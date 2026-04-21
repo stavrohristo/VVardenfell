@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -34,6 +35,10 @@ namespace VVardenfell.Runtime.Streaming
         {
             var world = World.DefaultGameObjectInjectionWorld;
             var em = world.EntityManager;
+
+            // Cache Unity's persistent-data root on the main thread before any worker
+            // resolves cell file paths during parallel preload.
+            CachePaths.Warmup();
 
             // --- Managed resources ---
             WorldResources.Cache = cache;
@@ -107,26 +112,25 @@ namespace VVardenfell.Runtime.Streaming
             var singleton = em.CreateEntity();
             em.SetName(singleton, "VVardenfell.World");
 
-            // Preload every baked cell into RAM. ~57 MB across ~1400 cells on disk; trading
-            // ~60-80 MB of managed heap for zero per-stream disk I/O at runtime. Sub-second
-            // on SSD, covered by the existing "Loading cache…" IMGUI message. Swap to
-            // Parallel.For (with ConcurrentDictionary) if this ever grows past ~2 s.
+            // Preload every baked cell into RAM. Disk reads + binary decode are independent,
+            // so fan them out across a small worker pool and merge back in manifest order to
+            // keep the final dictionary deterministic.
             var available = new NativeHashSet<int2>(cache.Manifest.CellCount, Allocator.Persistent);
             WorldResources.Cells.Clear();
             WorldResources.Cells.EnsureCapacity(cache.Manifest.CellGrid.Length);
+            var preloadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var preloadedCells = PreloadCells(cache);
             for (int i = 0; i < cache.Manifest.CellGrid.Length; i++)
             {
                 var g = cache.Manifest.CellGrid[i];
                 var coord = new int2(g.Item1, g.Item2);
                 available.Add(coord);
-                string path = CachePaths.CellFile(coord.x, coord.y);
-                if (!System.IO.File.Exists(path)) continue;
-                try { WorldResources.Cells[coord] = CellFile.Read(path); }
-                catch (System.Exception ex)
-                {
-                    Debug.LogWarning($"[VVardenfell] failed preloading cell ({coord.x},{coord.y}): {ex.Message}");
-                }
+                var cell = preloadedCells[i];
+                if (cell != null)
+                    WorldResources.Cells[coord] = cell;
             }
+            preloadStopwatch.Stop();
+            Debug.Log($"[VVardenfell] preloaded {WorldResources.Cells.Count}/{cache.Manifest.CellGrid.Length} baked cells in {preloadStopwatch.ElapsedMilliseconds}ms");
 
             em.AddComponentData(singleton, new StreamingConfig
             {
@@ -205,6 +209,42 @@ namespace VVardenfell.Runtime.Streaming
             cam.transform.position = center + new Vector3(0, 40f, -40f);
             cam.transform.LookAt(center);
             cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
+        }
+
+        private static CellData[] PreloadCells(CacheLoader cache)
+        {
+            var cellGrid = cache.Manifest.CellGrid;
+            var loaded = new CellData[cellGrid.Length];
+            var errors = new string[cellGrid.Length];
+            var options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = System.Math.Min(8, System.Math.Max(1, System.Environment.ProcessorCount / 2)),
+            };
+
+            Parallel.For(0, cellGrid.Length, options, i =>
+            {
+                var g = cellGrid[i];
+                string path = CachePaths.CellFile(g.Item1, g.Item2);
+                if (!System.IO.File.Exists(path))
+                    return;
+
+                try
+                {
+                    loaded[i] = CellFile.Read(path);
+                }
+                catch (System.Exception ex)
+                {
+                    errors[i] = $"[VVardenfell] failed preloading cell ({g.Item1},{g.Item2}): {ex.Message}";
+                }
+            });
+
+            for (int i = 0; i < errors.Length; i++)
+            {
+                if (!string.IsNullOrEmpty(errors[i]))
+                    Debug.LogWarning(errors[i]);
+            }
+
+            return loaded;
         }
     }
 }

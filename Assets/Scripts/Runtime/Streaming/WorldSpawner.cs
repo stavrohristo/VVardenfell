@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
@@ -9,6 +10,7 @@ using UnityEngine.Rendering;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
+using Unity.Burst;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -164,35 +166,36 @@ namespace VVardenfell.Runtime.Streaming
                     }
                 }
 
-                // Main-thread fill. ComponentLookup (needed for the parallel job) requires a
-                // SystemState, which isn't available from the bootstrap call site — and
-                // splitting this into a system-hosted pass adds lifecycle complexity we
-                // don't need for a one-time boot operation. ~330k × 5 SetComponentData ≈
-                // a few hundred ms; absorbed into the existing terrain-build window.
+                // Build the per-ref payloads in Burst, then record the component writes via
+                // a parallel ECB. Playback is still deterministic, but the expensive
+                // coordinate/material/bounds derivation no longer runs in one large serial
+                // loop on the main thread.
                 var fallbackBucketSlice = WorldResources.FallbackBucketSlice;
                 var meshBounds          = WorldResources.MeshBounds;
                 int meshCount           = meshBounds.Length;
-
-                for (int i = 0; i < totalRefs; i++)
+                var spawnData = new NativeArray<RefSpawnData>(totalRefs, Allocator.TempJob);
+                new BuildRefSpawnDataJob
                 {
-                    var e = entities[i];
-                    var r = refArr[i];
+                    Refs                = refArr,
+                    Coords              = coordArr,
+                    TexBucketInfo       = texInfo,
+                    FallbackBucketSlice = fallbackBucketSlice,
+                    MeshBounds          = meshBounds,
+                    MeshCount           = meshCount,
+                    Output              = spawnData,
+                }.Schedule(totalRefs, 128).Complete();
 
-                    em.SetComponentData(e, LocalTransform.FromPositionRotationScale(
-                        new float3(r.PosX, r.PosY, r.PosZ),
-                        new quaternion(r.RotX, r.RotY, r.RotZ, r.RotW),
-                        r.Scale));
-                    em.SetComponentData(e, MaterialMeshInfo.FromRenderMeshArrayIndices(r.MaterialIndex, r.MeshIndex));
+                var ecb = new EntityCommandBuffer(Allocator.TempJob);
+                new ApplyRefSpawnDataJob
+                {
+                    Entities   = entities,
+                    SpawnData  = spawnData,
+                    CommandBuf = ecb.AsParallelWriter(),
+                }.Schedule(totalRefs, 128).Complete();
 
-                    int2 bucketSlice = r.SliceIndex < 0 ? fallbackBucketSlice : texInfo[r.SliceIndex];
-                    em.SetComponentData(e, new TextureSlice { Value = bucketSlice.y });
-                    em.SetComponentData(e, new CellLink { Value = coordArr[i] });
-
-                    var aabb = (uint)r.MeshIndex < (uint)meshCount
-                        ? meshBounds[r.MeshIndex]
-                        : new AABB { Center = float3.zero, Extents = new float3(1f) };
-                    em.SetComponentData(e, new RenderBounds { Value = aabb });
-                }
+                ecb.Playback(em);
+                ecb.Dispose();
+                spawnData.Dispose();
 
                 entities.Dispose();
                 refArr.Dispose();
@@ -225,6 +228,68 @@ namespace VVardenfell.Runtime.Streaming
         {
             public RefEntry Ref;
             public int2 Coord;
+        }
+
+        private struct RefSpawnData
+        {
+            public LocalTransform Transform;
+            public MaterialMeshInfo MaterialMeshInfo;
+            public TextureSlice TextureSlice;
+            public CellLink CellLink;
+            public RenderBounds RenderBounds;
+        }
+
+        [BurstCompile]
+        private struct BuildRefSpawnDataJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<RefEntry> Refs;
+            [ReadOnly] public NativeArray<int2> Coords;
+            [ReadOnly] public NativeArray<int2> TexBucketInfo;
+            [ReadOnly] public NativeArray<AABB> MeshBounds;
+            [ReadOnly] public int2 FallbackBucketSlice;
+            [ReadOnly] public int MeshCount;
+
+            [WriteOnly] public NativeArray<RefSpawnData> Output;
+
+            public void Execute(int index)
+            {
+                var r = Refs[index];
+                int2 bucketSlice = r.SliceIndex < 0 ? FallbackBucketSlice : TexBucketInfo[r.SliceIndex];
+                var aabb = (uint)r.MeshIndex < (uint)MeshCount
+                    ? MeshBounds[r.MeshIndex]
+                    : new AABB { Center = float3.zero, Extents = new float3(1f) };
+
+                Output[index] = new RefSpawnData
+                {
+                    Transform = LocalTransform.FromPositionRotationScale(
+                        new float3(r.PosX, r.PosY, r.PosZ),
+                        new quaternion(r.RotX, r.RotY, r.RotZ, r.RotW),
+                        r.Scale),
+                    MaterialMeshInfo = MaterialMeshInfo.FromRenderMeshArrayIndices(r.MaterialIndex, r.MeshIndex),
+                    TextureSlice = new TextureSlice { Value = bucketSlice.y },
+                    CellLink = new CellLink { Value = Coords[index] },
+                    RenderBounds = new RenderBounds { Value = aabb },
+                };
+            }
+        }
+
+        [BurstCompile]
+        private struct ApplyRefSpawnDataJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<Entity> Entities;
+            [ReadOnly] public NativeArray<RefSpawnData> SpawnData;
+            public EntityCommandBuffer.ParallelWriter CommandBuf;
+
+            public void Execute(int index)
+            {
+                var entity = Entities[index];
+                var data = SpawnData[index];
+                CommandBuf.SetComponent(index, entity, data.Transform);
+                CommandBuf.SetComponent(index, entity, data.MaterialMeshInfo);
+                CommandBuf.SetComponent(index, entity, data.TextureSlice);
+                CommandBuf.SetComponent(index, entity, data.CellLink);
+                CommandBuf.SetComponent(index, entity, data.RenderBounds);
+            }
         }
 
         private struct PairedBucketComparer : IComparer<PairedRef>
