@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -rn \"correctTexturePath\\\\|\\\\\"textures\\\\\"\\\\|\\\\\"\\\\\\\\.dds\\\\\"\" C:/Users/jacob/VVardenfell/OpenMW/components/misc/resourcehelpers.*)"
-    ]
-  }
-}
