@@ -1,0 +1,26 @@
+{
+    "name": "VVardenfell.Runtime",
+    "rootNamespace": "VVardenfell.Runtime",
+    "references": [
+        "VVardenfell.Core",
+        "VVardenfell.Importer",
+        "Unity.Entities",
+        "Unity.Entities.Graphics",
+        "Unity.Transforms",
+        "Unity.Collections",
+        "Unity.Burst",
+        "Unity.Mathematics",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.Mathematics.Extensions"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

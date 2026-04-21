@@ -1,0 +1,16 @@
+{
+    "name": "VVardenfell.Importer",
+    "rootNamespace": "VVardenfell.Importer",
+    "references": [
+        "VVardenfell.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

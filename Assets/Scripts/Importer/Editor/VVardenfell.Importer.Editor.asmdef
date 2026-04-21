@@ -1,0 +1,19 @@
+{
+    "name": "VVardenfell.Importer.Editor",
+    "rootNamespace": "VVardenfell.Importer.Editor",
+    "references": [
+        "VVardenfell.Core",
+        "VVardenfell.Importer"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
