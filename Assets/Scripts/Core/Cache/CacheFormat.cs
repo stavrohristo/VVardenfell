@@ -11,8 +11,11 @@ namespace VVardenfell.Core.Cache
         /// <summary>'VVDF' little-endian.</summary>
         public const uint Magic = 0x46445656u;
 
-        /// <summary>Bump this to force all users to rebake.</summary>
-        public const uint FormatVersion = 13;
+        /// <summary>
+        /// Bump this to force all users to rebake when the binary layout or baked-content
+        /// semantics change.
+        /// </summary>
+        public const uint FormatVersion = 16;
 
         // Flags on BakedMeshHeader.Flags
         public const uint MeshFlagHasNormals = 1 << 0;

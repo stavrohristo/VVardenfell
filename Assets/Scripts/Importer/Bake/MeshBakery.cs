@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Nif;
@@ -7,7 +9,7 @@ using VVardenfell.Importer.Nif;
 namespace VVardenfell.Importer.Bake
 {
     /// <summary>
-    /// Collects baked meshes during the bake phase, dedupes by (nifPath, submeshIndex),
+    /// Collects baked meshes during the bake phase, dedupes by encoded mesh payload,
     /// and writes them to a single <c>meshes.bin</c>.
     ///
     /// File layout:
@@ -27,24 +29,44 @@ namespace VVardenfell.Importer.Bake
     {
         public const uint MagicMesh = 0x4853454Du; // 'MESH'
 
-        private readonly Dictionary<string, int> _indexByKey =
-            new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<int>> _indicesByPayloadHash =
+            new Dictionary<string, List<int>>(System.StringComparer.Ordinal);
         private readonly List<byte[]> _payloads = new List<byte[]>();
         private readonly List<string> _names = new List<string>();
 
         public int Count => _payloads.Count;
 
-        /// <summary>Returns the mesh index for the given (nifPath, submeshIndex), writing it if new.</summary>
+        /// <summary>
+        /// Returns the mesh index for the given built mesh, reusing an existing index when
+        /// the encoded geometry payload is byte-identical even if it came from a different
+        /// NIF path/submesh.
+        /// </summary>
         public int AddOrGet(string nifPath, int submeshIndex, in NifMeshBuilder.BuiltMesh bm)
         {
-            string key = $"{nifPath}#{submeshIndex}";
-            if (_indexByKey.TryGetValue(key, out var idx)) return idx;
+            string sourceLabel = $"{nifPath}#{submeshIndex}";
+            byte[] payload = EncodePayload(bm);
+            string payloadHash = ComputePayloadHash(payload);
 
-            idx = _payloads.Count;
-            _indexByKey[key] = idx;
-            _payloads.Add(EncodePayload(bm));
-            _names.Add(key);
-            return idx;
+            if (_indicesByPayloadHash.TryGetValue(payloadHash, out var existing))
+            {
+                for (int i = 0; i < existing.Count; i++)
+                {
+                    int idx = existing[i];
+                    if (PayloadEquals(_payloads[idx], payload))
+                        return idx;
+                }
+            }
+            else
+            {
+                existing = new List<int>(1);
+                _indicesByPayloadHash[payloadHash] = existing;
+            }
+
+            int newIdx = _payloads.Count;
+            existing.Add(newIdx);
+            _payloads.Add(payload);
+            _names.Add(sourceLabel);
+            return newIdx;
         }
 
         public void WriteNames(string path)
@@ -118,6 +140,27 @@ namespace VVardenfell.Importer.Bake
                 for (int i = 0; i < tris.Length; i++) w.Write((ushort)tris[i]);
 
             return ms.ToArray();
+        }
+
+        private static string ComputePayloadHash(byte[] payload)
+        {
+            using var sha = SHA256.Create();
+            byte[] hash = sha.ComputeHash(payload);
+            var sb = new StringBuilder(hash.Length * 2);
+            for (int i = 0; i < hash.Length; i++)
+                sb.Append(hash[i].ToString("x2"));
+            return sb.ToString();
+        }
+
+        private static bool PayloadEquals(byte[] a, byte[] b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null || a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (a[i] != b[i]) return false;
+            }
+            return true;
         }
 
         public void WriteTo(string path)

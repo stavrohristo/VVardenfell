@@ -28,7 +28,7 @@ namespace VVardenfell.Runtime.Streaming
         public const int DefaultViewRadius = 8;
         public const int DefaultMaxLoadsPerFrame = 64;
         public const int DefaultMaxUnloadsPerFrame = 64;
-        /// <summary>When false, terrain stays visible for every cell regardless of view radius.</summary>
+        /// <summary>When true, terrain follows the same cell-radius visibility gate as refs.</summary>
         public const bool DefaultGateTerrainByRadius = false;
 
         public static void Install(CacheLoader cache)
@@ -137,6 +137,7 @@ namespace VVardenfell.Runtime.Streaming
                 ViewRadius = DefaultViewRadius,
                 MaxLoadsPerFrame = DefaultMaxLoadsPerFrame,
                 MaxUnloadsPerFrame = DefaultMaxUnloadsPerFrame,
+                GateTerrainByRadius = DefaultGateTerrainByRadius,
                 CameraCell = new int2(int.MinValue, int.MinValue), 
             });
             em.AddComponentData(singleton, new AvailableCells { Set = available });

@@ -9,11 +9,11 @@ namespace VVardenfell.Importer.Nif
     /// NiTriShape, with its local-within-file world transform baked in.
     ///
     /// Conversions applied:
-    ///   - Morrowind units → meters via <see cref="WorldScale.MwUnitsToMeters"/>.
+    ///   - Morrowind units to meters via <see cref="WorldScale.MwUnitsToMeters"/>.
     ///   - Handedness: Morrowind is right-handed Z-up, Unity is left-handed Y-up.
     ///     We swap Y and Z on positions/normals and reverse triangle winding.
     ///
-    /// The RootCollisionNode subtree is skipped — it is collision geometry, not visual.
+    /// The RootCollisionNode subtree is skipped because it is collision geometry, not visual.
     /// </summary>
     public static class NifMeshBuilder
     {
@@ -31,7 +31,7 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[rootIndex] is NiAVObject av)
                     Walk(nif, av, Matrix4x4.identity, result);
             }
-            return result;
+            return MergeCompatible(result);
         }
 
         public readonly struct BuiltMesh
@@ -58,9 +58,8 @@ namespace VVardenfell.Importer.Nif
         {
             if ((obj.Flags & 0x0001) != 0) return; // hidden
 
-            // The NIF "rotation" matrix can carry non-uniform scale and negative (reflection) scale
-            // per OpenMW's NiTransform::toMatrix comment. Build the local matrix directly instead
-            // of decomposing to (quat + uniform scale), which was losing that information.
+            // Build the local matrix directly instead of decomposing to
+            // (quat + uniform scale), which would lose non-uniform or reflected scale.
             var r = obj.Rotation;
             float s = obj.Scale;
             var local = new Matrix4x4();
@@ -95,7 +94,6 @@ namespace VVardenfell.Importer.Nif
             }
         }
 
-
         private static BuiltMesh? BuildMesh(NiTriShape tri, NiTriShapeData data, Matrix4x4 world, string texturePath, ushort alphaFlags, byte alphaThreshold)
         {
             int vcount = data.NumVertices;
@@ -110,7 +108,6 @@ namespace VVardenfell.Importer.Nif
             for (int i = 0; i < vcount; i++)
             {
                 var p = world.MultiplyPoint3x4(data.Vertices[i]);
-                // Morrowind Z-up → Unity Y-up: swap Y and Z
                 var pU = new Vector3(p.x, p.z, p.y) * WorldScale.MwUnitsToMeters;
                 verts[i] = pU;
                 if (pU.x < min.x) min.x = pU.x; if (pU.x > max.x) max.x = pU.x;
@@ -124,7 +121,6 @@ namespace VVardenfell.Importer.Nif
                 }
             }
 
-            // Reverse winding: (a, b, c) → (a, c, b) to flip faces after Y/Z swap
             int itri = data.Triangles.Length;
             var indices = new int[itri];
             for (int i = 0; i < itri; i += 3)
@@ -152,7 +148,8 @@ namespace VVardenfell.Importer.Nif
 
         private static void FindAlpha(NifFile nif, NiTriShape tri, out ushort flags, out byte threshold)
         {
-            flags = 0; threshold = 0;
+            flags = 0;
+            threshold = 0;
             if (tri.PropertyLinks == null) return;
             foreach (int pIdx in tri.PropertyLinks)
             {
@@ -191,7 +188,147 @@ namespace VVardenfell.Importer.Nif
             return nif.Records[link] as T;
         }
 
-        // Matrix4x4Rotation removed — we used to decompose to a quaternion here, which silently
-        // discarded any non-uniform/negative scale baked into the NIF rotation matrix.
+        private static List<BuiltMesh> MergeCompatible(List<BuiltMesh> source)
+        {
+            if (source.Count <= 1)
+                return source;
+
+            var groups = new Dictionary<MergeKey, List<BuiltMesh>>(new MergeKeyComparer());
+            for (int i = 0; i < source.Count; i++)
+            {
+                var built = source[i];
+                var mesh = built.Mesh;
+                bool hasNormals = mesh.normals != null && mesh.normals.Length == mesh.vertexCount;
+                bool hasUvs = mesh.uv != null && mesh.uv.Length == mesh.vertexCount;
+                var key = new MergeKey(built.TexturePath, built.AlphaFlags, built.AlphaThreshold, hasNormals, hasUvs);
+                if (!groups.TryGetValue(key, out var list))
+                    groups[key] = list = new List<BuiltMesh>();
+                list.Add(built);
+            }
+
+            var merged = new List<BuiltMesh>(groups.Count);
+            foreach (var kv in groups)
+            {
+                var group = kv.Value;
+                if (group.Count == 1)
+                {
+                    merged.Add(group[0]);
+                    continue;
+                }
+
+                merged.Add(MergeGroup(kv.Key, group));
+            }
+
+            return merged;
+        }
+
+        private static BuiltMesh MergeGroup(in MergeKey key, List<BuiltMesh> group)
+        {
+            int totalVerts = 0;
+            int totalIndices = 0;
+            for (int i = 0; i < group.Count; i++)
+            {
+                var mesh = group[i].Mesh;
+                totalVerts += mesh.vertexCount;
+                totalIndices += mesh.triangles.Length;
+            }
+
+            var verts = new Vector3[totalVerts];
+            Vector3[] normals = key.HasNormals ? new Vector3[totalVerts] : null;
+            Vector2[] uvs = key.HasUvs ? new Vector2[totalVerts] : null;
+            var indices = new int[totalIndices];
+
+            int vertexOffset = 0;
+            int indexOffset = 0;
+            var bounds = group[0].LocalBounds;
+
+            for (int i = 0; i < group.Count; i++)
+            {
+                var mesh = group[i].Mesh;
+                var srcVerts = mesh.vertices;
+                var srcNormals = mesh.normals;
+                var srcUvs = mesh.uv;
+                var srcIndices = mesh.triangles;
+
+                System.Array.Copy(srcVerts, 0, verts, vertexOffset, srcVerts.Length);
+                if (normals != null)
+                    System.Array.Copy(srcNormals, 0, normals, vertexOffset, srcNormals.Length);
+                if (uvs != null)
+                    System.Array.Copy(srcUvs, 0, uvs, vertexOffset, srcUvs.Length);
+
+                for (int j = 0; j < srcIndices.Length; j++)
+                    indices[indexOffset + j] = srcIndices[j] + vertexOffset;
+
+                bounds.Encapsulate(group[i].LocalBounds.min);
+                bounds.Encapsulate(group[i].LocalBounds.max);
+
+                vertexOffset += srcVerts.Length;
+                indexOffset += srcIndices.Length;
+            }
+
+            var mergedMesh = new Mesh
+            {
+                name = string.IsNullOrEmpty(group[0].Name)
+                    ? $"Merged({group.Count})"
+                    : $"{group[0].Name}[merged:{group.Count}]",
+                indexFormat = totalVerts > 65535
+                    ? UnityEngine.Rendering.IndexFormat.UInt32
+                    : UnityEngine.Rendering.IndexFormat.UInt16,
+            };
+            mergedMesh.SetVertices(verts);
+            if (normals != null) mergedMesh.SetNormals(normals);
+            if (uvs != null) mergedMesh.SetUVs(0, uvs);
+            mergedMesh.SetTriangles(indices, 0);
+            if (normals == null) mergedMesh.RecalculateNormals();
+            mergedMesh.bounds = bounds;
+
+            return new BuiltMesh(
+                mergedMesh,
+                key.TexturePath,
+                mergedMesh.name,
+                bounds,
+                key.AlphaFlags,
+                key.AlphaThreshold);
+        }
+
+        private readonly struct MergeKey
+        {
+            public readonly string TexturePath;
+            public readonly ushort AlphaFlags;
+            public readonly byte AlphaThreshold;
+            public readonly bool HasNormals;
+            public readonly bool HasUvs;
+
+            public MergeKey(string texturePath, ushort alphaFlags, byte alphaThreshold, bool hasNormals, bool hasUvs)
+            {
+                TexturePath = texturePath ?? "";
+                AlphaFlags = alphaFlags;
+                AlphaThreshold = alphaThreshold;
+                HasNormals = hasNormals;
+                HasUvs = hasUvs;
+            }
+        }
+
+        private sealed class MergeKeyComparer : IEqualityComparer<MergeKey>
+        {
+            public bool Equals(MergeKey x, MergeKey y)
+            {
+                return x.AlphaFlags == y.AlphaFlags
+                    && x.AlphaThreshold == y.AlphaThreshold
+                    && x.HasNormals == y.HasNormals
+                    && x.HasUvs == y.HasUvs
+                    && string.Equals(x.TexturePath, y.TexturePath, System.StringComparison.OrdinalIgnoreCase);
+            }
+
+            public int GetHashCode(MergeKey obj)
+            {
+                int hash = System.StringComparer.OrdinalIgnoreCase.GetHashCode(obj.TexturePath ?? "");
+                hash = (hash * 397) ^ obj.AlphaFlags.GetHashCode();
+                hash = (hash * 397) ^ obj.AlphaThreshold.GetHashCode();
+                hash = (hash * 397) ^ obj.HasNormals.GetHashCode();
+                hash = (hash * 397) ^ obj.HasUvs.GetHashCode();
+                return hash;
+            }
+        }
     }
 }

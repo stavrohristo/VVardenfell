@@ -64,6 +64,7 @@ namespace VVardenfell.Runtime.Streaming
             if (unload.PendingEntityDestroy.Length == 0) return;
 
             var cfg = _cfgQuery.GetSingleton<StreamingConfig>();
+            var targetQuery = cfg.GateTerrainByRadius ? _allQuery : _refsOnlyQuery;
 
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
@@ -78,7 +79,7 @@ namespace VVardenfell.Runtime.Streaming
                     Enable      = false,
                     LinkHandle  = _cellLinkHandle,
                     MmiHandle   = _mmiHandle,
-                }.Run(_allQuery);
+                }.Run(targetQuery);
 
                 loaded.Active.Remove(coord);
                 // Managed resources (terrain Mesh/Texture/Material) stay alive across

@@ -15,6 +15,7 @@ namespace VVardenfell.Runtime.Streaming
         public int ViewRadius;
         public int MaxLoadsPerFrame;
         public int MaxUnloadsPerFrame;
+        public bool GateTerrainByRadius;
         public int2 CameraCell;
     }
 

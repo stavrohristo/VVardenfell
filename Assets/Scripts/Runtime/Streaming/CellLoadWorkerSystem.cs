@@ -68,6 +68,8 @@ namespace VVardenfell.Runtime.Streaming
             _mmiHandle.Update(ref state);
 
 
+            var targetQuery = cfg.GateTerrainByRadius ? _allQuery : _refsOnlyQuery;
+
             int budget = cfg.MaxLoadsPerFrame;
             while (budget-- > 0 && queue.Queue.TryDequeue(out var coord))
             {
@@ -79,7 +81,7 @@ namespace VVardenfell.Runtime.Streaming
                     Enable     = true,
                     LinkHandle = _cellLinkHandle,
                     MmiHandle  = _mmiHandle,
-                }.Run(_allQuery);
+                }.Run(targetQuery);
 
                 loaded.Active.Add(coord);
             }
