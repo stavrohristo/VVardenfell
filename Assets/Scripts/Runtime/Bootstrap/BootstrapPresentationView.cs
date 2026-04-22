@@ -4,6 +4,7 @@ using System.IO;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.Networking;
 using UnityEngine.UI;
@@ -198,6 +199,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
             UpdateMoviePlaybackState();
             RefreshScreenDependentLayout();
+            HandleIntroSkipInput();
 
             switch (_phase)
             {
@@ -215,6 +217,19 @@ namespace VVardenfell.Runtime.Bootstrap
                         SwitchPhase(PresentationPhase.Menu);
                     break;
             }
+        }
+
+        void HandleIntroSkipInput()
+        {
+            if (_phase != PresentationPhase.IntroCompany && _phase != PresentationPhase.IntroLogo)
+                return;
+
+            bool escapePressed = Keyboard.current?.escapeKey.wasPressedThisFrame ?? false;
+            bool mousePressed = Mouse.current?.leftButton.wasPressedThisFrame ?? false;
+            if (!escapePressed && !mousePressed)
+                return;
+
+            AdvanceFromCurrentIntroPhase();
         }
 
         private void OnDestroy()
@@ -436,7 +451,7 @@ namespace VVardenfell.Runtime.Bootstrap
             _loadingRoot.gameObject.SetActive(false);
             _menuRoot.gameObject.SetActive(false);
             StopMovie();
-            if (phase != PresentationPhase.Menu)
+            if (phase != PresentationPhase.IntroLogo && phase != PresentationPhase.Menu)
                 StopMenuMusic();
 
             switch (phase)
@@ -455,6 +470,7 @@ namespace VVardenfell.Runtime.Bootstrap
                     _loadingRoot.gameObject.SetActive(true);
                     _activeLoadingSplash = PickSplashImage();
                     SetBackgroundImage(_activeLoadingSplash ?? _assets.MenuBackground, stretchToFill: StretchMenuBackground);
+                    PreloadMenuMusic();
                     UpdateLoadingVisuals();
                     SignalLoadingPhaseReady();
                     break;
@@ -463,6 +479,7 @@ namespace VVardenfell.Runtime.Bootstrap
                     _backgroundMatte.color = Color.black;
                     ConfigureIntroFallback("MORROWIND", "The Elder Scrolls III", ScaleText(1.7f), ScaleText(0.82f), show: true);
                     SetBackgroundImage(_assets.MenuBackground ?? _activeLoadingSplash ?? PickSplashImage(), stretchToFill: true);
+                    StartMenuMusic();
                     BeginIntroMoviePhase("Morrowind Logo");
                     break;
 
@@ -797,15 +814,7 @@ namespace VVardenfell.Runtime.Bootstrap
             if (source == null || source != _videoPlayer || !_activeMovieOwnsPhase || _movieState != MoviePlaybackState.Playing)
                 return;
 
-            switch (_phase)
-            {
-                case PresentationPhase.IntroCompany:
-                    SwitchPhase(PresentationPhase.Loading);
-                    break;
-                case PresentationPhase.IntroLogo:
-                    SwitchPhase(PresentationPhase.Menu);
-                    break;
-            }
+            AdvanceFromCurrentIntroPhase();
         }
 
         void ApplyMovieFallback(UiMovieRuntimeInfo movie)
@@ -941,6 +950,19 @@ namespace VVardenfell.Runtime.Bootstrap
             return Time.unscaledTime - _phaseStartTime >= fallbackSeconds;
         }
 
+        void AdvanceFromCurrentIntroPhase()
+        {
+            switch (_phase)
+            {
+                case PresentationPhase.IntroCompany:
+                    SwitchPhase(PresentationPhase.Loading);
+                    break;
+                case PresentationPhase.IntroLogo:
+                    SwitchPhase(PresentationPhase.Menu);
+                    break;
+            }
+        }
+
         void ConfigureMovieAudio(bool hasAudio)
         {
             if (_videoPlayer == null)
@@ -978,7 +1000,19 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             if (_menuMusicLoadRoutine != null)
-                StopCoroutine(_menuMusicLoadRoutine);
+                return;
+
+            _menuMusicLoadRoutine = StartCoroutine(LoadAndPlayMenuMusic(musicPath));
+        }
+
+        void PreloadMenuMusic()
+        {
+            if (_menuMusicClip != null || _menuMusicLoadRoutine != null)
+                return;
+
+            string musicPath = ResolveMainMenuMusicPath();
+            if (string.IsNullOrWhiteSpace(musicPath))
+                return;
 
             _menuMusicLoadRoutine = StartCoroutine(LoadAndPlayMenuMusic(musicPath));
         }
@@ -1040,7 +1074,7 @@ namespace VVardenfell.Runtime.Bootstrap
             _menuMusicClip = clip;
             _menuMusicPath = path;
 
-            if (_phase != PresentationPhase.Menu || _menuMusicAudio == null)
+            if ((_phase != PresentationPhase.IntroLogo && _phase != PresentationPhase.Menu) || _menuMusicAudio == null)
                 yield break;
 
             _menuMusicAudio.clip = clip;

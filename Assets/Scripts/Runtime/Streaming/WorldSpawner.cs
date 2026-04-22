@@ -449,12 +449,13 @@ namespace VVardenfell.Runtime.Streaming
             Debug.Log($"[VVardenfell] eager-spawn: {loaded.Map.Count} cells ({terrainBuilt} w/ terrain, {staticCellsSpawned} w/ STAT collision), {totalRefs} refs - terrain {terrainMs}ms, static {staticMs - terrainMs}ms, total {sw.ElapsedMilliseconds}ms");
         }
 
-        public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, DynamicBuffer<InteriorSpawnedEntity> spawned)
+        public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity)
         {
             if (cell == null)
                 return;
 
             var em = world.EntityManager;
+            var spawnedEntities = new System.Collections.Generic.List<Entity>(cell.Refs?.Length + (cell.HasStaticCollider ? 1 : 0) ?? 1);
             int fallbackBucket = WorldResources.FallbackBucketSlice.x;
             var texInfo = WorldResources.TexBucketInfo;
             var meshBounds = WorldResources.MeshBounds;
@@ -472,7 +473,7 @@ namespace VVardenfell.Runtime.Streaming
                 em.AddComponent<InteriorCellMember>(staticEntity);
                 em.AddComponent<Unity.Transforms.Static>(staticEntity);
                 em.AddSharedComponent(staticEntity, new PhysicsWorldIndex { Value = 0 });
-                spawned.Add(new InteriorSpawnedEntity { Value = staticEntity });
+                spawnedEntities.Add(staticEntity);
             }
 
             var prefabs = WorldResources.RefPrefabs;
@@ -527,8 +528,12 @@ namespace VVardenfell.Runtime.Streaming
                     });
                 }
 
-                spawned.Add(new InteriorSpawnedEntity { Value = entity });
+                spawnedEntities.Add(entity);
             }
+
+            var spawnedBuffer = em.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
+            for (int i = 0; i < spawnedEntities.Count; i++)
+                spawnedBuffer.Add(new InteriorSpawnedEntity { Value = spawnedEntities[i] });
         }
 
         public static void HideExteriorVisibility(World world, ref LoadedCellsMap loaded)

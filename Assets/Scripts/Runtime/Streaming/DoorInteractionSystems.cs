@@ -201,7 +201,6 @@ namespace VVardenfell.Runtime.Streaming
 
             var transitionEntity = _transitionQuery.GetSingletonEntity();
             var transitionRef = _transitionQuery.GetSingletonRW<InteriorTransitionState>();
-            var spawnedBuffer = EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
             ref var transition = ref transitionRef.ValueRW;
             transition.TransitionInProgress = 1;
 
@@ -245,16 +244,16 @@ namespace VVardenfell.Runtime.Streaming
 
             if (goesToInterior)
             {
-                DestroyInteriorEntities(spawnedBuffer);
+                DestroyInteriorEntities(transitionEntity);
                 WorldSpawner.HideExteriorVisibility(World, ref loaded);
-                WorldSpawner.SpawnInteriorCell(World, destinationInterior, InteriorWorldOffset, spawnedBuffer);
+                WorldSpawner.SpawnInteriorCell(World, destinationInterior, InteriorWorldOffset, transitionEntity);
                 configRef.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
                 transition.ActiveInteriorCellId = door.DestinationCellId;
             }
             else
             {
-                DestroyInteriorEntities(spawnedBuffer);
+                DestroyInteriorEntities(transitionEntity);
                 configRef.ExteriorStreamingPaused = false;
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
@@ -326,16 +325,21 @@ namespace VVardenfell.Runtime.Streaming
             });
         }
 
-        void DestroyInteriorEntities(DynamicBuffer<InteriorSpawnedEntity> spawnedBuffer)
+        void DestroyInteriorEntities(Entity transitionEntity)
         {
-            for (int i = 0; i < spawnedBuffer.Length; i++)
-            {
-                Entity entity = spawnedBuffer[i].Value;
-                if (EntityManager.Exists(entity))
-                    EntityManager.DestroyEntity(entity);
-            }
+            var spawnedBuffer = EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
+            if (spawnedBuffer.Length == 0)
+                return;
 
-            spawnedBuffer.Clear();
+            var entitiesToDestroy = new Entity[spawnedBuffer.Length];
+            for (int i = 0; i < spawnedBuffer.Length; i++)
+                entitiesToDestroy[i] = spawnedBuffer[i].Value;
+
+            for (int i = 0; i < entitiesToDestroy.Length; i++)
+                if (EntityManager.Exists(entitiesToDestroy[i]))
+                    EntityManager.DestroyEntity(entitiesToDestroy[i]);
+
+            EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity).Clear();
         }
 
         void ClearFocus()
