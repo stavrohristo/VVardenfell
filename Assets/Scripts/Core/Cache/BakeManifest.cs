@@ -9,6 +9,23 @@ namespace VVardenfell.Core.Cache
     /// </summary>
     public sealed class BakeManifest
     {
+        public sealed class BakedCellState
+        {
+            public string Key;
+            public string OutputPath;
+            public string Fingerprint;
+            public uint PipelineVersion;
+            public bool IsInterior;
+            public int GridX;
+            public int GridY;
+            public string InteriorId;
+            public int[] MeshIndices;
+            public int[] MaterialIndices;
+            public int[] TextureIndices;
+            public int[] CollisionIndices;
+            public int[] TerrainLayerIndices;
+        }
+
         public uint FormatVersion;
         public long EsmSize;
         public long EsmMtimeTicks;
@@ -17,9 +34,14 @@ namespace VVardenfell.Core.Cache
         public int MeshCount;
         public int MaterialCount;
         public int TextureCount;
+        public int CollisionCount;
         public int CellCount;
         /// <summary>Length-prefixed list of baked cell grid coords (x, y pairs).</summary>
         public (int X, int Y)[] CellGrid;
+        public int InteriorCellCount;
+        /// <summary>Length-prefixed list of baked interior cell ids/names.</summary>
+        public string[] InteriorCellIds;
+        public BakedCellState[] CellStates;
 
         public static BakeManifest FromCurrentSources(string esmPath, string bsaPath)
         {
@@ -60,12 +82,20 @@ namespace VVardenfell.Core.Cache
             w.Write(MeshCount);
             w.Write(MaterialCount);
             w.Write(TextureCount);
+            w.Write(CollisionCount);
             w.Write(CellCount);
             for (int i = 0; i < CellCount; i++)
             {
                 w.Write(CellGrid[i].X);
                 w.Write(CellGrid[i].Y);
             }
+            w.Write(InteriorCellCount);
+            for (int i = 0; i < InteriorCellCount; i++)
+                w.Write(InteriorCellIds[i] ?? string.Empty);
+            int stateCount = CellStates?.Length ?? 0;
+            w.Write(stateCount);
+            for (int i = 0; i < stateCount; i++)
+                WriteCellState(w, CellStates[i]);
         }
 
         public static bool TryRead(string path, out BakeManifest manifest)
@@ -87,11 +117,20 @@ namespace VVardenfell.Core.Cache
                     MeshCount = r.ReadInt32(),
                     MaterialCount = r.ReadInt32(),
                     TextureCount = r.ReadInt32(),
+                    CollisionCount = r.ReadInt32(),
                     CellCount = r.ReadInt32(),
                 };
                 m.CellGrid = new (int, int)[m.CellCount];
                 for (int i = 0; i < m.CellCount; i++)
                     m.CellGrid[i] = (r.ReadInt32(), r.ReadInt32());
+                m.InteriorCellCount = r.ReadInt32();
+                m.InteriorCellIds = new string[m.InteriorCellCount];
+                for (int i = 0; i < m.InteriorCellCount; i++)
+                    m.InteriorCellIds[i] = r.ReadString();
+                int stateCount = r.ReadInt32();
+                m.CellStates = new BakedCellState[stateCount];
+                for (int i = 0; i < stateCount; i++)
+                    m.CellStates[i] = ReadCellState(r);
                 manifest = m;
                 return true;
             }
@@ -99,6 +138,60 @@ namespace VVardenfell.Core.Cache
             {
                 return false;
             }
+        }
+
+        private static void WriteCellState(BinaryWriter w, BakedCellState state)
+        {
+            w.Write(state?.Key ?? string.Empty);
+            w.Write(state?.OutputPath ?? string.Empty);
+            w.Write(state?.Fingerprint ?? string.Empty);
+            w.Write(state?.PipelineVersion ?? 0u);
+            w.Write(state != null && state.IsInterior);
+            w.Write(state?.GridX ?? 0);
+            w.Write(state?.GridY ?? 0);
+            w.Write(state?.InteriorId ?? string.Empty);
+            WriteIntArray(w, state?.MeshIndices);
+            WriteIntArray(w, state?.MaterialIndices);
+            WriteIntArray(w, state?.TextureIndices);
+            WriteIntArray(w, state?.CollisionIndices);
+            WriteIntArray(w, state?.TerrainLayerIndices);
+        }
+
+        private static BakedCellState ReadCellState(BinaryReader r)
+        {
+            return new BakedCellState
+            {
+                Key = r.ReadString(),
+                OutputPath = r.ReadString(),
+                Fingerprint = r.ReadString(),
+                PipelineVersion = r.ReadUInt32(),
+                IsInterior = r.ReadBoolean(),
+                GridX = r.ReadInt32(),
+                GridY = r.ReadInt32(),
+                InteriorId = r.ReadString(),
+                MeshIndices = ReadIntArray(r),
+                MaterialIndices = ReadIntArray(r),
+                TextureIndices = ReadIntArray(r),
+                CollisionIndices = ReadIntArray(r),
+                TerrainLayerIndices = ReadIntArray(r),
+            };
+        }
+
+        private static void WriteIntArray(BinaryWriter w, int[] values)
+        {
+            int length = values?.Length ?? 0;
+            w.Write(length);
+            for (int i = 0; i < length; i++)
+                w.Write(values[i]);
+        }
+
+        private static int[] ReadIntArray(BinaryReader r)
+        {
+            int length = r.ReadInt32();
+            var values = new int[length];
+            for (int i = 0; i < length; i++)
+                values[i] = r.ReadInt32();
+            return values;
         }
     }
 }

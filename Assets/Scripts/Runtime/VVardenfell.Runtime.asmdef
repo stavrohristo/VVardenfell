@@ -12,7 +12,10 @@
         "Unity.Mathematics",
         "Unity.RenderPipelines.Universal.Runtime",
         "Unity.RenderPipelines.Core.Runtime",
-        "Unity.Mathematics.Extensions"
+        "Unity.Mathematics.Extensions",
+        "Unity.Physics",
+        "Unity.InputSystem",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

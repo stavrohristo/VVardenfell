@@ -16,6 +16,7 @@ namespace VVardenfell.Runtime.Streaming
         public int MaxLoadsPerFrame;
         public int MaxUnloadsPerFrame;
         public bool GateTerrainByRadius;
+        public bool ExteriorStreamingPaused;
         public int2 CameraCell;
     }
 

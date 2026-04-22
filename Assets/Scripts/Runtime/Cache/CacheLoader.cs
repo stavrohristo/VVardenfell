@@ -1,224 +1,397 @@
+using System.Collections;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using Unity.Collections;
+using Unity.Mathematics;
 using Unity.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Unity.Profiling;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Dds;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Streaming;
+using Debug = UnityEngine.Debug;
 
 namespace VVardenfell.Runtime.Cache
 {
     /// <summary>
     /// Reads the baked cache and produces the runtime-side Unity resources:
-    /// <see cref="UnityEngine.Mesh"/>[], <see cref="Texture2D"/>[], <see cref="Material"/>[].
-    /// Runs once at boot.
+    /// Mesh[], Texture2D[], Material[]. Runs once at boot.
     /// </summary>
     public sealed class CacheLoader
     {
+        const uint SupportedMeshPayloadFlags =
+            CacheFormat.MeshFlagHasNormals |
+            CacheFormat.MeshFlagHasUVs |
+            CacheFormat.MeshFlagIndex32;
+        const int MeshBatchSize = 256;
+        const int TextureBatchSize = 128;
+        const int BucketYieldStride = 512;
+
+        static readonly ProfilerMarker k_Load = new("VV.CacheLoader.Load");
+        static readonly ProfilerMarker k_Manifest = new("VV.CacheLoader.Manifest");
+        static readonly ProfilerMarker k_Meshes = new("VV.CacheLoader.Meshes");
+        static readonly ProfilerMarker k_MeshPayloadRead = new("VV.CacheLoader.MeshPayloadRead");
+        static readonly ProfilerMarker k_MeshUpload = new("VV.CacheLoader.MeshUpload");
+        static readonly ProfilerMarker k_Textures = new("VV.CacheLoader.Textures");
+        static readonly ProfilerMarker k_RefBuckets = new("VV.CacheLoader.RefBuckets");
+        static readonly ProfilerMarker k_TerrainLayers = new("VV.CacheLoader.TerrainLayers");
+
         public BakeManifest Manifest { get; private set; }
         public Mesh[] Meshes { get; private set; }
-        public string[] MeshNames { get; private set; } // parallel to Meshes; may be null if sidecar missing
+        public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
-        /// <summary>
-        /// Editor-only material registry asset. Populated on first editor boot; used
-        /// by <see cref="Streaming.WorldBootstrap"/> to resolve the terrain template +
-        /// fallback so they share the user's tweaks too. Null in standalone builds.
-        /// </summary>
         public MaterialRegistry Registry { get; private set; }
 
         public bool TryLoad(out string error)
         {
-            error = null;
+            try
+            {
+                using var _ = k_Load.Auto();
+                RuntimeCoroutinePump.RunToCompletion(LoadIncremental(new RuntimeLoadProgress()));
+                error = null;
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
 
-            if (!BakeManifest.TryRead(CachePaths.Manifest, out var manifest))
-            { error = "manifest.bin unreadable"; return false; }
-            Manifest = manifest;
+        public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
+        {
+            var totalSw = Stopwatch.StartNew();
 
-            Meshes = ReadAllMeshes(CachePaths.Meshes, out var meshError);
-            if (Meshes == null) { error = meshError; return false; }
+            progress?.BeginStage("Manifest + metadata", "Reading manifest", 1);
+            var manifestSw = Stopwatch.StartNew();
+            k_Manifest.Begin();
+            try
+            {
+                if (!BakeManifest.TryRead(CachePaths.Manifest, out var manifest))
+                    throw new InvalidDataException("manifest.bin unreadable");
+                Manifest = manifest;
+                MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
+            }
+            finally
+            {
+                k_Manifest.End();
+            }
+            manifestSw.Stop();
+            progress?.Report("Manifest ready", 1, 1);
+            progress?.CompleteStage();
+            Debug.Log($"[VVardenfell] cache manifest + metadata in {manifestSw.ElapsedMilliseconds}ms");
+            yield return null;
 
-            MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
+            progress?.BeginStage("Mesh deserialization", "Reading meshes", 0);
+            yield return ReadMeshesIncremental(progress);
 
+            progress?.BeginStage("Texture decode/load", "Loading textures", 0);
+            yield return LoadTexturesIncremental(progress);
+
+            progress?.BeginStage("Ref buckets + materials", "Building reference buckets", 0);
+            yield return BuildBucketedRefArraysIncremental(progress);
+
+            progress?.BeginStage("Terrain layer arrays", "Preparing terrain layers", 1);
+            var terrainSw = Stopwatch.StartNew();
+            if (File.Exists(CachePaths.TerrainLayers))
+            {
+                k_TerrainLayers.Begin();
+                try
+                {
+                    TerrainLayers = new TerrainLayers();
+                    yield return TerrainLayers.BuildIncremental(CachePaths.TerrainLayers, Textures, progress);
+                }
+                finally
+                {
+                    k_TerrainLayers.End();
+                }
+            }
+            else
+            {
+                progress?.Report("terrain_layers.bin missing", 1, 1);
+                progress?.CompleteStage();
+                yield return null;
+            }
+            terrainSw.Stop();
+            Debug.Log($"[VVardenfell] cache terrain layers in {terrainSw.ElapsedMilliseconds}ms");
+
+            totalSw.Stop();
+            Debug.Log($"[VVardenfell] cache hydrated in {totalSw.ElapsedMilliseconds}ms");
+        }
+
+        private IEnumerator ReadMeshesIncremental(RuntimeLoadProgress progress)
+        {
+            var sw = Stopwatch.StartNew();
+            if (!File.Exists(CachePaths.Meshes))
+                throw new InvalidDataException("meshes.bin missing");
+
+            using var fs = File.OpenRead(CachePaths.Meshes);
+            using var r = new BinaryReader(fs);
+            if (r.ReadUInt32() != Importer.Bake.MeshBakery.MagicMesh)
+                throw new InvalidDataException("meshes.bin magic mismatch");
+
+            uint count = r.ReadUInt32();
+            progress?.Report("Reading mesh table", 0, (int)count);
+
+            var offsets = new ulong[count];
+            for (int i = 0; i < count; i++)
+                offsets[i] = r.ReadUInt64();
+
+            Meshes = new Mesh[count];
+            for (int i = 0; i < count; i++)
+            {
+                k_Meshes.Begin();
+                try
+                {
+                    fs.Position = (long)offsets[i];
+                    Meshes[i] = ReadOneMesh(r, $"BakedMesh{i}");
+                }
+                finally
+                {
+                    k_Meshes.End();
+                }
+
+                int completed = i + 1;
+                if (completed == count || (completed % MeshBatchSize) == 0)
+                {
+                    progress?.Report($"Reading meshes {completed}/{count}", completed, (int)count);
+                    yield return null;
+                }
+            }
+
+            sw.Stop();
+            progress?.CompleteStage("Meshes ready");
+            Debug.Log($"[VVardenfell] cache meshes in {sw.ElapsedMilliseconds}ms");
+        }
+
+        private IEnumerator LoadTexturesIncremental(RuntimeLoadProgress progress)
+        {
+            var sw = Stopwatch.StartNew();
             var texHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
             Textures = new Texture2D[texHashes.Length];
-            for (int i = 0; i < texHashes.Length; i++)
-                Textures[i] = LoadTexture(CachePaths.TextureFile(texHashes[i]), texHashes[i]);
+            progress?.Report("Loading textures", 0, texHashes.Length);
 
+            for (int i = 0; i < texHashes.Length; i++)
+            {
+                k_Textures.Begin();
+                try
+                {
+                    Textures[i] = LoadTexture(CachePaths.TextureFile(texHashes[i]), texHashes[i]);
+                }
+                finally
+                {
+                    k_Textures.End();
+                }
+
+                int completed = i + 1;
+                if (completed == texHashes.Length || (completed % TextureBatchSize) == 0)
+                {
+                    progress?.Report($"Loading textures {completed}/{texHashes.Length}", completed, texHashes.Length);
+                    yield return null;
+                }
+            }
+
+            sw.Stop();
+            progress?.CompleteStage("Textures ready");
+            Debug.Log($"[VVardenfell] cache textures in {sw.ElapsedMilliseconds}ms");
+        }
+
+        private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)
+        {
+            var sw = Stopwatch.StartNew();
             var matRecords = Importer.Bake.MaterialBakery.ReadAll(CachePaths.Materials);
-            var refShader  = Shader.Find("VVardenfell/MwRef");
-            if (refShader == null) { error = "VVardenfell/MwRef shader missing"; return false; }
+            var refShader = Shader.Find("VVardenfell/MwRef");
+            if (refShader == null)
+                throw new InvalidDataException("VVardenfell/MwRef shader missing");
 
 #if UNITY_EDITOR
-            // Registry still hosts the terrain template/fallback; ref materials no longer
-            // round-trip through it (there are only a handful now, rebuilt each boot).
             Registry = MaterialRegistry.LoadOrCreate();
 #endif
 
-            // Group textures by (width, height) into buckets, each with its own native-sized
-            // Texture2DArray + mip chain. Rationale: the previous single 256² ARGB32 array
-            // upscaled 16² textures 16× (wasted VRAM + bandwidth) and had no mips (every
-            // sample hit base mip level regardless of distance, thrashing the texture cache).
-            // Per-dim buckets mean natively-sized slices and proper trilinear filtering.
-            //
-            // Each bucket gets its own RenderMeshArray + Material set so the material's
-            // _BaseArray points at the bucket's RT. Entities end up in different chunks
-            // (per-bucket RMA = separate shared component value) which is fine because
-            // bucket count is small (~5), not per-cell.
-            BuildBucketedRefArrays(Textures, matRecords, refShader, out var rts, out var rmas,
-                                   out var texBucketInfo, out var fallbackBucketSlice, out var materials);
-            WorldResources.RefBaseArrays       = rts;
-            WorldResources.RefsRmas            = rmas;
-            WorldResources.TexBucketInfo       = texBucketInfo;
-            WorldResources.FallbackBucketSlice = fallbackBucketSlice;
-            WorldResources.BlendVariantCount   = matRecords.Length;
-            Materials = materials;
-            Debug.Log($"[VVardenfell] Refs: {rts.Length} dim-buckets × {matRecords.Length} blend variants = {materials.Length} materials");
-
-            if (File.Exists(CachePaths.TerrainLayers))
+            var groups = new Dictionary<int, List<int>>();
+            for (int i = 0; i < Textures.Length; i++)
             {
-                TerrainLayers = new TerrainLayers();
-                TerrainLayers.Build(CachePaths.TerrainLayers, Textures);
-            }
-
-            return true;
-        }
-
-        /// <summary>
-        /// Group <paramref name="src"/> textures by (width, height), build one Texture2DArray
-        /// per unique dimension with a full mip chain, and produce the matching per-bucket
-        /// RenderMeshArrays and materials. Each bucket's array also gets a trailing white
-        /// slice for refs with <c>SliceIndex == -1</c>.
-        /// </summary>
-        private void BuildBucketedRefArrays(
-            Texture2D[] src,
-            VVardenfell.Core.Cache.MaterialRecord[] matRecords,
-            Shader refShader,
-            out RenderTexture[] rts,
-            out RenderMeshArray[] rmas,
-            out Unity.Collections.NativeArray<Unity.Mathematics.int2> texBucketInfo,
-            out Unity.Mathematics.int2 fallbackBucketSlice,
-            out Material[] materials)
-        {
-            // Group texture indices by (width, height) packed into one int.
-            var groups = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<int>>();
-            for (int i = 0; i < src.Length; i++)
-            {
-                int w = src[i] != null ? src[i].width  : 1;
-                int h = src[i] != null ? src[i].height : 1;
+                int w = Textures[i] != null ? Textures[i].width : 1;
+                int h = Textures[i] != null ? Textures[i].height : 1;
                 int key = (w << 16) | (h & 0xFFFF);
-                if (!groups.TryGetValue(key, out var list)) groups[key] = list = new System.Collections.Generic.List<int>();
+                if (!groups.TryGetValue(key, out var list))
+                    groups[key] = list = new List<int>();
                 list.Add(i);
             }
-            // Stable bucket order: ascending by dim so bucket 0 is smallest (least wasteful as fallback).
+
+            if (groups.Count == 0)
+                groups[(1 << 16) | 1] = new List<int>();
+
             var keys = new int[groups.Count];
             groups.Keys.CopyTo(keys, 0);
             System.Array.Sort(keys);
 
-            int nBuckets = keys.Length;
-            rts  = new RenderTexture[nBuckets];
-            rmas = new RenderMeshArray[nBuckets];
+            int totalTextureOps = 0;
+            foreach (var key in keys)
+                totalTextureOps += groups[key].Count + 1;
+            int totalMaterialOps = keys.Length * matRecords.Length;
+            int totalOps = System.Math.Max(1, totalTextureOps + totalMaterialOps);
+            progress?.Report("Grouping textures into buckets", 0, totalOps);
 
-            texBucketInfo = new Unity.Collections.NativeArray<Unity.Mathematics.int2>(
-                src.Length, Unity.Collections.Allocator.Persistent,
-                Unity.Collections.NativeArrayOptions.UninitializedMemory);
+            RenderTexture[] rts = new RenderTexture[keys.Length];
+            RenderMeshArray[] rmas = new RenderMeshArray[keys.Length];
+            Material[] materials = new Material[keys.Length * matRecords.Length];
+            var texBucketInfo = new NativeArray<int2>(
+                Textures.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
-            // Solid-white 1×1 reused as fallback slot in every bucket (missing sources + the
-            // trailing fallback slice for SliceIndex == -1).
             var white = new Texture2D(1, 1, TextureFormat.RGBA32, mipChain: false, linear: false);
             white.SetPixel(0, 0, Color.white);
             white.Apply();
 
+            int completed = 0;
+            int yieldedAt = 0;
             int fallbackBucket = 0;
-            int fallbackSlice  = 0;
+            int fallbackSlice = 0;
 
-            materials = new Material[nBuckets * matRecords.Length];
-            var meshes = Meshes;
-
-            for (int b = 0; b < nBuckets; b++)
+            bool success = false;
+            try
             {
-                int key = keys[b];
-                int w = key >> 16;
-                int h = key & 0xFFFF;
-                var list = groups[key];
-                int sliceCount = list.Count + 1; // +1 for per-bucket white fallback
-
-                var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
+                for (int b = 0; b < keys.Length; b++)
                 {
-                    name             = $"VV:RefBaseArray[{w}x{h}][{sliceCount}]",
-                    dimension        = TextureDimension.Tex2DArray,
-                    volumeDepth      = sliceCount,
-                    useMipMap        = true,
-                    autoGenerateMips = false, // we call GenerateMips() once after all Blits
-                    filterMode       = FilterMode.Trilinear,
-                    wrapMode         = TextureWrapMode.Repeat,
-                    anisoLevel       = 8,
-                };
-                rt.Create();
+                    int key = keys[b];
+                    int w = key >> 16;
+                    int h = key & 0xFFFF;
+                    var list = groups[key];
+                    int sliceCount = list.Count + 1;
 
-                for (int s = 0; s < list.Count; s++)
-                {
-                    int globalTex = list[s];
-                    var source = src[globalTex] != null ? (Texture)src[globalTex] : white;
-                    Graphics.Blit(source, rt, 0, s); // resize/format-convert + write mip 0 of slice s
-                    texBucketInfo[globalTex] = new Unity.Mathematics.int2(b, s);
-                }
-                int whiteSliceInBucket = list.Count;
-                Graphics.Blit(white, rt, 0, whiteSliceInBucket);
-
-                // Build the mip chain from the populated mip 0.
-                rt.GenerateMips();
-
-                rts[b] = rt;
-
-                // Materials for this bucket: one per blend variant, each bound to this bucket's RT.
-                var bucketMats = new Material[matRecords.Length];
-                for (int mi = 0; mi < matRecords.Length; mi++)
-                {
-                    var r = matRecords[mi];
-                    var m = new Material(refShader)
+                    k_RefBuckets.Begin();
+                    try
                     {
-                        name = $"{MaterialNameForFlags(r.Flags, mi)}[b{b}:{w}x{h}]",
-                        enableInstancing = true,
-                        doubleSidedGI    = true,
-                    };
-                    m.SetTexture("_BaseArray", rt);
-                    ApplyAlpha(m, r.Flags);
-                    bucketMats[mi] = m;
-                    materials[b * matRecords.Length + mi] = m;
-                }
-                // RMA per bucket: 3 materials × all meshes. Meshes are shared across RMAs by
-                // reference — cheap, since RenderMeshArray holds managed references.
-                rmas[b] = new RenderMeshArray(bucketMats, meshes);
+                        var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
+                        {
+                            name = $"VV:RefBaseArray[{w}x{h}][{sliceCount}]",
+                            dimension = TextureDimension.Tex2DArray,
+                            volumeDepth = sliceCount,
+                            useMipMap = true,
+                            autoGenerateMips = false,
+                            filterMode = FilterMode.Trilinear,
+                            wrapMode = TextureWrapMode.Repeat,
+                            anisoLevel = 8,
+                        };
+                        rt.Create();
+                        rts[b] = rt;
 
-                // Bucket 0 hosts the global fallback slice for SliceIndex == -1.
-                if (b == fallbackBucket) fallbackSlice = whiteSliceInBucket;
+                        for (int s = 0; s < list.Count; s++)
+                        {
+                            int globalTex = list[s];
+                            var source = Textures[globalTex] != null ? (Texture)Textures[globalTex] : white;
+                            Graphics.Blit(source, rt, 0, s);
+                            texBucketInfo[globalTex] = new int2(b, s);
+                            completed++;
+
+                            if ((completed - yieldedAt) >= BucketYieldStride)
+                            {
+                                progress?.Report($"Uploading ref textures {completed}/{totalOps}", completed, totalOps);
+                                yieldedAt = completed;
+                                yield return null;
+                            }
+                        }
+
+                        int whiteSliceInBucket = list.Count;
+                        Graphics.Blit(white, rt, 0, whiteSliceInBucket);
+                        rt.GenerateMips();
+                        completed++;
+
+                        var bucketMats = new Material[matRecords.Length];
+                        for (int mi = 0; mi < matRecords.Length; mi++)
+                        {
+                            var record = matRecords[mi];
+                            var material = new Material(refShader)
+                            {
+                                name = $"{MaterialNameForFlags(record.Flags, mi)}[b{b}:{w}x{h}]",
+                                enableInstancing = true,
+                                doubleSidedGI = true,
+                            };
+                            material.SetTexture("_BaseArray", rt);
+                            ApplyAlpha(material, record.Flags);
+                            bucketMats[mi] = material;
+                            materials[b * matRecords.Length + mi] = material;
+                            completed++;
+                        }
+
+                        rmas[b] = new RenderMeshArray(bucketMats, Meshes);
+                        if (b == fallbackBucket)
+                            fallbackSlice = whiteSliceInBucket;
+                    }
+                    finally
+                    {
+                        k_RefBuckets.End();
+                    }
+
+                    if ((completed - yieldedAt) >= BucketYieldStride || b == keys.Length - 1)
+                    {
+                        progress?.Report($"Built ref bucket {b + 1}/{keys.Length}", completed, totalOps);
+                        yieldedAt = completed;
+                        yield return null;
+                    }
+                }
+
+                WorldResources.RefBaseArrays = rts;
+                WorldResources.RefsRmas = rmas;
+                WorldResources.TexBucketInfo = texBucketInfo;
+                WorldResources.FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
+                WorldResources.BlendVariantCount = matRecords.Length;
+                Materials = materials;
+
+                progress?.CompleteStage("Reference buckets ready");
+                Debug.Log($"[VVardenfell] refs: {rts.Length} dim buckets x {matRecords.Length} blend variants = {materials.Length} materials");
+                success = true;
+            }
+            finally
+            {
+                if (!success)
+                {
+                    for (int i = 0; i < rts.Length; i++)
+                    {
+                        var rt = rts[i];
+                        if (rt != null)
+                        {
+                            rt.Release();
+                            Object.Destroy(rt);
+                        }
+                    }
+
+                    for (int i = 0; i < materials.Length; i++)
+                    {
+                        if (materials[i] != null)
+                            Object.Destroy(materials[i]);
+                    }
+
+                    if (texBucketInfo.IsCreated)
+                        texBucketInfo.Dispose();
+                }
+
+                Object.Destroy(white);
             }
 
-            Object.Destroy(white);
-            fallbackBucketSlice = new Unity.Mathematics.int2(fallbackBucket, fallbackSlice);
+            sw.Stop();
+            Debug.Log($"[VVardenfell] cache ref buckets in {sw.ElapsedMilliseconds}ms");
         }
 
         private static string MaterialNameForFlags(uint flags, int index)
         {
             bool blend = (flags & CacheFormat.MatFlagAlphaBlend) != 0;
-            bool clip  = (flags & CacheFormat.MatFlagAlphaClip) != 0;
+            bool clip = (flags & CacheFormat.MatFlagAlphaClip) != 0;
             string kind = blend ? "AlphaBlend" : clip ? "AlphaTest" : "Opaque";
             return $"VV:Mat{index}({kind})";
         }
 
-        /// <summary>
-        /// Wire the requested NiAlphaProperty-derived surface on a MwRef material:
-        /// opaque / alpha-clip / transparent. MwRef uses explicit <c>_SrcBlend</c>/<c>_DstBlend</c>/<c>_ZWrite</c>
-        /// material properties driven by <c>[PropertyName] Blend</c> directives in the shader,
-        /// plus <c>_ALPHATEST_ON</c> / <c>_SURFACE_TYPE_TRANSPARENT</c> keywords.
-        /// </summary>
         private static void ApplyAlpha(Material m, uint flags)
         {
             bool blend = (flags & CacheFormat.MatFlagAlphaBlend) != 0;
-            bool clip  = (flags & CacheFormat.MatFlagAlphaClip) != 0;
-            byte thr   = CacheFormat.UnpackAlphaThreshold(flags);
+            bool clip = (flags & CacheFormat.MatFlagAlphaClip) != 0;
+            byte thr = CacheFormat.UnpackAlphaThreshold(flags);
 
             if (blend)
             {
@@ -255,7 +428,9 @@ namespace VVardenfell.Runtime.Cache
 
         private static Texture2D LoadTexture(string path, string hashHex)
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path))
+                return null;
+
             try
             {
                 var bytes = File.ReadAllBytes(path);
@@ -268,72 +443,152 @@ namespace VVardenfell.Runtime.Cache
             }
         }
 
-        private static Mesh[] ReadAllMeshes(string path, out string error)
-        {
-            error = null;
-            if (!File.Exists(path)) { error = "meshes.bin missing"; return null; }
-            using var fs = File.OpenRead(path);
-            using var r = new BinaryReader(fs);
-            if (r.ReadUInt32() != Importer.Bake.MeshBakery.MagicMesh) { error = "meshes.bin magic mismatch"; return null; }
-            uint count = r.ReadUInt32();
-            var offsets = new ulong[count];
-            for (int i = 0; i < count; i++) offsets[i] = r.ReadUInt64();
-
-            var meshes = new Mesh[count];
-            for (int i = 0; i < count; i++)
-            {
-                fs.Position = (long)offsets[i];
-                meshes[i] = ReadOneMesh(r, $"BakedMesh{i}");
-            }
-            return meshes;
-        }
-
         private static Mesh ReadOneMesh(BinaryReader r, string name)
         {
-            int vertexCount = r.ReadInt32();
-            int indexCount = r.ReadInt32();
+            uint vertexCount = r.ReadUInt32();
+            uint indexCount = r.ReadUInt32();
             uint flags = r.ReadUInt32();
+            if ((flags & ~SupportedMeshPayloadFlags) != 0)
+                throw new InvalidDataException($"Mesh '{name}' has unsupported flags 0x{flags:X8}.");
+
             bool hasNormals = (flags & CacheFormat.MeshFlagHasNormals) != 0;
             bool hasUVs = (flags & CacheFormat.MeshFlagHasUVs) != 0;
             bool index32 = (flags & CacheFormat.MeshFlagIndex32) != 0;
+            if (!hasNormals)
+                throw new InvalidDataException($"Mesh '{name}' is missing baked normals.");
+            if (vertexCount == 0 || indexCount == 0)
+                throw new InvalidDataException($"Mesh '{name}' has invalid empty buffers.");
 
-            // Bounds (center + extents)
             var bc = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
             var be = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+            uint vertexDataBytes = r.ReadUInt32();
+            uint indexDataBytes = r.ReadUInt32();
 
-            var verts = new Vector3[vertexCount];
-            for (int i = 0; i < vertexCount; i++)
-                verts[i] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+            int vertexStride = GetVertexStride(hasNormals, hasUVs);
+            long expectedVertexBytes = (long)vertexCount * vertexStride;
+            int indexStride = index32 ? 4 : 2;
+            long expectedIndexBytes = (long)indexCount * indexStride;
+            if (vertexDataBytes != expectedVertexBytes)
+            {
+                throw new InvalidDataException(
+                    $"Mesh '{name}' vertex bytes mismatch. Expected {expectedVertexBytes}, got {vertexDataBytes}.");
+            }
+            if (indexDataBytes != expectedIndexBytes)
+            {
+                throw new InvalidDataException(
+                    $"Mesh '{name}' index bytes mismatch. Expected {expectedIndexBytes}, got {indexDataBytes}.");
+            }
+            if (vertexDataBytes > int.MaxValue || indexDataBytes > int.MaxValue)
+                throw new InvalidDataException($"Mesh '{name}' buffer sizes exceed supported limits.");
 
-            Vector3[] normals = null;
+            byte[] vertexBytes = null;
+            byte[] indexBytes = null;
+
+            try
+            {
+                using (k_MeshPayloadRead.Auto())
+                {
+                    vertexBytes = ArrayPool<byte>.Shared.Rent((int)vertexDataBytes);
+                    indexBytes = ArrayPool<byte>.Shared.Rent((int)indexDataBytes);
+                    ReadExactly(r, vertexBytes, (int)vertexDataBytes);
+                    ReadExactly(r, indexBytes, (int)indexDataBytes);
+                }
+
+                using (k_MeshUpload.Auto())
+                {
+                    var mesh = new Mesh
+                    {
+                        name = name,
+                        indexFormat = index32 ? IndexFormat.UInt32 : IndexFormat.UInt16,
+                    };
+
+                    var meshDataArray = Mesh.AllocateWritableMeshData(1);
+                    try
+                    {
+                        var meshData = meshDataArray[0];
+                        var descriptors = GetVertexLayout(hasNormals, hasUVs);
+                        meshData.SetVertexBufferParams((int)vertexCount, descriptors);
+                        meshData.SetIndexBufferParams((int)indexCount, index32 ? IndexFormat.UInt32 : IndexFormat.UInt16);
+
+                        var vertexData = meshData.GetVertexData<byte>(0);
+                        var indexData = meshData.GetIndexData<byte>();
+                        if (vertexData.Length != vertexDataBytes || indexData.Length != indexDataBytes)
+                        {
+                            throw new InvalidDataException(
+                                $"Mesh '{name}' writable buffer size mismatch ({vertexData.Length}/{indexData.Length}).");
+                        }
+
+                        NativeArray<byte>.Copy(vertexBytes, 0, vertexData, 0, (int)vertexDataBytes);
+                        NativeArray<byte>.Copy(indexBytes, 0, indexData, 0, (int)indexDataBytes);
+
+                        meshData.subMeshCount = 1;
+                        meshData.SetSubMesh(
+                            0,
+                            new SubMeshDescriptor(0, (int)indexCount, MeshTopology.Triangles),
+                            MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
+
+                        Mesh.ApplyAndDisposeWritableMeshData(
+                            meshDataArray,
+                            mesh,
+                            MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
+
+                        mesh.bounds = new Bounds(bc, be * 2f);
+                        mesh.UploadMeshData(true);
+                        return mesh;
+                    }
+                    catch
+                    {
+                        meshDataArray.Dispose();
+                        throw;
+                    }
+                }
+            }
+            catch (EndOfStreamException ex)
+            {
+                throw new InvalidDataException($"Mesh '{name}' payload is truncated.", ex);
+            }
+            finally
+            {
+                if (vertexBytes != null)
+                    ArrayPool<byte>.Shared.Return(vertexBytes);
+                if (indexBytes != null)
+                    ArrayPool<byte>.Shared.Return(indexBytes);
+            }
+        }
+
+        private static void ReadExactly(BinaryReader r, byte[] buffer, int length)
+        {
+            int offset = 0;
+            while (offset < length)
+            {
+                int read = r.Read(buffer, offset, length - offset);
+                if (read <= 0)
+                    throw new EndOfStreamException();
+                offset += read;
+            }
+        }
+
+        private static VertexAttributeDescriptor[] GetVertexLayout(bool hasNormals, bool hasUVs)
+        {
+            int count = 1 + (hasNormals ? 1 : 0) + (hasUVs ? 1 : 0);
+            var descriptors = new VertexAttributeDescriptor[count];
+            int i = 0;
+            descriptors[i++] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, 0);
             if (hasNormals)
-            {
-                normals = new Vector3[vertexCount];
-                for (int i = 0; i < vertexCount; i++)
-                    normals[i] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-            }
-
-            Vector2[] uvs = null;
+                descriptors[i++] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, 0);
             if (hasUVs)
-            {
-                uvs = new Vector2[vertexCount];
-                for (int i = 0; i < vertexCount; i++)
-                    uvs[i] = new Vector2(r.ReadSingle(), r.ReadSingle());
-            }
+                descriptors[i] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, 0);
+            return descriptors;
+        }
 
-            var indices = new int[indexCount];
-            if (index32) for (int i = 0; i < indexCount; i++) indices[i] = (int)r.ReadUInt32();
-            else          for (int i = 0; i < indexCount; i++) indices[i] = r.ReadUInt16();
-
-            var mesh = new Mesh { name = name };
-            mesh.indexFormat = index32 ? IndexFormat.UInt32 : IndexFormat.UInt16;
-            mesh.SetVertices(verts);
-            if (normals != null) mesh.SetNormals(normals);
-            if (uvs != null) mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(indices, 0);
-            if (normals == null) mesh.RecalculateNormals();
-            mesh.bounds = new Bounds(bc, be * 2f);
-            return mesh;
+        private static int GetVertexStride(bool hasNormals, bool hasUVs)
+        {
+            int stride = 12;
+            if (hasNormals)
+                stride += 12;
+            if (hasUVs)
+                stride += 8;
+            return stride;
         }
     }
 }

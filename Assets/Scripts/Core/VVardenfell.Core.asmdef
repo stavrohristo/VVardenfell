@@ -1,7 +1,12 @@
 {
     "name": "VVardenfell.Core",
     "rootNamespace": "VVardenfell.Core",
-    "references": [],
+    "references": [
+        "Unity.Entities",
+        "Unity.Physics",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,

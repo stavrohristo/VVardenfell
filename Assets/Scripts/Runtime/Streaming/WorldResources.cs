@@ -2,10 +2,13 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Physics;
 using Unity.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
 using VVardenfell.Runtime.Cache;
+using Collider = Unity.Physics.Collider;
+using Material = UnityEngine.Material;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -100,6 +103,30 @@ namespace VVardenfell.Runtime.Streaming
         /// lookup instead of <see cref="CellFile.Read"/>.
         /// </summary>
         public static readonly Dictionary<int2, CellData> Cells = new();
+        public static readonly Dictionary<string, CellData> InteriorCells = new(System.StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Global deduped interactable-collider blobs (indexed by <see cref="RefEntry.CollisionIndex"/>).
+        /// Populated from <c>collisions.bin</c> at boot, disposed on <see cref="Reset"/>.
+        /// Entries may be <c>default</c> for empty/failed payloads — the spawn path
+        /// skips any ref whose blob is unset.
+        /// </summary>
+        public static BlobAssetReference<Collider>[] ColliderBlobs;
+
+        /// <summary>
+        /// Shared degenerate collider carried on every ref prefab so instantiated clones
+        /// already have a <c>PhysicsCollider</c> component of the correct archetype.
+        /// Refs with a real <see cref="RefEntry.CollisionIndex"/> overwrite the blob
+        /// during spawn; refs without collision keep this sentinel (filter is
+        /// <see cref="CollisionFilter.Zero"/>, so queries never hit it).
+        /// </summary>
+        public static BlobAssetReference<Collider> SentinelCollider;
+
+        /// <summary>Per-cell combined STAT collider (null for wilderness cells).</summary>
+        public static readonly Dictionary<int2, BlobAssetReference<Collider>> StaticCellColliders = new();
+
+        /// <summary>Per-cell terrain heightfield collider (null for cells without LAND).</summary>
+        public static readonly Dictionary<int2, BlobAssetReference<Collider>> TerrainColliders = new();
 
         public struct PerCellManaged
         {
@@ -124,6 +151,33 @@ namespace VVardenfell.Runtime.Streaming
             }
             LoadedManaged.Clear();
             Cells.Clear();
+            foreach (var kv in InteriorCells)
+            {
+                var data = kv.Value;
+                if (data == null)
+                    continue;
+                if (data.StaticColliderBlob.IsCreated)
+                    data.StaticColliderBlob.Dispose();
+                if (data.TerrainColliderBlob.IsCreated)
+                    data.TerrainColliderBlob.Dispose();
+            }
+            InteriorCells.Clear();
+
+            // Dispose per-cell static + terrain collider blobs before clearing the dicts.
+            foreach (var kv in StaticCellColliders)
+                if (kv.Value.IsCreated) kv.Value.Dispose();
+            StaticCellColliders.Clear();
+            foreach (var kv in TerrainColliders)
+                if (kv.Value.IsCreated) kv.Value.Dispose();
+            TerrainColliders.Clear();
+            if (ColliderBlobs != null)
+            {
+                for (int i = 0; i < ColliderBlobs.Length; i++)
+                    if (ColliderBlobs[i].IsCreated) ColliderBlobs[i].Dispose();
+                ColliderBlobs = null;
+            }
+            if (SentinelCollider.IsCreated) SentinelCollider.Dispose();
+            SentinelCollider = default;
 
             if (MeshBounds.IsCreated) MeshBounds.Dispose();
             if (RefBaseArrays != null)

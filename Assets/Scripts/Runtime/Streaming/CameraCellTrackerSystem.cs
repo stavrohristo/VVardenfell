@@ -26,6 +26,10 @@ namespace VVardenfell.Runtime.Streaming
 
         protected override void OnUpdate()
         {
+            var cfg = _configQuery.GetSingletonRW<StreamingConfig>();
+            if (cfg.ValueRO.ExteriorStreamingPaused)
+                return;
+
             var cam = Camera.main;
             if (cam == null) return;
 
@@ -35,7 +39,6 @@ namespace VVardenfell.Runtime.Streaming
                 (int)math.floor(p.x / cellM),
                 (int)math.floor(p.z / cellM));
 
-            var cfg = _configQuery.GetSingletonRW<StreamingConfig>();
             cfg.ValueRW.CameraCell = coord;
         }
     }

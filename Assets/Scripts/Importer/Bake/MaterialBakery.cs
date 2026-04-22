@@ -5,35 +5,71 @@ using VVardenfell.Core.Cache;
 namespace VVardenfell.Importer.Bake
 {
     /// <summary>
-    /// Dedupes materials and writes <c>materials.bin</c>.
-    ///
-    /// Since FormatVersion 13 the only axis that produces a distinct material is
-    /// the alpha blend/test state (plus packed clip threshold). Every ref samples
-    /// a shared <c>Texture2DArray</c> at runtime with a per-instance slice index,
-    /// so textures and solid-color fallbacks no longer fork the material table.
-    /// Typical output: 1–3 records.
-    ///
-    /// File layout:
-    ///   u32 magic 'MATL'
-    ///   u32 count
-    ///   MaterialRecord[count]   (4 bytes each: Flags only)
+    /// Dedupes materials and preserves stable append-only indices across runs.
     /// </summary>
     public sealed class MaterialBakery
     {
         public const uint MagicMat = 0x4C54414Du; // 'MATL'
+        private const uint MagicCatalog = 0x54414341u; // 'ACAT'
 
+        private readonly object _gate = new object();
         private readonly Dictionary<uint, int> _indexByFlags = new Dictionary<uint, int>();
         private readonly List<MaterialRecord> _records = new List<MaterialRecord>();
 
         public int Count => _records.Count;
+        public bool Modified { get; private set; }
+
+        public void TryLoadExisting(string catalogPath)
+        {
+            if (!File.Exists(catalogPath))
+                return;
+
+            try
+            {
+                using var fs = File.OpenRead(catalogPath);
+                using var r = new BinaryReader(fs);
+                if (r.ReadUInt32() != MagicCatalog)
+                    return;
+
+                uint count = r.ReadUInt32();
+                for (int i = 0; i < count; i++)
+                {
+                    uint flags = r.ReadUInt32();
+                    int index = _records.Count;
+                    _records.Add(new MaterialRecord { Flags = flags });
+                    _indexByFlags[flags] = index;
+                }
+            }
+            catch
+            {
+                _indexByFlags.Clear();
+                _records.Clear();
+            }
+        }
 
         public int AddOrGet(uint flags)
         {
-            if (_indexByFlags.TryGetValue(flags, out var existing)) return existing;
-            int idx = _records.Count;
-            _records.Add(new MaterialRecord { Flags = flags });
-            _indexByFlags[flags] = idx;
-            return idx;
+            lock (_gate)
+            {
+                if (_indexByFlags.TryGetValue(flags, out var existing))
+                    return existing;
+                int idx = _records.Count;
+                _records.Add(new MaterialRecord { Flags = flags });
+                _indexByFlags[flags] = idx;
+                Modified = true;
+                return idx;
+            }
+        }
+
+        public void WriteCatalog(string path)
+        {
+            using var fs = File.Create(path);
+            using var w = new BinaryWriter(fs);
+            w.Write(MagicCatalog);
+            w.Write((uint)_records.Count);
+            foreach (var record in _records)
+                w.Write(record.Flags);
+            Modified = false;
         }
 
         public void WriteTo(string path)
@@ -42,7 +78,8 @@ namespace VVardenfell.Importer.Bake
             using var w = new BinaryWriter(fs);
             w.Write(MagicMat);
             w.Write((uint)_records.Count);
-            foreach (var m in _records) w.Write(m.Flags);
+            foreach (var m in _records)
+                w.Write(m.Flags);
         }
 
         public static MaterialRecord[] ReadAll(string path)

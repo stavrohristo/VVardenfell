@@ -5,43 +5,102 @@ using VVardenfell.Core;
 namespace VVardenfell.Importer.Nif
 {
     /// <summary>
-    /// Walks a parsed NifFile and emits one <see cref="UnityEngine.Mesh"/> per renderable
-    /// NiTriShape, with its local-within-file world transform baked in.
-    ///
-    /// Conversions applied:
-    ///   - Morrowind units to meters via <see cref="WorldScale.MwUnitsToMeters"/>.
-    ///   - Handedness: Morrowind is right-handed Z-up, Unity is left-handed Y-up.
-    ///     We swap Y and Z on positions/normals and reverse triangle winding.
-    ///
-    /// The RootCollisionNode subtree is skipped because it is collision geometry, not visual.
+    /// Walks a parsed NIF and emits raw render geometry in Unity bake space.
+    /// World baking consumes the raw payloads directly so it can stay off the Mesh API.
     /// </summary>
     public static class NifMeshBuilder
     {
         /// <summary>Case-insensitive substring match; if the NIF path contains it, verbose-dump to console.</summary>
         public static string DebugMeshPath = "";
 
+        public readonly struct RawBuiltMesh
+        {
+            public readonly Vector3[] Vertices;
+            public readonly Vector3[] Normals;
+            public readonly Vector2[] Uvs;
+            public readonly int[] Indices;
+            public readonly string TexturePath;
+            public readonly string Name;
+            public readonly Bounds LocalBounds;
+            public readonly ushort AlphaFlags;
+            public readonly byte AlphaThreshold;
+
+            public RawBuiltMesh(
+                Vector3[] vertices,
+                Vector3[] normals,
+                Vector2[] uvs,
+                int[] indices,
+                string texturePath,
+                string name,
+                Bounds bounds,
+                ushort alphaFlags,
+                byte alphaThreshold)
+            {
+                Vertices = vertices;
+                Normals = normals;
+                Uvs = uvs;
+                Indices = indices;
+                TexturePath = texturePath;
+                Name = name;
+                LocalBounds = bounds;
+                AlphaFlags = alphaFlags;
+                AlphaThreshold = alphaThreshold;
+            }
+
+            public bool HasNormals => Normals != null && Normals.Length == Vertices.Length;
+            public bool HasUvs => Uvs != null && Uvs.Length == Vertices.Length;
+            public int VertexCount => Vertices?.Length ?? 0;
+        }
+
+        /// <summary>
+        /// Compatibility wrapper kept for code paths that still want Unity meshes.
+        /// World baking should prefer <see cref="BuildRaw"/>.
+        /// </summary>
         public static List<BuiltMesh> Build(NifFile nif)
+        {
+            var raw = BuildRaw(nif);
+            var result = new List<BuiltMesh>(raw.Count);
+            for (int i = 0; i < raw.Count; i++)
+            {
+                var mesh = CreateMesh(raw[i], string.IsNullOrEmpty(raw[i].Name) ? $"NifMesh{i}" : raw[i].Name);
+                result.Add(new BuiltMesh(
+                    mesh,
+                    raw[i].TexturePath,
+                    raw[i].Name,
+                    raw[i].LocalBounds,
+                    raw[i].AlphaFlags,
+                    raw[i].AlphaThreshold));
+            }
+            return result;
+        }
+
+        public static List<RawBuiltMesh> BuildRaw(NifFile nif)
         {
             bool debug = !string.IsNullOrEmpty(DebugMeshPath)
                          && nif.Path.IndexOf(DebugMeshPath, System.StringComparison.OrdinalIgnoreCase) >= 0;
-            var result = new List<BuiltMesh>();
+            var result = new List<RawBuiltMesh>();
             foreach (int rootIndex in nif.Roots)
             {
-                if (rootIndex < 0 || rootIndex >= nif.Records.Length) continue;
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
                 if (nif.Records[rootIndex] is NiAVObject av)
                     Walk(nif, av, Matrix4x4.identity, result);
             }
+
+            if (debug)
+                Debug.Log($"[VVardenfell] Built {result.Count} raw meshes from {nif.Path}");
+
             return MergeCompatible(result);
         }
 
         public readonly struct BuiltMesh
         {
             public readonly Mesh Mesh;
-            public readonly string TexturePath;  // may be null/empty
-            public readonly string Name;         // NiTriShape name, for debugging
+            public readonly string TexturePath;
+            public readonly string Name;
             public readonly Bounds LocalBounds;
-            public readonly ushort AlphaFlags;   // 0 when no NiAlphaProperty; see property.hpp Flag_Blending/Testing
-            public readonly byte AlphaThreshold; // cutoff byte for alpha testing
+            public readonly ushort AlphaFlags;
+            public readonly byte AlphaThreshold;
 
             public BuiltMesh(Mesh mesh, string texturePath, string name, Bounds bounds, ushort alphaFlags, byte alphaThreshold)
             {
@@ -54,12 +113,11 @@ namespace VVardenfell.Importer.Nif
             }
         }
 
-        private static void Walk(NifFile nif, NiAVObject obj, Matrix4x4 parent, List<BuiltMesh> result)
+        private static void Walk(NifFile nif, NiAVObject obj, Matrix4x4 parent, List<RawBuiltMesh> result)
         {
-            if ((obj.Flags & 0x0001) != 0) return; // hidden
+            if ((obj.Flags & 0x0001) != 0)
+                return;
 
-            // Build the local matrix directly instead of decomposing to
-            // (quat + uniform scale), which would lose non-uniform or reflected scale.
             var r = obj.Rotation;
             float s = obj.Scale;
             var local = new Matrix4x4();
@@ -78,8 +136,9 @@ namespace VVardenfell.Importer.Nif
                 if (data == null || data.Vertices == null || data.NumVertices == 0 || data.Triangles == null)
                     return;
                 FindAlpha(nif, tri, out ushort alphaFlags, out byte alphaThreshold);
-                var built = BuildMesh(tri, data, world, FindTexture(nif, tri), alphaFlags, alphaThreshold);
-                if (built.HasValue) result.Add(built.Value);
+                var built = BuildRawMesh(tri, data, world, FindTexture(nif, tri), alphaFlags, alphaThreshold);
+                if (built.HasValue)
+                    result.Add(built.Value);
                 return;
             }
 
@@ -87,20 +146,28 @@ namespace VVardenfell.Importer.Nif
             {
                 foreach (int childIdx in node.Children)
                 {
-                    if (childIdx < 0 || childIdx >= nif.Records.Length) continue;
+                    if (childIdx < 0 || childIdx >= nif.Records.Length)
+                        continue;
                     if (nif.Records[childIdx] is NiAVObject child)
                         Walk(nif, child, world, result);
                 }
             }
         }
 
-        private static BuiltMesh? BuildMesh(NiTriShape tri, NiTriShapeData data, Matrix4x4 world, string texturePath, ushort alphaFlags, byte alphaThreshold)
+        private static RawBuiltMesh? BuildRawMesh(
+            NiTriShape tri,
+            NiTriShapeData data,
+            Matrix4x4 world,
+            string texturePath,
+            ushort alphaFlags,
+            byte alphaThreshold)
         {
             int vcount = data.NumVertices;
             var verts = new Vector3[vcount];
-            var normals = new Vector3[vcount];
-            bool hasNormals = data.Normals != null;
-            var uvs = (data.UvSets != null && data.UvSets.Length > 0) ? data.UvSets[0] : null;
+            var normals = data.Normals != null ? new Vector3[vcount] : null;
+            var uvs = (data.UvSets != null && data.UvSets.Length > 0 && data.UvSets[0] != null && data.UvSets[0].Length == vcount)
+                ? (Vector2[])data.UvSets[0].Clone()
+                : null;
 
             var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
             var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
@@ -114,46 +181,62 @@ namespace VVardenfell.Importer.Nif
                 if (pU.y < min.y) min.y = pU.y; if (pU.y > max.y) max.y = pU.y;
                 if (pU.z < min.z) min.z = pU.z; if (pU.z > max.z) max.z = pU.z;
 
-                if (hasNormals)
+                if (normals != null)
                 {
                     var n = world.MultiplyVector(data.Normals[i]);
                     normals[i] = new Vector3(n.x, n.z, n.y).normalized;
                 }
             }
 
-            int itri = data.Triangles.Length;
-            var indices = new int[itri];
-            for (int i = 0; i < itri; i += 3)
+            int[] indices = new int[data.Triangles.Length];
+            for (int i = 0; i < data.Triangles.Length; i += 3)
             {
                 indices[i + 0] = data.Triangles[i + 0];
                 indices[i + 1] = data.Triangles[i + 2];
                 indices[i + 2] = data.Triangles[i + 1];
             }
 
-            var mesh = new Mesh { name = string.IsNullOrEmpty(tri.Name) ? "NiTriShape" : tri.Name };
-            mesh.indexFormat = vcount > 65535
+            var bounds = new Bounds((min + max) * 0.5f, max - min);
+            return new RawBuiltMesh(
+                verts,
+                normals,
+                uvs,
+                indices,
+                texturePath,
+                tri.Name ?? "",
+                bounds,
+                alphaFlags,
+                alphaThreshold);
+        }
+
+        private static Mesh CreateMesh(in RawBuiltMesh raw, string name)
+        {
+            var mesh = new Mesh { name = name };
+            mesh.indexFormat = raw.VertexCount > 65535
                 ? UnityEngine.Rendering.IndexFormat.UInt32
                 : UnityEngine.Rendering.IndexFormat.UInt16;
-            mesh.SetVertices(verts);
-            if (hasNormals) mesh.SetNormals(normals);
-            if (uvs != null && uvs.Length == vcount) mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(indices, 0);
-            if (!hasNormals) mesh.RecalculateNormals();
-
-            var bounds = new Bounds((min + max) * 0.5f, max - min);
-            mesh.bounds = bounds;
-
-            return new BuiltMesh(mesh, texturePath, tri.Name ?? "", bounds, alphaFlags, alphaThreshold);
+            mesh.SetVertices(raw.Vertices);
+            if (raw.HasNormals)
+                mesh.SetNormals(raw.Normals);
+            if (raw.HasUvs)
+                mesh.SetUVs(0, raw.Uvs);
+            mesh.SetTriangles(raw.Indices, 0);
+            if (!raw.HasNormals)
+                mesh.RecalculateNormals();
+            mesh.bounds = raw.LocalBounds;
+            return mesh;
         }
 
         private static void FindAlpha(NifFile nif, NiTriShape tri, out ushort flags, out byte threshold)
         {
             flags = 0;
             threshold = 0;
-            if (tri.PropertyLinks == null) return;
+            if (tri.PropertyLinks == null)
+                return;
             foreach (int pIdx in tri.PropertyLinks)
             {
-                if (pIdx < 0 || pIdx >= nif.Records.Length) continue;
+                if (pIdx < 0 || pIdx >= nif.Records.Length)
+                    continue;
                 if (nif.Records[pIdx] is NiAlphaProperty ap)
                 {
                     flags = ap.Flags;
@@ -165,10 +248,12 @@ namespace VVardenfell.Importer.Nif
 
         private static string FindTexture(NifFile nif, NiTriShape tri)
         {
-            if (tri.PropertyLinks == null) return null;
+            if (tri.PropertyLinks == null)
+                return null;
             foreach (int pIdx in tri.PropertyLinks)
             {
-                if (pIdx < 0 || pIdx >= nif.Records.Length) continue;
+                if (pIdx < 0 || pIdx >= nif.Records.Length)
+                    continue;
                 if (nif.Records[pIdx] is NiTexturingProperty texProp
                     && texProp.Textures != null
                     && texProp.Textures.Length > 0
@@ -176,7 +261,8 @@ namespace VVardenfell.Importer.Nif
                     && texProp.Textures[0].Enabled)
                 {
                     var src = Resolve<NiSourceTexture>(nif, texProp.Textures[0].SourceTexture);
-                    if (src != null && src.External) return src.FileName;
+                    if (src != null && src.External)
+                        return src.FileName;
                 }
             }
             return null;
@@ -184,29 +270,32 @@ namespace VVardenfell.Importer.Nif
 
         private static T Resolve<T>(NifFile nif, int link) where T : NifRecord
         {
-            if (link < 0 || link >= nif.Records.Length) return null;
+            if (link < 0 || link >= nif.Records.Length)
+                return null;
             return nif.Records[link] as T;
         }
 
-        private static List<BuiltMesh> MergeCompatible(List<BuiltMesh> source)
+        private static List<RawBuiltMesh> MergeCompatible(List<RawBuiltMesh> source)
         {
             if (source.Count <= 1)
                 return source;
 
-            var groups = new Dictionary<MergeKey, List<BuiltMesh>>(new MergeKeyComparer());
+            var groups = new Dictionary<MergeKey, List<RawBuiltMesh>>(new MergeKeyComparer());
             for (int i = 0; i < source.Count; i++)
             {
                 var built = source[i];
-                var mesh = built.Mesh;
-                bool hasNormals = mesh.normals != null && mesh.normals.Length == mesh.vertexCount;
-                bool hasUvs = mesh.uv != null && mesh.uv.Length == mesh.vertexCount;
-                var key = new MergeKey(built.TexturePath, built.AlphaFlags, built.AlphaThreshold, hasNormals, hasUvs);
+                var key = new MergeKey(
+                    built.TexturePath,
+                    built.AlphaFlags,
+                    built.AlphaThreshold,
+                    built.HasNormals,
+                    built.HasUvs);
                 if (!groups.TryGetValue(key, out var list))
-                    groups[key] = list = new List<BuiltMesh>();
+                    groups[key] = list = new List<RawBuiltMesh>();
                 list.Add(built);
             }
 
-            var merged = new List<BuiltMesh>(groups.Count);
+            var merged = new List<RawBuiltMesh>(groups.Count);
             foreach (var kv in groups)
             {
                 var group = kv.Value;
@@ -222,15 +311,14 @@ namespace VVardenfell.Importer.Nif
             return merged;
         }
 
-        private static BuiltMesh MergeGroup(in MergeKey key, List<BuiltMesh> group)
+        private static RawBuiltMesh MergeGroup(in MergeKey key, List<RawBuiltMesh> group)
         {
             int totalVerts = 0;
             int totalIndices = 0;
             for (int i = 0; i < group.Count; i++)
             {
-                var mesh = group[i].Mesh;
-                totalVerts += mesh.vertexCount;
-                totalIndices += mesh.triangles.Length;
+                totalVerts += group[i].VertexCount;
+                totalIndices += group[i].Indices.Length;
             }
 
             var verts = new Vector3[totalVerts];
@@ -244,48 +332,29 @@ namespace VVardenfell.Importer.Nif
 
             for (int i = 0; i < group.Count; i++)
             {
-                var mesh = group[i].Mesh;
-                var srcVerts = mesh.vertices;
-                var srcNormals = mesh.normals;
-                var srcUvs = mesh.uv;
-                var srcIndices = mesh.triangles;
-
-                System.Array.Copy(srcVerts, 0, verts, vertexOffset, srcVerts.Length);
+                var raw = group[i];
+                System.Array.Copy(raw.Vertices, 0, verts, vertexOffset, raw.Vertices.Length);
                 if (normals != null)
-                    System.Array.Copy(srcNormals, 0, normals, vertexOffset, srcNormals.Length);
+                    System.Array.Copy(raw.Normals, 0, normals, vertexOffset, raw.Normals.Length);
                 if (uvs != null)
-                    System.Array.Copy(srcUvs, 0, uvs, vertexOffset, srcUvs.Length);
+                    System.Array.Copy(raw.Uvs, 0, uvs, vertexOffset, raw.Uvs.Length);
 
-                for (int j = 0; j < srcIndices.Length; j++)
-                    indices[indexOffset + j] = srcIndices[j] + vertexOffset;
+                for (int j = 0; j < raw.Indices.Length; j++)
+                    indices[indexOffset + j] = raw.Indices[j] + vertexOffset;
 
-                bounds.Encapsulate(group[i].LocalBounds.min);
-                bounds.Encapsulate(group[i].LocalBounds.max);
-
-                vertexOffset += srcVerts.Length;
-                indexOffset += srcIndices.Length;
+                bounds.Encapsulate(raw.LocalBounds.min);
+                bounds.Encapsulate(raw.LocalBounds.max);
+                vertexOffset += raw.Vertices.Length;
+                indexOffset += raw.Indices.Length;
             }
 
-            var mergedMesh = new Mesh
-            {
-                name = string.IsNullOrEmpty(group[0].Name)
-                    ? $"Merged({group.Count})"
-                    : $"{group[0].Name}[merged:{group.Count}]",
-                indexFormat = totalVerts > 65535
-                    ? UnityEngine.Rendering.IndexFormat.UInt32
-                    : UnityEngine.Rendering.IndexFormat.UInt16,
-            };
-            mergedMesh.SetVertices(verts);
-            if (normals != null) mergedMesh.SetNormals(normals);
-            if (uvs != null) mergedMesh.SetUVs(0, uvs);
-            mergedMesh.SetTriangles(indices, 0);
-            if (normals == null) mergedMesh.RecalculateNormals();
-            mergedMesh.bounds = bounds;
-
-            return new BuiltMesh(
-                mergedMesh,
+            return new RawBuiltMesh(
+                verts,
+                normals,
+                uvs,
+                indices,
                 key.TexturePath,
-                mergedMesh.name,
+                string.IsNullOrEmpty(group[0].Name) ? $"Merged({group.Count})" : $"{group[0].Name}[merged:{group.Count}]",
                 bounds,
                 key.AlphaFlags,
                 key.AlphaThreshold);
@@ -322,11 +391,11 @@ namespace VVardenfell.Importer.Nif
 
             public int GetHashCode(MergeKey obj)
             {
-                int hash = System.StringComparer.OrdinalIgnoreCase.GetHashCode(obj.TexturePath ?? "");
-                hash = (hash * 397) ^ obj.AlphaFlags.GetHashCode();
-                hash = (hash * 397) ^ obj.AlphaThreshold.GetHashCode();
+                int hash = obj.AlphaFlags;
+                hash = (hash * 397) ^ obj.AlphaThreshold;
                 hash = (hash * 397) ^ obj.HasNormals.GetHashCode();
                 hash = (hash * 397) ^ obj.HasUvs.GetHashCode();
+                hash = (hash * 397) ^ System.StringComparer.OrdinalIgnoreCase.GetHashCode(obj.TexturePath ?? "");
                 return hash;
             }
         }

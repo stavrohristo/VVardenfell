@@ -23,10 +23,12 @@ namespace VVardenfell.Importer.Bake
     {
         public const uint MagicLayers = 0x5259_4C54u; // 'TLYR'
 
+        private readonly object _gate = new object();
         private readonly Dictionary<int, ushort> _layerByTextureIndex = new Dictionary<int, ushort>();
         private readonly List<int> _textureIndexByLayer = new List<int>();
 
         public int Count => _textureIndexByLayer.Count;
+        public bool Modified { get; private set; }
 
         public TerrainLayerBakery(int defaultTextureIndex)
         {
@@ -39,11 +41,15 @@ namespace VVardenfell.Importer.Bake
         /// <summary>Returns the dense layer index for a given textures.bin index.</summary>
         public ushort AddOrGet(int textureIndex)
         {
-            if (_layerByTextureIndex.TryGetValue(textureIndex, out var existing)) return existing;
-            var idx = (ushort)_textureIndexByLayer.Count;
-            _textureIndexByLayer.Add(textureIndex);
-            _layerByTextureIndex[textureIndex] = idx;
-            return idx;
+            lock (_gate)
+            {
+                if (_layerByTextureIndex.TryGetValue(textureIndex, out var existing)) return existing;
+                var idx = (ushort)_textureIndexByLayer.Count;
+                _textureIndexByLayer.Add(textureIndex);
+                _layerByTextureIndex[textureIndex] = idx;
+                Modified = true;
+                return idx;
+            }
         }
 
         /// <summary>
@@ -78,6 +84,34 @@ namespace VVardenfell.Importer.Bake
             w.Write(MagicLayers);
             w.Write((uint)_textureIndexByLayer.Count);
             foreach (var texIdx in _textureIndexByLayer) w.Write(texIdx);
+            Modified = false;
+        }
+
+        public void TryLoadExisting(string path)
+        {
+            if (!File.Exists(path))
+                return;
+
+            try
+            {
+                var existing = ReadAll(path);
+                if (existing == null || existing.Length == 0)
+                    return;
+
+                _layerByTextureIndex.Clear();
+                _textureIndexByLayer.Clear();
+                for (int i = 0; i < existing.Length; i++)
+                {
+                    _textureIndexByLayer.Add(existing[i]);
+                    _layerByTextureIndex[existing[i]] = (ushort)i;
+                }
+                Modified = false;
+            }
+            catch
+            {
+                _layerByTextureIndex.Clear();
+                _textureIndexByLayer.Clear();
+            }
         }
 
         public static int[] ReadAll(string path)

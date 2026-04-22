@@ -2,7 +2,12 @@
     "name": "VVardenfell.Importer",
     "rootNamespace": "VVardenfell.Importer",
     "references": [
-        "VVardenfell.Core"
+        "VVardenfell.Core",
+        "Unity.Entities",
+        "Unity.Physics",
+        "Unity.Collections",
+        "Unity.Mathematics",
+        "Unity.Burst"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

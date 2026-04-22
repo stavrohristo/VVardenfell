@@ -37,6 +37,13 @@ namespace VVardenfell.Runtime.Streaming
             var queue    = _query.GetSingleton<LoadQueue>();
             var unload   = _query.GetSingleton<UnloadList>();
 
+            if (cfg.ExteriorStreamingPaused)
+            {
+                queue.Queue.Clear();
+                unload.PendingEntityDestroy.Clear();
+                return;
+            }
+
             // LoadQueue is drained by the managed worker; we only append cells that
             // aren't already in-flight. Rather than scan the queue for duplicates on
             // every frame, we rebuild from scratch — the worker clears entries it
