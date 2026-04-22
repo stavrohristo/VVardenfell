@@ -31,6 +31,7 @@ namespace VVardenfell.Core.Cache
         public int RegionCount;
         public int RegionSoundRefCount;
         public int MusicTrackCount;
+        public int AmbientSettingsCount;
 
         public static GameplayContentManifest FromSources(string[] sourcePaths)
         {
@@ -118,6 +119,7 @@ namespace VVardenfell.Core.Cache
             w.Write(RegionCount);
             w.Write(RegionSoundRefCount);
             w.Write(MusicTrackCount);
+            w.Write(AmbientSettingsCount);
         }
 
         public static bool TryRead(string path, out GameplayContentManifest manifest)
@@ -167,6 +169,7 @@ namespace VVardenfell.Core.Cache
                 manifest.RegionCount = r.ReadInt32();
                 manifest.RegionSoundRefCount = r.ReadInt32();
                 manifest.MusicTrackCount = r.ReadInt32();
+                manifest.AmbientSettingsCount = r.ReadInt32();
                 return true;
             }
             catch

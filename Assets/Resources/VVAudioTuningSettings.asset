@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5fd089e51c2d43689e585cfc8296dd82, type: 3}
+  m_Name: VVAudioTuningSettings
+  m_EditorClassIdentifier: 
+  Music:
+    GlobalVolume: 0.3
+    MenuSpecialScalar: 1
+    ExploreScalar: 1
+    BattleScalar: 1
+  InteriorAmbience:
+    VolumeMultiplier: 1
+    FallbackBaseVolume: 1
+    MinDistanceMultiplier: 1
+    MaxDistanceMultiplier: 1
+  ExteriorAmbience:
+    VolumeMultiplier: 1
+    FallbackBaseVolume: 0.75
+    MinIntervalMultiplier: 1
+    MaxIntervalMultiplier: 1
+    FallbackMinSeconds: 1
+    FallbackMaxSeconds: 5
+  InteractionSfx:
+    VolumeMultiplier: 1
+    FallbackBaseVolume: 1
+    MinDistanceMultiplier: 1
+    MaxDistanceMultiplier: 1

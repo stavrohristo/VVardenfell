@@ -9,6 +9,9 @@ namespace VVardenfell.Runtime.Streaming
     {
         None = 0,
         Door = 1,
+        LooseItem = 2,
+        Container = 3,
+        Activator = 4,
     }
 
     public struct PlacedRefIdentity : IComponentData
@@ -40,6 +43,15 @@ namespace VVardenfell.Runtime.Streaming
     public struct LogicalRefChild : IBufferElementData
     {
         public Entity Value;
+    }
+
+    public struct InteractionActivationProxyState : IComponentData
+    {
+        public Entity ProxyEntity;
+    }
+
+    public struct InteractionActivationProxyTag : IComponentData
+    {
     }
 
     public struct LogicalRefLookup : IComponentData
@@ -127,6 +139,134 @@ namespace VVardenfell.Runtime.Streaming
         public SoundDefHandle SecondarySound;
     }
 
+    public struct InteriorAmbientSourceAuthoring : IComponentData
+    {
+        public SoundDefHandle AmbientSound;
+    }
+
+    public enum AudioPlaybackMode : byte
+    {
+        Bootstrap = 0,
+        Menu = 1,
+        World = 2,
+    }
+
+    public struct AudioContextState : IComponentData
+    {
+        public AudioPlaybackMode Mode;
+        public byte BootstrapPhase;
+    }
+
+    public struct MusicState : IComponentData
+    {
+        public MusicTrackDefHandle ResolvedTrack;
+        public MusicTrackCategory Category;
+        public byte Looping;
+    }
+
+    public struct MusicPlaylistState : IComponentData
+    {
+        public uint RandomState;
+        public int LastPlayedTrackValue;
+        public int CurrentTrackValue;
+        public int ContentTrackCount;
+        public byte ActiveCategory;
+        public byte Initialized;
+    }
+
+    public struct MusicPlaybackStatus : IComponentData
+    {
+        public byte IsPlaying;
+        public byte HasPendingTrack;
+    }
+
+    public struct MusicPlaylistEntry : IBufferElementData
+    {
+        public MusicTrackDefHandle Track;
+    }
+
+    public struct InteriorAmbientState : IComponentData
+    {
+        public SoundDefHandle ResolvedSound;
+        public FixedString128Bytes InteriorCellId;
+        public uint SourcePlacedRefId;
+        public float3 SourcePosition;
+        public float MinDistance;
+        public float MaxDistance;
+        public byte Looping;
+    }
+
+    public struct RegionAmbientState : IComponentData
+    {
+        public RegionDefHandle Region;
+        public SoundDefHandle PendingEventSound;
+        public uint EventSequence;
+    }
+
+    public struct AmbientSchedulerState : IComponentData
+    {
+        public float SecondsUntilNextAttempt;
+        public uint RandomState;
+        public int ActiveRegionHandleValue;
+        public byte Initialized;
+    }
+
+    public struct AmbientSettingsState : IComponentData
+    {
+        public float MinSecondsBetweenEnvironmentalSounds;
+        public float MaxSecondsBetweenEnvironmentalSounds;
+    }
+
+    public struct AudioTuningState : IComponentData
+    {
+        public float MusicGlobalVolume;
+        public float MusicMenuSpecialScalar;
+        public float MusicExploreScalar;
+        public float MusicBattleScalar;
+        public float InteriorAmbientVolumeMultiplier;
+        public float InteriorAmbientFallbackBaseVolume;
+        public float InteriorAmbientMinDistanceMultiplier;
+        public float InteriorAmbientMaxDistanceMultiplier;
+        public float ExteriorAmbientVolumeMultiplier;
+        public float ExteriorAmbientFallbackBaseVolume;
+        public float ExteriorAmbientMinIntervalMultiplier;
+        public float ExteriorAmbientMaxIntervalMultiplier;
+        public float ExteriorAmbientFallbackMinSeconds;
+        public float ExteriorAmbientFallbackMaxSeconds;
+        public float InteractionVolumeMultiplier;
+        public float InteractionFallbackBaseVolume;
+        public float InteractionMinDistanceMultiplier;
+        public float InteractionMaxDistanceMultiplier;
+    }
+
+    public enum InteractionAudioKind : byte
+    {
+        None = 0,
+        Door = 1,
+        LooseItem = 2,
+    }
+
+    public struct InteractionAudioRequestState : IComponentData
+    {
+        public uint NextSequence;
+        public uint LastConsumedSequence;
+    }
+
+    public struct InteractionAudioRequest : IBufferElementData
+    {
+        public uint Sequence;
+        public SoundDefHandle Sound;
+        public float3 Position;
+        public uint SourcePlacedRefId;
+        public byte Kind;
+    }
+
+    public struct InteractionRuntimeState : IComponentData
+    {
+        public uint NextActivationSequence;
+        public byte PendingPickedItemPrune;
+    }
+
     public struct DoorInteractable : IComponentData
     {
         public byte IsTeleport;
@@ -144,10 +284,44 @@ namespace VVardenfell.Runtime.Streaming
         public byte HasTarget;
     }
 
-    public struct DoorActivationRequest : IComponentData
+    public struct InteractionActivationRequest : IComponentData
     {
         public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public uint Sequence;
+        public byte Kind;
         public byte Pending;
+    }
+
+    public struct InteractionActivationResult : IComponentData
+    {
+        public uint Sequence;
+        public byte Kind;
+        public byte Success;
+        public byte PendingNotification;
+        public FixedString128Bytes NotificationText;
+    }
+
+    public struct PlayerInventoryItem : IBufferElementData
+    {
+        public ItemDefHandle Definition;
+        public int Count;
+    }
+
+    public struct PickedItemRecord : IBufferElementData
+    {
+        public uint PlacedRefId;
+        public ItemDefHandle Definition;
+    }
+
+    public struct InteractionPresentationState : IComponentData
+    {
+        public FixedString128Bytes FocusText;
+        public FixedString128Bytes NotificationText;
+        public float NotificationSecondsRemaining;
+        public byte ShowCrosshair;
+        public byte ShowFocus;
+        public byte ShowNotification;
     }
 
     public struct InteriorTransitionState : IComponentData

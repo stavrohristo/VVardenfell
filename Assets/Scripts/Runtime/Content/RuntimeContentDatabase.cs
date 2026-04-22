@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, EnchantmentDefHandle> _enchantmentsById;
         readonly Dictionary<int, MagicEffectDefHandle> _magicEffectsByIndex;
         readonly Dictionary<string, RegionDefHandle> _regionsById;
+        readonly Dictionary<string, MusicTrackDefHandle> _musicTracksByRelativePath;
         readonly Dictionary<string, ContentReference> _placeablesById;
 
         public static RuntimeContentDatabase Active { get; private set; }
@@ -42,6 +43,7 @@ namespace VVardenfell.Runtime.Content
         public int MagicEffectCount => Data.MagicEffects.Length;
         public int RegionCount => Data.Regions.Length;
         public int MusicTrackCount => Data.MusicTracks.Length;
+        public int AmbientSettingsCount => Manifest?.AmbientSettingsCount ?? 0;
 
         RuntimeContentDatabase(GameplayContentManifest manifest, GameplayContentData data)
         {
@@ -60,6 +62,7 @@ namespace VVardenfell.Runtime.Content
             _enchantmentsById = BuildIndex(data.Enchantments, def => def.Id, EnchantmentDefHandle.FromIndex);
             _magicEffectsByIndex = BuildMagicEffectIndex(data.MagicEffects);
             _regionsById = BuildIndex(data.Regions, def => def.Id, RegionDefHandle.FromIndex);
+            _musicTracksByRelativePath = BuildIndex(data.MusicTracks, def => def.RelativePath, MusicTrackDefHandle.FromIndex);
             _placeablesById = BuildPlaceableIndex(data);
         }
 
@@ -90,6 +93,7 @@ namespace VVardenfell.Runtime.Content
         public bool TryGetEnchantmentHandle(string id, out EnchantmentDefHandle handle) => _enchantmentsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetMagicEffectHandle(int index, out MagicEffectDefHandle handle) => _magicEffectsByIndex.TryGetValue(index, out handle);
         public bool TryGetRegionHandle(string id, out RegionDefHandle handle) => _regionsById.TryGetValue(id ?? string.Empty, out handle);
+        public bool TryGetMusicTrackHandle(string relativePath, out MusicTrackDefHandle handle) => _musicTracksByRelativePath.TryGetValue(relativePath ?? string.Empty, out handle);
         public bool TryResolvePlaceable(string id, out ContentReference contentRef) => _placeablesById.TryGetValue(id ?? string.Empty, out contentRef);
         public bool IsValid(ContentReference contentRef)
         {
@@ -120,6 +124,8 @@ namespace VVardenfell.Runtime.Content
         public ref readonly EnchantmentDef Get(EnchantmentDefHandle handle) => ref Data.Enchantments[handle.Index];
         public ref readonly MagicEffectDef Get(MagicEffectDefHandle handle) => ref Data.MagicEffects[handle.Index];
         public ref readonly RegionDef Get(RegionDefHandle handle) => ref Data.Regions[handle.Index];
+        public ref readonly MusicTrackDef Get(MusicTrackDefHandle handle) => ref Data.MusicTracks[handle.Index];
+        public ref readonly AmbientSettingsDef GetAmbientSettings() => ref Data.AmbientSettings;
 
         public ReadOnlySpan<DialogueInfoDef> GetDialogueInfos(DialogueDefHandle handle)
         {
@@ -127,6 +133,30 @@ namespace VVardenfell.Runtime.Content
             if (dialogue.FirstInfoIndex < 0 || dialogue.InfoCount <= 0)
                 return ReadOnlySpan<DialogueInfoDef>.Empty;
             return new ReadOnlySpan<DialogueInfoDef>(Data.DialogueInfos, dialogue.FirstInfoIndex, dialogue.InfoCount);
+        }
+
+        public ReadOnlySpan<RegionSoundRefDef> GetRegionSoundRefs(RegionDefHandle handle)
+        {
+            ref readonly var region = ref Get(handle);
+            if (region.SoundRefStartIndex < 0 || region.SoundRefCount <= 0)
+                return ReadOnlySpan<RegionSoundRefDef>.Empty;
+            return new ReadOnlySpan<RegionSoundRefDef>(Data.RegionSoundRefs, region.SoundRefStartIndex, region.SoundRefCount);
+        }
+
+        public bool TryGetFirstMusicTrackByCategory(MusicTrackCategory category, out MusicTrackDefHandle handle)
+        {
+            var tracks = Data.MusicTracks;
+            for (int i = 0; i < tracks.Length; i++)
+            {
+                if (tracks[i].Category != category)
+                    continue;
+
+                handle = MusicTrackDefHandle.FromIndex(i);
+                return true;
+            }
+
+            handle = default;
+            return false;
         }
 
         static Dictionary<string, THandle> BuildIndex<TDef, THandle>(TDef[] defs, Func<TDef, string> keySelector, Func<int, THandle> handleFactory)

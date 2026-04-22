@@ -157,6 +157,8 @@ namespace VVardenfell.Runtime.Bootstrap
 
             Active = this;
             DontDestroyOnLoad(gameObject);
+            BootstrapPresentationGate.Reset();
+            BootstrapPresentationAudioState.Reset();
             _playerMovement?.Validate();
         }
 
@@ -191,10 +193,11 @@ namespace VVardenfell.Runtime.Bootstrap
 
             string esmPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.esm");
             string bsaPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.bsa");
-            string[] gameplaySources = InstalledContentSources.ResolveGameplayRecordSources(_config.InstallPath);
+            string[] gameplayRecordSources = InstalledContentSources.ResolveGameplayRecordSources(_config.InstallPath);
+            string[] gameplaySources = InstalledContentSources.ResolveGameplayDependencySources(_config.InstallPath);
 
             bool worldCacheValid = BakeManifest.TryRead(CachePaths.Manifest, out var worldManifest)
-                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplaySources);
+                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplayRecordSources);
             bool uiCacheValid = UiCacheManifest.TryRead(CachePaths.UiManifest, out var uiManifest)
                                 && uiManifest.SourcesMatch(_config.InstallPath)
                                 && uiManifest.HasRequiredBootstrapImages(out _)

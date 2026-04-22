@@ -6,7 +6,6 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
-using UnityEngine.Networking;
 using UnityEngine.UI;
 using UnityEngine.Video;
 using VVardenfell.Core.Cache;
@@ -71,6 +70,29 @@ namespace VVardenfell.Runtime.Bootstrap
             public Button Button;
         }
 
+        readonly struct BootstrapMenuActionState
+        {
+            public BootstrapMenuActionState(
+                BootstrapMenuActionId action,
+                bool visible,
+                bool enabled,
+                string unavailableTitle,
+                string unavailableBody)
+            {
+                Action = action;
+                Visible = visible;
+                Enabled = enabled;
+                UnavailableTitle = unavailableTitle ?? string.Empty;
+                UnavailableBody = unavailableBody ?? string.Empty;
+            }
+
+            public BootstrapMenuActionId Action { get; }
+            public bool Visible { get; }
+            public bool Enabled { get; }
+            public string UnavailableTitle { get; }
+            public string UnavailableBody { get; }
+        }
+
         sealed class BorderFrameView
         {
             public RectTransform Root;
@@ -109,8 +131,6 @@ namespace VVardenfell.Runtime.Bootstrap
         const float PresentationTextScaleMultiplier = 1.5f;
         const float LoadingScaleMultiplier = 2f;
         const float MenuVisualScaleMultiplier = 2f;
-        const string MainMenuMusicRelativePath = @"Data Files\Music\Special\morrowind title.mp3";
-
         static readonly ProfilerMarker k_MoviePrepare = new("VV.Runtime.BootstrapMovie.Prepare");
         static readonly ProfilerMarker k_MovieStart = new("VV.Runtime.BootstrapMovie.Start");
         static readonly ProfilerMarker k_MovieStop = new("VV.Runtime.BootstrapMovie.Stop");
@@ -135,7 +155,6 @@ namespace VVardenfell.Runtime.Bootstrap
         RawImage _backgroundImage;
         RawImage _videoImage;
         AudioSource _videoAudio;
-        AudioSource _menuMusicAudio;
         EventSystem _eventSystem;
 
         RectTransform _introFallbackGroup;
@@ -154,6 +173,15 @@ namespace VVardenfell.Runtime.Bootstrap
         RectTransform _menuRoot;
         RectTransform _menuButtonBox;
         BitmapTextGraphic _versionText;
+        RectTransform _menuDialogRoot;
+        Image _menuDialogBlocker;
+        RectTransform _menuDialogRect;
+        BorderFrameView _menuDialogFrame;
+        BitmapTextGraphic _menuDialogTitle;
+        BitmapTextGraphic _menuDialogBody;
+        BitmapTextGraphic _menuDialogFooter;
+        int _menuDialogOpenedFrame = -1;
+        BootstrapMenuActionId _lastSelectedMenuAction;
 
         VideoPlayer _videoPlayer;
         RenderTexture _videoTexture;
@@ -168,10 +196,6 @@ namespace VVardenfell.Runtime.Bootstrap
         bool _moviePrepareWarningLogged;
         bool _movieStartQueued;
         Vector2 _lastCanvasSize;
-        AudioClip _menuMusicClip;
-        Coroutine _menuMusicLoadRoutine;
-        string _menuMusicPath;
-        bool _menuMusicWarningLogged;
 
         public bool IsDismissed => _dismissed;
 
@@ -183,6 +207,7 @@ namespace VVardenfell.Runtime.Bootstrap
             _onLoadingPhaseReady = onLoadingPhaseReady;
             _loadingPhaseSignaled = false;
             BootstrapPresentationGate.BlocksGameplayInput = true;
+            BootstrapPresentationAudioState.SetPhase(BootstrapAudioPhase.IntroCompany);
             BuildCanvas();
             SwitchPhase(PresentationPhase.IntroCompany);
         }
@@ -200,6 +225,7 @@ namespace VVardenfell.Runtime.Bootstrap
             UpdateMoviePlaybackState();
             RefreshScreenDependentLayout();
             HandleIntroSkipInput();
+            HandleMenuDialogInput();
 
             switch (_phase)
             {
@@ -232,6 +258,23 @@ namespace VVardenfell.Runtime.Bootstrap
             AdvanceFromCurrentIntroPhase();
         }
 
+        void HandleMenuDialogInput()
+        {
+            if (!IsMenuDialogVisible() || Time.frameCount == _menuDialogOpenedFrame)
+                return;
+
+            bool confirmPressed = (Keyboard.current?.enterKey.wasPressedThisFrame ?? false)
+                || (Keyboard.current?.numpadEnterKey.wasPressedThisFrame ?? false)
+                || (Keyboard.current?.spaceKey.wasPressedThisFrame ?? false)
+                || (Gamepad.current?.buttonSouth.wasPressedThisFrame ?? false);
+            bool cancelPressed = (Keyboard.current?.escapeKey.wasPressedThisFrame ?? false)
+                || (Gamepad.current?.buttonEast.wasPressedThisFrame ?? false);
+            if (!confirmPressed && !cancelPressed)
+                return;
+
+            CloseMenuDialog();
+        }
+
         private void OnDestroy()
         {
             BootstrapPresentationGate.BlocksGameplayInput = false;
@@ -246,10 +289,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
             if (_videoAudio != null)
                 _videoAudio.Stop();
-
-            StopMenuMusic();
-            if (_menuMusicClip != null)
-                Destroy(_menuMusicClip);
 
             if (_videoTexture != null)
             {
@@ -292,12 +331,6 @@ namespace VVardenfell.Runtime.Bootstrap
             _videoAudio.playOnAwake = false;
             _videoAudio.loop = false;
             _videoAudio.spatialBlend = 0f;
-
-            _menuMusicAudio = gameObject.AddComponent<AudioSource>();
-            _menuMusicAudio.playOnAwake = false;
-            _menuMusicAudio.loop = true;
-            _menuMusicAudio.spatialBlend = 0f;
-            _menuMusicAudio.ignoreListenerPause = true;
 
             BuildIntroFallback();
             BuildLoadingView();
@@ -425,6 +458,80 @@ namespace VVardenfell.Runtime.Bootstrap
             _versionText.rectTransform.pivot = new Vector2(1f, 0f);
             _versionText.rectTransform.anchoredPosition = new Vector2(-ScaleMenuLayout(20f), ScaleMenuLayout(16f));
             _versionText.rectTransform.sizeDelta = new Vector2(ScaleMenuLayout(320f), ScaleMenuLayout(42f));
+
+            BuildMenuDialogView();
+        }
+
+        void BuildMenuDialogView()
+        {
+            _menuDialogRoot = CreateStretchRect("MenuDialogRoot", _menuRoot);
+            _menuDialogRoot.gameObject.SetActive(false);
+
+            _menuDialogBlocker = CreateImage("MenuDialogBlocker", _menuDialogRoot, new Color(0f, 0f, 0f, 0.72f));
+            Stretch(_menuDialogBlocker.rectTransform);
+            _menuDialogBlocker.raycastTarget = true;
+
+            var blockerButton = _menuDialogBlocker.gameObject.AddComponent<Button>();
+            blockerButton.transition = Selectable.Transition.None;
+            blockerButton.targetGraphic = _menuDialogBlocker;
+            blockerButton.onClick.AddListener(CloseMenuDialog);
+            blockerButton.navigation = new Navigation { mode = Navigation.Mode.None };
+
+            _menuDialogRect = CreateAnchoredRect(
+                "MenuDialog",
+                _menuDialogRoot,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                Vector2.zero,
+                new Vector2(ScaleMenuLayout(520f), ScaleMenuLayout(176f)));
+            _menuDialogRect.pivot = new Vector2(0.5f, 0.5f);
+
+            _menuDialogFrame = CreateBorderFrame(
+                "MenuDialogFrame",
+                _menuDialogRect,
+                ResolveThickFrame(),
+                new Color(0f, 0f, 0f, 0.94f));
+            Stretch(_menuDialogFrame.Root);
+
+            _menuDialogTitle = CreateBitmapText(
+                "MenuDialogTitle",
+                _menuDialogRect,
+                _assets.TitleFont ?? _assets.DefaultFont,
+                ScaleMenuText(0.7f),
+                new Color(0.94f, 0.82f, 0.53f),
+                BitmapTextAlignment.Center);
+            _menuDialogTitle.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _menuDialogTitle.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _menuDialogTitle.rectTransform.pivot = new Vector2(0.5f, 1f);
+            _menuDialogTitle.rectTransform.anchoredPosition = new Vector2(0f, -ScaleMenuLayout(18f));
+            _menuDialogTitle.rectTransform.sizeDelta = new Vector2(-ScaleMenuLayout(48f), ScaleMenuLayout(28f));
+
+            _menuDialogBody = CreateBitmapText(
+                "MenuDialogBody",
+                _menuDialogRect,
+                _assets.DefaultFont,
+                ScaleMenuText(0.52f),
+                new Color(0.93f, 0.88f, 0.75f),
+                BitmapTextAlignment.Center);
+            _menuDialogBody.rectTransform.anchorMin = new Vector2(0f, 0f);
+            _menuDialogBody.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _menuDialogBody.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            _menuDialogBody.rectTransform.anchoredPosition = new Vector2(0f, -ScaleMenuLayout(6f));
+            _menuDialogBody.rectTransform.sizeDelta = new Vector2(-ScaleMenuLayout(72f), -ScaleMenuLayout(88f));
+
+            _menuDialogFooter = CreateBitmapText(
+                "MenuDialogFooter",
+                _menuDialogRect,
+                _assets.DefaultFont,
+                ScaleMenuText(0.42f),
+                new Color(0.76f, 0.73f, 0.66f),
+                BitmapTextAlignment.Center);
+            _menuDialogFooter.rectTransform.anchorMin = new Vector2(0f, 0f);
+            _menuDialogFooter.rectTransform.anchorMax = new Vector2(1f, 0f);
+            _menuDialogFooter.rectTransform.pivot = new Vector2(0.5f, 0f);
+            _menuDialogFooter.rectTransform.anchoredPosition = new Vector2(0f, ScaleMenuLayout(14f));
+            _menuDialogFooter.rectTransform.sizeDelta = new Vector2(-ScaleMenuLayout(48f), ScaleMenuLayout(18f));
+            _menuDialogFooter.Text = "Press Enter, Escape, or B to return";
         }
 
         void BuildVideoPlayer()
@@ -450,9 +557,11 @@ namespace VVardenfell.Runtime.Bootstrap
             _introFallbackGroup.gameObject.SetActive(false);
             _loadingRoot.gameObject.SetActive(false);
             _menuRoot.gameObject.SetActive(false);
+            if (_menuDialogRoot != null)
+                _menuDialogRoot.gameObject.SetActive(false);
+            _menuDialogOpenedFrame = -1;
             StopMovie();
-            if (phase != PresentationPhase.IntroLogo && phase != PresentationPhase.Menu)
-                StopMenuMusic();
+            BootstrapPresentationAudioState.SetPhase(ToAudioPhase(phase));
 
             switch (phase)
             {
@@ -470,7 +579,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     _loadingRoot.gameObject.SetActive(true);
                     _activeLoadingSplash = PickSplashImage();
                     SetBackgroundImage(_activeLoadingSplash ?? _assets.MenuBackground, stretchToFill: StretchMenuBackground);
-                    PreloadMenuMusic();
                     UpdateLoadingVisuals();
                     SignalLoadingPhaseReady();
                     break;
@@ -479,7 +587,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     _backgroundMatte.color = Color.black;
                     ConfigureIntroFallback("MORROWIND", "The Elder Scrolls III", ScaleText(1.7f), ScaleText(0.82f), show: true);
                     SetBackgroundImage(_assets.MenuBackground ?? _activeLoadingSplash ?? PickSplashImage(), stretchToFill: true);
-                    StartMenuMusic();
                     BeginIntroMoviePhase("Morrowind Logo");
                     break;
 
@@ -488,7 +595,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     _menuRoot.gameObject.SetActive(true);
                     SetBackgroundImage(_assets.MenuBackground ?? _activeLoadingSplash ?? PickSplashImage(), stretchToFill: StretchMenuBackground);
                     RefreshMenuButtons();
-                    StartMenuMusic();
                     break;
             }
         }
@@ -519,14 +625,15 @@ namespace VVardenfell.Runtime.Bootstrap
 
             _menuButtons.Clear();
 
-            var visibleDefinitions = new List<BootstrapMenuDefinition>(k_MenuDefinitions.Length);
+            var visibleStates = new List<BootstrapMenuActionState>(k_MenuDefinitions.Length);
             for (int i = 0; i < k_MenuDefinitions.Length; i++)
             {
-                if (IsMenuActionVisible(k_MenuDefinitions[i].Action))
-                    visibleDefinitions.Add(k_MenuDefinitions[i]);
+                var state = BuildMenuActionState(k_MenuDefinitions[i].Action);
+                if (state.Visible)
+                    visibleStates.Add(state);
             }
 
-            if (visibleDefinitions.Count == 0)
+            if (visibleStates.Count == 0)
             {
                 _menuButtonBox.sizeDelta = Vector2.zero;
                 return;
@@ -534,11 +641,12 @@ namespace VVardenfell.Runtime.Bootstrap
 
             float maxWidth = 0f;
             float totalHeight = 0f;
-            var sizes = new Vector2[visibleDefinitions.Count];
+            var sizes = new Vector2[visibleStates.Count];
 
-            for (int i = 0; i < visibleDefinitions.Count; i++)
+            for (int i = 0; i < visibleStates.Count; i++)
             {
-                var sprite = _assets.GetBootstrapImage(visibleDefinitions[i].NormalKey)?.Sprite;
+                var definition = GetMenuDefinition(visibleStates[i].Action);
+                var sprite = _assets.GetBootstrapImage(definition.NormalKey)?.Sprite;
                 if (sprite == null)
                     continue;
 
@@ -558,9 +666,10 @@ namespace VVardenfell.Runtime.Bootstrap
             _menuButtonBox.sizeDelta = new Vector2(maxWidth, totalHeight);
 
             float curY = 0f;
-            for (int i = 0; i < visibleDefinitions.Count; i++)
+            for (int i = 0; i < visibleStates.Count; i++)
             {
-                var definition = visibleDefinitions[i];
+                var state = visibleStates[i];
+                var definition = GetMenuDefinition(state.Action);
                 var normal = _assets.GetBootstrapImage(definition.NormalKey)?.Sprite;
                 var highlighted = _assets.GetBootstrapImage(definition.HighlightedKey)?.Sprite ?? normal;
                 var pressed = _assets.GetBootstrapImage(definition.PressedKey)?.Sprite ?? highlighted ?? normal;
@@ -580,6 +689,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 image.type = Image.Type.Simple;
                 image.preserveAspect = true;
                 image.rectTransform.localScale = new Vector3(1f, -1f, 1f);
+                image.color = state.Enabled ? Color.white : new Color(1f, 1f, 1f, 0.58f);
 
                 var button = rect.gameObject.AddComponent<Button>();
                 button.transition = Selectable.Transition.SpriteSwap;
@@ -595,12 +705,12 @@ namespace VVardenfell.Runtime.Bootstrap
                 var navigation = new Navigation { mode = Navigation.Mode.None };
                 button.navigation = navigation;
 
-                var action = definition.Action;
+                var action = state.Action;
                 button.onClick.AddListener(() => OnMenuButtonPressed(action));
 
                 _menuButtons.Add(new BootstrapMenuButtonView
                 {
-                    Action = definition.Action,
+                    Action = state.Action,
                     Rect = rect,
                     Image = image,
                     Button = button,
@@ -608,40 +718,37 @@ namespace VVardenfell.Runtime.Bootstrap
 
                 curY += sizes[i].y;
             }
+
+            ConfigureMenuNavigation();
         }
 
         void OnMenuButtonPressed(BootstrapMenuActionId action)
         {
+            _lastSelectedMenuAction = action;
+            var state = BuildMenuActionState(action);
+            if (!state.Enabled)
+            {
+                ShowMenuDialog(state.UnavailableTitle, state.UnavailableBody);
+                return;
+            }
+
             switch (action)
             {
                 case BootstrapMenuActionId.Continue:
                     if (GameInitializationRequestBridge.TryRequestContinue(out var continueError))
                         Dismiss();
                     else
-                        Debug.LogWarning($"[VVardenfell] continue request failed: {continueError}");
+                        ShowMenuDialog("Continue Unavailable", continueError);
                     break;
 
                 case BootstrapMenuActionId.NewGame:
                     if (GameInitializationRequestBridge.TryRequestNewGame(out var newGameError))
                         Dismiss();
                     else
-                        Debug.LogWarning($"[VVardenfell] new game request failed: {newGameError}");
-                    break;
-
-                case BootstrapMenuActionId.LoadGame:
-                    Debug.Log("[VVardenfell] Load Game is not wired into runtime bootstrap yet.");
-                    break;
-
-                case BootstrapMenuActionId.Options:
-                    Debug.Log("[VVardenfell] Options is presentation-only in this pass.");
-                    break;
-
-                case BootstrapMenuActionId.Credits:
-                    Debug.Log("[VVardenfell] Credits is presentation-only in this pass.");
+                        ShowMenuDialog("New Game Unavailable", newGameError);
                     break;
 
                 case BootstrapMenuActionId.ExitGame:
-                    Debug.Log("[VVardenfell] Exit Game requested from bootstrap menu.");
                     Application.Quit();
                     break;
             }
@@ -649,24 +756,83 @@ namespace VVardenfell.Runtime.Bootstrap
 
         void Dismiss()
         {
+            CloseMenuDialog();
             _dismissed = true;
             _phase = PresentationPhase.Dismissed;
+            BootstrapPresentationAudioState.SetPhase(BootstrapAudioPhase.Dismissed);
             BootstrapPresentationGate.BlocksGameplayInput = false;
             gameObject.SetActive(false);
         }
 
-        bool IsMenuActionVisible(BootstrapMenuActionId action)
+        BootstrapMenuActionState BuildMenuActionState(BootstrapMenuActionId action)
         {
             return action switch
             {
-                BootstrapMenuActionId.Continue => GameInitializationRequestBridge.CanRequestContinue(out _),
-                BootstrapMenuActionId.NewGame => GameInitializationRequestBridge.CanRequestNewGame(out _),
-                BootstrapMenuActionId.LoadGame => GameInitializationRequestBridge.CanRequestLoadGame(out _),
-                BootstrapMenuActionId.Options => true,
-                BootstrapMenuActionId.Credits => true,
-                BootstrapMenuActionId.ExitGame => true,
-                _ => false,
+                BootstrapMenuActionId.Continue => BuildUnavailableAwareAction(
+                    action,
+                    GameInitializationRequestBridge.GetContinueAvailability(),
+                    "Continue Unavailable"),
+                BootstrapMenuActionId.NewGame => BuildUnavailableAwareAction(
+                    action,
+                    GameInitializationRequestBridge.GetNewGameAvailability(),
+                    "New Game Unavailable"),
+                BootstrapMenuActionId.LoadGame => BuildUnavailableAction(
+                    action,
+                    "Load Game Unavailable",
+                    GameInitializationRequestBridge.GetLoadGameAvailability().Reason),
+                BootstrapMenuActionId.Options => BuildUnavailableAction(
+                    action,
+                    "Options Deferred",
+                    "Options belongs to the broader Core UI Shell milestone and is not implemented in this bootstrap menu slice."),
+                BootstrapMenuActionId.Credits => BuildUnavailableAction(
+                    action,
+                    "Credits Deferred",
+                    "A dedicated Credits panel is deferred. This bootstrap slice is focused on completing the startup-to-world menu flow."),
+                BootstrapMenuActionId.ExitGame => new BootstrapMenuActionState(
+                    action,
+                    visible: true,
+                    enabled: true,
+                    unavailableTitle: string.Empty,
+                    unavailableBody: string.Empty),
+                _ => default,
             };
+        }
+
+        BootstrapMenuActionState BuildUnavailableAwareAction(
+            BootstrapMenuActionId action,
+            GameInitializationRequestBridge.RequestAvailability availability,
+            string unavailableTitle)
+        {
+            return new BootstrapMenuActionState(
+                action,
+                visible: true,
+                enabled: availability.Available,
+                unavailableTitle: unavailableTitle,
+                unavailableBody: availability.Reason);
+        }
+
+        static BootstrapMenuActionState BuildUnavailableAction(
+            BootstrapMenuActionId action,
+            string title,
+            string body)
+        {
+            return new BootstrapMenuActionState(
+                action,
+                visible: true,
+                enabled: false,
+                unavailableTitle: title,
+                unavailableBody: body);
+        }
+
+        static BootstrapMenuDefinition GetMenuDefinition(BootstrapMenuActionId action)
+        {
+            for (int i = 0; i < k_MenuDefinitions.Length; i++)
+            {
+                if (k_MenuDefinitions[i].Action == action)
+                    return k_MenuDefinitions[i];
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown bootstrap menu action.");
         }
 
         void EnsureEventSystem()
@@ -678,6 +844,83 @@ namespace VVardenfell.Runtime.Bootstrap
             var go = new GameObject("VVardenfell.EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
             DontDestroyOnLoad(go);
             _eventSystem = go.GetComponent<EventSystem>();
+        }
+
+        void ConfigureMenuNavigation()
+        {
+            if (_menuButtons.Count == 0)
+                return;
+
+            for (int i = 0; i < _menuButtons.Count; i++)
+            {
+                var button = _menuButtons[i].Button;
+                if (button == null)
+                    continue;
+
+                var navigation = new Navigation
+                {
+                    mode = Navigation.Mode.Explicit,
+                    selectOnUp = _menuButtons[(i - 1 + _menuButtons.Count) % _menuButtons.Count].Button,
+                    selectOnDown = _menuButtons[(i + 1) % _menuButtons.Count].Button,
+                };
+                button.navigation = navigation;
+            }
+
+            RestoreMenuSelection();
+        }
+
+        void RestoreMenuSelection()
+        {
+            if (_eventSystem == null || _menuButtons.Count == 0)
+                return;
+
+            for (int i = 0; i < _menuButtons.Count; i++)
+            {
+                if (_menuButtons[i].Action != _lastSelectedMenuAction || _menuButtons[i].Button == null)
+                    continue;
+
+                _eventSystem.SetSelectedGameObject(_menuButtons[i].Button.gameObject);
+                return;
+            }
+
+            if (_menuButtons[0].Button != null)
+                _eventSystem.SetSelectedGameObject(_menuButtons[0].Button.gameObject);
+        }
+
+        void ShowMenuDialog(string title, string body)
+        {
+            if (_menuDialogRoot == null)
+                return;
+
+            _menuDialogTitle.Text = string.IsNullOrWhiteSpace(title) ? "Unavailable" : title.Trim();
+            _menuDialogBody.Text = WrapMenuDialogBody(body);
+            _menuDialogRoot.gameObject.SetActive(true);
+            _menuDialogOpenedFrame = Time.frameCount;
+
+            if (_eventSystem != null)
+                _eventSystem.SetSelectedGameObject(null);
+        }
+
+        void CloseMenuDialog()
+        {
+            if (_menuDialogRoot == null || !_menuDialogRoot.gameObject.activeSelf)
+                return;
+
+            _menuDialogRoot.gameObject.SetActive(false);
+            _menuDialogOpenedFrame = -1;
+            RestoreMenuSelection();
+        }
+
+        bool IsMenuDialogVisible()
+        {
+            return _menuDialogRoot != null && _menuDialogRoot.gameObject.activeSelf;
+        }
+
+        string WrapMenuDialogBody(string body)
+        {
+            string raw = string.IsNullOrWhiteSpace(body) ? "This action is not available in the current bootstrap slice." : body.Trim();
+            float maxWidth = ScaleMenuLayout(410f);
+            return WrapText(_assets.DefaultFont, raw, _menuDialogBody.FontScale, maxWidth);
         }
 
         void SetBackgroundImage(UiImageAsset image, bool stretchToFill)
@@ -982,105 +1225,6 @@ namespace VVardenfell.Runtime.Bootstrap
             _videoPlayer.SetDirectAudioVolume(0, 1f);
         }
 
-        void StartMenuMusic()
-        {
-            if (_menuMusicAudio == null)
-                return;
-
-            string musicPath = ResolveMainMenuMusicPath();
-            if (string.IsNullOrWhiteSpace(musicPath))
-                return;
-
-            if (_menuMusicClip != null && string.Equals(_menuMusicPath, musicPath, StringComparison.OrdinalIgnoreCase))
-            {
-                _menuMusicAudio.clip = _menuMusicClip;
-                if (!_menuMusicAudio.isPlaying)
-                    _menuMusicAudio.Play();
-                return;
-            }
-
-            if (_menuMusicLoadRoutine != null)
-                return;
-
-            _menuMusicLoadRoutine = StartCoroutine(LoadAndPlayMenuMusic(musicPath));
-        }
-
-        void PreloadMenuMusic()
-        {
-            if (_menuMusicClip != null || _menuMusicLoadRoutine != null)
-                return;
-
-            string musicPath = ResolveMainMenuMusicPath();
-            if (string.IsNullOrWhiteSpace(musicPath))
-                return;
-
-            _menuMusicLoadRoutine = StartCoroutine(LoadAndPlayMenuMusic(musicPath));
-        }
-
-        void StopMenuMusic()
-        {
-            if (_menuMusicLoadRoutine != null)
-            {
-                StopCoroutine(_menuMusicLoadRoutine);
-                _menuMusicLoadRoutine = null;
-            }
-
-            if (_menuMusicAudio != null)
-                _menuMusicAudio.Stop();
-        }
-
-        string ResolveMainMenuMusicPath()
-        {
-            if (string.IsNullOrWhiteSpace(_installPath))
-                return null;
-
-            string path = Path.Combine(_installPath, MainMenuMusicRelativePath);
-            if (File.Exists(path))
-                return path;
-
-            if (!_menuMusicWarningLogged)
-            {
-                _menuMusicWarningLogged = true;
-                Debug.LogWarning($"[VVardenfell] main menu music was not found at '{path}'.");
-            }
-
-            return null;
-        }
-
-        System.Collections.IEnumerator LoadAndPlayMenuMusic(string path)
-        {
-            _menuMusicPath = path;
-            using var request = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, AudioType.MPEG);
-            yield return request.SendWebRequest();
-
-            _menuMusicLoadRoutine = null;
-
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                Debug.LogWarning($"[VVardenfell] failed loading main menu music '{path}': {request.error}");
-                yield break;
-            }
-
-            var clip = DownloadHandlerAudioClip.GetContent(request);
-            if (clip == null)
-            {
-                Debug.LogWarning($"[VVardenfell] menu music request completed but produced no clip for '{path}'.");
-                yield break;
-            }
-
-            if (_menuMusicClip != null && _menuMusicClip != clip)
-                Destroy(_menuMusicClip);
-
-            _menuMusicClip = clip;
-            _menuMusicPath = path;
-
-            if ((_phase != PresentationPhase.IntroLogo && _phase != PresentationPhase.Menu) || _menuMusicAudio == null)
-                yield break;
-
-            _menuMusicAudio.clip = clip;
-            _menuMusicAudio.Play();
-        }
-
         void ConfigureIntroFallback(string title, string subtitle, float titleScale, float subtitleScale, bool show)
         {
             _introFallbackTitle.Font = _assets.TitleFont ?? _assets.DefaultFont;
@@ -1311,6 +1455,45 @@ namespace VVardenfell.Runtime.Bootstrap
             return width;
         }
 
+        string WrapText(BitmapFontAsset font, string text, float scale, float maxWidth)
+        {
+            if (font == null || string.IsNullOrWhiteSpace(text) || maxWidth <= 0f)
+                return text ?? string.Empty;
+
+            var paragraphs = text.Replace("\r", "").Split('\n');
+            var wrapped = new List<string>(paragraphs.Length * 2);
+            for (int paragraphIndex = 0; paragraphIndex < paragraphs.Length; paragraphIndex++)
+            {
+                string paragraph = paragraphs[paragraphIndex];
+                if (string.IsNullOrWhiteSpace(paragraph))
+                {
+                    wrapped.Add(string.Empty);
+                    continue;
+                }
+
+                string[] words = paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                string currentLine = words.Length > 0 ? words[0] : string.Empty;
+                for (int wordIndex = 1; wordIndex < words.Length; wordIndex++)
+                {
+                    string candidate = $"{currentLine} {words[wordIndex]}";
+                    if (MeasureLineWidth(font, candidate, scale) <= maxWidth)
+                    {
+                        currentLine = candidate;
+                    }
+                    else
+                    {
+                        wrapped.Add(currentLine);
+                        currentLine = words[wordIndex];
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(currentLine))
+                    wrapped.Add(currentLine);
+            }
+
+            return string.Join("\n", wrapped);
+        }
+
         static RectTransform CreateStretchRect(string name, Transform parent)
         {
             var rect = CreateRect(name, parent);
@@ -1438,6 +1621,19 @@ namespace VVardenfell.Runtime.Bootstrap
             rect.anchorMax = Vector2.one;
             rect.offsetMin = new Vector2(left, bottom);
             rect.offsetMax = new Vector2(right, top);
+        }
+
+        static BootstrapAudioPhase ToAudioPhase(PresentationPhase phase)
+        {
+            return phase switch
+            {
+                PresentationPhase.IntroCompany => BootstrapAudioPhase.IntroCompany,
+                PresentationPhase.Loading => BootstrapAudioPhase.Loading,
+                PresentationPhase.IntroLogo => BootstrapAudioPhase.IntroLogo,
+                PresentationPhase.Menu => BootstrapAudioPhase.Menu,
+                PresentationPhase.Dismissed => BootstrapAudioPhase.Dismissed,
+                _ => BootstrapAudioPhase.None,
+            };
         }
 
         readonly struct BorderTextureSet

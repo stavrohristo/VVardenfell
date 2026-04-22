@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -133,8 +134,9 @@ namespace VVardenfell.Importer.Bake
         {
             using var _ = k_Bake.Auto();
 
-            string[] sourcePaths = InstalledContentSources.ResolveGameplayRecordSources(config.InstallPath);
-            if (sourcePaths.Length == 0)
+            string[] recordSourcePaths = InstalledContentSources.ResolveGameplayRecordSources(config.InstallPath);
+            string[] dependencySourcePaths = InstalledContentSources.ResolveGameplayDependencySources(config.InstallPath);
+            if (recordSourcePaths.Length == 0)
             {
                 progress.Error = "No gameplay-content sources were found under the configured install path.";
                 progress.Done = markDone;
@@ -146,17 +148,17 @@ namespace VVardenfell.Importer.Bake
             progress.Stage = "Gameplay Content";
             progress.Label = "Resolving load order";
             progress.Current = 0;
-            progress.Total = sourcePaths.Length + 4;
+            progress.Total = recordSourcePaths.Length + 4;
             yield return null;
 
             var state = new State();
             string currentDialogueId = null;
 
-            for (int i = 0; i < sourcePaths.Length; i++)
+            for (int i = 0; i < recordSourcePaths.Length; i++)
             {
-                progress.Label = Path.GetFileName(sourcePaths[i]);
+                progress.Label = Path.GetFileName(recordSourcePaths[i]);
                 using (k_ParseSource.Auto())
-                using (var esm = new EsmReader(sourcePaths[i]))
+                using (var esm = new EsmReader(recordSourcePaths[i]))
                 {
                     currentDialogueId = ParseSourceIntoState(esm, state, currentDialogueId);
                 }
@@ -166,18 +168,18 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Building deterministic content arrays";
-            progress.Current = sourcePaths.Length + 1;
+            progress.Current = recordSourcePaths.Length + 1;
             GameplayContentData data = BuildContentData(state, config.InstallPath);
             yield return null;
 
             progress.Label = "Writing gameplay content cache";
-            progress.Current = sourcePaths.Length + 2;
+            progress.Current = recordSourcePaths.Length + 2;
             GameplayContentFile.Write(CachePaths.GameplayContent, data);
             yield return null;
 
             progress.Label = "Writing gameplay validation report";
-            progress.Current = sourcePaths.Length + 3;
-            var manifest = GameplayContentManifest.FromSources(sourcePaths);
+            progress.Current = recordSourcePaths.Length + 3;
+            var manifest = GameplayContentManifest.FromSources(dependencySourcePaths);
             PopulateManifestCounts(manifest, data);
             manifest.Write(CachePaths.GameplayContentManifest);
 
@@ -188,7 +190,7 @@ namespace VVardenfell.Importer.Bake
             yield return null;
 
             progress.Label = "Gameplay content ready";
-            progress.Current = sourcePaths.Length + 4;
+            progress.Current = recordSourcePaths.Length + 4;
             if (markDone)
                 progress.Done = true;
         }
@@ -1067,6 +1069,7 @@ namespace VVardenfell.Importer.Bake
                 Sounds = OrderByNormalizedId(state.Sounds).ToArray(),
                 MagicEffects = state.MagicEffects.OrderBy(pair => pair.Key).Select(pair => pair.Value).ToArray(),
                 MusicTracks = BuildMusicTrackDefs(installPath),
+                AmbientSettings = BuildAmbientSettings(installPath),
             };
 
             BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
@@ -1221,6 +1224,51 @@ namespace VVardenfell.Importer.Bake
             return results;
         }
 
+        static AmbientSettingsDef BuildAmbientSettings(string installPath)
+        {
+            const float defaultMinSeconds = 1f;
+            const float defaultMaxSeconds = 5f;
+
+            string iniPath = Path.Combine(installPath ?? string.Empty, "Morrowind.ini");
+            if (!File.Exists(iniPath))
+            {
+                return new AmbientSettingsDef
+                {
+                    MinSecondsBetweenEnvironmentalSounds = defaultMinSeconds,
+                    MaxSecondsBetweenEnvironmentalSounds = defaultMaxSeconds,
+                };
+            }
+
+            var ini = MorrowindIniReader.Read(iniPath);
+            float minSeconds = ReadIniFloat(ini, "Weather", "Minimum Time Between Environmental Sounds", defaultMinSeconds);
+            float maxSeconds = ReadIniFloat(ini, "Weather", "Maximum Time Between Environmental Sounds", defaultMaxSeconds);
+            minSeconds = ClampPositiveSeconds(minSeconds, defaultMinSeconds);
+            maxSeconds = ClampPositiveSeconds(maxSeconds, defaultMaxSeconds);
+            if (maxSeconds < minSeconds)
+                maxSeconds = minSeconds;
+
+            return new AmbientSettingsDef
+            {
+                MinSecondsBetweenEnvironmentalSounds = minSeconds,
+                MaxSecondsBetweenEnvironmentalSounds = maxSeconds,
+            };
+        }
+
+        static float ReadIniFloat(MorrowindIniReader ini, string section, string key, float fallback)
+        {
+            string value = ini.GetValueOrDefault(section, key, string.Empty);
+            return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed)
+                ? parsed
+                : fallback;
+        }
+
+        static float ClampPositiveSeconds(float value, float fallback)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                return fallback;
+            return value;
+        }
+
         static void PopulateManifestCounts(GameplayContentManifest manifest, GameplayContentData data)
         {
             manifest.ActorCount = data.Actors.Length;
@@ -1239,6 +1287,7 @@ namespace VVardenfell.Importer.Bake
             manifest.RegionCount = data.Regions.Length;
             manifest.RegionSoundRefCount = data.RegionSoundRefs.Length;
             manifest.MusicTrackCount = data.MusicTracks.Length;
+            manifest.AmbientSettingsCount = 1;
         }
 
         static void WriteValidationReport(string installPath, GameplayContentData data)
@@ -1257,12 +1306,14 @@ namespace VVardenfell.Importer.Bake
             ValidateDialogue(data.Dialogues, data.DialogueInfos, issues);
             ValidateMagicEffects(data.MagicEffects, soundIds, assetIndex, issues);
             ValidateRegions(data.Regions, data.RegionSoundRefs, soundIds, issues);
+            ValidateAmbientSettings(data.AmbientSettings, issues);
 
             Directory.CreateDirectory(Path.GetDirectoryName(CachePaths.GameplayValidationReport) ?? string.Empty);
             using var writer = new StreamWriter(CachePaths.GameplayValidationReport, false, Encoding.UTF8);
             writer.WriteLine("VVardenfell Gameplay Content Validation");
             writer.WriteLine($"Generated: {DateTime.UtcNow:O}");
             writer.WriteLine($"Actors={data.Actors.Length}, Lights={data.Lights.Length}, Sounds={data.Sounds.Length}, Dialogues={data.Dialogues.Length}, Infos={data.DialogueInfos.Length}");
+            writer.WriteLine($"AmbientSettings.MinSeconds={data.AmbientSettings.MinSecondsBetweenEnvironmentalSounds:0.###}, AmbientSettings.MaxSeconds={data.AmbientSettings.MaxSecondsBetweenEnvironmentalSounds:0.###}");
             writer.WriteLine();
 
             if (issues.Count == 0)
@@ -1347,8 +1398,28 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < defs.Length; i++)
             {
                 var def = defs[i];
-                ValidateAssetPath("Sound", def.Id, "sound file", def.SoundPath, assetIndex, issues);
+                ValidateSoundAssetPath(def, assetIndex, issues);
             }
+        }
+
+        static void ValidateSoundAssetPath(SoundDef def, HashSet<string> assetIndex, List<ValidationIssue> issues)
+        {
+            if (string.IsNullOrWhiteSpace(def.SoundPath))
+                return;
+
+            string corrected = VVardenfell.Core.Config.SoundPathResolver.Correct(def.SoundPath).Replace('\\', '/');
+            if (assetIndex.Contains(corrected))
+                return;
+
+            string mp3Fallback = VVardenfell.Core.Config.SoundPathResolver.ChangeExtension(corrected, ".mp3").Replace('\\', '/');
+            if (assetIndex.Contains(mp3Fallback))
+                return;
+
+            issues.Add(new ValidationIssue
+            {
+                IsError = false,
+                Message = $"Sound '{def.Id}' references missing sound file '{def.SoundPath}' (resolved as '{corrected}').",
+            });
         }
 
         static void ValidateDialogue(DialogueDef[] dialogues, DialogueInfoDef[] infos, List<ValidationIssue> issues)
@@ -1403,6 +1474,27 @@ namespace VVardenfell.Importer.Bake
 
                     ValidateLinkedSound("Region", regions[i].Id, "region sound", refs[index].SoundId, soundIds, issues);
                 }
+            }
+        }
+
+        static void ValidateAmbientSettings(AmbientSettingsDef settings, List<ValidationIssue> issues)
+        {
+            if (settings.MinSecondsBetweenEnvironmentalSounds <= 0f)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = "Ambient settings have a non-positive minimum time between environmental sounds.",
+                });
+            }
+
+            if (settings.MaxSecondsBetweenEnvironmentalSounds < settings.MinSecondsBetweenEnvironmentalSounds)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = "Ambient settings have a maximum time between environmental sounds lower than the minimum.",
+                });
             }
         }
 

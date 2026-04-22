@@ -73,6 +73,24 @@ namespace VVardenfell.Core.Config
             return results.ToArray();
         }
 
+        public static string[] ResolveGameplayDependencySources(string installPath)
+        {
+            var results = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string source in ResolveGameplayRecordSources(installPath))
+            {
+                if (seen.Add(source))
+                    results.Add(source);
+            }
+
+            string iniPath = Path.Combine(installPath ?? string.Empty, "Morrowind.ini");
+            if (File.Exists(iniPath) && seen.Add(iniPath))
+                results.Add(iniPath);
+
+            return results.ToArray();
+        }
+
         public static string[] ResolveMusicTracks(string installPath)
         {
             string musicRoot = Path.Combine(installPath ?? string.Empty, "Data Files", "Music");

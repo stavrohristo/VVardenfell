@@ -286,6 +286,12 @@ namespace VVardenfell.Core.Cache
         public MusicTrackCategory Category;
     }
 
+    public struct AmbientSettingsDef
+    {
+        public float MinSecondsBetweenEnvironmentalSounds;
+        public float MaxSecondsBetweenEnvironmentalSounds;
+    }
+
     public sealed class GameplayContentData
     {
         public ActorDef[] Actors = Array.Empty<ActorDef>();
@@ -304,6 +310,7 @@ namespace VVardenfell.Core.Cache
         public RegionDef[] Regions = Array.Empty<RegionDef>();
         public RegionSoundRefDef[] RegionSoundRefs = Array.Empty<RegionSoundRefDef>();
         public MusicTrackDef[] MusicTracks = Array.Empty<MusicTrackDef>();
+        public AmbientSettingsDef AmbientSettings;
     }
 
     public static class GameplayContentFile
@@ -336,6 +343,7 @@ namespace VVardenfell.Core.Cache
             WriteRegionArray(w, data?.Regions);
             WriteRegionSoundRefArray(w, data?.RegionSoundRefs);
             WriteMusicTrackArray(w, data?.MusicTracks);
+            WriteAmbientSettings(w, data?.AmbientSettings ?? default);
         }
 
         public static GameplayContentData Read(string path)
@@ -373,6 +381,7 @@ namespace VVardenfell.Core.Cache
                 Regions = ReadRegionArray(r),
                 RegionSoundRefs = ReadRegionSoundRefArray(r),
                 MusicTracks = ReadMusicTrackArray(r),
+                AmbientSettings = ReadAmbientSettings(r),
             };
         }
 
@@ -813,6 +822,21 @@ namespace VVardenfell.Core.Cache
                 ContentId = ReadContentId(r),
                 RelativePath = ReadString(r),
                 Category = (MusicTrackCategory)r.ReadByte(),
+            };
+        }
+
+        static void WriteAmbientSettings(BinaryWriter w, AmbientSettingsDef value)
+        {
+            w.Write(value.MinSecondsBetweenEnvironmentalSounds);
+            w.Write(value.MaxSecondsBetweenEnvironmentalSounds);
+        }
+
+        static AmbientSettingsDef ReadAmbientSettings(BinaryReader r)
+        {
+            return new AmbientSettingsDef
+            {
+                MinSecondsBetweenEnvironmentalSounds = r.ReadSingle(),
+                MaxSecondsBetweenEnvironmentalSounds = r.ReadSingle(),
             };
         }
 

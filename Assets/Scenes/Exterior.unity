@@ -161,7 +161,7 @@ MonoBehaviour:
     MinPitch: -89
     MaxPitch: 89
     LookSensitivity: 0.12
-    GroundMaxSpeed: 6
+    GroundMaxSpeed: 36
     SprintSpeedMultiplier: 1.45
     CrouchSpeedMultiplier: 0.5
     GroundedMovementSharpness: 18
@@ -169,7 +169,7 @@ MonoBehaviour:
     AirMaxSpeed: 6
     AirDrag: 0.05
     Gravity: -20
-    JumpSpeed: 8
+    JumpSpeed: 155
     CoyoteTime: 0.12
     JumpBufferTime: 0.12
 --- !u!4 &101423244

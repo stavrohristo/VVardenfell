@@ -1006,6 +1006,13 @@ namespace VVardenfell.Runtime.Streaming
                     em.AddComponentData(logicalEntity, BuildLightInstanceState(def));
                     em.AddComponentData(logicalEntity, new LightPresentationLink { Slot = -1 });
                     TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, null);
+                    if (contentDb.TryGetSoundHandle(def.SoundId, out SoundDefHandle ambientSound) && ambientSound.IsValid)
+                    {
+                        em.AddComponentData(logicalEntity, new InteriorAmbientSourceAuthoring
+                        {
+                            AmbientSound = ambientSound,
+                        });
+                    }
                     break;
                 }
             }

@@ -56,4 +56,49 @@ namespace VVardenfell.Core.Config
         private static string MakeLookupKey(string section, string key)
             => $"{section ?? ""}:{key ?? ""}";
     }
+
+    /// <summary>
+    /// Normalizes Morrowind sound resource paths to the same top-level layout OpenMW uses:
+    /// sound\{relative-path}. Also supports the vanilla wav->mp3 fallback used by some installs/mods.
+    /// </summary>
+    public static class SoundPathResolver
+    {
+        const string TopLevelDirectory = "sound";
+
+        public static string Correct(string rawPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                return string.Empty;
+
+            string path = rawPath.Trim().ToLowerInvariant().Replace('/', '\\');
+            while (path.Contains("\\\\", StringComparison.Ordinal))
+                path = path.Replace("\\\\", "\\", StringComparison.Ordinal);
+
+            if (path.StartsWith("\\", StringComparison.Ordinal))
+                path = path.Substring(1);
+
+            string prefix = TopLevelDirectory + "\\";
+            if (path.StartsWith(prefix, StringComparison.Ordinal))
+                return path;
+
+            int embeddedPrefix = path.IndexOf("\\" + prefix, StringComparison.Ordinal);
+            if (embeddedPrefix >= 0)
+                return path.Substring(embeddedPrefix + 1);
+
+            return prefix + path;
+        }
+
+        public static string ChangeExtension(string path, string newExtension)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            int dot = path.LastIndexOf('.');
+            if (dot < 0)
+                return path + newExtension;
+
+            return path.Substring(0, dot) + newExtension;
+        }
+    }
+
 }
