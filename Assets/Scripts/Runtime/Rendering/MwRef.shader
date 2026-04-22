@@ -51,7 +51,9 @@ Shader "VVardenfell/MwRef"
             #pragma target 4.5
 
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile _ _SHADOWS_SOFT
+            #pragma multi_compile_fog
             #pragma shader_feature_local _ALPHATEST_ON
             #pragma shader_feature_local _SURFACE_TYPE_TRANSPARENT
             #pragma multi_compile_instancing
@@ -99,6 +101,7 @@ Shader "VVardenfell/MwRef"
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS   : TEXCOORD1;
                 float2 uv         : TEXCOORD2;
+                float fogFactor   : TEXCOORD3;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -116,6 +119,7 @@ Shader "VVardenfell/MwRef"
                 OUT.positionWS = pos.positionWS;
                 OUT.normalWS   = nrm.normalWS;
                 OUT.uv         = IN.uv;
+                OUT.fogFactor  = ComputeFogFactor(pos.positionCS.z);
                 return OUT;
             }
 
@@ -138,6 +142,19 @@ Shader "VVardenfell/MwRef"
                 Light mainLight = GetMainLight(shadowCoord);
                 float ndotl = saturate(dot(N, mainLight.direction));
                 half3 lit = albedo.rgb * (mainLight.color * ndotl * mainLight.shadowAttenuation + SampleSH(N));
+
+                #if defined(_ADDITIONAL_LIGHTS)
+                uint additionalLightCount = GetAdditionalLightsCount();
+                for (uint lightIndex = 0u; lightIndex < additionalLightCount; lightIndex++)
+                {
+                    Light additionalLight = GetAdditionalLight(lightIndex, IN.positionWS);
+                    float addNdotL = saturate(dot(N, additionalLight.direction));
+                    lit += albedo.rgb * additionalLight.color * addNdotL
+                        * (additionalLight.distanceAttenuation * additionalLight.shadowAttenuation);
+                }
+                #endif
+
+                lit = MixFog(lit, IN.fogFactor);
 
                 #ifdef _SURFACE_TYPE_TRANSPARENT
                 return half4(lit, albedo.a);

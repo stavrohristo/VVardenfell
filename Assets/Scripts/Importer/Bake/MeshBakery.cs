@@ -16,6 +16,7 @@ namespace VVardenfell.Importer.Bake
     {
         public const uint MagicMesh = 0x4853454Du; // 'MESH'
         private const uint MagicCatalog = 0x5441434Du; // 'MCAT'
+        private const uint CatalogVersion = 2u;
         [ThreadStatic] private static SHA256 s_threadSha256;
 
         private readonly object _gate = new object();
@@ -27,42 +28,109 @@ namespace VVardenfell.Importer.Bake
 
         public int Count => _payloads.Count;
         public bool Modified { get; private set; }
-
-        public void TryLoadExisting(string catalogPath)
+        public long TotalPayloadBytes
         {
-            if (!File.Exists(catalogPath))
+            get
+            {
+                lock (_gate)
+                {
+                    long total = 0;
+                    for (int i = 0; i < _payloads.Count; i++)
+                        total += _payloads[i]?.Length ?? 0;
+                    return total;
+                }
+            }
+        }
+
+        public string GetSourceLabel(int index)
+        {
+            lock (_gate)
+            {
+                return (uint)index < (uint)_names.Count ? (_names[index] ?? string.Empty) : string.Empty;
+            }
+        }
+
+        public int GetPayloadLength(int index)
+        {
+            lock (_gate)
+            {
+                return (uint)index < (uint)_payloads.Count ? (_payloads[index]?.Length ?? 0) : 0;
+            }
+        }
+
+        public void TryLoadExisting(string catalogPath, string meshesPath)
+        {
+            if (!File.Exists(catalogPath) || !File.Exists(meshesPath))
                 return;
 
             try
             {
-                using var fs = File.OpenRead(catalogPath);
-                using var r = new BinaryReader(fs);
-                if (r.ReadUInt32() != MagicCatalog)
+                Clear();
+
+                using var catalogFs = File.OpenRead(catalogPath);
+                using var catalogReader = new BinaryReader(catalogFs);
+                if (catalogReader.ReadUInt32() != MagicCatalog)
                     return;
 
-                uint count = r.ReadUInt32();
-                for (int i = 0; i < count; i++)
+                uint version = catalogReader.ReadUInt32();
+                if (version != CatalogVersion)
+                    return;
+
+                uint catalogCount = catalogReader.ReadUInt32();
+                var hashes = new string[catalogCount];
+                var names = new string[catalogCount];
+                var lengths = new int[catalogCount];
+                for (int i = 0; i < catalogCount; i++)
                 {
-                    string hash = r.ReadString();
-                    string sourceLabel = r.ReadString();
-                    int payloadLength = r.ReadInt32();
-                    byte[] payload = r.ReadBytes(payloadLength);
-                    if (payload.Length != payloadLength)
-                        return;
+                    hashes[i] = catalogReader.ReadString();
+                    names[i] = catalogReader.ReadString();
+                    lengths[i] = catalogReader.ReadInt32();
+                    if (lengths[i] < 0)
+                        throw new InvalidDataException($"Negative mesh payload length {lengths[i]} in '{catalogPath}'.");
+                }
+
+                using var meshFs = File.OpenRead(meshesPath);
+                using var meshReader = new BinaryReader(meshFs);
+                if (meshReader.ReadUInt32() != MagicMesh)
+                    throw new InvalidDataException($"Bad mesh magic in '{meshesPath}'.");
+
+                uint meshCount = meshReader.ReadUInt32();
+                if (meshCount != catalogCount)
+                    throw new InvalidDataException($"Mesh catalog count {catalogCount} does not match meshes.bin count {meshCount}.");
+
+                var offsets = new ulong[meshCount];
+                for (int i = 0; i < meshCount; i++)
+                    offsets[i] = meshReader.ReadUInt64();
+
+                ulong fileLength = (ulong)meshFs.Length;
+                for (int i = 0; i < meshCount; i++)
+                {
+                    ulong start = offsets[i];
+                    ulong end = i + 1 < meshCount ? offsets[i + 1] : fileLength;
+                    if (start > end || end > fileLength)
+                        throw new InvalidDataException($"Invalid mesh offset range [{start}, {end}) in '{meshesPath}' for mesh {i}.");
+
+                    ulong actualLength = end - start;
+                    if (actualLength > int.MaxValue)
+                        throw new InvalidDataException($"Mesh payload {i} in '{meshesPath}' exceeds supported size.");
+                    if ((int)actualLength != lengths[i])
+                        throw new InvalidDataException($"Mesh payload {i} length mismatch: catalog={lengths[i]}, meshes.bin={(int)actualLength}.");
+
+                    meshFs.Position = (long)start;
+                    byte[] payload = meshReader.ReadBytes((int)actualLength);
+                    if (payload.Length != (int)actualLength)
+                        throw new InvalidDataException($"Mesh payload {i} in '{meshesPath}' truncated.");
 
                     int index = _payloads.Count;
                     _payloads.Add(payload);
-                    _payloadHashes.Add(hash);
-                    _names.Add(sourceLabel);
-                    _indicesByPayloadHash[hash] = index;
+                    _payloadHashes.Add(hashes[i] ?? string.Empty);
+                    _names.Add(names[i] ?? string.Empty);
+                    _indicesByPayloadHash[hashes[i] ?? string.Empty] = index;
                 }
             }
             catch
             {
-                _indicesByPayloadHash.Clear();
-                _payloads.Clear();
-                _payloadHashes.Clear();
-                _names.Clear();
+                Clear();
             }
         }
 
@@ -132,13 +200,13 @@ namespace VVardenfell.Importer.Bake
             using var fs = File.Create(path);
             using var w = new BinaryWriter(fs);
             w.Write(MagicCatalog);
+            w.Write(CatalogVersion);
             w.Write((uint)_payloads.Count);
             for (int i = 0; i < _payloads.Count; i++)
             {
                 w.Write(_payloadHashes[i]);
                 w.Write(_names[i] ?? string.Empty);
                 w.Write(_payloads[i].Length);
-                w.Write(_payloads[i]);
             }
             Modified = false;
         }
@@ -280,6 +348,14 @@ namespace VVardenfell.Importer.Bake
             fs.Position = tableStart;
             for (int i = 0; i < offsets.Length; i++)
                 w.Write(offsets[i]);
+        }
+
+        private void Clear()
+        {
+            _indicesByPayloadHash.Clear();
+            _payloads.Clear();
+            _payloadHashes.Clear();
+            _names.Clear();
         }
     }
 }

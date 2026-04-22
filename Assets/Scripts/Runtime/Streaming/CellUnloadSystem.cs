@@ -2,6 +2,8 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Physics;
+using Unity.Profiling;
 using Unity.Rendering;
 
 namespace VVardenfell.Runtime.Streaming
@@ -25,8 +27,14 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _cfgQuery;
         EntityQuery _refsOnlyQuery;  // excludes terrain (no CellCoord)
         EntityQuery _allQuery;       // refs + terrain
+        EntityQuery _refPhysicsUnloadQuery;
+        EntityQuery _cellPhysicsUnloadQuery;
+        EntityTypeHandle _entityHandle;
         ComponentTypeHandle<CellLink> _cellLinkHandle;
         ComponentTypeHandle<MaterialMeshInfo> _mmiHandle;
+        static readonly ProfilerMarker k_PhysicsUnload = new("VV.Streaming.PhysicsUnload");
+        static readonly ProfilerMarker k_DeactivateRefCollider = new("VV.Streaming.PhysicsUnload.DeactivateRefCollider");
+        static readonly ProfilerMarker k_DeactivateCellCollider = new("VV.Streaming.PhysicsUnload.DeactivateCellCollider");
 
         public void OnCreate(ref SystemState state)
         {
@@ -52,7 +60,14 @@ namespace VVardenfell.Runtime.Streaming
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
                 .Build();
+            _refPhysicsUnloadQuery = SystemAPI.QueryBuilder()
+                .WithAll<CellLink, RefCollisionSource, PhysicsCollider>()
+                .Build();
+            _cellPhysicsUnloadQuery = SystemAPI.QueryBuilder()
+                .WithAll<CellLink, StoredPhysicsColliderBlob, PhysicsCollider>()
+                .Build();
 
+            _entityHandle = state.GetEntityTypeHandle();
             _cellLinkHandle = state.GetComponentTypeHandle<CellLink>(isReadOnly: true);
             _mmiHandle      = state.GetComponentTypeHandle<MaterialMeshInfo>(isReadOnly: false);
         }
@@ -68,22 +83,57 @@ namespace VVardenfell.Runtime.Streaming
 
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
+            _entityHandle.Update(ref state);
+            var ecb = new EntityCommandBuffer(Allocator.TempJob);
 
-            for (int i = 0; i < unload.PendingEntityDestroy.Length; i++)
+            try
             {
-                var coord = unload.PendingEntityDestroy[i];
-
-                new ToggleMmiJob
+                for (int i = 0; i < unload.PendingEntityDestroy.Length; i++)
                 {
-                    Target      = coord,
-                    Enable      = false,
-                    LinkHandle  = _cellLinkHandle,
-                    MmiHandle   = _mmiHandle,
-                }.Run(targetQuery);
+                    var coord = unload.PendingEntityDestroy[i];
 
-                loaded.Active.Remove(coord);
-                // Managed resources (terrain Mesh/Texture/Material) stay alive across
-                // enable/disable cycles — we only toggle render state.
+                    new ToggleMmiJob
+                    {
+                        Target      = coord,
+                        Enable      = false,
+                        LinkHandle  = _cellLinkHandle,
+                        MmiHandle   = _mmiHandle,
+                    }.Run(targetQuery);
+
+                    using (k_PhysicsUnload.Auto())
+                    {
+                        using (k_DeactivateRefCollider.Auto())
+                        {
+                            new RemovePhysicsColliderJob
+                            {
+                                Target = coord,
+                                EntityHandle = _entityHandle,
+                                LinkHandle = _cellLinkHandle,
+                                CommandBuf = ecb.AsParallelWriter(),
+                            }.Run(_refPhysicsUnloadQuery);
+                        }
+
+                        using (k_DeactivateCellCollider.Auto())
+                        {
+                            new RemovePhysicsColliderJob
+                            {
+                                Target = coord,
+                                EntityHandle = _entityHandle,
+                                LinkHandle = _cellLinkHandle,
+                                CommandBuf = ecb.AsParallelWriter(),
+                            }.Run(_cellPhysicsUnloadQuery);
+                        }
+                    }
+
+                    loaded.Active.Remove(coord);
+                    // Managed resources (terrain Mesh/Texture/Material) stay alive across
+                    // enable/disable cycles — we only toggle render/physics state.
+                }
+            }
+            finally
+            {
+                ecb.Playback(state.EntityManager);
+                ecb.Dispose();
             }
 
             unload.PendingEntityDestroy.Clear();
@@ -105,6 +155,29 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     if (links[i].Value.Equals(Target))
                         chunk.SetComponentEnabled(ref MmiHandle, i, Enable);
+                }
+            }
+        }
+
+        [BurstCompile]
+        private struct RemovePhysicsColliderJob : IJobChunk
+        {
+            public int2 Target;
+            [ReadOnly] public EntityTypeHandle EntityHandle;
+            [ReadOnly] public ComponentTypeHandle<CellLink> LinkHandle;
+            public EntityCommandBuffer.ParallelWriter CommandBuf;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
+            {
+                var entities = chunk.GetNativeArray(EntityHandle);
+                var links = chunk.GetNativeArray(ref LinkHandle);
+                int n = chunk.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    if (!links[i].Value.Equals(Target))
+                        continue;
+
+                    CommandBuf.RemoveComponent<PhysicsCollider>(unfilteredChunkIndex, entities[i]);
                 }
             }
         }

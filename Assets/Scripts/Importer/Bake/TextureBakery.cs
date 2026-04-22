@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Bsa;
 
@@ -107,6 +108,17 @@ namespace VVardenfell.Importer.Bake
 
         public IReadOnlyList<string> HashesInOrder => _hashHexByIndex;
 
+        public int2 GetBucketDimensions(int textureIndex)
+        {
+            if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
+                return new int2(1, 1);
+
+            string path = CachePaths.TextureFile(_hashHexByIndex[textureIndex]);
+            return TryReadCachedDdsDimensions(path, out int width, out int height)
+                ? new int2(math.max(1, width), math.max(1, height))
+                : new int2(1, 1);
+        }
+
         public void WriteCatalog(string path)
         {
             using var fs = File.Create(path);
@@ -167,6 +179,37 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < 8; i++)
                 sb.AppendFormat("{0:x2}", hash[i]);
             return sb.ToString();
+        }
+
+        private static bool TryReadCachedDdsDimensions(string path, out int width, out int height)
+        {
+            width = 1;
+            height = 1;
+
+            if (!File.Exists(path))
+                return false;
+
+            try
+            {
+                using var fs = File.OpenRead(path);
+                using var r = new BinaryReader(fs);
+                if (fs.Length < 20)
+                    return false;
+
+                const uint MagicDds = 0x20534444u;
+                if (r.ReadUInt32() != MagicDds)
+                    return false;
+
+                _ = r.ReadUInt32(); // header size
+                _ = r.ReadUInt32(); // flags
+                height = r.ReadInt32();
+                width = r.ReadInt32();
+                return width > 0 && height > 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

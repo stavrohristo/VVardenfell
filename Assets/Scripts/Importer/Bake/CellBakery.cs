@@ -24,7 +24,12 @@ namespace VVardenfell.Importer.Bake
     /// File layout:
     ///   u32 magic 'CELL'
     ///   i32 gridX, gridY
-    ///   u32 flags              (CellFlagHasTerrain, CellFlagHasNormals, CellFlagHasVtex, CellFlagHasStaticCollision)
+    ///   u32 flags              (CellFlagHasTerrain, CellFlagHasNormals, CellFlagHasVtex, CellFlagHasStaticCollision, CellFlagHasEnvironment)
+    ///   (if HasEnvironment)
+    ///     u8 hasMood, u8 hasWater
+    ///     u32 ambientColor, directionalColor, fogColor
+    ///     f32 fogDensity, waterHeight
+    ///     string regionId
     ///   (if HasTerrain)
     ///     float[4225] heights
     ///     (if HasNormals)
@@ -37,7 +42,7 @@ namespace VVardenfell.Importer.Bake
     ///     u32 staticBlobLen
     ///     byte[staticBlobLen] pre-built MeshCollider blob
     ///   u32 refCount
-    ///   RefEntry[refCount]     (56 bytes each)
+    ///   RefEntry[refCount]     (68 bytes each)
     ///   u32 doorCount
     ///   DoorRefEntry[doorCount]
     /// </summary>
@@ -47,33 +52,42 @@ namespace VVardenfell.Importer.Bake
 
         public readonly struct BakedRef
         {
-            public readonly int MeshIndex;
-            public readonly int MaterialIndex;
+            public readonly int RenderShardIndex;
+            public readonly int LocalMeshIndex;
+            public readonly int LocalMaterialIndex;
             public readonly int SliceIndex;
             public readonly int CollisionIndex;
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
+            public readonly int ContentHandleValue;
+            public readonly int ContentKind;
             public readonly Vector3 PositionUnity;
             public readonly Quaternion RotationUnity;
             public readonly float Scale;
 
             public BakedRef(
-                int mesh,
-                int mat,
+                int renderShardIndex,
+                int localMeshIndex,
+                int localMaterialIndex,
                 int slice,
                 int collision,
                 uint placedRefId,
                 int doorMetaIndex,
+                int contentHandleValue,
+                int contentKind,
                 Vector3 pos,
                 Quaternion rot,
                 float scale)
             {
-                MeshIndex = mesh;
-                MaterialIndex = mat;
+                RenderShardIndex = renderShardIndex;
+                LocalMeshIndex = localMeshIndex;
+                LocalMaterialIndex = localMaterialIndex;
                 SliceIndex = slice;
                 CollisionIndex = collision;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
+                ContentHandleValue = contentHandleValue;
+                ContentKind = contentKind;
                 PositionUnity = pos;
                 RotationUnity = rot;
                 Scale = scale;
@@ -100,6 +114,7 @@ namespace VVardenfell.Importer.Bake
             int gridY,
             LandRecord land,
             ushort[] layerGrid,
+            in CellEnvironmentData environment,
             in StaticCollision staticCollision,
             IReadOnlyList<BakedRef> refs,
             IReadOnlyList<DoorRefEntry> doors,
@@ -113,10 +128,12 @@ namespace VVardenfell.Importer.Bake
             bool hasNormals = hasTerrain && land.Normals != null;
             bool hasVtex = hasTerrain && layerGrid != null && layerGrid.Length == LandRecord.NumTextures;
             bool hasStaticCollision = !staticCollision.IsEmpty;
+            bool hasEnvironment = environment.HasAnyData;
             if (hasTerrain) flags |= CacheFormat.CellFlagHasTerrain;
             if (hasNormals) flags |= CacheFormat.CellFlagHasNormals;
             if (hasVtex) flags |= CacheFormat.CellFlagHasVtex;
             if (hasStaticCollision) flags |= CacheFormat.CellFlagHasStaticCollision;
+            if (hasEnvironment) flags |= CacheFormat.CellFlagHasEnvironment;
 
             using var fs = File.Create(path);
             using var w = new BinaryWriter(fs);
@@ -124,6 +141,18 @@ namespace VVardenfell.Importer.Bake
             w.Write(gridX);
             w.Write(gridY);
             w.Write(flags);
+
+            if (hasEnvironment)
+            {
+                w.Write(environment.HasMood);
+                w.Write(environment.HasWater);
+                w.Write(environment.AmbientColorRgba);
+                w.Write(environment.DirectionalColorRgba);
+                w.Write(environment.FogColorRgba);
+                w.Write(environment.FogDensity);
+                w.Write(environment.WaterHeight);
+                w.Write(environment.RegionId ?? string.Empty);
+            }
 
             if (hasTerrain)
             {
@@ -193,12 +222,15 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < refs.Count; i++)
             {
                 var r = refs[i];
-                w.Write(r.MeshIndex);
-                w.Write(r.MaterialIndex);
+                w.Write(r.RenderShardIndex);
+                w.Write(r.LocalMeshIndex);
+                w.Write(r.LocalMaterialIndex);
                 w.Write(r.SliceIndex);
                 w.Write(r.CollisionIndex);
                 w.Write(r.PlacedRefId);
                 w.Write(r.DoorMetaIndex);
+                w.Write(r.ContentHandleValue);
+                w.Write(r.ContentKind);
                 w.Write(r.PositionUnity.x);
                 w.Write(r.PositionUnity.y);
                 w.Write(r.PositionUnity.z);

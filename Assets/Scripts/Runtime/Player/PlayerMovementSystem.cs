@@ -18,7 +18,9 @@ namespace VVardenfell.Runtime.Player
         EntityQuery _viewQuery;
 
         const float MinMoveEpsilon = 1e-5f;
+        const float MinInputEpsilonSq = 1e-4f;
         const float StepDownSlack = 0.05f;
+        const float MinGroundSnapDistance = 0.001f;
         const int GroundSlidePasses = 4;
         const int AirSlidePasses = 3;
 
@@ -129,8 +131,7 @@ namespace VVardenfell.Runtime.Player
                 position = groundedPosition;
                 characterState.Grounded = true;
                 characterState.LastGroundedTick = tick;
-                if (characterState.WorldVelocity.y < 0f)
-                    characterState.WorldVelocity.y = 0f;
+                ResolveWalkableGroundVelocity(ref characterState.WorldVelocity);
             }
             else
             {
@@ -162,20 +163,30 @@ namespace VVardenfell.Runtime.Player
             }
 
             float inputMagnitudeSq = math.lengthsq(control.MoveInput);
+            bool hasMoveInput = inputMagnitudeSq > MinInputEpsilonSq;
             characterState.Sprinting = !characterState.Crouched && characterState.Grounded && control.SprintHeld && inputMagnitudeSq > 0f;
 
             if (characterState.Grounded)
             {
-                float groundedMaxSpeed = character.GroundMaxSpeed;
-                if (characterState.Crouched)
-                    groundedMaxSpeed *= character.CrouchSpeedMultiplier;
-                else if (characterState.Sprinting)
-                    groundedMaxSpeed *= character.SprintSpeedMultiplier;
+                if (!hasMoveInput)
+                {
+                    characterState.WorldVelocity = float3.zero;
+                }
+                else
+                {
+                    float groundedMaxSpeed = character.GroundMaxSpeed;
+                    if (characterState.Crouched)
+                        groundedMaxSpeed *= character.CrouchSpeedMultiplier;
+                    else if (characterState.Sprinting)
+                        groundedMaxSpeed *= character.SprintSpeedMultiplier;
 
-                ProjectOnPlane(moveVectorWorld * groundedMaxSpeed, groundNormal, out float3 targetGroundVelocity);
-                float lerpFactor = 1f - math.exp(-character.GroundedMovementSharpness * dt);
-                characterState.WorldVelocity = math.lerp(characterState.WorldVelocity, targetGroundVelocity, lerpFactor);
-                ProjectOnPlane(characterState.WorldVelocity, groundNormal, out characterState.WorldVelocity);
+                    float3 targetGroundVelocity = moveVectorWorld * groundedMaxSpeed;
+                    ResolveWalkableGroundVelocity(ref characterState.WorldVelocity);
+
+                    float lerpFactor = 1f - math.exp(-character.GroundedMovementSharpness * dt);
+                    characterState.WorldVelocity = math.lerp(characterState.WorldVelocity, targetGroundVelocity, lerpFactor);
+                    ResolveWalkableGroundVelocity(ref characterState.WorldVelocity);
+                }
             }
             else
             {
@@ -196,8 +207,7 @@ namespace VVardenfell.Runtime.Player
 
             if (characterState.Grounded)
             {
-                ProjectOnPlane(characterState.WorldVelocity, groundNormal, out float3 groundedVelocityOnPlane);
-                float3 groundedMove = groundedVelocityOnPlane * dt;
+                float3 groundedMove = new float3(characterState.WorldVelocity.x, 0f, characterState.WorldVelocity.z) * dt;
                 if (math.lengthsq(groundedMove) > MinMoveEpsilon)
                 {
                     MoveGrounded(
@@ -253,9 +263,7 @@ namespace VVardenfell.Runtime.Player
                 position = regroundedPosition;
                 characterState.Grounded = true;
                 characterState.LastGroundedTick = tick;
-                ProjectOnPlane(characterState.WorldVelocity, regroundNormal, out characterState.WorldVelocity);
-                if (characterState.WorldVelocity.y < 0f)
-                    characterState.WorldVelocity.y = 0f;
+                ResolveWalkableGroundVelocity(ref characterState.WorldVelocity);
             }
             else
             {
@@ -308,6 +316,12 @@ namespace VVardenfell.Runtime.Player
         }
 
         [BurstCompile]
+        static void ResolveWalkableGroundVelocity(ref float3 velocity)
+        {
+            velocity.y = 0f;
+        }
+
+        [BurstCompile]
         static void MoveGrounded(
             in CollisionWorld world,
             in PhysicsCollider collider,
@@ -327,6 +341,20 @@ namespace VVardenfell.Runtime.Player
                 true,
                 ref slidePosition,
                 out ColliderCastHit firstHit);
+
+            float slideGroundProbeDistance = math.max(
+                character.GroundProbeDistance,
+                character.MaxStepHeight + math.length(move) + StepDownSlack);
+            if (TrySnapToGround(
+                world,
+                collider,
+                slidePosition,
+                slideGroundProbeDistance,
+                character.MaxSlopeCosine,
+                out float3 snappedSlidePosition))
+            {
+                slidePosition = snappedSlidePosition;
+            }
 
             float3 bestPosition = slidePosition;
             float slideDistanceSq = math.lengthsq(slidePosition - start);
@@ -506,6 +534,43 @@ namespace VVardenfell.Runtime.Player
             groundNormal = math.up();
             snappedPosition = position;
             return false;
+        }
+
+        [BurstCompile]
+        static unsafe bool TrySnapToGround(
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            in float3 position,
+            float snapDistance,
+            float maxSlopeCosine,
+            out float3 snappedPosition)
+        {
+            if (snapDistance <= MinGroundSnapDistance)
+            {
+                snappedPosition = position;
+                return false;
+            }
+
+            var castInput = new ColliderCastInput(
+                collider.Value,
+                position,
+                position - new float3(0f, snapDistance, 0f),
+                quaternion.identity);
+
+            if (!world.CastCollider(castInput, out ColliderCastHit hit))
+            {
+                snappedPosition = position;
+                return false;
+            }
+
+            if (hit.SurfaceNormal.y < maxSlopeCosine)
+            {
+                snappedPosition = position;
+                return false;
+            }
+
+            snappedPosition = position - new float3(0f, snapDistance * hit.Fraction, 0f);
+            return true;
         }
 
         [BurstCompile]

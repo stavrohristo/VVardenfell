@@ -1,3 +1,5 @@
+using VVardenfell.Core.Cache;
+
 namespace VVardenfell.Importer.Esm
 {
     [System.Flags]
@@ -18,15 +20,17 @@ namespace VVardenfell.Importer.Esm
         public readonly CellFlags Flags;
         public readonly int GridX;
         public readonly int GridY;
+        public readonly CellEnvironmentData Environment;
         /// <summary>Stream position of the record header (start of the 16-byte record).</summary>
         public readonly long RecordOffset;
 
-        public CellHeader(string name, CellFlags flags, int gridX, int gridY, long recordOffset)
+        public CellHeader(string name, CellFlags flags, int gridX, int gridY, CellEnvironmentData environment, long recordOffset)
         {
             Name = name;
             Flags = flags;
             GridX = gridX;
             GridY = gridY;
+            Environment = environment;
             RecordOffset = recordOffset;
         }
 

@@ -1,8 +1,10 @@
+using System;
 using System.Collections;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Rendering;
@@ -12,6 +14,7 @@ using Unity.Profiling;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Dds;
 using VVardenfell.Runtime.Bootstrap;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using Debug = UnityEngine.Debug;
 
@@ -39,14 +42,17 @@ namespace VVardenfell.Runtime.Cache
         static readonly ProfilerMarker k_Textures = new("VV.CacheLoader.Textures");
         static readonly ProfilerMarker k_RefBuckets = new("VV.CacheLoader.RefBuckets");
         static readonly ProfilerMarker k_TerrainLayers = new("VV.CacheLoader.TerrainLayers");
+        static readonly ProfilerMarker k_GameplayContent = new("VV.CacheLoader.GameplayContent");
 
         public BakeManifest Manifest { get; private set; }
         public Mesh[] Meshes { get; private set; }
         public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
+        public RenderShardCatalogData RenderShardCatalog { get; private set; }
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
         public MaterialRegistry Registry { get; private set; }
+        public RuntimeContentDatabase ContentDatabase { get; private set; }
 
         public bool TryLoad(out string error)
         {
@@ -77,6 +83,9 @@ namespace VVardenfell.Runtime.Cache
                     throw new InvalidDataException("manifest.bin unreadable");
                 Manifest = manifest;
                 MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
+                if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
+                    throw new InvalidDataException("render_shards.bin unreadable");
+                RenderShardCatalog = renderShardCatalog;
             }
             finally
             {
@@ -88,13 +97,33 @@ namespace VVardenfell.Runtime.Cache
             Debug.Log($"[VVardenfell] cache manifest + metadata in {manifestSw.ElapsedMilliseconds}ms");
             yield return null;
 
+            progress?.BeginStage("Gameplay content", "Loading gameplay content database", 1);
+            var gameplaySw = Stopwatch.StartNew();
+            k_GameplayContent.Begin();
+            try
+            {
+                ContentDatabase = RuntimeContentDatabase.LoadFromCache();
+            }
+            finally
+            {
+                k_GameplayContent.End();
+            }
+            gameplaySw.Stop();
+            progress?.Report(
+                $"Gameplay content ready: {ContentDatabase.ActorCount} actors, {ContentDatabase.LightCount} lights, {ContentDatabase.SoundCount} sounds",
+                1,
+                1);
+            progress?.CompleteStage();
+            Debug.Log($"[VVardenfell] gameplay content loaded in {gameplaySw.ElapsedMilliseconds}ms");
+            yield return null;
+
             progress?.BeginStage("Mesh deserialization", "Reading meshes", 0);
             yield return ReadMeshesIncremental(progress);
 
             progress?.BeginStage("Texture decode/load", "Loading textures", 0);
             yield return LoadTexturesIncremental(progress);
 
-            progress?.BeginStage("Ref buckets + materials", "Building reference buckets", 0);
+            progress?.BeginStage("Ref shards + materials", "Building reference shards", 0);
             yield return BuildBucketedRefArraysIncremental(progress);
 
             progress?.BeginStage("Terrain layer arrays", "Preparing terrain layers", 1);
@@ -214,6 +243,7 @@ namespace VVardenfell.Runtime.Cache
             Registry = MaterialRegistry.LoadOrCreate();
 #endif
 
+            const int fallbackBucketKey = (1 << 16) | 1; // 0x00010001
             var groups = new Dictionary<int, List<int>>();
             for (int i = 0; i < Textures.Length; i++)
             {
@@ -228,9 +258,13 @@ namespace VVardenfell.Runtime.Cache
             if (groups.Count == 0)
                 groups[(1 << 16) | 1] = new List<int>();
 
+            if (!groups.ContainsKey(fallbackBucketKey))
+                groups[fallbackBucketKey] = new List<int>();
+
             var keys = new int[groups.Count];
             groups.Keys.CopyTo(keys, 0);
             System.Array.Sort(keys);
+            int fallbackBucket = -1;
 
             int totalTextureOps = 0;
             foreach (var key in keys)
@@ -240,8 +274,8 @@ namespace VVardenfell.Runtime.Cache
             progress?.Report("Grouping textures into buckets", 0, totalOps);
 
             RenderTexture[] rts = new RenderTexture[keys.Length];
-            RenderMeshArray[] rmas = new RenderMeshArray[keys.Length];
             Material[] materials = new Material[keys.Length * matRecords.Length];
+            var bucketMaterials = new Material[keys.Length][];
             var texBucketInfo = new NativeArray<int2>(
                 Textures.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
@@ -251,8 +285,9 @@ namespace VVardenfell.Runtime.Cache
 
             int completed = 0;
             int yieldedAt = 0;
-            int fallbackBucket = 0;
             int fallbackSlice = 0;
+            NativeArray<int2> shardRanges = default;
+            NativeArray<int> shardGlobalMeshIndices = default;
 
             bool success = false;
             try
@@ -260,6 +295,9 @@ namespace VVardenfell.Runtime.Cache
                 for (int b = 0; b < keys.Length; b++)
                 {
                     int key = keys[b];
+                    if (key == fallbackBucketKey)
+                        fallbackBucket = b;
+
                     int w = key >> 16;
                     int h = key & 0xFFFF;
                     var list = groups[key];
@@ -320,7 +358,7 @@ namespace VVardenfell.Runtime.Cache
                             completed++;
                         }
 
-                        rmas[b] = new RenderMeshArray(bucketMats, Meshes);
+                        bucketMaterials[b] = bucketMats;
                         if (b == fallbackBucket)
                             fallbackSlice = whiteSliceInBucket;
                     }
@@ -337,15 +375,79 @@ namespace VVardenfell.Runtime.Cache
                     }
                 }
 
+                var records = RenderShardCatalog?.Records ?? Array.Empty<RenderShardRecord>();
+                if (records.Length == 0)
+                    throw new InvalidDataException("render_shards.bin contains no shard records.");
+
+                if (fallbackBucket < 0)
+                    throw new InvalidDataException($"runtime texture bucket map missing fallback key 0x{fallbackBucketKey:X8}.");
+
+                var bucketIndexByKey = new Dictionary<int, int>(keys.Length);
+                for (int i = 0; i < keys.Length; i++)
+                    bucketIndexByKey[keys[i]] = i;
+
+                int remappedShardCount = 0;
+                var remappedBuckets = new HashSet<int>();
+
+                var rmas = new RenderMeshArray[records.Length];
+                shardRanges = new NativeArray<int2>(records.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                int totalShardMeshIndices = 0;
+                for (int shardIndex = 0; shardIndex < records.Length; shardIndex++)
+                    totalShardMeshIndices += records[shardIndex]?.GlobalMeshIndices?.Length ?? 0;
+                shardGlobalMeshIndices = new NativeArray<int>(totalShardMeshIndices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+
+                int shardGlobalCursor = 0;
+                for (int shardIndex = 0; shardIndex < records.Length; shardIndex++)
+                {
+                    var record = records[shardIndex];
+                    if (!bucketIndexByKey.TryGetValue(record.BucketKey, out int bucketIndex))
+                    {
+                        remappedShardCount++;
+                        remappedBuckets.Add(record.BucketKey);
+                        bucketIndex = fallbackBucket;
+                    }
+
+                    var globalMeshIndices = record.GlobalMeshIndices ?? Array.Empty<int>();
+                    var shardMeshes = new Mesh[globalMeshIndices.Length];
+                    shardRanges[shardIndex] = new int2(shardGlobalCursor, globalMeshIndices.Length);
+                    for (int meshIndex = 0; meshIndex < globalMeshIndices.Length; meshIndex++)
+                    {
+                        int globalMeshIndex = globalMeshIndices[meshIndex];
+                        if ((uint)globalMeshIndex >= (uint)Meshes.Length)
+                            throw new InvalidDataException($"render shard {shardIndex} references mesh index {globalMeshIndex}, but meshes.bin only contains {Meshes.Length} meshes.");
+                        shardMeshes[meshIndex] = Meshes[globalMeshIndex];
+                        shardGlobalMeshIndices[shardGlobalCursor++] = globalMeshIndex;
+                    }
+
+                    rmas[shardIndex] = new RenderMeshArray(bucketMaterials[bucketIndex], shardMeshes);
+                }
+
                 WorldResources.RefBaseArrays = rts;
                 WorldResources.RefsRmas = rmas;
+                WorldResources.RefShardMeshRanges = shardRanges;
+                WorldResources.RefShardGlobalMeshIndices = shardGlobalMeshIndices;
                 WorldResources.TexBucketInfo = texBucketInfo;
                 WorldResources.FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
                 WorldResources.BlendVariantCount = matRecords.Length;
                 Materials = materials;
 
-                progress?.CompleteStage("Reference buckets ready");
-                Debug.Log($"[VVardenfell] refs: {rts.Length} dim buckets x {matRecords.Length} blend variants = {materials.Length} materials");
+                progress?.CompleteStage("Reference shards ready");
+                RenderShardFile.LogShardStats(RenderShardCatalog, "runtime load");
+                if (remappedShardCount > 0)
+                {
+                    var missingBuckets = new StringBuilder();
+                    int bucketCount = 0;
+                    foreach (int missing in remappedBuckets)
+                    {
+                        if (bucketCount > 0)
+                            missingBuckets.Append(", ");
+                        missingBuckets.AppendFormat("0x{0:X8}", missing);
+                        bucketCount++;
+                    }
+
+                    Debug.LogWarning($"[VVardenfell] remapped {remappedShardCount} render shard(s) ({missingBuckets}) to fallback bucket due to missing bucket keys.");
+                }
+                Debug.Log($"[VVardenfell] refs: {records.Length} shards, {rts.Length} dim buckets x {matRecords.Length} blend variants = {materials.Length} materials");
                 success = true;
             }
             finally
@@ -358,25 +460,29 @@ namespace VVardenfell.Runtime.Cache
                         if (rt != null)
                         {
                             rt.Release();
-                            Object.Destroy(rt);
+                            UnityEngine.Object.Destroy(rt);
                         }
                     }
 
                     for (int i = 0; i < materials.Length; i++)
                     {
                         if (materials[i] != null)
-                            Object.Destroy(materials[i]);
+                            UnityEngine.Object.Destroy(materials[i]);
                     }
 
+                    if (shardRanges.IsCreated)
+                        shardRanges.Dispose();
+                    if (shardGlobalMeshIndices.IsCreated)
+                        shardGlobalMeshIndices.Dispose();
                     if (texBucketInfo.IsCreated)
                         texBucketInfo.Dispose();
                 }
 
-                Object.Destroy(white);
+                UnityEngine.Object.Destroy(white);
             }
 
             sw.Stop();
-            Debug.Log($"[VVardenfell] cache ref buckets in {sw.ElapsedMilliseconds}ms");
+            Debug.Log($"[VVardenfell] cache ref shards in {sw.ElapsedMilliseconds}ms");
         }
 
         private static string MaterialNameForFlags(uint flags, int index)

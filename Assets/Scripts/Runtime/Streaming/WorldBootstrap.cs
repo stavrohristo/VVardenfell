@@ -18,8 +18,6 @@ using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Player;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
-using SphereCollider = Unity.Physics.SphereCollider;
-using CapsuleCollider = Unity.Physics.CapsuleCollider;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace VVardenfell.Runtime.Streaming
@@ -42,8 +40,10 @@ namespace VVardenfell.Runtime.Streaming
         static readonly ProfilerMarker k_Managed = new("VV.Install.ManagedResources");
         static readonly ProfilerMarker k_MeshBounds = new("VV.Install.MeshBoundsCache");
         static readonly ProfilerMarker k_TerrainAssets = new("VV.Install.TerrainAssetResolve");
-        static readonly ProfilerMarker k_Sentinel = new("VV.Install.SentinelCollider");
         static readonly ProfilerMarker k_RefPrefabs = new("VV.Install.RefPrefabBuild");
+        static readonly ProfilerMarker k_RefPrefabCreateEntity = new("VV.Install.RefPrefabBuild.CreateEntity");
+        static readonly ProfilerMarker k_RefPrefabAddRenderMesh = new("VV.Install.RefPrefabBuild.AddRenderMesh");
+        static readonly ProfilerMarker k_RefPrefabSetup = new("VV.Install.RefPrefabBuild.Setup");
         static readonly ProfilerMarker k_CellPreload = new("VV.Install.CellPreload");
         static readonly ProfilerMarker k_InteractableBlobs = new("VV.Install.InteractableColliderLoad");
         static readonly ProfilerMarker k_StatCellBlobs = new("VV.Install.CellColliderTransfer");
@@ -104,6 +104,7 @@ namespace VVardenfell.Runtime.Streaming
 
             NativeHashSet<int2> available = default;
             var loadedMap = default(LoadedCellsMap);
+            var logicalRefLookup = default(LogicalRefLookup);
             var loadQueue = default(LoadQueue);
             var unloadList = default(UnloadList);
             bool singletonInstalled = false;
@@ -190,46 +191,56 @@ namespace VVardenfell.Runtime.Streaming
                 progress?.CompleteStage();
                 yield return null;
 
-                progress?.BeginStage("Sentinel collider", "Creating sentinel collider", 1);
-                k_Sentinel.Begin();
-                try
-                {
-                    if (!WorldResources.SentinelCollider.IsCreated)
-                    {
-                        WorldResources.SentinelCollider = SphereCollider.Create(
-                            new SphereGeometry { Center = float3.zero, Radius = 0.01f },
-                            CollisionFilter.Zero);
-                    }
-                }
-                finally
-                {
-                    k_Sentinel.End();
-                }
-                progress?.Report("Sentinel collider ready", 1, 1);
-                progress?.CompleteStage();
-                yield return null;
-
                 var rmas = WorldResources.RefsRmas ?? System.Array.Empty<RenderMeshArray>();
                 WorldResources.RefPrefabs = new Entity[rmas.Length];
 
                 progress?.BeginStage("Ref prefab build", "Creating ref prefabs", rmas.Length);
+                var prefabBuildSw = Stopwatch.StartNew();
                 for (int b = 0; b < rmas.Length; b++)
                 {
                     k_RefPrefabs.Begin();
                     try
                     {
-                        var prefab = em.CreateEntity();
+                        Entity prefab;
+                        k_RefPrefabCreateEntity.Begin();
+                        try
+                        {
+                            prefab = em.CreateEntity();
+                        }
+                        finally
+                        {
+                            k_RefPrefabCreateEntity.End();
+                        }
+
                         em.SetName(prefab, $"VVardenfell.RefPrefab[b{b}]");
-                        RenderMeshUtility.AddComponents(
-                            prefab, em, WorldResources.Desc, rmas[b],
-                            MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-                        em.AddComponentData(prefab, LocalTransform.Identity);
-                        em.AddComponentData(prefab, default(TextureSlice));
-                        em.AddComponentData(prefab, new CellLink { Value = int2.zero });
-                        em.AddComponent<Unity.Transforms.Static>(prefab);
-                        em.AddComponentData(prefab, new PhysicsCollider { Value = WorldResources.SentinelCollider });
-                        em.AddSharedComponent(prefab, new PhysicsWorldIndex { Value = 0 });
-                        em.AddComponent<Prefab>(prefab);
+
+                        k_RefPrefabAddRenderMesh.Begin();
+                        try
+                        {
+                            RenderMeshUtility.AddComponents(
+                                prefab, em, WorldResources.Desc, rmas[b],
+                                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+                        }
+                        finally
+                        {
+                            k_RefPrefabAddRenderMesh.End();
+                        }
+
+                        k_RefPrefabSetup.Begin();
+                        try
+                        {
+                            em.AddComponentData(prefab, LocalTransform.Identity);
+                            em.AddComponentData(prefab, default(TextureSlice));
+                            em.AddComponentData(prefab, new CellLink { Value = int2.zero });
+                            em.AddComponent<Unity.Transforms.Static>(prefab);
+                            em.AddSharedComponent(prefab, new PhysicsWorldIndex { Value = 0 });
+                            em.AddComponent<Prefab>(prefab);
+                        }
+                        finally
+                        {
+                            k_RefPrefabSetup.End();
+                        }
+
                         WorldResources.RefPrefabs[b] = prefab;
                     }
                     finally
@@ -241,7 +252,17 @@ namespace VVardenfell.Runtime.Streaming
                     progress?.Report($"Creating ref prefabs {completed}/{rmas.Length}", completed, rmas.Length);
                     yield return null;
                 }
+                prefabBuildSw.Stop();
                 progress?.CompleteStage("Ref prefabs ready");
+                if (rmas.Length > 0)
+                {
+                    double averageMs = prefabBuildSw.Elapsed.TotalMilliseconds / rmas.Length;
+                    Debug.Log($"[VVardenfell] ref prefab build: prefabs={rmas.Length}, elapsedMs={prefabBuildSw.Elapsed.TotalMilliseconds:F2}, avgMsPerPrefab={averageMs:F3}");
+                }
+                else
+                {
+                    Debug.Log("[VVardenfell] ref prefab build: prefabs=0, elapsedMs=0.00, avgMsPerPrefab=0.000");
+                }
 
                 progress?.BeginStage("Background preload", "Scheduling cell preload and collider load", 2);
                 var preloadTask = Task.Run(() => PreloadCells(cache));
@@ -379,6 +400,10 @@ namespace VVardenfell.Runtime.Streaming
                     Map = new NativeHashMap<int2, Entity>(cellCap, Allocator.Persistent),
                     Active = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
                 };
+                logicalRefLookup = new LogicalRefLookup
+                {
+                    Map = new NativeParallelHashMap<uint, Entity>(System.Math.Max(cellCap * 8, 1024), Allocator.Persistent),
+                };
                 loadQueue = new LoadQueue
                 {
                     Queue = new NativeQueue<int2>(Allocator.Persistent),
@@ -388,7 +413,7 @@ namespace VVardenfell.Runtime.Streaming
                     PendingEntityDestroy = new NativeList<int2>(32, Allocator.Persistent),
                 };
 
-                yield return WorldSpawner.SpawnAllIncremental(world, cache, loadedMap, DefaultGateTerrainByRadius, progress);
+                yield return WorldSpawner.SpawnAllIncremental(world, cache, loadedMap, logicalRefLookup, DefaultGateTerrainByRadius, progress);
 
                 progress?.BeginStage("Create singleton state", "Publishing streaming singletons", 1);
                 k_Singletons.Begin();
@@ -407,6 +432,7 @@ namespace VVardenfell.Runtime.Streaming
                     });
                     em.AddComponentData(singleton, new AvailableCells { Set = available });
                     em.AddComponentData(singleton, loadedMap);
+                    em.AddComponentData(singleton, logicalRefLookup);
                     em.AddComponentData(singleton, loadQueue);
                     em.AddComponentData(singleton, unloadList);
                     singletonInstalled = true;
@@ -450,6 +476,8 @@ namespace VVardenfell.Runtime.Streaming
                         loadedMap.Map.Dispose();
                     if (loadedMap.Active.IsCreated)
                         loadedMap.Active.Dispose();
+                    if (logicalRefLookup.Map.IsCreated)
+                        logicalRefLookup.Map.Dispose();
                     if (loadQueue.Queue.IsCreated)
                         loadQueue.Queue.Dispose();
                     if (unloadList.PendingEntityDestroy.IsCreated)
@@ -500,6 +528,12 @@ namespace VVardenfell.Runtime.Streaming
                 lc.Active.Dispose();
             }
 
+            foreach (var e in em.CreateEntityQuery(typeof(LogicalRefLookup)).ToEntityArray(Allocator.Temp))
+            {
+                var lookup = em.GetComponentData<LogicalRefLookup>(e);
+                lookup.Map.Dispose();
+            }
+
             foreach (var e in em.CreateEntityQuery(typeof(LoadQueue)).ToEntityArray(Allocator.Temp))
                 em.GetComponentData<LoadQueue>(e).Queue.Dispose();
 
@@ -541,6 +575,7 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     loaded[i] = CellFile.Read(path);
+                    TryAttachPlacementAudit(loaded[i], CachePaths.CellPlacementAuditFile(g.Item1, g.Item2));
                 }
                 catch (System.Exception ex)
                 {
@@ -568,6 +603,7 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     loadedInteriors[i] = CellFile.Read(path, isInterior: true, cellId: cellId);
+                    TryAttachPlacementAudit(loadedInteriors[i], CachePaths.InteriorCellPlacementAuditFile(cellId));
                 }
                 catch (System.Exception ex)
                 {
@@ -586,6 +622,21 @@ namespace VVardenfell.Runtime.Streaming
                 InteriorCells = loadedInteriors,
                 InteriorFailures = interiorFailures,
             };
+        }
+
+        private static void TryAttachPlacementAudit(CellData cell, string auditPath)
+        {
+            if (cell == null || string.IsNullOrEmpty(auditPath) || !System.IO.File.Exists(auditPath))
+                return;
+
+            try
+            {
+                cell.PlacementAudit = RefPlacementAuditFile.Read(auditPath);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[VVardenfell] failed reading placement audit '{auditPath}': {ex.Message}");
+            }
         }
 
         private static PreloadFailureInfo CreateMissingFileFailure(bool isInterior, string cellLabel, string path)

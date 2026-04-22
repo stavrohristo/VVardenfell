@@ -30,9 +30,11 @@ namespace VVardenfell.Runtime.Cache
         // Ownership moves to <c>WorldResources</c> dictionaries at install time.
         public BlobAssetReference<Collider> StaticColliderBlob;
         public BlobAssetReference<Collider> TerrainColliderBlob;
+        public CellEnvironmentData Environment;
 
         public RefEntry[] Refs;
         public DoorRefEntry[] Doors;
+        public CellPlacementAuditData PlacementAudit;
 
         public bool HasStaticCollider => StaticColliderBlob.IsCreated;
         public bool HasTerrainCollider => TerrainColliderBlob.IsCreated;
@@ -44,7 +46,7 @@ namespace VVardenfell.Runtime.Cache
         const int TerrainSampleCount = TerrainSize * TerrainSize;
         const int TerrainNormalCount = 3 * TerrainSampleCount;
         const int LayerGridCount = 16 * 16;
-        const int RefEntrySizeBytes = 56;
+        const int RefEntrySizeBytes = 68;
         const int DoorEntryFixedBytes = 36;
 
         static readonly ProfilerMarker k_ReadHeader = new("VV.Runtime.CellRead.Header");
@@ -68,6 +70,7 @@ namespace VVardenfell.Runtime.Cache
                 bool hasNormals;
                 bool hasVtex;
                 bool hasStaticCollision;
+                bool hasEnvironment;
 
                 using (k_ReadHeader.Auto())
                 {
@@ -96,6 +99,13 @@ namespace VVardenfell.Runtime.Cache
                     hasNormals = (flags & CacheFormat.CellFlagHasNormals) != 0;
                     hasVtex = (flags & CacheFormat.CellFlagHasVtex) != 0;
                     hasStaticCollision = (flags & CacheFormat.CellFlagHasStaticCollision) != 0;
+                    hasEnvironment = (flags & CacheFormat.CellFlagHasEnvironment) != 0;
+                }
+
+                if (hasEnvironment)
+                {
+                    currentSection = "cell environment";
+                    cell.Environment = ReadEnvironmentData(r, path, cellId, isInterior, currentSection);
                 }
 
                 if (cell.HasTerrain)
@@ -168,12 +178,15 @@ namespace VVardenfell.Runtime.Cache
                     {
                         cell.Refs[i] = new RefEntry
                         {
-                            MeshIndex = r.ReadInt32(),
-                            MaterialIndex = r.ReadInt32(),
+                            RenderShardIndex = r.ReadInt32(),
+                            LocalMeshIndex = r.ReadInt32(),
+                            LocalMaterialIndex = r.ReadInt32(),
                             SliceIndex = r.ReadInt32(),
                             CollisionIndex = r.ReadInt32(),
                             PlacedRefId = r.ReadUInt32(),
                             DoorMetaIndex = r.ReadInt32(),
+                            ContentHandleValue = r.ReadInt32(),
+                            ContentKind = r.ReadInt32(),
                             PosX = r.ReadSingle(),
                             PosY = r.ReadSingle(),
                             PosZ = r.ReadSingle(),
@@ -306,6 +319,30 @@ namespace VVardenfell.Runtime.Cache
             {
                 throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Failed reading string payload.", ex);
             }
+        }
+
+        static CellEnvironmentData ReadEnvironmentData(BinaryReader reader, string path, string cellId, bool isInterior, string section)
+        {
+            EnsureRemaining(
+                reader,
+                2L + sizeof(uint) * 3L + sizeof(float) * 2L,
+                path,
+                cellId,
+                isInterior,
+                section);
+
+            var environment = new CellEnvironmentData
+            {
+                HasMood = reader.ReadByte(),
+                HasWater = reader.ReadByte(),
+                AmbientColorRgba = reader.ReadUInt32(),
+                DirectionalColorRgba = reader.ReadUInt32(),
+                FogColorRgba = reader.ReadUInt32(),
+                FogDensity = reader.ReadSingle(),
+                WaterHeight = reader.ReadSingle(),
+                RegionId = ReadCellString(reader, path, cellId, isInterior, $"{section} region id"),
+            };
+            return environment;
         }
 
         static string BuildBlobContext(string path, string cellId, bool isInterior, string section)

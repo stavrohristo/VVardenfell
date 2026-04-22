@@ -33,10 +33,13 @@ namespace VVardenfell.Importer.Esm
         public static readonly uint DODT = Make('D', 'O', 'D', 'T');
         public static readonly uint DELE = Make('D', 'E', 'L', 'E');
         public static readonly uint NAM0 = Make('N', 'A', 'M', '0');
+        public static readonly uint RGNN = Make('R', 'G', 'N', 'N');
         public static readonly uint MODL = Make('M', 'O', 'D', 'L');
         public static readonly uint FNAM = Make('F', 'N', 'A', 'M');
         public static readonly uint LAND = Make('L', 'A', 'N', 'D');
         public static readonly uint INTV = Make('I', 'N', 'T', 'V');
+        public static readonly uint WHGT = Make('W', 'H', 'G', 'T');
+        public static readonly uint AMBI = Make('A', 'M', 'B', 'I');
         public static readonly uint VHGT = Make('V', 'H', 'G', 'T');
         public static readonly uint VNML = Make('V', 'N', 'M', 'L');
         public static readonly uint VCLR = Make('V', 'C', 'L', 'R');

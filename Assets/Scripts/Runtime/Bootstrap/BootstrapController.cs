@@ -191,22 +191,36 @@ namespace VVardenfell.Runtime.Bootstrap
 
             string esmPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.esm");
             string bsaPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.bsa");
+            string[] gameplaySources = InstalledContentSources.ResolveGameplayRecordSources(_config.InstallPath);
 
             bool worldCacheValid = BakeManifest.TryRead(CachePaths.Manifest, out var worldManifest)
-                                   && worldManifest.SourcesMatch(esmPath, bsaPath);
+                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplaySources);
             bool uiCacheValid = UiCacheManifest.TryRead(CachePaths.UiManifest, out var uiManifest)
                                 && uiManifest.SourcesMatch(_config.InstallPath)
                                 && uiManifest.HasRequiredBootstrapImages(out _)
                                 && MovieTranscodeBridge.CacheMatches(uiManifest, _config.InstallPath, out _);
+            bool gameplayCacheValid = File.Exists(CachePaths.GameplayContent)
+                                      && GameplayContentManifest.TryRead(CachePaths.GameplayContentManifest, out var gameplayManifest)
+                                      && gameplayManifest.SourcesMatch(gameplaySources);
 
-            if (worldCacheValid && uiCacheValid)
+            if (worldCacheValid && uiCacheValid && gameplayCacheValid)
             {
                 BeginLoading();
+            }
+            else if (worldCacheValid && uiCacheValid)
+            {
+                _stage = Stage.Baking;
+                StartCoroutine(BakeCoordinator.BakeGameplayOnly(_config, _progress));
+            }
+            else if (worldCacheValid && gameplayCacheValid)
+            {
+                _stage = Stage.Baking;
+                StartCoroutine(BakeCoordinator.BakeUiOnly(_config, _progress));
             }
             else if (worldCacheValid)
             {
                 _stage = Stage.Baking;
-                StartCoroutine(BakeCoordinator.BakeUiOnly(_config, _progress));
+                StartCoroutine(BakeCoordinator.BakeUiAndGameplayOnly(_config, _progress));
             }
             else
             {

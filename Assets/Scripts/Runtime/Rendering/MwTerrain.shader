@@ -39,6 +39,7 @@ Shader "VVardenfell/MwTerrain"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile _ _SHADOWS_SOFT
+            #pragma multi_compile_fog
             // Entities.Graphics / BatchRendererGroup demands this variant to hoist UnityPerMaterial
             // into the per-instance buffer. Without it the BRG refuses to draw and logs a warning.
             #pragma multi_compile_instancing
@@ -71,6 +72,7 @@ Shader "VVardenfell/MwTerrain"
                 float3 positionWS  : TEXCOORD0;
                 float3 normalWS    : TEXCOORD1;
                 float2 uv          : TEXCOORD2;
+                float fogFactor    : TEXCOORD3;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -90,6 +92,7 @@ Shader "VVardenfell/MwTerrain"
                 OUT.positionWS  = pos.positionWS;
                 OUT.normalWS    = nrm.normalWS;
                 OUT.uv          = IN.uv;
+                OUT.fogFactor   = ComputeFogFactor(pos.positionCS.z);
                 // shadowCoord intentionally NOT computed here — see frag(). With
                 // cascades enabled, picking the cascade per-vertex and interpolating
                 // produces ring-shaped seams at cascade boundaries (follows the
@@ -150,6 +153,19 @@ Shader "VVardenfell/MwTerrain"
                 Light mainLight = GetMainLight(shadowCoord);
                 float ndotl = saturate(dot(N, mainLight.direction));
                 float3 lit = albedo * (mainLight.color * ndotl * mainLight.shadowAttenuation + SampleSH(N));
+
+                #if defined(_ADDITIONAL_LIGHTS)
+                uint additionalLightCount = GetAdditionalLightsCount();
+                for (uint lightIndex = 0u; lightIndex < additionalLightCount; lightIndex++)
+                {
+                    Light additionalLight = GetAdditionalLight(lightIndex, IN.positionWS);
+                    float addNdotL = saturate(dot(N, additionalLight.direction));
+                    lit += albedo * additionalLight.color * addNdotL
+                        * (additionalLight.distanceAttenuation * additionalLight.shadowAttenuation);
+                }
+                #endif
+
+                lit = MixFog(lit, IN.fogFactor);
 
                 return half4(lit, 1.0);
             }

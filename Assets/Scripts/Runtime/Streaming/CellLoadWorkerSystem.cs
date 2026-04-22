@@ -2,6 +2,8 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Physics;
+using Unity.Profiling;
 using Unity.Rendering;
 using UnityEngine;
 
@@ -22,8 +24,17 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _singletonQuery;
         EntityQuery _refsOnlyQuery;  // excludes terrain (no CellCoord)
         EntityQuery _allQuery;       // refs + terrain
+        EntityQuery _refPhysicsLoadQuery;
+        EntityQuery _cellPhysicsLoadQuery;
+        EntityTypeHandle _entityHandle;
         ComponentTypeHandle<CellLink> _cellLinkHandle;
         ComponentTypeHandle<MaterialMeshInfo> _mmiHandle;
+        ComponentTypeHandle<RefCollisionSource> _refCollisionSourceHandle;
+        ComponentTypeHandle<StoredPhysicsColliderBlob> _storedColliderHandle;
+
+        static readonly ProfilerMarker k_PhysicsLoad = new("VV.Streaming.PhysicsLoad");
+        static readonly ProfilerMarker k_ActivateRefCollider = new("VV.Streaming.PhysicsLoad.ActivateRefCollider");
+        static readonly ProfilerMarker k_ActivateCellCollider = new("VV.Streaming.PhysicsLoad.ActivateCellCollider");
 
         public void OnCreate(ref SystemState state)
         {
@@ -51,9 +62,20 @@ namespace VVardenfell.Runtime.Streaming
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
                 .Build();
+            _refPhysicsLoadQuery = SystemAPI.QueryBuilder()
+                .WithAll<CellLink, RefCollisionSource>()
+                .WithNone<PhysicsCollider>()
+                .Build();
+            _cellPhysicsLoadQuery = SystemAPI.QueryBuilder()
+                .WithAll<CellLink, StoredPhysicsColliderBlob>()
+                .WithNone<PhysicsCollider>()
+                .Build();
 
+            _entityHandle = state.GetEntityTypeHandle();
             _cellLinkHandle = state.GetComponentTypeHandle<CellLink>(isReadOnly: true);
             _mmiHandle      = state.GetComponentTypeHandle<MaterialMeshInfo>(isReadOnly: false);
+            _refCollisionSourceHandle = state.GetComponentTypeHandle<RefCollisionSource>(isReadOnly: true);
+            _storedColliderHandle = state.GetComponentTypeHandle<StoredPhysicsColliderBlob>(isReadOnly: true);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -66,24 +88,67 @@ namespace VVardenfell.Runtime.Streaming
 
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
+            _entityHandle.Update(ref state);
+            _refCollisionSourceHandle.Update(ref state);
+            _storedColliderHandle.Update(ref state);
 
 
             var targetQuery = cfg.GateTerrainByRadius ? _allQuery : _refsOnlyQuery;
+            var ecb = new EntityCommandBuffer(Allocator.TempJob);
+            bool physicsChanged = false;
 
-            int budget = cfg.MaxLoadsPerFrame;
-            while (budget-- > 0 && queue.Queue.TryDequeue(out var coord))
+            try
             {
-                if (loaded.Active.Contains(coord)) continue;
-
-                new ToggleCellMmiJob
+                int budget = cfg.MaxLoadsPerFrame;
+                while (budget-- > 0 && queue.Queue.TryDequeue(out var coord))
                 {
-                    Target     = coord,
-                    Enable     = true,
-                    LinkHandle = _cellLinkHandle,
-                    MmiHandle  = _mmiHandle,
-                }.Run(targetQuery);
+                    if (loaded.Active.Contains(coord))
+                        continue;
 
-                loaded.Active.Add(coord);
+                    new ToggleCellMmiJob
+                    {
+                        Target     = coord,
+                        Enable     = true,
+                        LinkHandle = _cellLinkHandle,
+                        MmiHandle  = _mmiHandle,
+                    }.Run(targetQuery);
+
+                    using (k_PhysicsLoad.Auto())
+                    {
+                        using (k_ActivateRefCollider.Auto())
+                        {
+                            new ActivateRefPhysicsJob
+                            {
+                                Target = coord,
+                                EntityHandle = _entityHandle,
+                                LinkHandle = _cellLinkHandle,
+                                SourceHandle = _refCollisionSourceHandle,
+                                CommandBuf = ecb.AsParallelWriter(),
+                            }.Run(_refPhysicsLoadQuery);
+                        }
+
+                        using (k_ActivateCellCollider.Auto())
+                        {
+                            new ActivateStoredPhysicsJob
+                            {
+                                Target = coord,
+                                EntityHandle = _entityHandle,
+                                LinkHandle = _cellLinkHandle,
+                                SourceHandle = _storedColliderHandle,
+                                CommandBuf = ecb.AsParallelWriter(),
+                            }.Run(_cellPhysicsLoadQuery);
+                        }
+                    }
+
+                    physicsChanged = true;
+                    loaded.Active.Add(coord);
+                }
+            }
+            finally
+            {
+                if (physicsChanged)
+                    ecb.Playback(state.EntityManager);
+                ecb.Dispose();
             }
         }
 
@@ -108,6 +173,62 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     if (links[i].Value.Equals(Target))
                         chunk.SetComponentEnabled(ref MmiHandle, i, Enable);
+                }
+            }
+        }
+
+        [BurstCompile]
+        internal struct ActivateRefPhysicsJob : IJobChunk
+        {
+            public int2 Target;
+            [ReadOnly] public EntityTypeHandle EntityHandle;
+            [ReadOnly] public ComponentTypeHandle<CellLink> LinkHandle;
+            [ReadOnly] public ComponentTypeHandle<RefCollisionSource> SourceHandle;
+            public EntityCommandBuffer.ParallelWriter CommandBuf;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
+            {
+                var entities = chunk.GetNativeArray(EntityHandle);
+                var links = chunk.GetNativeArray(ref LinkHandle);
+                var sources = chunk.GetNativeArray(ref SourceHandle);
+                int n = chunk.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    if (!links[i].Value.Equals(Target))
+                        continue;
+
+                    CommandBuf.AddComponent(unfilteredChunkIndex, entities[i], new PhysicsCollider
+                    {
+                        Value = sources[i].Value
+                    });
+                }
+            }
+        }
+
+        [BurstCompile]
+        internal struct ActivateStoredPhysicsJob : IJobChunk
+        {
+            public int2 Target;
+            [ReadOnly] public EntityTypeHandle EntityHandle;
+            [ReadOnly] public ComponentTypeHandle<CellLink> LinkHandle;
+            [ReadOnly] public ComponentTypeHandle<StoredPhysicsColliderBlob> SourceHandle;
+            public EntityCommandBuffer.ParallelWriter CommandBuf;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
+            {
+                var entities = chunk.GetNativeArray(EntityHandle);
+                var links = chunk.GetNativeArray(ref LinkHandle);
+                var sources = chunk.GetNativeArray(ref SourceHandle);
+                int n = chunk.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    if (!links[i].Value.Equals(Target))
+                        continue;
+
+                    CommandBuf.AddComponent(unfilteredChunkIndex, entities[i], new PhysicsCollider
+                    {
+                        Value = sources[i].Value
+                    });
                 }
             }
         }

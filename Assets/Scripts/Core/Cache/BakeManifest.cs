@@ -1,5 +1,4 @@
 using System.IO;
-
 namespace VVardenfell.Core.Cache
 {
     /// <summary>
@@ -31,6 +30,7 @@ namespace VVardenfell.Core.Cache
         public long EsmMtimeTicks;
         public long BsaSize;
         public long BsaMtimeTicks;
+        public string GameplaySourcesHash;
         public int MeshCount;
         public int MaterialCount;
         public int TextureCount;
@@ -43,7 +43,7 @@ namespace VVardenfell.Core.Cache
         public string[] InteriorCellIds;
         public BakedCellState[] CellStates;
 
-        public static BakeManifest FromCurrentSources(string esmPath, string bsaPath)
+        public static BakeManifest FromCurrentSources(string esmPath, string bsaPath, string[] gameplaySourcePaths = null)
         {
             var esm = new FileInfo(esmPath);
             var bsa = new FileInfo(bsaPath);
@@ -54,10 +54,11 @@ namespace VVardenfell.Core.Cache
                 EsmMtimeTicks = esm.LastWriteTimeUtc.Ticks,
                 BsaSize = bsa.Length,
                 BsaMtimeTicks = bsa.LastWriteTimeUtc.Ticks,
+                GameplaySourcesHash = BuildGameplaySourcesHash(gameplaySourcePaths),
             };
         }
 
-        public bool SourcesMatch(string esmPath, string bsaPath)
+        public bool SourcesMatch(string esmPath, string bsaPath, string[] gameplaySourcePaths = null)
         {
             if (!File.Exists(esmPath) || !File.Exists(bsaPath)) return false;
             var esm = new FileInfo(esmPath);
@@ -66,6 +67,7 @@ namespace VVardenfell.Core.Cache
                 && esm.LastWriteTimeUtc.Ticks == EsmMtimeTicks
                 && bsa.Length == BsaSize
                 && bsa.LastWriteTimeUtc.Ticks == BsaMtimeTicks
+                && string.Equals(GameplaySourcesHash ?? string.Empty, BuildGameplaySourcesHash(gameplaySourcePaths), System.StringComparison.Ordinal)
                 && FormatVersion == CacheFormat.FormatVersion;
         }
 
@@ -79,6 +81,7 @@ namespace VVardenfell.Core.Cache
             w.Write(EsmMtimeTicks);
             w.Write(BsaSize);
             w.Write(BsaMtimeTicks);
+            w.Write(GameplaySourcesHash ?? string.Empty);
             w.Write(MeshCount);
             w.Write(MaterialCount);
             w.Write(TextureCount);
@@ -114,6 +117,7 @@ namespace VVardenfell.Core.Cache
                     EsmMtimeTicks = r.ReadInt64(),
                     BsaSize = r.ReadInt64(),
                     BsaMtimeTicks = r.ReadInt64(),
+                    GameplaySourcesHash = r.ReadString(),
                     MeshCount = r.ReadInt32(),
                     MaterialCount = r.ReadInt32(),
                     TextureCount = r.ReadInt32(),
@@ -192,6 +196,35 @@ namespace VVardenfell.Core.Cache
             for (int i = 0; i < length; i++)
                 values[i] = r.ReadInt32();
             return values;
+        }
+
+        static string BuildGameplaySourcesHash(string[] gameplaySourcePaths)
+        {
+            var sources = gameplaySourcePaths ?? System.Array.Empty<string>();
+            if (sources.Length == 0)
+                return string.Empty;
+
+            var manifest = GameplayContentManifest.FromSources(sources);
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                int count = manifest.Sources?.Length ?? 0;
+                w.Write(count);
+                for (int i = 0; i < count; i++)
+                {
+                    var source = manifest.Sources[i];
+                    w.Write(source?.Path ?? string.Empty);
+                    w.Write(source?.Size ?? 0L);
+                    w.Write(source?.MtimeTicks ?? 0L);
+                }
+            }
+
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            byte[] hash = sha.ComputeHash(ms.ToArray());
+            var sb = new System.Text.StringBuilder(hash.Length * 2);
+            for (int i = 0; i < hash.Length; i++)
+                sb.Append(hash[i].ToString("x2"));
+            return sb.ToString();
         }
     }
 }

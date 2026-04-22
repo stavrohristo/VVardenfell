@@ -15,14 +15,15 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 22;
+        public const uint FormatVersion = 26;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 2;
+        public const uint WorldBakePipelineVersion = 7;
+        public const uint GameplayContentVersion = 1;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized
@@ -56,11 +57,12 @@ namespace VVardenfell.Core.Cache
         public const uint CellFlagHasNormals         = 1 << 1;
         public const uint CellFlagHasVtex            = 1 << 2;
         public const uint CellFlagHasStaticCollision = 1 << 3;  // per-cell combined STAT triangle soup
+        public const uint CellFlagHasEnvironment     = 1 << 4;
     }
 
     /// <summary>
     /// Fixed-size ref entry in a cell file. One per placed object submesh.
-    /// Layout is hand-packed 56 bytes, matched exactly by the writer/reader.
+    /// Layout is hand-packed 68 bytes, matched exactly by the writer/reader.
     ///
     /// <see cref="CollisionIndex"/> is -1 for refs with no per-ref collider - either
     /// because the source NIF has no RootCollisionNode, or because the ref is a pure
@@ -70,19 +72,32 @@ namespace VVardenfell.Core.Cache
     /// reserved for interactable record types (DOOR/ACTI/CONT/LIGH/pickable items) so
     /// they can be raycasted individually at runtime.
     /// </summary>
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 68)]
     public struct RefEntry
     {
-        public int MeshIndex;      // 4 - index into the global meshes table
-        public int MaterialIndex;  // 4 - blend-variant material (0=Opaque,1=AlphaTest,2=AlphaBlend)
-        public int SliceIndex;     // 4 - slice in the shared ref Texture2DArray, or -1 for no texture
-        public int CollisionIndex; // 4 - index into collisions.bin, or -1 if no per-ref collider
-        public uint PlacedRefId;   // 4 - stable CELL ref id (FRMR/FormId) shared by this placed object
-        public int DoorMetaIndex;  // 4 - index into the per-cell door metadata table, or -1
-        public float PosX, PosY, PosZ;     // 12 - Unity world position (already in meters, Y-up)
-        public float RotX, RotY, RotZ, RotW; // 16 - Unity quaternion
-        public float Scale;        // 4
-                                   // = 56 bytes
+        [FieldOffset(0)] public int RenderShardIndex;    // 4 - shard-scoped RenderMeshArray/prefab index
+        [FieldOffset(4)] public int LocalMeshIndex;      // 4 - local mesh index within the shard RMA
+        [FieldOffset(8)] public int LocalMaterialIndex;  // 4 - local material index within the shard RMA
+        [FieldOffset(12)] public int SliceIndex;         // 4 - global texture index, or -1 for no texture
+        [FieldOffset(16)] public int CollisionIndex;     // 4 - index into collisions.bin, or -1 if no per-ref collider
+        [FieldOffset(20)] public uint PlacedRefId;       // 4 - stable CELL ref id (FRMR/FormId) shared by this placed object
+        [FieldOffset(24)] public int DoorMetaIndex;      // 4 - index into the per-cell door metadata table, or -1
+        [FieldOffset(28)] public int ContentHandleValue; // 4 - stable typed gameplay-content handle value, or 0
+        [FieldOffset(32)] public int ContentKind;        // 4 - <see cref="ContentReferenceKind"/> as int, or 0
+        [FieldOffset(36)] public float PosX;             // 4 - Unity world position X (meters, Y-up)
+        [FieldOffset(40)] public float PosY;             // 4 - Unity world position Y
+        [FieldOffset(44)] public float PosZ;             // 4 - Unity world position Z
+        [FieldOffset(48)] public float RotX;             // 4 - Unity quaternion X
+        [FieldOffset(52)] public float RotY;             // 4 - Unity quaternion Y
+        [FieldOffset(56)] public float RotZ;             // 4 - Unity quaternion Z
+        [FieldOffset(60)] public float RotW;             // 4 - Unity quaternion W
+        [FieldOffset(64)] public float Scale;            // 4
+
+        // Burst can hold onto stale field hashes across hot reloads. These aliases let
+        // older generated method metadata resolve while keeping the new shard layout.
+        [FieldOffset(4)] public int MeshIndex;
+        [FieldOffset(8)] public int MaterialIndex;
+        // = 68 bytes
     }
 
     /// <summary>
@@ -98,6 +113,218 @@ namespace VVardenfell.Core.Cache
         public float DestPosX, DestPosY, DestPosZ;
         public float DestRotX, DestRotY, DestRotZ, DestRotW;
         public string DestinationCellId;
+    }
+
+    public struct CellEnvironmentData
+    {
+        public byte HasMood;
+        public byte HasWater;
+        public uint AmbientColorRgba;
+        public uint DirectionalColorRgba;
+        public uint FogColorRgba;
+        public float FogDensity;
+        public float WaterHeight;
+        public string RegionId;
+
+        public bool HasAnyData =>
+            HasMood != 0 ||
+            HasWater != 0 ||
+            !string.IsNullOrWhiteSpace(RegionId);
+    }
+
+    [System.Flags]
+    public enum RefPlacementAuditFlags : uint
+    {
+        None = 0,
+        IsDoor = 1u << 0,
+        IsTeleportDoor = 1u << 1,
+        HasDuplicatePlacedRefId = 1u << 2,
+        HasWorldBounds = 1u << 3,
+        WasBaked = 1u << 4,
+        MissingBaseRecord = 1u << 5,
+        MissingModel = 1u << 6,
+    }
+
+    public struct RefPlacementAuditEntry
+    {
+        public uint PlacedRefId;
+        public string BaseId;
+        public float SourcePosX;
+        public float SourcePosY;
+        public float SourcePosZ;
+        public float SourceRotX;
+        public float SourceRotY;
+        public float SourceRotZ;
+        public float SourceScale;
+        public float UnityPosX;
+        public float UnityPosY;
+        public float UnityPosZ;
+        public float UnityRotX;
+        public float UnityRotY;
+        public float UnityRotZ;
+        public float UnityRotW;
+        public float UnityScale;
+        public float BoundsCenterX;
+        public float BoundsCenterY;
+        public float BoundsCenterZ;
+        public float BoundsExtentsX;
+        public float BoundsExtentsY;
+        public float BoundsExtentsZ;
+        public int SpawnedSubmeshCount;
+        public int DuplicatePlacedRefCount;
+        public RefPlacementAuditFlags Flags;
+    }
+
+    public sealed class CellPlacementAuditData
+    {
+        public bool IsInterior;
+        public string CellId;
+        public int GridX;
+        public int GridY;
+        public RefPlacementAuditEntry[] Entries;
+    }
+
+    public static class RefPlacementAuditFile
+    {
+        const uint Magic = 0x54434150u; // 'PACT'
+        const uint Version = 1u;
+
+        public static void Write(string path, CellPlacementAuditData data)
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path) ?? string.Empty);
+
+            using var fs = System.IO.File.Create(path);
+            using var w = new System.IO.BinaryWriter(fs);
+            Write(w, data);
+        }
+
+        public static byte[] Serialize(CellPlacementAuditData data)
+        {
+            using var ms = new System.IO.MemoryStream();
+            using (var w = new System.IO.BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+                Write(w, data);
+            return ms.ToArray();
+        }
+
+        public static CellPlacementAuditData Read(string path)
+        {
+            using var fs = System.IO.File.OpenRead(path);
+            using var r = new System.IO.BinaryReader(fs);
+
+            uint magic = r.ReadUInt32();
+            if (magic != Magic)
+                throw new System.IO.InvalidDataException($"Bad placement audit magic 0x{magic:X8} in '{path}'.");
+
+            uint version = r.ReadUInt32();
+            if (version != Version)
+                throw new System.IO.InvalidDataException($"Unsupported placement audit version {version} in '{path}'.");
+
+            var data = new CellPlacementAuditData
+            {
+                IsInterior = r.ReadBoolean(),
+                CellId = r.ReadString(),
+                GridX = r.ReadInt32(),
+                GridY = r.ReadInt32(),
+            };
+
+            int count = r.ReadInt32();
+            if (count < 0)
+                throw new System.IO.InvalidDataException($"Negative placement audit entry count {count} in '{path}'.");
+
+            data.Entries = new RefPlacementAuditEntry[count];
+            for (int i = 0; i < count; i++)
+                data.Entries[i] = ReadEntry(r);
+
+            return data;
+        }
+
+        public static bool TryRead(string path, out CellPlacementAuditData data)
+        {
+            data = null;
+            if (!System.IO.File.Exists(path))
+                return false;
+
+            data = Read(path);
+            return true;
+        }
+
+        static void Write(System.IO.BinaryWriter w, CellPlacementAuditData data)
+        {
+            w.Write(Magic);
+            w.Write(Version);
+            w.Write(data?.IsInterior ?? false);
+            w.Write(data?.CellId ?? string.Empty);
+            w.Write(data?.GridX ?? 0);
+            w.Write(data?.GridY ?? 0);
+
+            var entries = data?.Entries ?? System.Array.Empty<RefPlacementAuditEntry>();
+            w.Write(entries.Length);
+            for (int i = 0; i < entries.Length; i++)
+                WriteEntry(w, entries[i]);
+        }
+
+        static void WriteEntry(System.IO.BinaryWriter w, RefPlacementAuditEntry entry)
+        {
+            w.Write(entry.PlacedRefId);
+            w.Write(entry.BaseId ?? string.Empty);
+            w.Write(entry.SourcePosX);
+            w.Write(entry.SourcePosY);
+            w.Write(entry.SourcePosZ);
+            w.Write(entry.SourceRotX);
+            w.Write(entry.SourceRotY);
+            w.Write(entry.SourceRotZ);
+            w.Write(entry.SourceScale);
+            w.Write(entry.UnityPosX);
+            w.Write(entry.UnityPosY);
+            w.Write(entry.UnityPosZ);
+            w.Write(entry.UnityRotX);
+            w.Write(entry.UnityRotY);
+            w.Write(entry.UnityRotZ);
+            w.Write(entry.UnityRotW);
+            w.Write(entry.UnityScale);
+            w.Write(entry.BoundsCenterX);
+            w.Write(entry.BoundsCenterY);
+            w.Write(entry.BoundsCenterZ);
+            w.Write(entry.BoundsExtentsX);
+            w.Write(entry.BoundsExtentsY);
+            w.Write(entry.BoundsExtentsZ);
+            w.Write(entry.SpawnedSubmeshCount);
+            w.Write(entry.DuplicatePlacedRefCount);
+            w.Write((uint)entry.Flags);
+        }
+
+        static RefPlacementAuditEntry ReadEntry(System.IO.BinaryReader r)
+        {
+            return new RefPlacementAuditEntry
+            {
+                PlacedRefId = r.ReadUInt32(),
+                BaseId = r.ReadString(),
+                SourcePosX = r.ReadSingle(),
+                SourcePosY = r.ReadSingle(),
+                SourcePosZ = r.ReadSingle(),
+                SourceRotX = r.ReadSingle(),
+                SourceRotY = r.ReadSingle(),
+                SourceRotZ = r.ReadSingle(),
+                SourceScale = r.ReadSingle(),
+                UnityPosX = r.ReadSingle(),
+                UnityPosY = r.ReadSingle(),
+                UnityPosZ = r.ReadSingle(),
+                UnityRotX = r.ReadSingle(),
+                UnityRotY = r.ReadSingle(),
+                UnityRotZ = r.ReadSingle(),
+                UnityRotW = r.ReadSingle(),
+                UnityScale = r.ReadSingle(),
+                BoundsCenterX = r.ReadSingle(),
+                BoundsCenterY = r.ReadSingle(),
+                BoundsCenterZ = r.ReadSingle(),
+                BoundsExtentsX = r.ReadSingle(),
+                BoundsExtentsY = r.ReadSingle(),
+                BoundsExtentsZ = r.ReadSingle(),
+                SpawnedSubmeshCount = r.ReadInt32(),
+                DuplicatePlacedRefCount = r.ReadInt32(),
+                Flags = (RefPlacementAuditFlags)r.ReadUInt32(),
+            };
+        }
     }
 
     /// <summary>

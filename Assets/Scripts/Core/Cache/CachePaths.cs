@@ -18,6 +18,7 @@ namespace VVardenfell.Core.Cache
         public static string Meshes => Path.Combine(Root, "meshes.bin");
         public static string Materials => Path.Combine(Root, "materials.bin");
         public static string MeshNames => Path.Combine(Root, "meshnames.bin");
+        public static string RenderShards => Path.Combine(Root, "render_shards.bin");
         public static string TexturesIndex => Path.Combine(Root, "textures.bin");
         public static string TerrainLayers => Path.Combine(Root, "terrain_layers.bin");
         public static string Collisions => Path.Combine(Root, "collisions.bin");
@@ -27,6 +28,10 @@ namespace VVardenfell.Core.Cache
         public static string CollisionCatalog => Path.Combine(Root, "collision_catalog.bin");
         public static string UiManifest => Path.Combine(Root, "ui.bin");
         public static string UiPayloads => Path.Combine(Root, "ui_payloads.bin");
+        public static string GameplayContentManifest => Path.Combine(Root, "gameplay_content_manifest.bin");
+        public static string GameplayContent => Path.Combine(Root, "gameplay_content.bin");
+        public static string GameplayValidationReport => Path.Combine(Root, "gameplay_content_validation.txt");
+        public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");
         public static string TexturesDir => Path.Combine(Root, "textures");
         public static string CellsDir => Path.Combine(Root, "cells");
         public static string InteriorCellsDir => Path.Combine(Root, "interiors");
@@ -34,8 +39,11 @@ namespace VVardenfell.Core.Cache
 
         public static string TextureFile(string hashHex) => Path.Combine(TexturesDir, hashHex + ".dds");
         public static string CellFile(int gridX, int gridY) => Path.Combine(CellsDir, $"{gridX}_{gridY}.bin");
+        public static string CellPlacementAuditFile(int gridX, int gridY) => Path.Combine(CellsDir, $"{gridX}_{gridY}.audit.bin");
         public static string InteriorCellFile(string cellId)
             => Path.Combine(InteriorCellsDir, StableHashHex(cellId) + ".bin");
+        public static string InteriorCellPlacementAuditFile(string cellId)
+            => Path.Combine(InteriorCellsDir, StableHashHex(cellId) + ".audit.bin");
         public static string UiMovieFile(string slotName)
             => Path.Combine(UiMoviesDir, SanitizeFileName(slotName) + ".mp4");
 

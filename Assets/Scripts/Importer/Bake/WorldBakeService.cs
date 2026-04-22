@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Jobs;
+using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
 using VVardenfell.Core;
@@ -50,6 +51,12 @@ namespace VVardenfell.Importer.Bake
         private static readonly ProfilerMarker k_BuildPreparedRefData = new("VV.Bake.BuildPreparedRefData");
         private static readonly ProfilerMarker k_CombineGroupMesh = new("VV.Bake.CombineGroupMesh");
         private static readonly ProfilerMarker k_ResolveDirtyCellIndices = new("VV.Bake.ResolveDirtyCellIndices");
+        private static readonly ProfilerMarker k_AssignRenderShards = new("VV.Bake.AssignRenderShards");
+        private static readonly ProfilerMarker k_AssignRenderShardsFamilyPrecompute = new("VV.Bake.AssignRenderShards.FamilyPrecompute");
+        private static readonly ProfilerMarker k_AssignRenderShardsBuildRequests = new("VV.Bake.AssignRenderShards.BuildRequests");
+        private static readonly ProfilerMarker k_AssignRenderShardsReduce = new("VV.Bake.AssignRenderShards.ReduceUnique");
+        private static readonly ProfilerMarker k_AssignRenderShardsResolve = new("VV.Bake.AssignRenderShards.Resolve");
+        private static readonly ProfilerMarker k_AssignRenderShardsApply = new("VV.Bake.AssignRenderShards.Apply");
         private static readonly ProfilerMarker k_PrepareCellWritePayload = new("VV.Bake.PrepareCellWritePayload");
         private static readonly ProfilerMarker k_BuildCellColliderBlobs = new("VV.Bake.BuildCellColliderBlobs");
         private static readonly ProfilerMarker k_CreateTerrainColliderBlob = new("VV.Bake.CreateTerrainColliderBlob");
@@ -65,15 +72,24 @@ namespace VVardenfell.Importer.Bake
             public readonly long LandOffset;
             public readonly string Key;
             public readonly string OutputPath;
+            public readonly string AuditOutputPath;
             public readonly Vector3 CellOrigin;
 
-            public CellBakeWorkItem(CellHeader cell, bool isInterior, long landOffset, string key, string outputPath, Vector3 cellOrigin)
+            public CellBakeWorkItem(
+                CellHeader cell,
+                bool isInterior,
+                long landOffset,
+                string key,
+                string outputPath,
+                string auditOutputPath,
+                Vector3 cellOrigin)
             {
                 Cell = cell;
                 IsInterior = isInterior;
                 LandOffset = landOffset;
                 Key = key;
                 OutputPath = outputPath;
+                AuditOutputPath = auditOutputPath;
                 CellOrigin = cellOrigin;
             }
         }
@@ -112,11 +128,13 @@ namespace VVardenfell.Importer.Bake
         {
             public readonly NifMeshBuilder.RawBuiltMesh Built;
             public readonly CollisionPayload Collision;
+            public readonly string MeshSourceLabel;
             public readonly uint MaterialFlags;
             public readonly string TexturePath;
             public readonly bool IsInteractable;
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
+            public readonly ContentReference ContentReference;
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly float Scale;
@@ -124,22 +142,26 @@ namespace VVardenfell.Importer.Bake
             public StagedRefData(
                 in NifMeshBuilder.RawBuiltMesh built,
                 in CollisionPayload collision,
+                string meshSourceLabel,
                 uint materialFlags,
                 string texturePath,
                 bool isInteractable,
                 uint placedRefId,
                 int doorMetaIndex,
+                ContentReference contentReference,
                 Vector3 position,
                 Quaternion rotation,
                 float scale)
             {
                 Built = built;
                 Collision = collision;
+                MeshSourceLabel = meshSourceLabel;
                 MaterialFlags = materialFlags;
                 TexturePath = texturePath;
                 IsInteractable = isInteractable;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
+                ContentReference = contentReference;
                 Position = position;
                 Rotation = rotation;
                 Scale = scale;
@@ -155,6 +177,7 @@ namespace VVardenfell.Importer.Bake
             public readonly string TexturePath;
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
+            public readonly ContentReference ContentReference;
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly float Scale;
@@ -167,6 +190,7 @@ namespace VVardenfell.Importer.Bake
                 string texturePath,
                 uint placedRefId,
                 int doorMetaIndex,
+                ContentReference contentReference,
                 Vector3 position,
                 Quaternion rotation,
                 float scale)
@@ -178,6 +202,7 @@ namespace VVardenfell.Importer.Bake
                 TexturePath = texturePath;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
+                ContentReference = contentReference;
                 Position = position;
                 Rotation = rotation;
                 Scale = scale;
@@ -193,6 +218,7 @@ namespace VVardenfell.Importer.Bake
             public readonly string TexturePath;
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
+            public readonly ContentReference ContentReference;
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly float Scale;
@@ -206,6 +232,7 @@ namespace VVardenfell.Importer.Bake
                 string texturePath,
                 uint placedRefId,
                 int doorMetaIndex,
+                ContentReference contentReference,
                 Vector3 position,
                 Quaternion rotation,
                 float scale,
@@ -218,6 +245,7 @@ namespace VVardenfell.Importer.Bake
                 TexturePath = texturePath;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
+                ContentReference = contentReference;
                 Position = position;
                 Rotation = rotation;
                 Scale = scale;
@@ -229,6 +257,7 @@ namespace VVardenfell.Importer.Bake
         {
             public CellBakeWorkItem WorkItem;
             public BakeManifest.BakedCellState PreviousState;
+            public CellEnvironmentData Environment;
             public LandRecord Land;
             public string[] TerrainTexturePaths;
             public ushort[] LayerGrid;
@@ -237,25 +266,90 @@ namespace VVardenfell.Importer.Bake
             public CellBakery.StaticCollision StaticCollision;
             public List<StagedRefData> PendingRefs;
             public List<PreparedRefData> PreparedRefs;
+            public List<RefPlacementAuditEntry> PlacementAuditEntries;
             public string Fingerprint;
+            public int[] GlobalMeshIndices;
+            public int[] GlobalMaterialIndices;
+            public int[] GlobalTextureIndices;
+            public int[] GlobalCollisionIndices;
+            public int[] GlobalTerrainLayerIndices;
             public bool NeedsWrite;
             public double BuildPreparedCellRefsMs;
             public int PendingRefCount;
             public int PreparedWorkItemCount;
+            public int SourcePreparedMeshCount;
             public int StaticGroupCount;
             public int CombinedGroupCount;
             public int InteractableWorkItemCount;
+            public long CombinedPreparedPayloadBytes;
+        }
+
+        private readonly struct RenderShardRequestKey : System.IEquatable<RenderShardRequestKey>
+        {
+            public readonly int BucketKey;
+            public readonly string FamilyKey;
+            public readonly int GlobalMeshIndex;
+
+            public RenderShardRequestKey(int bucketKey, string familyKey, int globalMeshIndex)
+            {
+                BucketKey = bucketKey;
+                FamilyKey = familyKey ?? string.Empty;
+                GlobalMeshIndex = globalMeshIndex;
+            }
+
+            public bool Equals(RenderShardRequestKey other)
+                => BucketKey == other.BucketKey
+                   && GlobalMeshIndex == other.GlobalMeshIndex
+                   && string.Equals(FamilyKey, other.FamilyKey, StringComparison.Ordinal);
+
+            public override bool Equals(object obj)
+                => obj is RenderShardRequestKey other && Equals(other);
+
+            public override int GetHashCode()
+                => HashCode.Combine(BucketKey, GlobalMeshIndex, StringComparer.Ordinal.GetHashCode(FamilyKey ?? string.Empty));
+        }
+
+        private readonly struct RenderShardResolvedAssignment
+        {
+            public readonly int RenderShardIndex;
+            public readonly int LocalMeshIndex;
+
+            public RenderShardResolvedAssignment(int renderShardIndex, int localMeshIndex)
+            {
+                RenderShardIndex = renderShardIndex;
+                LocalMeshIndex = localMeshIndex;
+            }
+        }
+
+        private sealed class RenderShardRequestKeyComparer : IComparer<RenderShardRequestKey>
+        {
+            public static readonly RenderShardRequestKeyComparer Instance = new();
+
+            public int Compare(RenderShardRequestKey x, RenderShardRequestKey y)
+            {
+                int bucketCompare = x.BucketKey.CompareTo(y.BucketKey);
+                if (bucketCompare != 0)
+                    return bucketCompare;
+
+                int familyCompare = string.CompareOrdinal(x.FamilyKey, y.FamilyKey);
+                if (familyCompare != 0)
+                    return familyCompare;
+
+                return x.GlobalMeshIndex.CompareTo(y.GlobalMeshIndex);
+            }
         }
 
         private sealed class PreparedCellWriteData
         {
             public string Key;
             public string OutputPath;
+            public string AuditOutputPath;
             public bool IsInterior;
             public string CellId;
             public int GridX;
             public int GridY;
             public uint Flags;
+            public CellEnvironmentData Environment;
             public LandRecord Land;
             public CellBakery.StaticCollision StaticCollision;
             public byte[] TerrainHeightBytes;
@@ -263,6 +357,7 @@ namespace VVardenfell.Importer.Bake
             public byte[] LayerGridBytes;
             public byte[] RefBytes;
             public byte[] DoorBytes;
+            public byte[] PlacementAuditBytes;
             public int RefCount;
             public int DoorCount;
             public BuiltCellBlobData BlobData;
@@ -378,7 +473,7 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
-        public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress)
+        public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress, GameplayContentData gameplayContent = null)
         {
             string esmPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.esm");
             string bsaPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.bsa");
@@ -391,6 +486,7 @@ namespace VVardenfell.Importer.Bake
 
             CachePaths.Warmup();
             CachePaths.EnsureExists();
+            var gameplayContentLookup = BuildGameplayContentLookup(gameplayContent);
 
             progress.Stage = "Source Indexing";
             progress.Label = "Opening archives";
@@ -457,7 +553,7 @@ namespace VVardenfell.Importer.Bake
 
             var textureResolver = new TexturePathResolver(sharedBsa);
             var bakeryMeshes = new MeshBakery();
-            bakeryMeshes.TryLoadExisting(CachePaths.MeshCatalog);
+            bakeryMeshes.TryLoadExisting(CachePaths.MeshCatalog, CachePaths.Meshes);
             var bakeryMaterials = new MaterialBakery();
             bakeryMaterials.TryLoadExisting(CachePaths.MaterialCatalog);
             var bakeryTextures = new TextureBakery(sharedBsa, textureResolver);
@@ -467,6 +563,8 @@ namespace VVardenfell.Importer.Bake
             bakeryLayers.TryLoadExisting(CachePaths.TerrainLayers);
             var bakeryCollisions = new CollisionBakery();
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
+            var bakeryRenderShards = new RenderShardBakery();
+            bakeryRenderShards.TryLoadExisting(CachePaths.RenderShards);
 
             progress.Current = 1;
             yield return null;
@@ -488,6 +586,7 @@ namespace VVardenfell.Importer.Bake
                     landOffset,
                     BuildExteriorKey(cell.GridX, cell.GridY),
                     CachePaths.CellFile(cell.GridX, cell.GridY),
+                    CachePaths.CellPlacementAuditFile(cell.GridX, cell.GridY),
                     cellOrigin));
             }
 
@@ -501,6 +600,7 @@ namespace VVardenfell.Importer.Bake
                     0,
                     BuildInteriorKey(interiorId),
                     CachePaths.InteriorCellFile(interiorId),
+                    CachePaths.InteriorCellPlacementAuditFile(interiorId),
                     Vector3.zero));
             }
 
@@ -531,7 +631,8 @@ namespace VVardenfell.Importer.Bake
                                 stagedCells[i] = StageCell(
                                     worker,
                                     workItems[i],
-                                    recordIndex,
+                                recordIndex,
+                                    gameplayContentLookup,
                                     sharedBsa,
                                     bsaByName,
                                     ltexMap,
@@ -575,6 +676,7 @@ namespace VVardenfell.Importer.Bake
             {
                 var staged = stagedCells[i];
                 expectedOutputs.Add(staged.WorkItem.OutputPath);
+                expectedOutputs.Add(staged.WorkItem.AuditOutputPath);
                 if (staged.NeedsWrite)
                     dirtyCells.Add(staged);
 
@@ -586,6 +688,7 @@ namespace VVardenfell.Importer.Bake
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions);
+            yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
             for (int i = 0; i < stagedCells.Length; i++)
                 cellStates[i] = BuildCellState(stagedCells[i]);
@@ -594,7 +697,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 8;
+            progress.Total = 10;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -615,8 +718,14 @@ namespace VVardenfell.Importer.Bake
                 bakeryMaterials.WriteCatalog(CachePaths.MaterialCatalog);
             }
 
-            progress.Label = "textures.bin";
+            progress.Label = "render_shards.bin";
             progress.Current = 3;
+            yield return null;
+            if (bakeryRenderShards.Modified || !File.Exists(CachePaths.RenderShards))
+                RenderShardFile.Write(CachePaths.RenderShards, bakeryRenderShards.BuildCatalog());
+
+            progress.Label = "textures.bin";
+            progress.Current = 4;
             yield return null;
             if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
             {
@@ -625,13 +734,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 4;
+            progress.Current = 5;
             yield return null;
             if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers);
 
             progress.Label = "collisions.bin";
-            progress.Current = 5;
+            progress.Current = 6;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -640,20 +749,28 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 6;
+            progress.Current = 7;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
 
+            progress.Label = "mesh_cache_report.txt";
+            progress.Current = 8;
+            yield return null;
+            WriteMeshCacheReport(stagedCells, bakeryMeshes);
+
             progress.Label = "ui.bin";
-            progress.Current = 7;
+            progress.Current = 9;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 8;
+            progress.Current = 10;
             yield return null;
-            var manifest = BakeManifest.FromCurrentSources(esmPath, bsaPath);
+            var manifest = BakeManifest.FromCurrentSources(
+                esmPath,
+                bsaPath,
+                InstalledContentSources.ResolveGameplayRecordSources(config.InstallPath));
             manifest.MeshCount = bakeryMeshes.Count;
             manifest.MaterialCount = bakeryMaterials.Count;
             manifest.TextureCount = bakeryTextures.Count;
@@ -684,6 +801,7 @@ namespace VVardenfell.Importer.Bake
             WorkerContext worker,
             CellBakeWorkItem workItem,
             RecordIndex recordIndex,
+            Dictionary<string, ContentReference> gameplayContentLookup,
             BsaArchive sharedBsa,
             Dictionary<string, BsaEntry> bsaByName,
             Dictionary<int, string> ltexMap,
@@ -719,6 +837,7 @@ namespace VVardenfell.Importer.Bake
                 && previousState.PipelineVersion == CacheFormat.WorldBakePipelineVersion
                 && string.Equals(previousState.Fingerprint, fingerprint, StringComparison.Ordinal)
                 && File.Exists(workItem.OutputPath)
+                && File.Exists(workItem.AuditOutputPath)
                 && TryValidateCellFile(workItem.OutputPath, workItem.IsInterior, workItem.Cell.Name, out _);
 
             var staged = new StagedCellData
@@ -726,14 +845,27 @@ namespace VVardenfell.Importer.Bake
                 WorkItem = workItem,
                 PreviousState = hasPrevious ? previousState : null,
                 Fingerprint = fingerprint,
+                Environment = workItem.Cell.Environment,
                 Land = land,
                 NeedsWrite = !canReuse,
                 PendingRefs = canReuse ? null : new List<StagedRefData>(refs.Count),
                 DoorEntries = canReuse ? null : new List<DoorRefEntry>(),
+                PlacementAuditEntries = canReuse ? null : new List<RefPlacementAuditEntry>(refs.Count),
             };
 
             if (canReuse)
                 return staged;
+
+            var duplicatePlacedRefCounts = new Dictionary<uint, int>();
+            for (int i = 0; i < refs.Count; i++)
+            {
+                var reference = refs[i];
+                if (reference.Deleted || reference.FormId == 0u)
+                    continue;
+
+                duplicatePlacedRefCounts.TryGetValue(reference.FormId, out int duplicateCount);
+                duplicatePlacedRefCounts[reference.FormId] = duplicateCount + 1;
+            }
 
             var staticVerts = new List<Vector3>();
             var staticIndices = new List<int>();
@@ -742,19 +874,71 @@ namespace VVardenfell.Importer.Bake
                 var reference = refs[i];
                 if (reference.Deleted)
                     continue;
-                if (!recordIndex.TryGet(reference.BaseId, out var rec))
-                    continue;
 
-                var model = EnsureModelSource(rec, sharedBsa, bsaByName, modelCache);
+                CellBakery.ToUnityTransform(reference, out var pos, out var rot);
+                bool hasBaseRecord = recordIndex.TryGet(reference.BaseId, out var rec);
+                bool isDoorRecord = hasBaseRecord && rec.Tag == DoorTag;
+                bool isStat = hasBaseRecord && rec.Tag == StatTag;
+                bool isInteractable = !isStat;
+                var contentReference = ResolveGameplayContentReference(gameplayContentLookup, reference.BaseId);
+                var model = hasBaseRecord ? EnsureModelSource(rec, sharedBsa, bsaByName, modelCache) : null;
+                int duplicateCount = 1;
+                if (reference.FormId != 0u && duplicatePlacedRefCounts.TryGetValue(reference.FormId, out int countedDuplicates))
+                    duplicateCount = countedDuplicates;
+
+                var auditFlags = RefPlacementAuditFlags.None;
+                if (isDoorRecord)
+                    auditFlags |= RefPlacementAuditFlags.IsDoor;
+                if (reference.IsDoor)
+                    auditFlags |= RefPlacementAuditFlags.IsTeleportDoor;
+                if (duplicateCount > 1)
+                    auditFlags |= RefPlacementAuditFlags.HasDuplicatePlacedRefId;
+                if (!hasBaseRecord)
+                    auditFlags |= RefPlacementAuditFlags.MissingBaseRecord;
+                if (hasBaseRecord && (string.IsNullOrEmpty(rec.Model) || model == null || model.Meshes.Length == 0))
+                    auditFlags |= RefPlacementAuditFlags.MissingModel;
+                if (model != null && model.Meshes.Length > 0)
+                    auditFlags |= RefPlacementAuditFlags.WasBaked;
+
+                Bounds aggregateWorldBounds = default;
+                if (TryComputeAggregateWorldBounds(model, pos, rot, reference.Scale, out aggregateWorldBounds))
+                    auditFlags |= RefPlacementAuditFlags.HasWorldBounds;
+
+                staged.PlacementAuditEntries.Add(new RefPlacementAuditEntry
+                {
+                    PlacedRefId = reference.FormId,
+                    BaseId = reference.BaseId ?? string.Empty,
+                    SourcePosX = reference.PosX,
+                    SourcePosY = reference.PosY,
+                    SourcePosZ = reference.PosZ,
+                    SourceRotX = reference.RotX,
+                    SourceRotY = reference.RotY,
+                    SourceRotZ = reference.RotZ,
+                    SourceScale = reference.Scale,
+                    UnityPosX = pos.x,
+                    UnityPosY = pos.y,
+                    UnityPosZ = pos.z,
+                    UnityRotX = rot.x,
+                    UnityRotY = rot.y,
+                    UnityRotZ = rot.z,
+                    UnityRotW = rot.w,
+                    UnityScale = reference.Scale,
+                    BoundsCenterX = aggregateWorldBounds.center.x,
+                    BoundsCenterY = aggregateWorldBounds.center.y,
+                    BoundsCenterZ = aggregateWorldBounds.center.z,
+                    BoundsExtentsX = aggregateWorldBounds.extents.x,
+                    BoundsExtentsY = aggregateWorldBounds.extents.y,
+                    BoundsExtentsZ = aggregateWorldBounds.extents.z,
+                    SpawnedSubmeshCount = model?.Meshes?.Length ?? 0,
+                    DuplicatePlacedRefCount = duplicateCount,
+                    Flags = auditFlags,
+                });
+
                 if (model == null || model.Meshes.Length == 0)
                     continue;
 
-                CellBakery.ToUnityTransform(reference, out var pos, out var rot);
-                bool isStat = rec.Tag == StatTag;
-                bool isInteractable = !isStat;
-
                 int doorMetaIndex = -1;
-                if (rec.Tag == DoorTag)
+                if (isDoorRecord)
                 {
                     doorMetaIndex = staged.DoorEntries.Count;
                     BuildDoorEntry(reference, out var doorEntry);
@@ -783,11 +967,13 @@ namespace VVardenfell.Importer.Bake
                     staged.PendingRefs.Add(new StagedRefData(
                         built,
                         meshIndex == 0 ? model.Collision : default,
+                        $"{rec.Model}#{meshIndex}",
                         matFlags,
                         built.TexturePath,
                         isInteractable,
                         reference.FormId,
                         meshIndex == 0 ? doorMetaIndex : -1,
+                        contentReference,
                         pos,
                         rot,
                         reference.Scale));
@@ -799,6 +985,54 @@ namespace VVardenfell.Importer.Bake
                 : default;
 
             return staged;
+        }
+
+        private static bool TryComputeAggregateWorldBounds(
+            ModelSource model,
+            Vector3 position,
+            Quaternion rotation,
+            float scale,
+            out Bounds aggregateBounds)
+        {
+            aggregateBounds = default;
+            if (model == null || model.Meshes == null || model.Meshes.Length == 0)
+                return false;
+
+            bool hasBounds = false;
+            for (int i = 0; i < model.Meshes.Length; i++)
+            {
+                Bounds worldBounds = TransformBounds(model.Meshes[i].LocalBounds, position, rotation, scale);
+                if (!hasBounds)
+                {
+                    aggregateBounds = worldBounds;
+                    hasBounds = true;
+                }
+                else
+                {
+                    aggregateBounds.Encapsulate(worldBounds.min);
+                    aggregateBounds.Encapsulate(worldBounds.max);
+                }
+            }
+
+            return hasBounds;
+        }
+
+        private static Bounds TransformBounds(Bounds localBounds, Vector3 position, Quaternion rotation, float scale)
+        {
+            float absoluteScale = Mathf.Abs(scale);
+            Vector3 scaledCenter = localBounds.center * scale;
+            Vector3 scaledExtents = localBounds.extents * absoluteScale;
+            Vector3 worldCenter = position + rotation * scaledCenter;
+
+            Vector3 right = rotation * Vector3.right;
+            Vector3 up = rotation * Vector3.up;
+            Vector3 forward = rotation * Vector3.forward;
+            Vector3 worldExtents = new(
+                Mathf.Abs(right.x) * scaledExtents.x + Mathf.Abs(up.x) * scaledExtents.y + Mathf.Abs(forward.x) * scaledExtents.z,
+                Mathf.Abs(right.y) * scaledExtents.x + Mathf.Abs(up.y) * scaledExtents.y + Mathf.Abs(forward.y) * scaledExtents.z,
+                Mathf.Abs(right.z) * scaledExtents.x + Mathf.Abs(up.z) * scaledExtents.y + Mathf.Abs(forward.z) * scaledExtents.z);
+
+            return new Bounds(worldCenter, worldExtents * 2f);
         }
 
         private static ModelSource EnsureModelSource(
@@ -1045,6 +1279,283 @@ namespace VVardenfell.Importer.Bake
             yield return null;
         }
 
+        private static IEnumerator AssignRenderShardIndicesIncremental(
+            List<StagedCellData> dirtyCells,
+            BakeProgress progress,
+            MeshBakery meshes,
+            TextureBakery textures,
+            RenderShardBakery renderShards)
+        {
+            using var _ = k_AssignRenderShards.Auto();
+
+            progress.Stage = "Assigning render shards";
+            progress.Total = dirtyCells.Count;
+            progress.Current = 0;
+            progress.Label = dirtyCells.Count == 0 ? "No dirty cells to shard" : $"Assigning render shards 0/{dirtyCells.Count}";
+            yield return null;
+
+            if (dirtyCells.Count == 0)
+                yield break;
+
+            int maxWorkers = Math.Max(1, Environment.ProcessorCount);
+            int fallbackBucketKey = RenderShardBakery.PackBucketKey(1, 1);
+
+            string[] familyKeysByMeshIndex = Array.Empty<string>();
+            if (meshes.Count > 0)
+            {
+                familyKeysByMeshIndex = new string[meshes.Count];
+                int familyCompleted = 0;
+                var familyTask = Task.Run(() =>
+                {
+                    k_AssignRenderShardsFamilyPrecompute.Begin();
+                    try
+                    {
+                        Parallel.For(
+                            0,
+                            familyKeysByMeshIndex.Length,
+                            new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
+                            meshIndex =>
+                            {
+                                string sourceLabel = meshes.GetSourceLabel(meshIndex);
+                                familyKeysByMeshIndex[meshIndex] = RenderShardBakery.NormalizeFamilyKey(sourceLabel);
+                                Interlocked.Increment(ref familyCompleted);
+                            });
+                    }
+                    finally
+                    {
+                        k_AssignRenderShardsFamilyPrecompute.End();
+                    }
+                });
+
+                while (!familyTask.IsCompleted)
+                {
+                    progress.Total = familyKeysByMeshIndex.Length;
+                    progress.Current = familyCompleted;
+                    progress.Label = $"Precomputing shard families {familyCompleted}/{familyKeysByMeshIndex.Length}";
+                    yield return null;
+                }
+
+                familyTask.GetAwaiter().GetResult();
+
+                progress.Total = familyKeysByMeshIndex.Length;
+                progress.Current = familyKeysByMeshIndex.Length;
+                progress.Label = $"Precomputing shard families {familyKeysByMeshIndex.Length}/{familyKeysByMeshIndex.Length}";
+                yield return null;
+            }
+
+            int[] bucketKeysByTextureIndex = Array.Empty<int>();
+            if (textures.Count > 0)
+            {
+                bucketKeysByTextureIndex = new int[textures.Count];
+                for (int textureIndex = 0; textureIndex < textures.Count; textureIndex++)
+                    bucketKeysByTextureIndex[textureIndex] = GetTextureBucketKey(textures, textureIndex);
+            }
+
+            var localRequestSets = new ConcurrentBag<HashSet<RenderShardRequestKey>>();
+            int requestBuildCompleted = 0;
+            var requestBuildTask = Task.Run(() =>
+            {
+                k_AssignRenderShardsBuildRequests.Begin();
+                try
+                {
+                    Parallel.ForEach(
+                        Partitioner.Create(0, dirtyCells.Count),
+                        new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
+                        () => new HashSet<RenderShardRequestKey>(),
+                        (range, _, localSet) =>
+                        {
+                            for (int cellIndex = range.Item1; cellIndex < range.Item2; cellIndex++)
+                            {
+                                var staged = dirtyCells[cellIndex];
+                                var bakedRefs = staged.BakedRefs;
+                                if (bakedRefs != null)
+                                {
+                                    for (int r = 0; r < bakedRefs.Count; r++)
+                                    {
+                                        var baked = bakedRefs[r];
+                                        int globalMeshIndex = baked.LocalMeshIndex;
+                                        int textureIndex = baked.SliceIndex;
+                                        int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
+                                            ? bucketKeysByTextureIndex[textureIndex]
+                                            : fallbackBucketKey;
+                                        string familyKey = (uint)globalMeshIndex < (uint)familyKeysByMeshIndex.Length
+                                            ? familyKeysByMeshIndex[globalMeshIndex]
+                                            : "__root__";
+                                        localSet.Add(new RenderShardRequestKey(bucketKey, familyKey, globalMeshIndex));
+                                    }
+                                }
+
+                                Interlocked.Increment(ref requestBuildCompleted);
+                            }
+
+                            return localSet;
+                        },
+                        localSet => localRequestSets.Add(localSet));
+                }
+                finally
+                {
+                    k_AssignRenderShardsBuildRequests.End();
+                }
+            });
+
+            while (!requestBuildTask.IsCompleted)
+            {
+                progress.Total = dirtyCells.Count;
+                progress.Current = requestBuildCompleted;
+                progress.Label = $"Building shard requests {requestBuildCompleted}/{dirtyCells.Count}";
+                yield return null;
+            }
+
+            requestBuildTask.GetAwaiter().GetResult();
+
+            progress.Total = dirtyCells.Count;
+            progress.Current = dirtyCells.Count;
+            progress.Label = $"Building shard requests {dirtyCells.Count}/{dirtyCells.Count}";
+            yield return null;
+
+            List<RenderShardRequestKey> sortedRequests;
+            using (k_AssignRenderShardsReduce.Auto())
+            {
+                var uniqueRequests = new HashSet<RenderShardRequestKey>();
+                foreach (var localSet in localRequestSets)
+                {
+                    if (localSet == null)
+                        continue;
+
+                    foreach (var request in localSet)
+                        uniqueRequests.Add(request);
+                }
+
+                sortedRequests = new List<RenderShardRequestKey>(uniqueRequests);
+                sortedRequests.Sort(RenderShardRequestKeyComparer.Instance);
+            }
+
+            progress.Total = Math.Max(1, sortedRequests.Count);
+            progress.Current = 0;
+            progress.Label = sortedRequests.Count == 0
+                ? "Resolving shard assignments 0/0"
+                : $"Resolving shard assignments 0/{sortedRequests.Count}";
+            yield return null;
+
+            int suspiciousShardCount = 0;
+            var resolvedAssignments = new Dictionary<RenderShardRequestKey, RenderShardResolvedAssignment>(sortedRequests.Count);
+            using (k_AssignRenderShardsResolve.Auto())
+            {
+                for (int i = 0; i < sortedRequests.Count; i++)
+                {
+                    var request = sortedRequests[i];
+                    var assignment = renderShards.GetOrAddAssignment(request.BucketKey, request.FamilyKey, request.GlobalMeshIndex);
+                    if (assignment.LocalMeshIndex == 0 && assignment.RenderShardIndex >= renderShards.Count - 1)
+                        suspiciousShardCount++;
+
+                    resolvedAssignments[request] = new RenderShardResolvedAssignment(
+                        assignment.RenderShardIndex,
+                        assignment.LocalMeshIndex);
+
+                    if (((i + 1) & 255) == 0 || i + 1 == sortedRequests.Count)
+                    {
+                        progress.Total = Math.Max(1, sortedRequests.Count);
+                        progress.Current = i + 1;
+                        progress.Label = $"Resolving shard assignments {i + 1}/{sortedRequests.Count}";
+                        yield return null;
+                    }
+                }
+            }
+
+            int applyCompleted = 0;
+            var applyTask = Task.Run(() =>
+            {
+                k_AssignRenderShardsApply.Begin();
+                try
+                {
+                    Parallel.ForEach(
+                        Partitioner.Create(0, dirtyCells.Count),
+                        new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
+                        range =>
+                        {
+                            for (int cellIndex = range.Item1; cellIndex < range.Item2; cellIndex++)
+                            {
+                                var staged = dirtyCells[cellIndex];
+                                var bakedRefs = staged.BakedRefs;
+                                if (bakedRefs != null)
+                                {
+                                    for (int r = 0; r < bakedRefs.Count; r++)
+                                    {
+                                        var baked = bakedRefs[r];
+                                        int globalMeshIndex = baked.LocalMeshIndex;
+                                        int textureIndex = baked.SliceIndex;
+                                        int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
+                                            ? bucketKeysByTextureIndex[textureIndex]
+                                            : fallbackBucketKey;
+                                        string familyKey = (uint)globalMeshIndex < (uint)familyKeysByMeshIndex.Length
+                                            ? familyKeysByMeshIndex[globalMeshIndex]
+                                            : "__root__";
+                                        var request = new RenderShardRequestKey(bucketKey, familyKey, globalMeshIndex);
+                                        var resolved = resolvedAssignments[request];
+
+                                        bakedRefs[r] = new CellBakery.BakedRef(
+                                            resolved.RenderShardIndex,
+                                            resolved.LocalMeshIndex,
+                                            baked.LocalMaterialIndex,
+                                            baked.SliceIndex,
+                                            baked.CollisionIndex,
+                                            baked.PlacedRefId,
+                                            baked.DoorMetaIndex,
+                                            baked.ContentHandleValue,
+                                            baked.ContentKind,
+                                            baked.PositionUnity,
+                                            baked.RotationUnity,
+                                            baked.Scale);
+                                    }
+                                }
+
+                                Interlocked.Increment(ref applyCompleted);
+                            }
+                        });
+                }
+                finally
+                {
+                    k_AssignRenderShardsApply.End();
+                }
+            });
+
+            while (!applyTask.IsCompleted)
+            {
+                progress.Total = dirtyCells.Count;
+                progress.Current = applyCompleted;
+                progress.Label = $"Applying shard assignments {applyCompleted}/{dirtyCells.Count}";
+                yield return null;
+            }
+
+            applyTask.GetAwaiter().GetResult();
+
+            progress.Total = dirtyCells.Count;
+            progress.Current = dirtyCells.Count;
+            progress.Label = $"Applying shard assignments {dirtyCells.Count}/{dirtyCells.Count}";
+            yield return null;
+
+            progress.Total = dirtyCells.Count;
+            progress.Current = dirtyCells.Count;
+            progress.Label = $"Assigning render shards {dirtyCells.Count}/{dirtyCells.Count}";
+            yield return null;
+
+            var catalog = renderShards.BuildCatalog();
+            RenderShardFile.LogShardStats(catalog, "bake");
+            if (suspiciousShardCount > 0)
+            {
+                UnityEngine.Debug.Log($"[VVardenfell] render shard assignment created or extended {suspiciousShardCount} shard-local mesh routes during this bake pass.");
+            }
+        }
+
+        private static int GetTextureBucketKey(TextureBakery textures, int textureIndex)
+        {
+            if (textureIndex < 0)
+                return RenderShardBakery.PackBucketKey(1, 1);
+
+            int2 dims = textures.GetBucketDimensions(textureIndex);
+            return RenderShardBakery.PackBucketKey(dims.x, dims.y);
+        }
+
         private static void ResolveDirtyCellIndices(
             StagedCellData staged,
             MeshBakery meshes,
@@ -1081,6 +1592,10 @@ namespace VVardenfell.Importer.Bake
             }
 
             var result = new List<CellBakery.BakedRef>(staged.PreparedRefs.Count);
+            var meshIndices = new HashSet<int>();
+            var materialIndices = new HashSet<int>();
+            var textureIndices = new HashSet<int>();
+            var collisionIndices = new HashSet<int>();
             for (int i = 0; i < staged.PreparedRefs.Count; i++)
             {
                 var prepared = staged.PreparedRefs[i];
@@ -1090,19 +1605,43 @@ namespace VVardenfell.Importer.Bake
                 int collisionIndex = prepared.Collision.IsEmpty
                     ? -1
                     : collisions.AddOrGet(prepared.Collision);
+                meshIndices.Add(meshIndex);
+                materialIndices.Add(materialIndex);
+                if (sliceIndex >= 0)
+                    textureIndices.Add(sliceIndex);
+                if (collisionIndex >= 0)
+                    collisionIndices.Add(collisionIndex);
                 result.Add(new CellBakery.BakedRef(
+                    -1,
                     meshIndex,
                     materialIndex,
                     sliceIndex,
                     collisionIndex,
                     prepared.PlacedRefId,
                     prepared.DoorMetaIndex,
+                    prepared.ContentReference.HandleValue,
+                    (int)prepared.ContentReference.Kind,
                     prepared.Position,
                     prepared.Rotation,
                     prepared.Scale));
             }
 
             staged.BakedRefs = result;
+            staged.GlobalMeshIndices = ToSortedArray(meshIndices);
+            staged.GlobalMaterialIndices = ToSortedArray(materialIndices);
+            staged.GlobalTextureIndices = ToSortedArray(textureIndices);
+            staged.GlobalCollisionIndices = ToSortedArray(collisionIndices);
+            if (staged.LayerGrid != null)
+            {
+                var terrainLayerIndices = new HashSet<int>();
+                for (int i = 0; i < staged.LayerGrid.Length; i++)
+                    terrainLayerIndices.Add(staged.LayerGrid[i]);
+                staged.GlobalTerrainLayerIndices = ToSortedArray(terrainLayerIndices);
+            }
+            else
+            {
+                staged.GlobalTerrainLayerIndices = Array.Empty<int>();
+            }
             }
             finally
             {
@@ -1153,15 +1692,17 @@ namespace VVardenfell.Importer.Bake
             {
                 staged.BuildPreparedCellRefsMs = 0d;
                 staged.PreparedWorkItemCount = 0;
+                staged.SourcePreparedMeshCount = 0;
                 staged.StaticGroupCount = 0;
                 staged.CombinedGroupCount = 0;
                 staged.InteractableWorkItemCount = 0;
+                staged.CombinedPreparedPayloadBytes = 0L;
                 return result;
             }
 
-            var groups = new Dictionary<BatchKey, List<StagedRefData>>(new BatchKeyComparer());
             var workItems = new List<PreparedWorkItem>(staged.PendingRefs.Count);
             int interactableWorkItems = 0;
+            int sourcePreparedMeshCount = 0;
             k_BuildPreparedCellRefsGroup.Begin();
             try
             {
@@ -1170,7 +1711,6 @@ namespace VVardenfell.Importer.Bake
                     var pending = staged.PendingRefs[i];
                     if (pending.IsInteractable)
                     {
-                        int preparedIndex = workItems.Count;
                         workItems.Add(new PreparedWorkItem(
                             true,
                             pending.Built,
@@ -1179,18 +1719,29 @@ namespace VVardenfell.Importer.Bake
                             pending.TexturePath,
                             pending.PlacedRefId,
                             pending.DoorMetaIndex,
+                            pending.ContentReference,
                             pending.Position,
                             pending.Rotation,
                             pending.Scale,
-                            BuildPreparedMeshSourceLabel(staged.WorkItem.Key, preparedIndex)));
+                            pending.MeshSourceLabel));
                         interactableWorkItems++;
                         continue;
                     }
 
-                    var key = new BatchKey(pending.MaterialFlags, pending.TexturePath, pending.Built.HasNormals, pending.Built.HasUvs);
-                    if (!groups.TryGetValue(key, out var list))
-                        groups[key] = list = new List<StagedRefData>();
-                    list.Add(pending);
+                    workItems.Add(new PreparedWorkItem(
+                        false,
+                        pending.Built,
+                        default,
+                        pending.MaterialFlags,
+                        pending.TexturePath,
+                        0u,
+                        -1,
+                        default,
+                        pending.Position,
+                        pending.Rotation,
+                        pending.Scale,
+                        pending.MeshSourceLabel));
+                    sourcePreparedMeshCount++;
                 }
             }
             finally
@@ -1198,51 +1749,12 @@ namespace VVardenfell.Importer.Bake
                 k_BuildPreparedCellRefsGroup.End();
             }
 
-            int batchIndex = 0;
             int combinedGroupCount = 0;
             k_BuildPreparedCellRefsCombine.Begin();
             try
             {
-                foreach (var kv in groups)
-                {
-                    var group = kv.Value;
-                    if (group.Count == 1)
-                    {
-                        var pending = group[0];
-                        int preparedIndex = workItems.Count;
-                        workItems.Add(new PreparedWorkItem(
-                            false,
-                            pending.Built,
-                            default,
-                            pending.MaterialFlags,
-                            pending.TexturePath,
-                            0u,
-                            -1,
-                            pending.Position,
-                            pending.Rotation,
-                            pending.Scale,
-                            BuildPreparedMeshSourceLabel(staged.WorkItem.Key, preparedIndex)));
-                        batchIndex++;
-                        continue;
-                    }
-
-                    var combined = CombineGroupMesh(group, staged.WorkItem.CellOrigin, $"{staged.WorkItem.Key}[{batchIndex}]");
-                    int combinedIndex = workItems.Count;
-                    workItems.Add(new PreparedWorkItem(
-                        false,
-                        combined,
-                        default,
-                        kv.Key.MaterialFlags,
-                        kv.Key.TexturePath,
-                        0u,
-                        -1,
-                        staged.WorkItem.CellOrigin,
-                        Quaternion.identity,
-                        1f,
-                        BuildPreparedMeshSourceLabel(staged.WorkItem.Key, combinedIndex)));
-                    combinedGroupCount++;
-                    batchIndex++;
-                }
+                // Storage-first pass: keep non-interactable refs as reusable source meshes
+                // instead of baking cell-specific combined meshes.
             }
             finally
             {
@@ -1253,9 +1765,11 @@ namespace VVardenfell.Importer.Bake
             {
                 staged.BuildPreparedCellRefsMs = 0d;
                 staged.PreparedWorkItemCount = 0;
-                staged.StaticGroupCount = groups.Count;
+                staged.SourcePreparedMeshCount = 0;
+                staged.StaticGroupCount = 0;
                 staged.CombinedGroupCount = combinedGroupCount;
                 staged.InteractableWorkItemCount = interactableWorkItems;
+                staged.CombinedPreparedPayloadBytes = 0L;
                 return result;
             }
 
@@ -1274,9 +1788,11 @@ namespace VVardenfell.Importer.Bake
             result.AddRange(prepared);
             staged.BuildPreparedCellRefsMs = ElapsedMilliseconds(startTicks);
             staged.PreparedWorkItemCount = workItems.Count;
-            staged.StaticGroupCount = groups.Count;
+            staged.SourcePreparedMeshCount = sourcePreparedMeshCount;
+            staged.StaticGroupCount = sourcePreparedMeshCount;
             staged.CombinedGroupCount = combinedGroupCount;
             staged.InteractableWorkItemCount = interactableWorkItems;
+            staged.CombinedPreparedPayloadBytes = 0L;
             return result;
             }
             finally
@@ -1284,9 +1800,6 @@ namespace VVardenfell.Importer.Bake
                 k_BuildPreparedCellRefs.End();
             }
         }
-
-        private static string BuildPreparedMeshSourceLabel(string cellKey, int preparedIndex)
-            => $"{cellKey}#{preparedIndex}";
 
         private static PreparedRefData BuildPreparedRefData(in PreparedWorkItem workItem)
         {
@@ -1301,6 +1814,7 @@ namespace VVardenfell.Importer.Bake
                 workItem.TexturePath,
                 workItem.PlacedRefId,
                 workItem.DoorMetaIndex,
+                workItem.ContentReference,
                 workItem.Position,
                 workItem.Rotation,
                 workItem.Scale);
@@ -1480,20 +1994,24 @@ namespace VVardenfell.Importer.Bake
                 bool hasNormals = hasTerrain && staged.Land.Normals != null;
                 bool hasVtex = hasTerrain && staged.LayerGrid != null && staged.LayerGrid.Length == LandRecord.NumTextures;
                 bool hasStaticCollision = !staged.StaticCollision.IsEmpty;
+                bool hasEnvironment = staged.Environment.HasAnyData;
                 if (hasTerrain) flags |= CacheFormat.CellFlagHasTerrain;
                 if (hasNormals) flags |= CacheFormat.CellFlagHasNormals;
                 if (hasVtex) flags |= CacheFormat.CellFlagHasVtex;
                 if (hasStaticCollision) flags |= CacheFormat.CellFlagHasStaticCollision;
+                if (hasEnvironment) flags |= CacheFormat.CellFlagHasEnvironment;
 
                 return new PreparedCellWriteData
                 {
                     Key = staged.WorkItem.Key,
                     OutputPath = staged.WorkItem.OutputPath,
+                    AuditOutputPath = staged.WorkItem.AuditOutputPath,
                     IsInterior = staged.WorkItem.IsInterior,
                     CellId = staged.WorkItem.Cell.Name ?? string.Empty,
                     GridX = staged.WorkItem.IsInterior ? 0 : staged.WorkItem.Cell.GridX,
                     GridY = staged.WorkItem.IsInterior ? 0 : staged.WorkItem.Cell.GridY,
                     Flags = flags,
+                    Environment = staged.Environment,
                     Land = staged.Land,
                     StaticCollision = staged.StaticCollision,
                     TerrainHeightBytes = hasTerrain ? BuildTerrainHeightBytes(staged.Land) : null,
@@ -1501,6 +2019,7 @@ namespace VVardenfell.Importer.Bake
                     LayerGridBytes = hasVtex ? BuildLayerGridBytes(staged.LayerGrid) : null,
                     RefBytes = BuildRefBytes(staged.BakedRefs),
                     DoorBytes = BuildDoorBytes(staged.DoorEntries),
+                    PlacementAuditBytes = BuildPlacementAuditBytes(staged),
                     RefCount = staged.BakedRefs?.Count ?? 0,
                     DoorCount = staged.DoorEntries?.Count ?? 0,
                 };
@@ -1822,6 +2341,9 @@ namespace VVardenfell.Importer.Bake
                 WriteSegment(fs, preparedWrite.FinalBuffer.DoorBytes);
 
                 fs.Flush(flushToDisk: true);
+
+                if (!string.IsNullOrEmpty(preparedWrite.AuditOutputPath))
+                    File.WriteAllBytes(preparedWrite.AuditOutputPath, preparedWrite.PlacementAuditBytes ?? Array.Empty<byte>());
             }
             finally
             {
@@ -1859,6 +2381,52 @@ namespace VVardenfell.Importer.Bake
             return bytes;
         }
 
+        private static Dictionary<string, ContentReference> BuildGameplayContentLookup(GameplayContentData gameplayContent)
+        {
+            var lookup = new Dictionary<string, ContentReference>(StringComparer.OrdinalIgnoreCase);
+            if (gameplayContent == null)
+                return lookup;
+
+            for (int i = 0; i < gameplayContent.Actors.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Actors[i].Id, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
+            for (int i = 0; i < gameplayContent.Activators.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Activators[i].Id, ContentReferenceKind.Activator, ActivatorDefHandle.FromIndex(i).Value);
+            for (int i = 0; i < gameplayContent.Doors.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Doors[i].Id, ContentReferenceKind.Door, DoorDefHandle.FromIndex(i).Value);
+            for (int i = 0; i < gameplayContent.Containers.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Containers[i].Id, ContentReferenceKind.Container, ContainerDefHandle.FromIndex(i).Value);
+            for (int i = 0; i < gameplayContent.Items.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Items[i].Id, ContentReferenceKind.Item, ItemDefHandle.FromIndex(i).Value);
+            for (int i = 0; i < gameplayContent.Lights.Length; i++)
+                AddGameplayContentLookup(lookup, gameplayContent.Lights[i].Id, ContentReferenceKind.Light, LightDefHandle.FromIndex(i).Value);
+
+            return lookup;
+        }
+
+        private static void AddGameplayContentLookup(
+            Dictionary<string, ContentReference> lookup,
+            string id,
+            ContentReferenceKind kind,
+            int handleValue)
+        {
+            if (string.IsNullOrWhiteSpace(id) || handleValue <= 0)
+                return;
+
+            lookup[id] = new ContentReference
+            {
+                Kind = kind,
+                HandleValue = handleValue,
+            };
+        }
+
+        private static ContentReference ResolveGameplayContentReference(Dictionary<string, ContentReference> lookup, string baseId)
+        {
+            if (lookup == null || string.IsNullOrWhiteSpace(baseId))
+                return default;
+
+            return lookup.TryGetValue(baseId, out var contentReference) ? contentReference : default;
+        }
+
         private static byte[] BuildTerrainNormalBytes(LandRecord land)
         {
             var bytes = new byte[land.Normals.Length];
@@ -1881,17 +2449,20 @@ namespace VVardenfell.Importer.Bake
             if (count == 0)
                 return null;
 
-            using var ms = new MemoryStream(count * 56);
+            using var ms = new MemoryStream(count * 68);
             using var w = new BinaryWriter(ms);
             for (int i = 0; i < count; i++)
             {
                 var r = refs[i];
-                w.Write(r.MeshIndex);
-                w.Write(r.MaterialIndex);
+                w.Write(r.RenderShardIndex);
+                w.Write(r.LocalMeshIndex);
+                w.Write(r.LocalMaterialIndex);
                 w.Write(r.SliceIndex);
                 w.Write(r.CollisionIndex);
                 w.Write(r.PlacedRefId);
                 w.Write(r.DoorMetaIndex);
+                w.Write(r.ContentHandleValue);
+                w.Write(r.ContentKind);
                 w.Write(r.PositionUnity.x);
                 w.Write(r.PositionUnity.y);
                 w.Write(r.PositionUnity.z);
@@ -1929,15 +2500,41 @@ namespace VVardenfell.Importer.Bake
             return ms.ToArray();
         }
 
+        private static byte[] BuildPlacementAuditBytes(StagedCellData staged)
+        {
+            var audit = new CellPlacementAuditData
+            {
+                IsInterior = staged.WorkItem.IsInterior,
+                CellId = staged.WorkItem.Cell.Name ?? string.Empty,
+                GridX = staged.WorkItem.Cell.GridX,
+                GridY = staged.WorkItem.Cell.GridY,
+                Entries = staged.PlacementAuditEntries?.ToArray() ?? Array.Empty<RefPlacementAuditEntry>(),
+            };
+
+            return RefPlacementAuditFile.Serialize(audit);
+        }
+
         private static byte[] BuildCellHeaderBytes(PreparedCellWriteData preparedWrite)
         {
-            var bytes = new byte[16];
-            int offset = 0;
-            WriteUInt32(bytes, ref offset, CellBakery.MagicCell);
-            WriteInt32(bytes, ref offset, preparedWrite.GridX);
-            WriteInt32(bytes, ref offset, preparedWrite.GridY);
-            WriteUInt32(bytes, ref offset, preparedWrite.Flags);
-            return bytes;
+            using var ms = new MemoryStream(64);
+            using var w = new BinaryWriter(ms);
+            w.Write(CellBakery.MagicCell);
+            w.Write(preparedWrite.GridX);
+            w.Write(preparedWrite.GridY);
+            w.Write(preparedWrite.Flags);
+            if ((preparedWrite.Flags & CacheFormat.CellFlagHasEnvironment) != 0)
+            {
+                var environment = preparedWrite.Environment;
+                w.Write(environment.HasMood);
+                w.Write(environment.HasWater);
+                w.Write(environment.AmbientColorRgba);
+                w.Write(environment.DirectionalColorRgba);
+                w.Write(environment.FogColorRgba);
+                w.Write(environment.FogDensity);
+                w.Write(environment.WaterHeight);
+                w.Write(environment.RegionId ?? string.Empty);
+            }
+            return ms.ToArray();
         }
 
         private static byte[] BuildLengthPrefixedBytes(byte[] payload)
@@ -1998,6 +2595,15 @@ namespace VVardenfell.Importer.Bake
                 bool hasNormals = (flags & CacheFormat.CellFlagHasNormals) != 0;
                 bool hasVtex = (flags & CacheFormat.CellFlagHasVtex) != 0;
                 bool hasStaticCollision = (flags & CacheFormat.CellFlagHasStaticCollision) != 0;
+                bool hasEnvironment = (flags & CacheFormat.CellFlagHasEnvironment) != 0;
+
+                if (hasEnvironment)
+                {
+                    SkipExact(r, 2L, "cell environment flags");
+                    SkipExact(r, 4L * 3L, "cell environment colors");
+                    SkipExact(r, sizeof(float) * 2L, "cell environment scalars");
+                    r.ReadString();
+                }
 
                 if (hasTerrain)
                 {
@@ -2027,7 +2633,7 @@ namespace VVardenfell.Importer.Bake
                 }
 
                 uint refCount = r.ReadUInt32();
-                SkipExact(r, checked((long)refCount * 56L), "ref table");
+                SkipExact(r, checked((long)refCount * 68L), "ref table");
 
                 uint doorCount = r.ReadUInt32();
                 for (int i = 0; i < doorCount; i++)
@@ -2156,32 +2762,6 @@ namespace VVardenfell.Importer.Bake
                 };
             }
 
-            var meshIndices = new HashSet<int>();
-            var materialIndices = new HashSet<int>();
-            var textureIndices = new HashSet<int>();
-            var collisionIndices = new HashSet<int>();
-            var terrainLayerIndices = new HashSet<int>();
-
-            if (staged.BakedRefs != null)
-            {
-                for (int i = 0; i < staged.BakedRefs.Count; i++)
-                {
-                    var baked = staged.BakedRefs[i];
-                    meshIndices.Add(baked.MeshIndex);
-                    materialIndices.Add(baked.MaterialIndex);
-                    if (baked.SliceIndex >= 0)
-                        textureIndices.Add(baked.SliceIndex);
-                    if (baked.CollisionIndex >= 0)
-                        collisionIndices.Add(baked.CollisionIndex);
-                }
-            }
-
-            if (staged.LayerGrid != null)
-            {
-                for (int i = 0; i < staged.LayerGrid.Length; i++)
-                    terrainLayerIndices.Add(staged.LayerGrid[i]);
-            }
-
             return new BakeManifest.BakedCellState
             {
                 Key = staged.WorkItem.Key,
@@ -2192,11 +2772,11 @@ namespace VVardenfell.Importer.Bake
                 GridX = staged.WorkItem.Cell.GridX,
                 GridY = staged.WorkItem.Cell.GridY,
                 InteriorId = staged.WorkItem.Cell.Name ?? string.Empty,
-                MeshIndices = ToSortedArray(meshIndices),
-                MaterialIndices = ToSortedArray(materialIndices),
-                TextureIndices = ToSortedArray(textureIndices),
-                CollisionIndices = ToSortedArray(collisionIndices),
-                TerrainLayerIndices = ToSortedArray(terrainLayerIndices),
+                MeshIndices = staged.GlobalMeshIndices ?? Array.Empty<int>(),
+                MaterialIndices = staged.GlobalMaterialIndices ?? Array.Empty<int>(),
+                TextureIndices = staged.GlobalTextureIndices ?? Array.Empty<int>(),
+                CollisionIndices = staged.GlobalCollisionIndices ?? Array.Empty<int>(),
+                TerrainLayerIndices = staged.GlobalTerrainLayerIndices ?? Array.Empty<int>(),
             };
         }
 
@@ -2237,6 +2817,8 @@ namespace VVardenfell.Importer.Bake
                     .Append(cell.PendingRefCount)
                     .Append(", workItems=")
                     .Append(cell.PreparedWorkItemCount)
+                    .Append(", sourceMeshes=")
+                    .Append(cell.SourcePreparedMeshCount)
                     .Append(", staticGroups=")
                     .Append(cell.StaticGroupCount)
                     .Append(", combinedGroups=")
@@ -2250,6 +2832,86 @@ namespace VVardenfell.Importer.Bake
                 sb.Append(" ... ").Append(slowCells.Count - count).AppendLine(" more");
 
             UnityEngine.Debug.Log(sb.ToString());
+        }
+
+        private static void WriteMeshCacheReport(StagedCellData[] stagedCells, MeshBakery meshes)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(CachePaths.MeshCacheReport) ?? string.Empty);
+
+            long meshesFileBytes = File.Exists(CachePaths.Meshes) ? new FileInfo(CachePaths.Meshes).Length : 0L;
+            long catalogFileBytes = File.Exists(CachePaths.MeshCatalog) ? new FileInfo(CachePaths.MeshCatalog).Length : 0L;
+
+            int sourcePreparedMeshCount = 0;
+            int combinedPreparedMeshCount = 0;
+            long combinedPreparedPayloadBytes = 0L;
+            var topCells = new List<(string Key, long Bytes, int MeshCount)>(stagedCells.Length);
+            for (int i = 0; i < stagedCells.Length; i++)
+            {
+                var cell = stagedCells[i];
+                sourcePreparedMeshCount += cell.SourcePreparedMeshCount;
+                combinedPreparedMeshCount += cell.CombinedGroupCount;
+                combinedPreparedPayloadBytes += cell.CombinedPreparedPayloadBytes;
+
+                long cellBytes = 0L;
+                var meshIndices = cell.GlobalMeshIndices ?? Array.Empty<int>();
+                for (int m = 0; m < meshIndices.Length; m++)
+                    cellBytes += meshes.GetPayloadLength(meshIndices[m]);
+
+                topCells.Add((cell.WorkItem.Key, cellBytes, meshIndices.Length));
+            }
+
+            topCells.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));
+
+            var topMeshes = new List<(int Index, int Bytes, string Label)>(meshes.Count);
+            for (int i = 0; i < meshes.Count; i++)
+                topMeshes.Add((i, meshes.GetPayloadLength(i), meshes.GetSourceLabel(i)));
+            topMeshes.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));
+
+            var sb = new StringBuilder(2048);
+            sb.AppendLine("[VVardenfell] Mesh Cache Report");
+            sb.Append("meshCount=").Append(meshes.Count)
+                .AppendLine();
+            sb.Append("totalPayloadBytes=").Append(meshes.TotalPayloadBytes)
+                .AppendLine();
+            sb.Append("meshes.bin=").Append(meshesFileBytes)
+                .AppendLine();
+            sb.Append("mesh_catalog.bin=").Append(catalogFileBytes)
+                .AppendLine();
+            sb.Append("sourcePreparedMeshes=").Append(sourcePreparedMeshCount)
+                .AppendLine();
+            sb.Append("combinedPreparedMeshes=").Append(combinedPreparedMeshCount)
+                .AppendLine();
+            sb.Append("combinedPreparedPayloadBytes=").Append(combinedPreparedPayloadBytes)
+                .AppendLine();
+
+            sb.AppendLine();
+            sb.AppendLine("Top mesh payloads:");
+            int topMeshCount = Math.Min(10, topMeshes.Count);
+            for (int i = 0; i < topMeshCount; i++)
+            {
+                var mesh = topMeshes[i];
+                sb.Append(" - #").Append(mesh.Index)
+                    .Append(" bytes=").Append(mesh.Bytes)
+                    .Append(" label=").Append(mesh.Label)
+                    .AppendLine();
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Top cells by mesh payload contribution:");
+            int topCellCount = Math.Min(10, topCells.Count);
+            for (int i = 0; i < topCellCount; i++)
+            {
+                var cell = topCells[i];
+                sb.Append(" - ").Append(cell.Key)
+                    .Append(": bytes=").Append(cell.Bytes)
+                    .Append(", meshRefs=").Append(cell.MeshCount)
+                    .AppendLine();
+            }
+
+            File.WriteAllText(CachePaths.MeshCacheReport, sb.ToString(), Encoding.UTF8);
+
+            UnityEngine.Debug.Log(
+                $"[VVardenfell] mesh cache: meshCount={meshes.Count}, meshes.bin={meshesFileBytes} bytes, mesh_catalog.bin={catalogFileBytes} bytes, sourcePreparedMeshes={sourcePreparedMeshCount}, combinedPreparedMeshes={combinedPreparedMeshCount}, combinedPreparedPayloadBytes={combinedPreparedPayloadBytes}");
         }
 
 
@@ -2275,6 +2937,14 @@ namespace VVardenfell.Importer.Bake
                 w.Write(workItem.Cell.Name ?? string.Empty);
                 w.Write(workItem.Cell.GridX);
                 w.Write(workItem.Cell.GridY);
+                w.Write(workItem.Cell.Environment.HasMood);
+                w.Write(workItem.Cell.Environment.HasWater);
+                w.Write(workItem.Cell.Environment.AmbientColorRgba);
+                w.Write(workItem.Cell.Environment.DirectionalColorRgba);
+                w.Write(workItem.Cell.Environment.FogColorRgba);
+                w.Write(workItem.Cell.Environment.FogDensity);
+                w.Write(workItem.Cell.Environment.WaterHeight);
+                w.Write(workItem.Cell.Environment.RegionId ?? string.Empty);
                 w.Write(refs.Count);
                 for (int i = 0; i < refs.Count; i++)
                 {

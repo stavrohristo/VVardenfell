@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bsa;
 
@@ -14,19 +15,48 @@ namespace VVardenfell.Importer.Bake
     {
         public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress)
         {
-            return WorldBakeService.Bake(config, progress);
+            progress.Done = false;
+            yield return GameplayContentBakery.Bake(config, progress, markDone: false);
+            if (!string.IsNullOrEmpty(progress.Error))
+                yield break;
+
+            progress.Done = false;
+            var gameplayContent = GameplayContentFile.Read(CachePaths.GameplayContent);
+            yield return WorldBakeService.Bake(config, progress, gameplayContent);
         }
 
         public static IEnumerator BakeUiOnly(MorrowindConfig config, BakeProgress progress)
+        {
+            yield return BakeUiOnlyInternal(config, progress, markDone: true);
+        }
+
+        public static IEnumerator BakeGameplayOnly(MorrowindConfig config, BakeProgress progress)
+        {
+            yield return GameplayContentBakery.Bake(config, progress);
+        }
+
+        public static IEnumerator BakeUiAndGameplayOnly(MorrowindConfig config, BakeProgress progress)
+        {
+            yield return BakeUiOnlyInternal(config, progress, markDone: false);
+            if (!string.IsNullOrEmpty(progress.Error))
+                yield break;
+
+            progress.Done = false;
+            yield return GameplayContentBakery.Bake(config, progress);
+        }
+
+        static IEnumerator BakeUiOnlyInternal(MorrowindConfig config, BakeProgress progress, bool markDone)
         {
             var bsaPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.bsa");
             if (!File.Exists(bsaPath))
             {
                 progress.Error = "Morrowind.bsa missing under the configured install path.";
-                progress.Done = true;
+                progress.Done = markDone;
                 yield break;
             }
 
+            progress.Done = false;
+            progress.Error = null;
             progress.Stage = "UI";
             progress.Label = "Opening archives";
             progress.Current = 0;
@@ -42,7 +72,7 @@ namespace VVardenfell.Importer.Bake
             catch (Exception ex)
             {
                 progress.Error = $"Failed to open BSA: {ex.Message}";
-                progress.Done = true;
+                progress.Done = markDone;
                 yield break;
             }
 
@@ -54,12 +84,12 @@ namespace VVardenfell.Importer.Bake
                 UiAssetBakery.Bake(config, bsa, progress);
                 progress.Current = 2;
                 progress.Label = "Presentation cache ready";
-                progress.Done = true;
+                progress.Done = markDone;
             }
             catch (Exception ex)
             {
                 progress.Error = $"Failed to bake UI cache: {ex.Message}";
-                progress.Done = true;
+                progress.Done = markDone;
             }
         }
     }

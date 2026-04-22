@@ -7,6 +7,7 @@ using Unity.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Content;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
 
@@ -62,6 +63,8 @@ namespace VVardenfell.Runtime.Streaming
         /// rewritten.
         /// </summary>
         public static NativeArray<AABB> MeshBounds;
+        public static NativeArray<int2> RefShardMeshRanges;
+        public static NativeArray<int> RefShardGlobalMeshIndices;
 
         /// <summary>
         /// Per-bucket Texture2DArrays. Each array is native-sized (<c>w × h</c>) with a full
@@ -112,15 +115,6 @@ namespace VVardenfell.Runtime.Streaming
         /// skips any ref whose blob is unset.
         /// </summary>
         public static BlobAssetReference<Collider>[] ColliderBlobs;
-
-        /// <summary>
-        /// Shared degenerate collider carried on every ref prefab so instantiated clones
-        /// already have a <c>PhysicsCollider</c> component of the correct archetype.
-        /// Refs with a real <see cref="RefEntry.CollisionIndex"/> overwrite the blob
-        /// during spawn; refs without collision keep this sentinel (filter is
-        /// <see cref="CollisionFilter.Zero"/>, so queries never hit it).
-        /// </summary>
-        public static BlobAssetReference<Collider> SentinelCollider;
 
         /// <summary>Per-cell combined STAT collider (null for wilderness cells).</summary>
         public static readonly Dictionary<int2, BlobAssetReference<Collider>> StaticCellColliders = new();
@@ -176,10 +170,9 @@ namespace VVardenfell.Runtime.Streaming
                     if (ColliderBlobs[i].IsCreated) ColliderBlobs[i].Dispose();
                 ColliderBlobs = null;
             }
-            if (SentinelCollider.IsCreated) SentinelCollider.Dispose();
-            SentinelCollider = default;
-
             if (MeshBounds.IsCreated) MeshBounds.Dispose();
+            if (RefShardMeshRanges.IsCreated) RefShardMeshRanges.Dispose();
+            if (RefShardGlobalMeshIndices.IsCreated) RefShardGlobalMeshIndices.Dispose();
             if (RefBaseArrays != null)
             {
                 for (int i = 0; i < RefBaseArrays.Length; i++)
@@ -201,6 +194,7 @@ namespace VVardenfell.Runtime.Streaming
             Cache = null;
             RefPrefabs = null;
             Desc = default;
+            RuntimeContentDatabase.Clear();
         }
     }
 }
