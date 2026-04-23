@@ -81,6 +81,8 @@ namespace VVardenfell.Runtime.UI
             var rect = rectTransform.rect;
             var lines = _text.Replace("\r", "").Split('\n');
             float lineHeight = _font.LineHeight * _fontScale;
+            bool flipUvX = transform.lossyScale.x < 0f;
+            bool flipUvY = transform.lossyScale.y < 0f;
 
             for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
             {
@@ -105,7 +107,7 @@ namespace VVardenfell.Runtime.UI
                     float y0 = y1 - glyph.Height * _fontScale;
 
                     if (glyph.Width > 0f && glyph.Height > 0f)
-                        AddQuad(vh, x0, y0, x1, y1, glyph.UvRect);
+                        AddQuad(vh, x0, y0, x1, y1, glyph.UvRect, flipUvX, flipUvY);
 
                     penX += glyph.Advance * _fontScale;
                 }
@@ -127,26 +129,30 @@ namespace VVardenfell.Runtime.UI
             return width;
         }
 
-        void AddQuad(VertexHelper vh, float x0, float y0, float x1, float y1, Rect uv)
+        void AddQuad(VertexHelper vh, float x0, float y0, float x1, float y1, Rect uv, bool flipUvX, bool flipUvY)
         {
             int start = vh.currentVertCount;
             var vert = UIVertex.simpleVert;
             vert.color = color;
+            float uMin = flipUvX ? uv.xMax : uv.xMin;
+            float uMax = flipUvX ? uv.xMin : uv.xMax;
+            float vMin = flipUvY ? uv.yMax : uv.yMin;
+            float vMax = flipUvY ? uv.yMin : uv.yMax;
 
             vert.position = new Vector3(x0, y0);
-            vert.uv0 = new Vector2(uv.xMin, uv.yMin);
+            vert.uv0 = new Vector2(uMin, vMin);
             vh.AddVert(vert);
 
             vert.position = new Vector3(x0, y1);
-            vert.uv0 = new Vector2(uv.xMin, uv.yMax);
+            vert.uv0 = new Vector2(uMin, vMax);
             vh.AddVert(vert);
 
             vert.position = new Vector3(x1, y1);
-            vert.uv0 = new Vector2(uv.xMax, uv.yMax);
+            vert.uv0 = new Vector2(uMax, vMax);
             vh.AddVert(vert);
 
             vert.position = new Vector3(x1, y0);
-            vert.uv0 = new Vector2(uv.xMax, uv.yMin);
+            vert.uv0 = new Vector2(uMax, vMin);
             vh.AddVert(vert);
 
             vh.AddTriangle(start, start + 1, start + 2);

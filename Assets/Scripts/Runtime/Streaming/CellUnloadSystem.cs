@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Profiling;
 using Unity.Rendering;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -27,14 +28,12 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _cfgQuery;
         EntityQuery _refsOnlyQuery;  // excludes terrain (no CellCoord)
         EntityQuery _allQuery;       // refs + terrain
-        EntityQuery _refPhysicsUnloadQuery;
-        EntityQuery _cellPhysicsUnloadQuery;
+        EntityQuery _physicsUnloadQuery;
         EntityTypeHandle _entityHandle;
         ComponentTypeHandle<CellLink> _cellLinkHandle;
         ComponentTypeHandle<MaterialMeshInfo> _mmiHandle;
         static readonly ProfilerMarker k_PhysicsUnload = new("VV.Streaming.PhysicsUnload");
-        static readonly ProfilerMarker k_DeactivateRefCollider = new("VV.Streaming.PhysicsUnload.DeactivateRefCollider");
-        static readonly ProfilerMarker k_DeactivateCellCollider = new("VV.Streaming.PhysicsUnload.DeactivateCellCollider");
+        static readonly ProfilerMarker k_DeactivateCollider = new("VV.Streaming.PhysicsUnload.DeactivateCollider");
 
         public void OnCreate(ref SystemState state)
         {
@@ -60,11 +59,8 @@ namespace VVardenfell.Runtime.Streaming
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
                 .Build();
-            _refPhysicsUnloadQuery = SystemAPI.QueryBuilder()
-                .WithAll<CellLink, RefCollisionSource, PhysicsCollider>()
-                .Build();
-            _cellPhysicsUnloadQuery = SystemAPI.QueryBuilder()
-                .WithAll<CellLink, StoredPhysicsColliderBlob, PhysicsCollider>()
+            _physicsUnloadQuery = SystemAPI.QueryBuilder()
+                .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>()
                 .Build();
 
             _entityHandle = state.GetEntityTypeHandle();
@@ -102,7 +98,7 @@ namespace VVardenfell.Runtime.Streaming
 
                     using (k_PhysicsUnload.Auto())
                     {
-                        using (k_DeactivateRefCollider.Auto())
+                        using (k_DeactivateCollider.Auto())
                         {
                             new RemovePhysicsColliderJob
                             {
@@ -110,18 +106,7 @@ namespace VVardenfell.Runtime.Streaming
                                 EntityHandle = _entityHandle,
                                 LinkHandle = _cellLinkHandle,
                                 CommandBuf = ecb.AsParallelWriter(),
-                            }.Run(_refPhysicsUnloadQuery);
-                        }
-
-                        using (k_DeactivateCellCollider.Auto())
-                        {
-                            new RemovePhysicsColliderJob
-                            {
-                                Target = coord,
-                                EntityHandle = _entityHandle,
-                                LinkHandle = _cellLinkHandle,
-                                CommandBuf = ecb.AsParallelWriter(),
-                            }.Run(_cellPhysicsUnloadQuery);
+                            }.Run(_physicsUnloadQuery);
                         }
                     }
 

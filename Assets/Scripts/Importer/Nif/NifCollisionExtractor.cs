@@ -4,6 +4,14 @@ using VVardenfell.Core;
 
 namespace VVardenfell.Importer.Nif
 {
+    public enum CollisionExtractionSource : byte
+    {
+        None = 0,
+        AuthoredRootCollision = 1,
+        AutoVisualStatic = 2,
+        ExplicitNoCollision = 3,
+    }
+
     /// <summary>
     /// Walks a parsed <see cref="NifFile"/> and collects the triangle-soup geometry
     /// authored under every <see cref="RootCollisionNode"/> subtree — that's how
@@ -29,6 +37,17 @@ namespace VVardenfell.Importer.Nif
         /// </summary>
         public static bool TryExtract(NifFile nif, out CollisionPayload payload)
         {
+            var result = Extract(nif);
+            payload = result.Payload;
+            return result.Source == CollisionExtractionSource.AuthoredRootCollision;
+        }
+
+        public static CollisionExtractionResult Extract(NifFile nif)
+        {
+            if (HasRootNoCollisionMarker(nif))
+                return new CollisionExtractionResult(default, CollisionExtractionSource.ExplicitNoCollision);
+
+            bool hasRootCollisionNode = HasRootCollisionNode(nif);
             var verts = new List<Vector3>();
             var indices = new List<int>();
 
@@ -36,21 +55,36 @@ namespace VVardenfell.Importer.Nif
             {
                 if (rootIndex < 0 || rootIndex >= nif.Records.Length) continue;
                 if (nif.Records[rootIndex] is NiAVObject av)
-                    Walk(nif, av, Matrix4x4.identity, inCollision: false, verts, indices);
+                    WalkAuthoredCollision(nif, av, Matrix4x4.identity, inCollision: false, verts, indices);
             }
 
-            if (verts.Count == 0 || indices.Count == 0)
+            if (verts.Count > 0 && indices.Count > 0)
+                return new CollisionExtractionResult(
+                    new CollisionPayload(verts.ToArray(), indices.ToArray()),
+                    CollisionExtractionSource.AuthoredRootCollision);
+
+            if (hasRootCollisionNode)
+                return new CollisionExtractionResult(default, CollisionExtractionSource.None);
+
+            verts.Clear();
+            indices.Clear();
+            foreach (int rootIndex in nif.Roots)
             {
-                payload = default;
-                return false;
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length) continue;
+                if (nif.Records[rootIndex] is NiAVObject av)
+                    WalkVisibleGeometry(nif, av, Matrix4x4.identity, verts, indices);
             }
 
-            payload = new CollisionPayload(verts.ToArray(), indices.ToArray());
-            return true;
+            if (verts.Count > 0 && indices.Count > 0)
+                return new CollisionExtractionResult(
+                    new CollisionPayload(verts.ToArray(), indices.ToArray()),
+                    CollisionExtractionSource.AutoVisualStatic);
+
+            return new CollisionExtractionResult(default, CollisionExtractionSource.None);
         }
 
-        private static void Walk(NifFile nif, NiAVObject obj, Matrix4x4 parent, bool inCollision,
-                                 List<Vector3> verts, List<int> indices)
+        private static void WalkAuthoredCollision(NifFile nif, NiAVObject obj, Matrix4x4 parent, bool inCollision,
+                                                  List<Vector3> verts, List<int> indices)
         {
             // Mirror NifMeshBuilder.Walk: build local matrix preserving non-uniform
             // or reflected scale instead of decomposing to (quat + uniform scale).
@@ -84,9 +118,99 @@ namespace VVardenfell.Importer.Nif
                 {
                     if (childIdx < 0 || childIdx >= nif.Records.Length) continue;
                     if (nif.Records[childIdx] is NiAVObject child)
-                        Walk(nif, child, world, childInCollision, verts, indices);
+                        WalkAuthoredCollision(nif, child, world, childInCollision, verts, indices);
                 }
             }
+        }
+
+        private static void WalkVisibleGeometry(NifFile nif, NiAVObject obj, Matrix4x4 parent,
+                                                List<Vector3> verts, List<int> indices)
+        {
+            if ((obj.Flags & 0x0001) != 0)
+                return;
+
+            var r = obj.Rotation;
+            float s = obj.Scale;
+            var local = new Matrix4x4();
+            local.m00 = r.m00 * s; local.m01 = r.m01 * s; local.m02 = r.m02 * s; local.m03 = obj.Translation.x;
+            local.m10 = r.m10 * s; local.m11 = r.m11 * s; local.m12 = r.m12 * s; local.m13 = obj.Translation.y;
+            local.m20 = r.m20 * s; local.m21 = r.m21 * s; local.m22 = r.m22 * s; local.m23 = obj.Translation.z;
+            local.m30 = 0f;        local.m31 = 0f;        local.m32 = 0f;        local.m33 = 1f;
+            var world = parent * local;
+
+            if (obj is RootCollisionNode)
+                return;
+
+            if (obj is NiTriShape tri)
+            {
+                var data = Resolve<NiTriShapeData>(nif, tri.Data);
+                if (data != null && data.Vertices != null && data.NumVertices > 0 && data.Triangles != null)
+                    AppendTriShape(data, world, verts, indices);
+                return;
+            }
+
+            if (obj is NiNode node && node.Children != null)
+            {
+                foreach (int childIdx in node.Children)
+                {
+                    if (childIdx < 0 || childIdx >= nif.Records.Length) continue;
+                    if (nif.Records[childIdx] is NiAVObject child)
+                        WalkVisibleGeometry(nif, child, world, verts, indices);
+                }
+            }
+        }
+
+        private static bool HasRootNoCollisionMarker(NifFile nif)
+        {
+            foreach (int rootIndex in nif.Roots)
+            {
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
+                if (nif.Records[rootIndex] is NiObjectNET root && HasNoCollisionMarker(nif, root))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasRootCollisionNode(NifFile nif)
+        {
+            foreach (int rootIndex in nif.Roots)
+            {
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
+                if (nif.Records[rootIndex] is not NiNode root || root.Children == null)
+                    continue;
+
+                foreach (int childIndex in root.Children)
+                {
+                    if (childIndex < 0 || childIndex >= nif.Records.Length)
+                        continue;
+                    if (nif.Records[childIndex] is RootCollisionNode)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasNoCollisionMarker(NifFile nif, NiObjectNET obj)
+        {
+            int extraIndex = obj.ExtraData;
+            var guard = 0;
+            while (extraIndex >= 0 && extraIndex < nif.Records.Length && guard++ < nif.Records.Length)
+            {
+                if (nif.Records[extraIndex] is NiStringExtraData stringExtra &&
+                    !string.IsNullOrEmpty(stringExtra.Data) &&
+                    stringExtra.Data.StartsWith("NC", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                extraIndex = nif.Records[extraIndex] is Extra extra ? extra.NextExtra : -1;
+            }
+
+            return false;
         }
 
         private static void AppendTriShape(NiTriShapeData data, Matrix4x4 world,
@@ -139,5 +263,17 @@ namespace VVardenfell.Importer.Nif
 
         public int TriangleCount => Indices != null ? Indices.Length / 3 : 0;
         public bool IsEmpty => Vertices == null || Vertices.Length == 0 || Indices == null || Indices.Length == 0;
+    }
+
+    public readonly struct CollisionExtractionResult
+    {
+        public readonly CollisionPayload Payload;
+        public readonly CollisionExtractionSource Source;
+
+        public CollisionExtractionResult(CollisionPayload payload, CollisionExtractionSource source)
+        {
+            Payload = payload;
+            Source = source;
+        }
     }
 }

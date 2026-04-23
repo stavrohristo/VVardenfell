@@ -15,15 +15,15 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 26;
+        public const uint FormatVersion = 28;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 7;
-        public const uint GameplayContentVersion = 2;
+        public const uint WorldBakePipelineVersion = 14;
+        public const uint GameplayContentVersion = 6;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized
@@ -60,9 +60,21 @@ namespace VVardenfell.Core.Cache
         public const uint CellFlagHasEnvironment     = 1 << 4;
     }
 
+    public enum RefSpawnMode : int
+    {
+        RenderShard = 0,
+        ModelPrefab = 1,
+    }
+
     /// <summary>
-    /// Fixed-size ref entry in a cell file. One per placed object submesh.
-    /// Layout is hand-packed 68 bytes, matched exactly by the writer/reader.
+    /// Fixed-size ref entry in a cell file.
+    ///
+    /// World refs now use a mixed-mode layout:
+    /// - <see cref="RefSpawnMode.RenderShard"/> keeps the legacy submesh-centric actor path.
+    /// - <see cref="RefSpawnMode.ModelPrefab"/> stores one placed-ref-centric entry that
+    ///   resolves to a baked model-prefab graph.
+    ///
+    /// Layout is hand-packed 72 bytes, matched exactly by the writer/reader.
     ///
     /// <see cref="CollisionIndex"/> is -1 for refs with no per-ref collider - either
     /// because the source NIF has no RootCollisionNode, or because the ref is a pure
@@ -72,13 +84,15 @@ namespace VVardenfell.Core.Cache
     /// reserved for interactable record types (DOOR/ACTI/CONT/LIGH/pickable items) so
     /// they can be raycasted individually at runtime.
     /// </summary>
-    [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 68)]
+    [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 72)]
     public struct RefEntry
     {
-        [FieldOffset(0)] public int RenderShardIndex;    // 4 - shard-scoped RenderMeshArray/prefab index
-        [FieldOffset(4)] public int LocalMeshIndex;      // 4 - local mesh index within the shard RMA
-        [FieldOffset(8)] public int LocalMaterialIndex;  // 4 - local material index within the shard RMA
-        [FieldOffset(12)] public int SliceIndex;         // 4 - global texture index, or -1 for no texture
+        [FieldOffset(0)] public int PrimaryIndex;        // 4 - RenderShardIndex or ModelPrefabIndex by SpawnMode
+        [FieldOffset(0)] public int RenderShardIndex;
+        [FieldOffset(0)] public int ModelPrefabIndex;
+        [FieldOffset(4)] public int LocalMeshIndex;      // 4 - local mesh index within the shard RMA (legacy path)
+        [FieldOffset(8)] public int LocalMaterialIndex;  // 4 - local material index within the shard RMA (legacy path)
+        [FieldOffset(12)] public int SliceIndex;         // 4 - global texture index, or -1 for no texture (legacy path)
         [FieldOffset(16)] public int CollisionIndex;     // 4 - index into collisions.bin, or -1 if no per-ref collider
         [FieldOffset(20)] public uint PlacedRefId;       // 4 - stable CELL ref id (FRMR/FormId) shared by this placed object
         [FieldOffset(24)] public int DoorMetaIndex;      // 4 - index into the per-cell door metadata table, or -1
@@ -92,12 +106,13 @@ namespace VVardenfell.Core.Cache
         [FieldOffset(56)] public float RotZ;             // 4 - Unity quaternion Z
         [FieldOffset(60)] public float RotW;             // 4 - Unity quaternion W
         [FieldOffset(64)] public float Scale;            // 4
+        [FieldOffset(68)] public int SpawnModeRaw;       // 4 - <see cref="RefSpawnMode"/>
 
         // Burst can hold onto stale field hashes across hot reloads. These aliases let
         // older generated method metadata resolve while keeping the new shard layout.
         [FieldOffset(4)] public int MeshIndex;
         [FieldOffset(8)] public int MaterialIndex;
-        // = 68 bytes
+        // = 72 bytes
     }
 
     /// <summary>
@@ -143,6 +158,7 @@ namespace VVardenfell.Core.Cache
         WasBaked = 1u << 4,
         MissingBaseRecord = 1u << 5,
         MissingModel = 1u << 6,
+        MissingGameplayContentReference = 1u << 7,
     }
 
     public struct RefPlacementAuditEntry

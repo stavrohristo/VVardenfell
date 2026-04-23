@@ -1,0 +1,195 @@
+using System;
+using System.Collections.Generic;
+using VVardenfell.Core.Cache;
+using VVardenfell.Importer.Nif;
+
+namespace VVardenfell.Importer.Bake
+{
+    public sealed class ModelPrefabBakery
+    {
+        public readonly struct Assignment
+        {
+            public readonly int ModelPrefabIndex;
+            public readonly int CollisionIndex;
+
+            public Assignment(int modelPrefabIndex, int collisionIndex)
+            {
+                ModelPrefabIndex = modelPrefabIndex;
+                CollisionIndex = collisionIndex;
+            }
+        }
+
+        readonly Dictionary<string, Assignment> _assignmentsByPath = new(StringComparer.OrdinalIgnoreCase);
+        readonly List<ModelPrefabDef> _records = new();
+
+        public int Count => _records.Count;
+        public bool Modified { get; private set; }
+
+        public bool TryGetAssignment(string modelPath, out Assignment assignment)
+            => _assignmentsByPath.TryGetValue(modelPath ?? string.Empty, out assignment);
+
+        public Assignment GetOrAdd(
+            string modelPath,
+            ModelPrefabSource source,
+            MeshBakery meshes,
+            MaterialBakery materials,
+            TextureBakery textures,
+            CollisionBakery collisions)
+        {
+            modelPath ??= string.Empty;
+            if (_assignmentsByPath.TryGetValue(modelPath, out var existing))
+                return existing;
+
+            int collisionIndex = source != null && !source.Collision.IsEmpty
+                ? collisions.AddOrGet(source.Collision)
+                : -1;
+
+            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex);
+            int index = _records.Count;
+            _records.Add(record);
+
+            var assignment = new Assignment(index, collisionIndex);
+            _assignmentsByPath[modelPath] = assignment;
+            Modified = true;
+            return assignment;
+        }
+
+        public ModelPrefabCatalogData BuildCatalog()
+        {
+            var records = new ModelPrefabDef[_records.Count];
+            for (int i = 0; i < _records.Count; i++)
+                records[i] = Clone(_records[i]);
+
+            return new ModelPrefabCatalogData
+            {
+                Records = records,
+            };
+        }
+
+        static ModelPrefabDef BuildRecord(
+            string modelPath,
+            ModelPrefabSource source,
+            MeshBakery meshes,
+            MaterialBakery materials,
+            TextureBakery textures,
+            int collisionIndex)
+        {
+            if (source == null)
+            {
+                return new ModelPrefabDef
+                {
+                    ModelPath = modelPath,
+                    RootNodeIndex = -1,
+                    CollisionIndex = collisionIndex,
+                    Nodes = Array.Empty<ModelPrefabNodeDef>(),
+                    ChildIndices = Array.Empty<int>(),
+                };
+            }
+
+            var nodes = new ModelPrefabNodeDef[source.Nodes.Length];
+            for (int i = 0; i < source.Nodes.Length; i++)
+            {
+                var node = source.Nodes[i];
+                int meshIndex = -1;
+                int materialIndex = -1;
+                int textureIndex = -1;
+                if (node.Kind == ModelPrefabNodeKind.RenderLeaf)
+                {
+                    meshIndex = meshes.AddOrGet($"{modelPath}#{i}", node.RenderLeaf);
+                    materialIndex = materials.AddOrGet(node.MaterialFlags);
+                    textureIndex = textures.AddOrGet(node.TexturePath);
+                }
+
+                var bounds = node.RenderLeaf.VertexCount > 0 ? node.RenderLeaf.LocalBounds : default;
+                nodes[i] = new ModelPrefabNodeDef
+                {
+                    Kind = node.Kind,
+                    Name = node.Name ?? string.Empty,
+                    ParentIndex = node.ParentIndex,
+                    FirstChildIndex = node.FirstChildIndex,
+                    ChildCount = node.ChildCount,
+                    SelectedChildIndex = node.SelectedChildIndex,
+                    GlobalMeshIndex = meshIndex,
+                    MaterialIndex = materialIndex,
+                    TextureIndex = textureIndex,
+                    PosX = node.LocalPosition.x,
+                    PosY = node.LocalPosition.y,
+                    PosZ = node.LocalPosition.z,
+                    RotX = node.LocalRotation.x,
+                    RotY = node.LocalRotation.y,
+                    RotZ = node.LocalRotation.z,
+                    RotW = node.LocalRotation.w,
+                    Scale = node.LocalScale,
+                    BoundsCenterX = bounds.center.x,
+                    BoundsCenterY = bounds.center.y,
+                    BoundsCenterZ = bounds.center.z,
+                    BoundsExtentsX = bounds.extents.x,
+                    BoundsExtentsY = bounds.extents.y,
+                    BoundsExtentsZ = bounds.extents.z,
+                    Flags = node.Flags,
+                };
+            }
+
+            var childIndices = new int[source.ChildIndices.Length];
+            Array.Copy(source.ChildIndices, childIndices, childIndices.Length);
+            return new ModelPrefabDef
+            {
+                ModelPath = modelPath,
+                RootNodeIndex = 0,
+                CollisionIndex = collisionIndex,
+                Nodes = nodes,
+                ChildIndices = childIndices,
+            };
+        }
+
+        static ModelPrefabDef Clone(ModelPrefabDef source)
+        {
+            var nodes = source?.Nodes ?? Array.Empty<ModelPrefabNodeDef>();
+            var clonedNodes = new ModelPrefabNodeDef[nodes.Length];
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                var node = nodes[i];
+                clonedNodes[i] = new ModelPrefabNodeDef
+                {
+                    Kind = node.Kind,
+                    Name = node.Name ?? string.Empty,
+                    ParentIndex = node.ParentIndex,
+                    FirstChildIndex = node.FirstChildIndex,
+                    ChildCount = node.ChildCount,
+                    SelectedChildIndex = node.SelectedChildIndex,
+                    GlobalMeshIndex = node.GlobalMeshIndex,
+                    MaterialIndex = node.MaterialIndex,
+                    TextureIndex = node.TextureIndex,
+                    PosX = node.PosX,
+                    PosY = node.PosY,
+                    PosZ = node.PosZ,
+                    RotX = node.RotX,
+                    RotY = node.RotY,
+                    RotZ = node.RotZ,
+                    RotW = node.RotW,
+                    Scale = node.Scale,
+                    BoundsCenterX = node.BoundsCenterX,
+                    BoundsCenterY = node.BoundsCenterY,
+                    BoundsCenterZ = node.BoundsCenterZ,
+                    BoundsExtentsX = node.BoundsExtentsX,
+                    BoundsExtentsY = node.BoundsExtentsY,
+                    BoundsExtentsZ = node.BoundsExtentsZ,
+                    Flags = node.Flags,
+                };
+            }
+
+            var childIndices = source?.ChildIndices ?? Array.Empty<int>();
+            var clonedChildIndices = new int[childIndices.Length];
+            Array.Copy(childIndices, clonedChildIndices, childIndices.Length);
+
+            return new ModelPrefabDef
+            {
+                ModelPath = source?.ModelPath ?? string.Empty,
+                RootNodeIndex = source?.RootNodeIndex ?? -1,
+                CollisionIndex = source?.CollisionIndex ?? -1,
+                Nodes = clonedNodes,
+                ChildIndices = clonedChildIndices,
+            };
+        }
+    }
+}

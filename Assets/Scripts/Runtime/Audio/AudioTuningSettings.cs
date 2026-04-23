@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text;
 using UnityEngine;
-using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Audio
 {

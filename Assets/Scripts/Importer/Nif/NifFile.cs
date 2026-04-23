@@ -84,7 +84,11 @@ namespace VVardenfell.Importer.Nif
             { "RootCollisionNode", () => new RootCollisionNode() },
             { "NiBSAnimationNode", () => new NiBSAnimationNode() },
             { "NiBSParticleNode", () => new NiBSParticleNode() },
+            { "NiCollisionSwitch", () => new NiCollisionSwitch() },
             { "NiBillboardNode", () => new NiBillboardNode() },
+            { "NiSwitchNode", () => new NiSwitchNode() },
+            { "NiLODNode", () => new NiLODNode() },
+            { "NiFltAnimationNode", () => new NiFltAnimationNode() },
 
             // Geometry
             { "NiTriShape", () => new NiTriShape() },

@@ -57,7 +57,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 return new RequestAvailability(false, error);
 
             if (!payload.HasSerializedSavePayload)
-                return new RequestAvailability(false, "No serialized save payload is available.");
+                return new RequestAvailability(false, payload.SerializedSavePayloadStatus.ToString());
 
             return new RequestAvailability(true, string.Empty);
         }

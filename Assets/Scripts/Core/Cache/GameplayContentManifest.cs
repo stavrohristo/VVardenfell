@@ -21,6 +21,10 @@ namespace VVardenfell.Core.Cache
         public int ContainerCount;
         public int ItemCount;
         public int LightCount;
+        public int ItemLeveledListCount;
+        public int ItemLeveledListEntryCount;
+        public int CreatureLeveledListCount;
+        public int CreatureLeveledListEntryCount;
         public int SoundCount;
         public int DialogueCount;
         public int DialogueInfoCount;
@@ -32,6 +36,20 @@ namespace VVardenfell.Core.Cache
         public int RegionSoundRefCount;
         public int MusicTrackCount;
         public int AmbientSettingsCount;
+        public int GameSettingCount;
+        public int GlobalCount;
+        public int ClassCount;
+        public int FactionCount;
+        public int RaceCount;
+        public int BirthsignCount;
+        public int SkillCount;
+        public int ScriptCount;
+        public int StartScriptCount;
+        public int SoundGeneratorCount;
+        public int LandTextureCount;
+        public int StaticCount;
+        public int BodyPartCount;
+        public int PathGridCount;
 
         public static GameplayContentManifest FromSources(string[] sourcePaths)
         {
@@ -109,6 +127,10 @@ namespace VVardenfell.Core.Cache
             w.Write(ContainerCount);
             w.Write(ItemCount);
             w.Write(LightCount);
+            w.Write(ItemLeveledListCount);
+            w.Write(ItemLeveledListEntryCount);
+            w.Write(CreatureLeveledListCount);
+            w.Write(CreatureLeveledListEntryCount);
             w.Write(SoundCount);
             w.Write(DialogueCount);
             w.Write(DialogueInfoCount);
@@ -120,6 +142,20 @@ namespace VVardenfell.Core.Cache
             w.Write(RegionSoundRefCount);
             w.Write(MusicTrackCount);
             w.Write(AmbientSettingsCount);
+            w.Write(GameSettingCount);
+            w.Write(GlobalCount);
+            w.Write(ClassCount);
+            w.Write(FactionCount);
+            w.Write(RaceCount);
+            w.Write(BirthsignCount);
+            w.Write(SkillCount);
+            w.Write(ScriptCount);
+            w.Write(StartScriptCount);
+            w.Write(SoundGeneratorCount);
+            w.Write(LandTextureCount);
+            w.Write(StaticCount);
+            w.Write(BodyPartCount);
+            w.Write(PathGridCount);
         }
 
         public static bool TryRead(string path, out GameplayContentManifest manifest)
@@ -159,6 +195,10 @@ namespace VVardenfell.Core.Cache
                 manifest.ContainerCount = r.ReadInt32();
                 manifest.ItemCount = r.ReadInt32();
                 manifest.LightCount = r.ReadInt32();
+                manifest.ItemLeveledListCount = r.ReadInt32();
+                manifest.ItemLeveledListEntryCount = r.ReadInt32();
+                manifest.CreatureLeveledListCount = r.ReadInt32();
+                manifest.CreatureLeveledListEntryCount = r.ReadInt32();
                 manifest.SoundCount = r.ReadInt32();
                 manifest.DialogueCount = r.ReadInt32();
                 manifest.DialogueInfoCount = r.ReadInt32();
@@ -170,6 +210,20 @@ namespace VVardenfell.Core.Cache
                 manifest.RegionSoundRefCount = r.ReadInt32();
                 manifest.MusicTrackCount = r.ReadInt32();
                 manifest.AmbientSettingsCount = r.ReadInt32();
+                manifest.GameSettingCount = r.ReadInt32();
+                manifest.GlobalCount = r.ReadInt32();
+                manifest.ClassCount = r.ReadInt32();
+                manifest.FactionCount = r.ReadInt32();
+                manifest.RaceCount = r.ReadInt32();
+                manifest.BirthsignCount = r.ReadInt32();
+                manifest.SkillCount = r.ReadInt32();
+                manifest.ScriptCount = r.ReadInt32();
+                manifest.StartScriptCount = r.ReadInt32();
+                manifest.SoundGeneratorCount = r.ReadInt32();
+                manifest.LandTextureCount = r.ReadInt32();
+                manifest.StaticCount = r.ReadInt32();
+                manifest.BodyPartCount = r.ReadInt32();
+                manifest.PathGridCount = r.ReadInt32();
                 return true;
             }
             catch

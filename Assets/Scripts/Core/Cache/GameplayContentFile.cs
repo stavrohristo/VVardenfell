@@ -60,6 +60,8 @@ namespace VVardenfell.Core.Cache
     public struct ContainerDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static ContainerDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct ItemDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static ItemDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct LightDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static LightDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
+    public struct ItemLeveledListDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static ItemLeveledListDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
+    public struct CreatureLeveledListDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static CreatureLeveledListDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct SoundDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static SoundDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct DialogueDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static DialogueDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct DialogueInfoDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static DialogueInfoDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
@@ -68,6 +70,7 @@ namespace VVardenfell.Core.Cache
     public struct MagicEffectDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static MagicEffectDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct RegionDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static RegionDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct MusicTrackDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static MusicTrackDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
+    public struct GenericRecordDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static GenericRecordDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
 
     public enum ContentReferenceKind : byte
     {
@@ -78,6 +81,9 @@ namespace VVardenfell.Core.Cache
         Container = 4,
         Item = 5,
         Light = 6,
+        Static = 7,
+        LeveledCreature = 8,
+        LeveledItem = 9,
     }
 
     public struct ContentReference
@@ -104,6 +110,52 @@ namespace VVardenfell.Core.Cache
         public float Float0;
         public int Int0;
         public int Int1;
+    }
+
+    public struct GenericRecordDef
+    {
+        public ContentId ContentId;
+        public uint RecordTag;
+        public string Id;
+        public string Name;
+        public string Model;
+        public string Icon;
+        public string ScriptId;
+        public string Text;
+        public uint Flags;
+        public int Int0;
+        public int Int1;
+        public int Int2;
+        public float Float0;
+        public float Float1;
+    }
+
+    public struct ContainerContentRangeDef
+    {
+        public int FirstItemIndex;
+        public int ItemCount;
+    }
+
+    public struct ContainerItemDef
+    {
+        public string ItemId;
+        public int Count;
+    }
+
+    public struct ItemLeveledListEntryDef
+    {
+        public string ItemId;
+        public ushort Level;
+    }
+
+    public struct ItemLeveledListDef
+    {
+        public ContentId ContentId;
+        public string Id;
+        public int Flags;
+        public byte ChanceNone;
+        public int FirstEntryIndex;
+        public int EntryCount;
     }
 
     public struct ActorDef
@@ -298,8 +350,14 @@ namespace VVardenfell.Core.Cache
         public BaseDef[] Activators = Array.Empty<BaseDef>();
         public BaseDef[] Doors = Array.Empty<BaseDef>();
         public BaseDef[] Containers = Array.Empty<BaseDef>();
+        public ContainerContentRangeDef[] ContainerContentRanges = Array.Empty<ContainerContentRangeDef>();
+        public ContainerItemDef[] ContainerItems = Array.Empty<ContainerItemDef>();
         public BaseDef[] Items = Array.Empty<BaseDef>();
         public LightDef[] Lights = Array.Empty<LightDef>();
+        public ItemLeveledListDef[] ItemLeveledLists = Array.Empty<ItemLeveledListDef>();
+        public ItemLeveledListEntryDef[] ItemLeveledListEntries = Array.Empty<ItemLeveledListEntryDef>();
+        public ItemLeveledListDef[] CreatureLeveledLists = Array.Empty<ItemLeveledListDef>();
+        public ItemLeveledListEntryDef[] CreatureLeveledListEntries = Array.Empty<ItemLeveledListEntryDef>();
         public SoundDef[] Sounds = Array.Empty<SoundDef>();
         public DialogueDef[] Dialogues = Array.Empty<DialogueDef>();
         public DialogueInfoDef[] DialogueInfos = Array.Empty<DialogueInfoDef>();
@@ -311,6 +369,20 @@ namespace VVardenfell.Core.Cache
         public RegionSoundRefDef[] RegionSoundRefs = Array.Empty<RegionSoundRefDef>();
         public MusicTrackDef[] MusicTracks = Array.Empty<MusicTrackDef>();
         public AmbientSettingsDef AmbientSettings;
+        public GenericRecordDef[] GameSettings = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Globals = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Classes = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Factions = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Races = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Birthsigns = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Skills = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Scripts = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] StartScripts = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] SoundGenerators = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] LandTextures = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] Statics = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] BodyParts = Array.Empty<GenericRecordDef>();
+        public GenericRecordDef[] PathGrids = Array.Empty<GenericRecordDef>();
     }
 
     public static class GameplayContentFile
@@ -331,8 +403,14 @@ namespace VVardenfell.Core.Cache
             WriteBaseDefArray(w, data?.Activators);
             WriteBaseDefArray(w, data?.Doors);
             WriteBaseDefArray(w, data?.Containers);
+            WriteContainerContentRangeArray(w, data?.ContainerContentRanges);
+            WriteContainerItemArray(w, data?.ContainerItems);
             WriteBaseDefArray(w, data?.Items);
             WriteLightArray(w, data?.Lights);
+            WriteItemLeveledListArray(w, data?.ItemLeveledLists);
+            WriteItemLeveledListEntryArray(w, data?.ItemLeveledListEntries);
+            WriteItemLeveledListArray(w, data?.CreatureLeveledLists);
+            WriteItemLeveledListEntryArray(w, data?.CreatureLeveledListEntries);
             WriteSoundArray(w, data?.Sounds);
             WriteDialogueArray(w, data?.Dialogues);
             WriteDialogueInfoArray(w, data?.DialogueInfos);
@@ -344,6 +422,20 @@ namespace VVardenfell.Core.Cache
             WriteRegionSoundRefArray(w, data?.RegionSoundRefs);
             WriteMusicTrackArray(w, data?.MusicTracks);
             WriteAmbientSettings(w, data?.AmbientSettings ?? default);
+            WriteGenericRecordArray(w, data?.GameSettings);
+            WriteGenericRecordArray(w, data?.Globals);
+            WriteGenericRecordArray(w, data?.Classes);
+            WriteGenericRecordArray(w, data?.Factions);
+            WriteGenericRecordArray(w, data?.Races);
+            WriteGenericRecordArray(w, data?.Birthsigns);
+            WriteGenericRecordArray(w, data?.Skills);
+            WriteGenericRecordArray(w, data?.Scripts);
+            WriteGenericRecordArray(w, data?.StartScripts);
+            WriteGenericRecordArray(w, data?.SoundGenerators);
+            WriteGenericRecordArray(w, data?.LandTextures);
+            WriteGenericRecordArray(w, data?.Statics);
+            WriteGenericRecordArray(w, data?.BodyParts);
+            WriteGenericRecordArray(w, data?.PathGrids);
         }
 
         public static GameplayContentData Read(string path)
@@ -369,8 +461,14 @@ namespace VVardenfell.Core.Cache
                 Activators = ReadBaseDefArray(r),
                 Doors = ReadBaseDefArray(r),
                 Containers = ReadBaseDefArray(r),
+                ContainerContentRanges = ReadContainerContentRangeArray(r),
+                ContainerItems = ReadContainerItemArray(r),
                 Items = ReadBaseDefArray(r),
                 Lights = ReadLightArray(r),
+                ItemLeveledLists = ReadItemLeveledListArray(r),
+                ItemLeveledListEntries = ReadItemLeveledListEntryArray(r),
+                CreatureLeveledLists = ReadItemLeveledListArray(r),
+                CreatureLeveledListEntries = ReadItemLeveledListEntryArray(r),
                 Sounds = ReadSoundArray(r),
                 Dialogues = ReadDialogueArray(r),
                 DialogueInfos = ReadDialogueInfoArray(r),
@@ -382,6 +480,20 @@ namespace VVardenfell.Core.Cache
                 RegionSoundRefs = ReadRegionSoundRefArray(r),
                 MusicTracks = ReadMusicTrackArray(r),
                 AmbientSettings = ReadAmbientSettings(r),
+                GameSettings = ReadGenericRecordArray(r),
+                Globals = ReadGenericRecordArray(r),
+                Classes = ReadGenericRecordArray(r),
+                Factions = ReadGenericRecordArray(r),
+                Races = ReadGenericRecordArray(r),
+                Birthsigns = ReadGenericRecordArray(r),
+                Skills = ReadGenericRecordArray(r),
+                Scripts = ReadGenericRecordArray(r),
+                StartScripts = ReadGenericRecordArray(r),
+                SoundGenerators = ReadGenericRecordArray(r),
+                LandTextures = ReadGenericRecordArray(r),
+                Statics = ReadGenericRecordArray(r),
+                BodyParts = ReadGenericRecordArray(r),
+                PathGrids = ReadGenericRecordArray(r),
             };
         }
 
@@ -426,6 +538,45 @@ namespace VVardenfell.Core.Cache
                 Float0 = r.ReadSingle(),
                 Int0 = r.ReadInt32(),
                 Int1 = r.ReadInt32(),
+            };
+        }
+
+        static void WriteGenericRecord(BinaryWriter w, GenericRecordDef value)
+        {
+            WriteContentId(w, value.ContentId);
+            w.Write(value.RecordTag);
+            WriteString(w, value.Id);
+            WriteString(w, value.Name);
+            WriteString(w, value.Model);
+            WriteString(w, value.Icon);
+            WriteString(w, value.ScriptId);
+            WriteString(w, value.Text);
+            w.Write(value.Flags);
+            w.Write(value.Int0);
+            w.Write(value.Int1);
+            w.Write(value.Int2);
+            w.Write(value.Float0);
+            w.Write(value.Float1);
+        }
+
+        static GenericRecordDef ReadGenericRecord(BinaryReader r)
+        {
+            return new GenericRecordDef
+            {
+                ContentId = ReadContentId(r),
+                RecordTag = r.ReadUInt32(),
+                Id = ReadString(r),
+                Name = ReadString(r),
+                Model = ReadString(r),
+                Icon = ReadString(r),
+                ScriptId = ReadString(r),
+                Text = ReadString(r),
+                Flags = r.ReadUInt32(),
+                Int0 = r.ReadInt32(),
+                Int1 = r.ReadInt32(),
+                Int2 = r.ReadInt32(),
+                Float0 = r.ReadSingle(),
+                Float1 = r.ReadSingle(),
             };
         }
 
@@ -508,6 +659,44 @@ namespace VVardenfell.Core.Cache
                 Radius = r.ReadInt32(),
                 ColorRgba = r.ReadUInt32(),
                 Flags = r.ReadInt32(),
+            };
+        }
+
+        static void WriteItemLeveledList(BinaryWriter w, ItemLeveledListDef value)
+        {
+            WriteContentId(w, value.ContentId);
+            WriteString(w, value.Id);
+            w.Write(value.Flags);
+            w.Write(value.ChanceNone);
+            w.Write(value.FirstEntryIndex);
+            w.Write(value.EntryCount);
+        }
+
+        static ItemLeveledListDef ReadItemLeveledList(BinaryReader r)
+        {
+            return new ItemLeveledListDef
+            {
+                ContentId = ReadContentId(r),
+                Id = ReadString(r),
+                Flags = r.ReadInt32(),
+                ChanceNone = r.ReadByte(),
+                FirstEntryIndex = r.ReadInt32(),
+                EntryCount = r.ReadInt32(),
+            };
+        }
+
+        static void WriteItemLeveledListEntry(BinaryWriter w, ItemLeveledListEntryDef value)
+        {
+            WriteString(w, value.ItemId);
+            w.Write(value.Level);
+        }
+
+        static ItemLeveledListEntryDef ReadItemLeveledListEntry(BinaryReader r)
+        {
+            return new ItemLeveledListEntryDef
+            {
+                ItemId = ReadString(r),
+                Level = r.ReadUInt16(),
             };
         }
 
@@ -831,6 +1020,36 @@ namespace VVardenfell.Core.Cache
             w.Write(value.MaxSecondsBetweenEnvironmentalSounds);
         }
 
+        static void WriteContainerContentRange(BinaryWriter w, ContainerContentRangeDef value)
+        {
+            w.Write(value.FirstItemIndex);
+            w.Write(value.ItemCount);
+        }
+
+        static ContainerContentRangeDef ReadContainerContentRange(BinaryReader r)
+        {
+            return new ContainerContentRangeDef
+            {
+                FirstItemIndex = r.ReadInt32(),
+                ItemCount = r.ReadInt32(),
+            };
+        }
+
+        static void WriteContainerItem(BinaryWriter w, ContainerItemDef value)
+        {
+            WriteString(w, value.ItemId);
+            w.Write(value.Count);
+        }
+
+        static ContainerItemDef ReadContainerItem(BinaryReader r)
+        {
+            return new ContainerItemDef
+            {
+                ItemId = ReadString(r),
+                Count = r.ReadInt32(),
+            };
+        }
+
         static AmbientSettingsDef ReadAmbientSettings(BinaryReader r)
         {
             return new AmbientSettingsDef
@@ -854,6 +1073,57 @@ namespace VVardenfell.Core.Cache
             var values = new BaseDef[count];
             for (int i = 0; i < count; i++)
                 values[i] = ReadBaseDef(r);
+            return values;
+        }
+
+        static void WriteGenericRecordArray(BinaryWriter w, GenericRecordDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteGenericRecord(w, values[i]);
+        }
+
+        static GenericRecordDef[] ReadGenericRecordArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new GenericRecordDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadGenericRecord(r);
+            return values;
+        }
+
+        static void WriteContainerContentRangeArray(BinaryWriter w, ContainerContentRangeDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteContainerContentRange(w, values[i]);
+        }
+
+        static ContainerContentRangeDef[] ReadContainerContentRangeArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ContainerContentRangeDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadContainerContentRange(r);
+            return values;
+        }
+
+        static void WriteContainerItemArray(BinaryWriter w, ContainerItemDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteContainerItem(w, values[i]);
+        }
+
+        static ContainerItemDef[] ReadContainerItemArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ContainerItemDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadContainerItem(r);
             return values;
         }
 
@@ -888,6 +1158,40 @@ namespace VVardenfell.Core.Cache
             var values = new LightDef[count];
             for (int i = 0; i < count; i++)
                 values[i] = ReadLight(r);
+            return values;
+        }
+
+        static void WriteItemLeveledListArray(BinaryWriter w, ItemLeveledListDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteItemLeveledList(w, values[i]);
+        }
+
+        static ItemLeveledListDef[] ReadItemLeveledListArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ItemLeveledListDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadItemLeveledList(r);
+            return values;
+        }
+
+        static void WriteItemLeveledListEntryArray(BinaryWriter w, ItemLeveledListEntryDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteItemLeveledListEntry(w, values[i]);
+        }
+
+        static ItemLeveledListEntryDef[] ReadItemLeveledListEntryArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ItemLeveledListEntryDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadItemLeveledListEntry(r);
             return values;
         }
 

@@ -3,73 +3,8 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 
-namespace VVardenfell.Runtime.Streaming
-{
-    public enum InteractableKind : byte
-    {
-        None = 0,
-        Door = 1,
-        LooseItem = 2,
-        Container = 3,
-        Activator = 4,
-    }
-
-    public struct PlacedRefIdentity : IComponentData
-    {
-        public uint Value;
-    }
-
-    public struct LogicalRefTag : IComponentData
-    {
-    }
-
-    public struct LogicalRefContentRef : IComponentData
-    {
-        public ContentReference Value;
-    }
-
-    public struct LogicalRefLocation : IComponentData
-    {
-        public int2 ExteriorCell;
-        public FixedString128Bytes InteriorCellId;
-        public byte IsInterior;
-    }
-
-    public struct LogicalRefParent : IComponentData
-    {
-        public Entity Value;
-    }
-
-    public struct LogicalRefChild : IBufferElementData
-    {
-        public Entity Value;
-    }
-
-    public struct InteractionActivationProxyState : IComponentData
-    {
-        public Entity ProxyEntity;
-    }
-
-    public struct InteractionActivationProxyTag : IComponentData
-    {
-    }
-
-    public struct LogicalRefLookup : IComponentData
-    {
-        public NativeParallelHashMap<uint, Entity> Map;
-    }
-
-    public struct DoorAuthoring : IComponentData
-    {
-        public DoorDefHandle Definition;
-    }
-
-    public struct LightSourceAuthoring : IComponentData
-    {
-        public LightDefHandle Definition;
-    }
-
-    public struct LightInstanceFlags : IComponentData
+namespace VVardenfell.Runtime.Components
+{    public struct LightInstanceFlags : IComponentData
     {
         public byte Carry;
         public byte Negative;
@@ -106,31 +41,6 @@ namespace VVardenfell.Runtime.Streaming
         public float FogFarMeters;
         public int RegionHandleValue;
         public byte IsInterior;
-    }
-
-    public struct ActorSpawnSource : IComponentData
-    {
-        public ActorDefHandle Definition;
-    }
-
-    public struct ItemPickupAuthoring : IComponentData
-    {
-        public ItemDefHandle Definition;
-    }
-
-    public struct ContainerAuthoring : IComponentData
-    {
-        public ContainerDefHandle Definition;
-    }
-
-    public struct ActivatorAuthoring : IComponentData
-    {
-        public ActivatorDefHandle Definition;
-    }
-
-    public struct DialogueSpeakerAuthoring : IComponentData
-    {
-        public ActorDefHandle Definition;
     }
 
     public struct AudioEmitterAuthoring : IComponentData
@@ -244,6 +154,7 @@ namespace VVardenfell.Runtime.Streaming
         None = 0,
         Door = 1,
         LooseItem = 2,
+        Container = 3,
     }
 
     public struct InteractionAudioRequestState : IComponentData
@@ -259,84 +170,5 @@ namespace VVardenfell.Runtime.Streaming
         public float3 Position;
         public uint SourcePlacedRefId;
         public byte Kind;
-    }
-
-    public struct InteractionRuntimeState : IComponentData
-    {
-        public uint NextActivationSequence;
-        public byte PendingPickedItemPrune;
-    }
-
-    public struct DoorInteractable : IComponentData
-    {
-        public byte IsTeleport;
-        public FixedString128Bytes DestinationCellId;
-        public float3 DestinationPosition;
-        public quaternion DestinationRotation;
-    }
-
-    public struct PlayerInteractionFocus : IComponentData
-    {
-        public Entity TargetEntity;
-        public uint PlacedRefId;
-        public byte InteractKind;
-        public float HitDistance;
-        public byte HasTarget;
-    }
-
-    public struct InteractionActivationRequest : IComponentData
-    {
-        public Entity TargetEntity;
-        public uint TargetPlacedRefId;
-        public uint Sequence;
-        public byte Kind;
-        public byte Pending;
-    }
-
-    public struct InteractionActivationResult : IComponentData
-    {
-        public uint Sequence;
-        public byte Kind;
-        public byte Success;
-        public byte PendingNotification;
-        public FixedString128Bytes NotificationText;
-    }
-
-    public struct PlayerInventoryItem : IBufferElementData
-    {
-        public ItemDefHandle Definition;
-        public int Count;
-    }
-
-    public struct PickedItemRecord : IBufferElementData
-    {
-        public uint PlacedRefId;
-        public ItemDefHandle Definition;
-    }
-
-    public struct InteractionPresentationState : IComponentData
-    {
-        public FixedString128Bytes FocusText;
-        public FixedString128Bytes NotificationText;
-        public float NotificationSecondsRemaining;
-        public byte ShowCrosshair;
-        public byte ShowFocus;
-        public byte ShowNotification;
-    }
-
-    public struct InteriorTransitionState : IComponentData
-    {
-        public byte InteriorActive;
-        public byte TransitionInProgress;
-        public FixedString128Bytes ActiveInteriorCellId;
-    }
-
-    public struct InteriorCellMember : IComponentData
-    {
-    }
-
-    public struct InteriorSpawnedEntity : IBufferElementData
-    {
-        public Entity Value;
     }
 }

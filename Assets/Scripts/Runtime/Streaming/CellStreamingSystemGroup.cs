@@ -1,11 +1,11 @@
 using Unity.Entities;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
 {
     /// <summary>
-    /// Holds every system that gates cell visibility by camera view radius. Runs inside
-    /// the default <see cref="SimulationSystemGroup"/>, ahead of Entities.Graphics'
-    /// presentation group so newly-activated cells render the same frame.
+    /// Holds every system that gates cell visibility by camera view radius. Runs after
+    /// transform updates so camera/view LocalToWorld reads are stable for the frame.
     ///
     /// Ordering inside this group:
     ///   1. <c>CameraCellTrackerSystem</c>  — reads Camera.main, writes StreamingConfig.
@@ -13,7 +13,9 @@ namespace VVardenfell.Runtime.Streaming
     ///   3. <c>CellUnloadSystem</c>         — Burst; disables MMI for cells leaving view.
     ///   4. <c>CellLoadWorkerSystem</c>     — Burst; enables MMI for cells entering view.
     /// </summary>
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
+    [UpdateAfter(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindEnvironmentSystemGroup))]
     public partial class CellStreamingSystemGroup : ComponentSystemGroup
     {
         protected override void OnDestroy()

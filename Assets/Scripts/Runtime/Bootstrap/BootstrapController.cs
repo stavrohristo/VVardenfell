@@ -7,9 +7,9 @@ using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bake;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Player;
-using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.UI;
 using Stopwatch = System.Diagnostics.Stopwatch;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Bootstrap
 {
@@ -159,6 +159,7 @@ namespace VVardenfell.Runtime.Bootstrap
             DontDestroyOnLoad(gameObject);
             BootstrapPresentationGate.Reset();
             BootstrapPresentationAudioState.Reset();
+            RuntimeShellPresentationGate.Reset();
             _playerMovement?.Validate();
         }
 
@@ -197,7 +198,8 @@ namespace VVardenfell.Runtime.Bootstrap
             string[] gameplaySources = InstalledContentSources.ResolveGameplayDependencySources(_config.InstallPath);
 
             bool worldCacheValid = BakeManifest.TryRead(CachePaths.Manifest, out var worldManifest)
-                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplayRecordSources);
+                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplayRecordSources)
+                                   && WorldCachePipelineMatchesRuntime(worldManifest);
             bool uiCacheValid = UiCacheManifest.TryRead(CachePaths.UiManifest, out var uiManifest)
                                 && uiManifest.SourcesMatch(_config.InstallPath)
                                 && uiManifest.HasRequiredBootstrapImages(out _)
@@ -230,6 +232,22 @@ namespace VVardenfell.Runtime.Bootstrap
                 _stage = Stage.Baking;
                 StartCoroutine(BakeCoordinator.Bake(_config, _progress));
             }
+        }
+
+        private static bool WorldCachePipelineMatchesRuntime(BakeManifest manifest)
+        {
+            var states = manifest?.CellStates;
+            if (states == null || states.Length == 0)
+                return false;
+
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i];
+                if (state == null || state.PipelineVersion != CacheFormat.WorldBakePipelineVersion)
+                    return false;
+            }
+
+            return true;
         }
 
         private void Update()

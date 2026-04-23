@@ -241,7 +241,10 @@ namespace VVardenfell.Importer.Bake
             List<UiFontRecord> fonts)
         {
             string fontDir = Path.Combine(dataFilesRoot, "Fonts");
-            var defaultNames = new[] { "magic_cards_regular", "century_gothic_font_regular", "daedric_font" };
+            // Keep the default in-game readable font for body text, then use the larger
+            // Century Gothic variant as the shared title font instead of Daedric so UI
+            // captions remain legible across bootstrap and runtime shells.
+            var defaultNames = new[] { "magic_cards_regular", "century_gothic_font_regular", "century_gothic_big" };
 
             for (int i = 0; i < 3; i++)
             {

@@ -7,6 +7,7 @@ using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Streaming
 {

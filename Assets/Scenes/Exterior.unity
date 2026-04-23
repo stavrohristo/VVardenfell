@@ -151,25 +151,25 @@ MonoBehaviour:
   _playerMovement:
     StandingHeight: 1.8
     CrouchingHeight: 1.15
-    Radius: 0.35
-    SkinWidth: 0.015
-    MaxStepHeight: 0.35
-    GroundProbeDistance: 0.3
-    MaxSlopeDegrees: 75.4
+    Radius: 0.23
+    SkinWidth: 0.01
+    MaxStepHeight: 0.47
+    GroundProbeDistance: 0.21
+    MaxSlopeDegrees: 84
     StandingEyeHeight: 1.65
     CrouchingEyeHeight: 1
     MinPitch: -89
     MaxPitch: 89
     LookSensitivity: 0.12
-    GroundMaxSpeed: 36
-    SprintSpeedMultiplier: 1.45
+    GroundMaxSpeed: 6.4
+    SprintSpeedMultiplier: 10.67
     CrouchSpeedMultiplier: 0.5
-    GroundedMovementSharpness: 18
-    AirAcceleration: 14
-    AirMaxSpeed: 6
+    GroundedMovementSharpness: 6.1
+    AirAcceleration: 27
+    AirMaxSpeed: 51.19
     AirDrag: 0.05
     Gravity: -20
-    JumpSpeed: 155
+    JumpSpeed: 25
     CoyoteTime: 0.12
     JumpBufferTime: 0.12
 --- !u!4 &101423244
@@ -585,7 +585,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!23 &858952286
 MeshRenderer:
   m_ObjectHideFlags: 0

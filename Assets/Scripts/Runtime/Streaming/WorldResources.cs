@@ -6,6 +6,7 @@ using Unity.Physics;
 using Unity.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
 using Collider = Unity.Physics.Collider;
@@ -24,6 +25,15 @@ namespace VVardenfell.Runtime.Streaming
     /// </summary>
     public static class WorldResources
     {
+        public struct RuntimeSpawnPrefabDescriptor
+        {
+            public int ModelPrefabIndex;
+            public int CollisionIndex;
+            public byte Supported;
+
+            public bool IsSupported => Supported != 0 && ModelPrefabIndex >= 0;
+        }
+
         public static CacheLoader Cache;
         public static Shader TerrainShader;
         /// <summary>
@@ -54,6 +64,10 @@ namespace VVardenfell.Runtime.Streaming
         /// shared component to N entities in Entities 1.3.
         /// </summary>
         public static Entity[] RefPrefabs;
+        public static Entity[] ModelPrefabs;
+        public static RuntimeSpawnPrefabDescriptor[] SpawnableCreaturePrefabs;
+        public static RuntimeSpawnPrefabDescriptor[] SpawnableItemPrefabs;
+        public static RuntimeSpawnPrefabDescriptor[] SpawnableLightPrefabs;
 
         /// <summary>
         /// Per-mesh local AABB, indexed by MeshIndex. Built once at bootstrap from
@@ -122,6 +136,53 @@ namespace VVardenfell.Runtime.Streaming
         /// <summary>Per-cell terrain heightfield collider (null for cells without LAND).</summary>
         public static readonly Dictionary<int2, BlobAssetReference<Collider>> TerrainColliders = new();
 
+        public static bool TryGetStaticCellCollider(int2 coord, out BlobAssetReference<Collider> collider)
+        {
+            return StaticCellColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+        }
+
+        public static bool TryGetTerrainCollider(int2 coord, out BlobAssetReference<Collider> collider)
+        {
+            return TerrainColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+        }
+
+        public static bool TryGetRuntimeSpawnPrefab(ContentReference content, out RuntimeSpawnPrefabDescriptor descriptor)
+        {
+            descriptor = default;
+            if (!content.IsValid)
+                return false;
+
+            switch (content.Kind)
+            {
+                case ContentReferenceKind.Actor:
+                    if (SpawnableCreaturePrefabs != null && (uint)(content.HandleValue - 1) < (uint)SpawnableCreaturePrefabs.Length)
+                    {
+                        descriptor = SpawnableCreaturePrefabs[content.HandleValue - 1];
+                        return descriptor.IsSupported;
+                    }
+                    return false;
+
+                case ContentReferenceKind.Item:
+                    if (SpawnableItemPrefabs != null && (uint)(content.HandleValue - 1) < (uint)SpawnableItemPrefabs.Length)
+                    {
+                        descriptor = SpawnableItemPrefabs[content.HandleValue - 1];
+                        return descriptor.IsSupported;
+                    }
+                    return false;
+
+                case ContentReferenceKind.Light:
+                    if (SpawnableLightPrefabs != null && (uint)(content.HandleValue - 1) < (uint)SpawnableLightPrefabs.Length)
+                    {
+                        descriptor = SpawnableLightPrefabs[content.HandleValue - 1];
+                        return descriptor.IsSupported;
+                    }
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
         public struct PerCellManaged
         {
             public Mesh TerrainMesh;
@@ -144,17 +205,13 @@ namespace VVardenfell.Runtime.Streaming
                 if (m.TerrainMat  != null && m.TerrainMat != TerrainFallbackMat) Object.Destroy(m.TerrainMat);
             }
             LoadedManaged.Clear();
+
+            foreach (var kv in Cells)
+                DisposeCellResidentBlobs(kv.Value);
             Cells.Clear();
+
             foreach (var kv in InteriorCells)
-            {
-                var data = kv.Value;
-                if (data == null)
-                    continue;
-                if (data.StaticColliderBlob.IsCreated)
-                    data.StaticColliderBlob.Dispose();
-                if (data.TerrainColliderBlob.IsCreated)
-                    data.TerrainColliderBlob.Dispose();
-            }
+                DisposeCellResidentBlobs(kv.Value);
             InteriorCells.Clear();
 
             // Dispose per-cell static + terrain collider blobs before clearing the dicts.
@@ -193,8 +250,30 @@ namespace VVardenfell.Runtime.Streaming
             RefsRmas = null;
             Cache = null;
             RefPrefabs = null;
+            ModelPrefabs = null;
+            SpawnableCreaturePrefabs = null;
+            SpawnableItemPrefabs = null;
+            SpawnableLightPrefabs = null;
             Desc = default;
             RuntimeContentDatabase.Clear();
+        }
+
+        private static void DisposeCellResidentBlobs(CellData data)
+        {
+            if (data == null)
+                return;
+
+            if (data.StaticColliderBlob.IsCreated)
+            {
+                data.StaticColliderBlob.Dispose();
+                data.StaticColliderBlob = default;
+            }
+
+            if (data.TerrainColliderBlob.IsCreated)
+            {
+                data.TerrainColliderBlob.Dispose();
+                data.TerrainColliderBlob = default;
+            }
         }
     }
 }

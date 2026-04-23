@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bake;
+using VVardenfell.Importer.Bsa;
 using VVardenfell.Importer.Dds;
 using Object = UnityEngine.Object;
 
@@ -94,66 +96,138 @@ namespace VVardenfell.Runtime.UI
     {
         public UiRuntimeAssets Load()
         {
+            if (TryLoadInternal(out var assets, out string error))
+                return assets;
+
+            if (!TryRebuildUiCache(error, out string rebuildError))
+                throw new InvalidDataException(rebuildError ?? error ?? "UI cache unreadable.");
+
+            if (TryLoadInternal(out assets, out error))
+                return assets;
+
+            throw new InvalidDataException(error ?? "UI cache unreadable after rebuild.");
+        }
+
+        bool TryLoadInternal(out UiRuntimeAssets assets, out string error)
+        {
+            assets = null;
+            error = null;
+
             if (!UiCacheManifest.TryRead(CachePaths.UiManifest, out var manifest))
-                throw new InvalidDataException("ui.bin unreadable");
+            {
+                error = "ui.bin unreadable";
+                return false;
+            }
+
             if (!File.Exists(CachePaths.UiPayloads))
-                throw new InvalidDataException("ui_payloads.bin missing");
-
-            var assets = new UiRuntimeAssets(manifest);
-
-            using var fs = File.OpenRead(CachePaths.UiPayloads);
-            using var r = new BinaryReader(fs);
-
-            for (int i = 0; i < manifest.Images.Length; i++)
             {
-                var record = manifest.Images[i];
-                var image = LoadImage(r, record);
-                assets.RegisterImage(image);
+                error = "ui_payloads.bin missing";
+                return false;
             }
 
-            for (int i = 0; i < manifest.BootstrapImages.Length; i++)
+            try
             {
-                var binding = manifest.BootstrapImages[i];
-                var image = assets.GetImage(binding.ImageId);
-                if (image != null)
-                    assets.BootstrapImagesByKey[binding.Key] = image;
-            }
+                assets = new UiRuntimeAssets(manifest);
 
-            for (int i = 0; i < manifest.Fonts.Length; i++)
-            {
-                var record = manifest.Fonts[i];
-                var font = LoadFont(r, record);
-                assets.FontsById[record.Id] = font;
-            }
+                using var fs = File.OpenRead(CachePaths.UiPayloads);
+                using var r = new BinaryReader(fs);
 
-            for (int i = 0; i < manifest.Movies.Length; i++)
-            {
-                var record = manifest.Movies[i];
-                assets.MoviesBySlot[record.Slot] = new UiMovieRuntimeInfo
+                for (int i = 0; i < manifest.Images.Length; i++)
                 {
-                    Slot = record.Slot,
-                    CachedClipPath = record.CachedClipPath,
-                    FallbackImageId = record.FallbackImageId,
-                    Width = record.Width,
-                    Height = record.Height,
-                    DurationMs = record.DurationMs,
-                    HasAudio = record.HasAudio,
-                    Flags = record.Flags,
-                };
-            }
+                    var record = manifest.Images[i];
+                    var image = LoadImage(r, record);
+                    assets.RegisterImage(image);
+                }
 
-            for (int i = 0; i < manifest.SplashImageIds.Length; i++)
+                for (int i = 0; i < manifest.BootstrapImages.Length; i++)
+                {
+                    var binding = manifest.BootstrapImages[i];
+                    var image = assets.GetImage(binding.ImageId);
+                    if (image != null)
+                        assets.BootstrapImagesByKey[binding.Key] = image;
+                }
+
+                for (int i = 0; i < manifest.Fonts.Length; i++)
+                {
+                    var record = manifest.Fonts[i];
+                    var font = LoadFont(r, record);
+                    assets.FontsById[record.Id] = font;
+                }
+
+                for (int i = 0; i < manifest.Movies.Length; i++)
+                {
+                    var record = manifest.Movies[i];
+                    assets.MoviesBySlot[record.Slot] = new UiMovieRuntimeInfo
+                    {
+                        Slot = record.Slot,
+                        CachedClipPath = record.CachedClipPath,
+                        FallbackImageId = record.FallbackImageId,
+                        Width = record.Width,
+                        Height = record.Height,
+                        DurationMs = record.DurationMs,
+                        HasAudio = record.HasAudio,
+                        Flags = record.Flags,
+                    };
+                }
+
+                for (int i = 0; i < manifest.SplashImageIds.Length; i++)
+                {
+                    var image = assets.GetImage(manifest.SplashImageIds[i]);
+                    if (image != null)
+                        assets.SplashImages.Add(image);
+                }
+
+                assets.MenuBackground = assets.GetImage(manifest.MenuBackgroundImageId);
+                assets.DefaultFont = assets.GetFont(manifest.DefaultFontId);
+                assets.TitleFont = assets.GetFont(manifest.TitleFontId) ?? assets.DefaultFont;
+                ValidateBootstrapVisuals(manifest, assets);
+                return true;
+            }
+            catch (Exception ex)
             {
-                var image = assets.GetImage(manifest.SplashImageIds[i]);
-                if (image != null)
-                    assets.SplashImages.Add(image);
+                assets?.Dispose();
+                assets = null;
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        bool TryRebuildUiCache(string loadError, out string error)
+        {
+            error = null;
+
+            if (!ConfigStorage.TryLoad(out var config) || config == null)
+            {
+                error = $"UI cache rebuild unavailable: no saved install config. Original error: {loadError}";
+                return false;
             }
 
-            assets.MenuBackground = assets.GetImage(manifest.MenuBackgroundImageId);
-            assets.DefaultFont = assets.GetFont(manifest.DefaultFontId);
-            assets.TitleFont = assets.GetFont(manifest.TitleFontId) ?? assets.DefaultFont;
-            ValidateBootstrapVisuals(manifest, assets);
-            return assets;
+            if (!config.IsValid(out string configError))
+            {
+                error = $"UI cache rebuild unavailable: {configError}. Original error: {loadError}";
+                return false;
+            }
+
+            string bsaPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.bsa");
+            if (!File.Exists(bsaPath))
+            {
+                error = $"UI cache rebuild unavailable: Morrowind.bsa missing at '{bsaPath}'. Original error: {loadError}";
+                return false;
+            }
+
+            try
+            {
+                CachePaths.EnsureExists();
+                using var bsa = BsaArchive.Open(bsaPath);
+                UiAssetBakery.Bake(config, bsa);
+                Debug.LogWarning($"[VVardenfell][UI] rebuilt stale UI cache after load failure: {loadError}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = $"UI cache rebuild failed: {ex.Message}. Original error: {loadError}";
+                return false;
+            }
         }
 
         private static UiImageAsset LoadImage(BinaryReader r, UiImageRecord record)
@@ -205,6 +279,12 @@ namespace VVardenfell.Runtime.UI
                 float advance = r.ReadSingle();
                 float bearingX = r.ReadSingle();
                 float bearingY = r.ReadSingle();
+
+                // Morrowind stores non-drawing glyphs such as spaces with zero bitmap width
+                // but a positive horizontal offset; keep that as runtime advance so words
+                // retain their authored spacing even against older cached payloads.
+                if (advance <= 0f)
+                    advance = Mathf.Max(glyphWidth, bearingX, 0f);
 
                 float yBottom = 1f - ((y + glyphHeight) / height);
                 var uv = new Rect(

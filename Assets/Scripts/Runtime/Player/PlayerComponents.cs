@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
@@ -116,7 +117,7 @@ namespace VVardenfell.Runtime.Player
     }
 
     [BurstCompile]
-    [UpdateInGroup(typeof(FixedStepSimulationSystemGroup), OrderLast = true)]
+    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup), OrderLast = true)]
     public partial struct FixedTickSystem : ISystem
     {
         public struct Singleton : IComponentData

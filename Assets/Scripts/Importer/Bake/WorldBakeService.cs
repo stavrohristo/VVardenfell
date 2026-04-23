@@ -65,6 +65,8 @@ namespace VVardenfell.Importer.Bake
         private static readonly ProfilerMarker k_AssembleFinalCellWriteBuffer = new("VV.Bake.AssembleFinalCellWriteBuffer");
         private static readonly ProfilerMarker k_FlushCellFile = new("VV.Bake.FlushCellFile");
 
+        private const bool EnableModelPrefabWorldRefs = false;
+
         private readonly struct CellBakeWorkItem
         {
             public readonly CellHeader Cell;
@@ -114,13 +116,56 @@ namespace VVardenfell.Importer.Bake
 
         private sealed class ModelSource
         {
+            public readonly string ModelPath;
             public readonly NifMeshBuilder.RawBuiltMesh[] Meshes;
             public readonly CollisionPayload Collision;
+            public readonly CollisionPayload AutoVisualStaticCollision;
+            public readonly CollisionExtractionSource CollisionSource;
+            public readonly ModelPrefabSource Prefab;
 
-            public ModelSource(NifMeshBuilder.RawBuiltMesh[] meshes, CollisionPayload collision)
+            public ModelSource(
+                string modelPath,
+                NifMeshBuilder.RawBuiltMesh[] meshes,
+                CollisionPayload collision,
+                CollisionPayload autoVisualStaticCollision,
+                CollisionExtractionSource collisionSource,
+                ModelPrefabSource prefab)
             {
+                ModelPath = modelPath;
                 Meshes = meshes;
                 Collision = collision;
+                AutoVisualStaticCollision = autoVisualStaticCollision;
+                CollisionSource = collisionSource;
+                Prefab = prefab;
+            }
+        }
+
+        private readonly struct StagedPlacedRefData
+        {
+            public readonly string ModelPath;
+            public readonly uint PlacedRefId;
+            public readonly int DoorMetaIndex;
+            public readonly ContentReference ContentReference;
+            public readonly Vector3 Position;
+            public readonly Quaternion Rotation;
+            public readonly float Scale;
+
+            public StagedPlacedRefData(
+                string modelPath,
+                uint placedRefId,
+                int doorMetaIndex,
+                ContentReference contentReference,
+                Vector3 position,
+                Quaternion rotation,
+                float scale)
+            {
+                ModelPath = modelPath ?? string.Empty;
+                PlacedRefId = placedRefId;
+                DoorMetaIndex = doorMetaIndex;
+                ContentReference = contentReference;
+                Position = position;
+                Rotation = rotation;
+                Scale = scale;
             }
         }
 
@@ -264,6 +309,7 @@ namespace VVardenfell.Importer.Bake
             public List<CellBakery.BakedRef> BakedRefs;
             public List<DoorRefEntry> DoorEntries;
             public CellBakery.StaticCollision StaticCollision;
+            public List<StagedPlacedRefData> PlacedRefs;
             public List<StagedRefData> PendingRefs;
             public List<PreparedRefData> PreparedRefs;
             public List<RefPlacementAuditEntry> PlacementAuditEntries;
@@ -282,6 +328,23 @@ namespace VVardenfell.Importer.Bake
             public int CombinedGroupCount;
             public int InteractableWorkItemCount;
             public long CombinedPreparedPayloadBytes;
+            public int CollisionStaticCandidateCount;
+            public int CollisionStaticAggregateCount;
+            public int CollisionStaticAggregateTriangleCount;
+            public int CollisionPerPlacedRefCount;
+            public int CollisionMissingPayloadCount;
+            public int CollisionAuthoredRootCount;
+            public int CollisionAutoVisualStaticCount;
+            public int CollisionExplicitNoCollisionCount;
+            public int CollisionNoColliderCount;
+            public List<string> CollisionMissingPayloadSamples;
+        }
+
+        private enum PlacedRefCollisionAssignment : byte
+        {
+            NoCollider,
+            CellStaticAggregate,
+            PerPlacedRef,
         }
 
         private readonly struct RenderShardRequestKey : System.IEquatable<RenderShardRequestKey>
@@ -565,6 +628,8 @@ namespace VVardenfell.Importer.Bake
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
             var bakeryRenderShards = new RenderShardBakery();
             bakeryRenderShards.TryLoadExisting(CachePaths.RenderShards);
+            var bakeryModelPrefabs = new ModelPrefabBakery();
+            var modelCache = new ConcurrentDictionary<string, Lazy<ModelSource>>(StringComparer.OrdinalIgnoreCase);
 
             progress.Current = 1;
             yield return null;
@@ -572,6 +637,8 @@ namespace VVardenfell.Importer.Bake
             var bsaByName = new Dictionary<string, BsaEntry>(sharedBsa.Entries.Length, StringComparer.OrdinalIgnoreCase);
             foreach (var entry in sharedBsa.Entries)
                 bsaByName[entry.Name] = entry;
+
+            SeedRuntimeSpawnableModels(gameplayContent, sharedBsa, bsaByName, modelCache);
 
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             var workItems = new List<CellBakeWorkItem>(exteriorCells.Count + interiorCells.Count);
@@ -616,7 +683,6 @@ namespace VVardenfell.Importer.Bake
             int maxWorkers = Math.Max(1, Math.Min(Environment.ProcessorCount, 8));
             var stageTask = Task.Run(() =>
             {
-                var modelCache = new ConcurrentDictionary<string, Lazy<ModelSource>>(StringComparer.OrdinalIgnoreCase);
                 var options = new ParallelOptions { MaxDegreeOfParallelism = maxWorkers };
                 try
                 {
@@ -687,7 +753,8 @@ namespace VVardenfell.Importer.Bake
             }
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
-            yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions);
+            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions);
+            yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
             for (int i = 0; i < stagedCells.Length; i++)
@@ -697,7 +764,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 10;
+            progress.Total = 12;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -724,8 +791,14 @@ namespace VVardenfell.Importer.Bake
             if (bakeryRenderShards.Modified || !File.Exists(CachePaths.RenderShards))
                 RenderShardFile.Write(CachePaths.RenderShards, bakeryRenderShards.BuildCatalog());
 
-            progress.Label = "textures.bin";
+            progress.Label = "model_prefabs.bin";
             progress.Current = 4;
+            yield return null;
+            if (bakeryModelPrefabs.Modified || !File.Exists(CachePaths.ModelPrefabs))
+                ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
+
+            progress.Label = "textures.bin";
+            progress.Current = 5;
             yield return null;
             if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
             {
@@ -734,13 +807,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 5;
+            progress.Current = 6;
             yield return null;
             if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers);
 
             progress.Label = "collisions.bin";
-            progress.Current = 6;
+            progress.Current = 7;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -749,23 +822,28 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 7;
+            progress.Current = 8;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 8;
+            progress.Current = 9;
             yield return null;
             WriteMeshCacheReport(stagedCells, bakeryMeshes);
 
+            progress.Label = "world_collision_validation.txt";
+            progress.Current = 10;
+            yield return null;
+            WriteWorldCollisionValidationReport(stagedCells);
+
             progress.Label = "ui.bin";
-            progress.Current = 9;
+            progress.Current = 11;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 10;
+            progress.Current = 12;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
@@ -848,9 +926,11 @@ namespace VVardenfell.Importer.Bake
                 Environment = workItem.Cell.Environment,
                 Land = land,
                 NeedsWrite = !canReuse,
+                PlacedRefs = canReuse ? null : new List<StagedPlacedRefData>(refs.Count),
                 PendingRefs = canReuse ? null : new List<StagedRefData>(refs.Count),
                 DoorEntries = canReuse ? null : new List<DoorRefEntry>(),
                 PlacementAuditEntries = canReuse ? null : new List<RefPlacementAuditEntry>(refs.Count),
+                CollisionMissingPayloadSamples = canReuse ? null : new List<string>(4),
             };
 
             if (canReuse)
@@ -895,6 +975,8 @@ namespace VVardenfell.Importer.Bake
                     auditFlags |= RefPlacementAuditFlags.HasDuplicatePlacedRefId;
                 if (!hasBaseRecord)
                     auditFlags |= RefPlacementAuditFlags.MissingBaseRecord;
+                if (hasBaseRecord && !contentReference.IsValid)
+                    auditFlags |= RefPlacementAuditFlags.MissingGameplayContentReference;
                 if (hasBaseRecord && (string.IsNullOrEmpty(rec.Model) || model == null || model.Meshes.Length == 0))
                     auditFlags |= RefPlacementAuditFlags.MissingModel;
                 if (model != null && model.Meshes.Length > 0)
@@ -935,7 +1017,10 @@ namespace VVardenfell.Importer.Bake
                 });
 
                 if (model == null || model.Meshes.Length == 0)
+                {
+                    staged.CollisionNoColliderCount++;
                     continue;
+                }
 
                 int doorMetaIndex = -1;
                 if (isDoorRecord)
@@ -945,12 +1030,58 @@ namespace VVardenfell.Importer.Bake
                     staged.DoorEntries.Add(doorEntry);
                 }
 
-                if (!model.Collision.IsEmpty)
+                CollisionPayload collisionPayload = model.Collision;
+                bool usedAutoVisualStaticCollision = false;
+                if (isStat && collisionPayload.IsEmpty && !model.AutoVisualStaticCollision.IsEmpty)
                 {
-                    if (isStat)
-                    {
-                        AppendTransformed(model.Collision, pos, rot, reference.Scale, workItem.CellOrigin, staticVerts, staticIndices);
-                    }
+                    collisionPayload = model.AutoVisualStaticCollision;
+                    usedAutoVisualStaticCollision = true;
+                }
+
+                PlacedRefCollisionAssignment collisionAssignment = ClassifyPlacedRefCollision(isStat, collisionPayload);
+                if (isStat)
+                    staged.CollisionStaticCandidateCount++;
+
+                switch (collisionAssignment)
+                {
+                    case PlacedRefCollisionAssignment.CellStaticAggregate:
+                        AppendTransformed(collisionPayload, pos, rot, reference.Scale, workItem.CellOrigin, staticVerts, staticIndices);
+                        staged.CollisionStaticAggregateCount++;
+                        staged.CollisionStaticAggregateTriangleCount += collisionPayload.TriangleCount;
+                        if (usedAutoVisualStaticCollision)
+                            staged.CollisionAutoVisualStaticCount++;
+                        else
+                            staged.CollisionAuthoredRootCount++;
+                        break;
+                    case PlacedRefCollisionAssignment.PerPlacedRef:
+                        staged.CollisionAuthoredRootCount++;
+                        staged.CollisionPerPlacedRefCount++;
+                        break;
+                    default:
+                        if (model.CollisionSource == CollisionExtractionSource.ExplicitNoCollision)
+                            staged.CollisionExplicitNoCollisionCount++;
+                        else if (isStat && collisionPayload.IsEmpty)
+                        {
+                            staged.CollisionMissingPayloadCount++;
+                            AddMissingCollisionSample(staged, model.ModelPath);
+                        }
+
+                        staged.CollisionNoColliderCount++;
+                        break;
+                }
+
+                bool useModelPrefab = EnableModelPrefabWorldRefs && contentReference.Kind == ContentReferenceKind.Actor;
+                if (useModelPrefab)
+                {
+                    staged.PlacedRefs.Add(new StagedPlacedRefData(
+                        model.ModelPath,
+                        reference.FormId,
+                        doorMetaIndex,
+                        contentReference,
+                        pos,
+                        rot,
+                        reference.Scale));
+                    continue;
                 }
 
                 for (int meshIndex = 0; meshIndex < model.Meshes.Length; meshIndex++)
@@ -966,7 +1097,7 @@ namespace VVardenfell.Importer.Bake
 
                     staged.PendingRefs.Add(new StagedRefData(
                         built,
-                        meshIndex == 0 ? model.Collision : default,
+                        meshIndex == 0 && collisionAssignment == PlacedRefCollisionAssignment.PerPlacedRef ? model.Collision : default,
                         $"{rec.Model}#{meshIndex}",
                         matFlags,
                         built.TexturePath,
@@ -985,6 +1116,25 @@ namespace VVardenfell.Importer.Bake
                 : default;
 
             return staged;
+        }
+
+        private static PlacedRefCollisionAssignment ClassifyPlacedRefCollision(bool isStat, in CollisionPayload collision)
+        {
+            if (collision.IsEmpty)
+                return PlacedRefCollisionAssignment.NoCollider;
+
+            return isStat
+                ? PlacedRefCollisionAssignment.CellStaticAggregate
+                : PlacedRefCollisionAssignment.PerPlacedRef;
+        }
+
+        private static void AddMissingCollisionSample(StagedCellData staged, string modelPath)
+        {
+            if (staged.CollisionMissingPayloadSamples == null || staged.CollisionMissingPayloadSamples.Count >= 5)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(modelPath) && !staged.CollisionMissingPayloadSamples.Contains(modelPath))
+                staged.CollisionMissingPayloadSamples.Add(modelPath);
         }
 
         private static bool TryComputeAggregateWorldBounds(
@@ -1041,10 +1191,19 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, BsaEntry> bsaByName,
             ConcurrentDictionary<string, Lazy<ModelSource>> modelCache)
         {
-            if (string.IsNullOrEmpty(rec.Model))
+            return EnsureModelSource(rec.Model, sharedBsa, bsaByName, modelCache);
+        }
+
+        private static ModelSource EnsureModelSource(
+            string modelPath,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache)
+        {
+            if (string.IsNullOrEmpty(modelPath))
                 return null;
 
-            string nifPath = "meshes\\" + rec.Model;
+            string nifPath = "meshes\\" + modelPath;
             var lazy = modelCache.GetOrAdd(
                 nifPath,
                 path => new Lazy<ModelSource>(() =>
@@ -1066,12 +1225,45 @@ namespace VVardenfell.Importer.Bake
                     if (built.Count == 0)
                         return null;
 
-                    CollisionPayload collision = default;
-                    NifCollisionExtractor.TryExtract(nif, out collision);
-                    return new ModelSource(built.ToArray(), collision);
+                    var prefab = NifModelPrefabBuilder.Build(nif);
+                    var collisionResult = NifCollisionExtractor.Extract(nif);
+                    CollisionPayload authoredCollision = collisionResult.Source == CollisionExtractionSource.AuthoredRootCollision
+                        ? collisionResult.Payload
+                        : default;
+                    CollisionPayload autoVisualStaticCollision = collisionResult.Source == CollisionExtractionSource.AutoVisualStatic
+                        ? collisionResult.Payload
+                        : default;
+                    return new ModelSource(path, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
                 }, LazyThreadSafetyMode.ExecutionAndPublication));
 
             return lazy.Value;
+        }
+
+        private static void SeedRuntimeSpawnableModels(
+            GameplayContentData gameplayContent,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache)
+        {
+            if (gameplayContent == null)
+                return;
+
+            var actors = gameplayContent.Actors ?? Array.Empty<ActorDef>();
+            for (int i = 0; i < actors.Length; i++)
+            {
+                if (actors[i].Kind != ActorDefKind.Creature)
+                    continue;
+
+                EnsureModelSource(actors[i].Model, sharedBsa, bsaByName, modelCache);
+            }
+
+            var items = gameplayContent.Items ?? Array.Empty<BaseDef>();
+            for (int i = 0; i < items.Length; i++)
+                EnsureModelSource(items[i].Model, sharedBsa, bsaByName, modelCache);
+
+            var lights = gameplayContent.Lights ?? Array.Empty<LightDef>();
+            for (int i = 0; i < lights.Length; i++)
+                EnsureModelSource(lights[i].Model, sharedBsa, bsaByName, modelCache);
         }
 
         private static IEnumerator PrepareDirtyCellsIncremental(
@@ -1162,6 +1354,51 @@ namespace VVardenfell.Importer.Bake
             yield return null;
         }
 
+        private static IEnumerator BuildModelPrefabsIncremental(
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            BakeProgress progress,
+            ModelPrefabBakery modelPrefabs,
+            MeshBakery meshes,
+            MaterialBakery materials,
+            TextureBakery textures,
+            CollisionBakery collisions)
+        {
+            var keys = new List<string>(modelCache.Keys);
+            keys.Sort(StringComparer.OrdinalIgnoreCase);
+
+            progress.Stage = "Model Prefabs";
+            progress.Total = Math.Max(1, keys.Count);
+            progress.Current = 0;
+            progress.Label = keys.Count == 0 ? "No model prefabs to bake" : $"Building model prefabs 0/{keys.Count}";
+            yield return null;
+
+            if (keys.Count == 0)
+                yield break;
+
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (modelCache.TryGetValue(keys[i], out var lazy))
+                {
+                    var source = lazy.Value;
+                    if (source?.Prefab != null)
+                    {
+                        modelPrefabs.GetOrAdd(
+                            source.ModelPath,
+                            source.Prefab,
+                            meshes,
+                            materials,
+                            textures,
+                            collisions);
+                    }
+                }
+
+                progress.Current = i + 1;
+                progress.Label = $"Building model prefabs {i + 1}/{keys.Count}";
+                if (((i + 1) & 31) == 0 || i + 1 == keys.Count)
+                    yield return null;
+            }
+        }
+
         private static void PrepareDirtyCell(StagedCellData staged, Dictionary<int, string> ltexMap)
         {
             k_PrepareDirtyCell.Begin();
@@ -1202,7 +1439,8 @@ namespace VVardenfell.Importer.Bake
             MaterialBakery materials,
             TextureBakery textures,
             TerrainLayerBakery terrainLayers,
-            CollisionBakery collisions)
+            CollisionBakery collisions,
+            ModelPrefabBakery modelPrefabs)
         {
             progress.Stage = "Assigning global indices";
             progress.Total = dirtyCells.Count;
@@ -1245,6 +1483,7 @@ namespace VVardenfell.Importer.Bake
                                     textures,
                                     terrainLayers,
                                     collisions,
+                                    modelPrefabs,
                                     materialIndexCache,
                                     textureIndexCache,
                                     terrainLayerCache);
@@ -1373,6 +1612,8 @@ namespace VVardenfell.Importer.Bake
                                     for (int r = 0; r < bakedRefs.Count; r++)
                                     {
                                         var baked = bakedRefs[r];
+                                        if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
+                                            continue;
                                         int globalMeshIndex = baked.LocalMeshIndex;
                                         int textureIndex = baked.SliceIndex;
                                         int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
@@ -1482,6 +1723,8 @@ namespace VVardenfell.Importer.Bake
                                     for (int r = 0; r < bakedRefs.Count; r++)
                                     {
                                         var baked = bakedRefs[r];
+                                        if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
+                                            continue;
                                         int globalMeshIndex = baked.LocalMeshIndex;
                                         int textureIndex = baked.SliceIndex;
                                         int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
@@ -1494,6 +1737,7 @@ namespace VVardenfell.Importer.Bake
                                         var resolved = resolvedAssignments[request];
 
                                         bakedRefs[r] = new CellBakery.BakedRef(
+                                            RefSpawnMode.RenderShard,
                                             resolved.RenderShardIndex,
                                             resolved.LocalMeshIndex,
                                             baked.LocalMaterialIndex,
@@ -1563,6 +1807,7 @@ namespace VVardenfell.Importer.Bake
             TextureBakery textures,
             TerrainLayerBakery terrainLayers,
             CollisionBakery collisions,
+            ModelPrefabBakery modelPrefabs,
             Dictionary<uint, int> materialIndexCache,
             Dictionary<string, int> textureIndexCache,
             Dictionary<int, ushort> terrainLayerCache)
@@ -1570,7 +1815,7 @@ namespace VVardenfell.Importer.Bake
             k_ResolveDirtyCellIndices.Begin();
             try
             {
-            if (staged.PreparedRefs == null)
+            if (staged.PreparedRefs == null && staged.PlacedRefs == null)
                 return;
 
             if (staged.TerrainTexturePaths != null)
@@ -1591,12 +1836,14 @@ namespace VVardenfell.Importer.Bake
                 staged.LayerGrid = layerGrid;
             }
 
-            var result = new List<CellBakery.BakedRef>(staged.PreparedRefs.Count);
+            int preparedCount = staged.PreparedRefs?.Count ?? 0;
+            int placedCount = staged.PlacedRefs?.Count ?? 0;
+            var result = new List<CellBakery.BakedRef>(preparedCount + placedCount);
             var meshIndices = new HashSet<int>();
             var materialIndices = new HashSet<int>();
             var textureIndices = new HashSet<int>();
             var collisionIndices = new HashSet<int>();
-            for (int i = 0; i < staged.PreparedRefs.Count; i++)
+            for (int i = 0; i < preparedCount; i++)
             {
                 var prepared = staged.PreparedRefs[i];
                 int meshIndex = meshes.AddOrGet(prepared.MeshSourceLabel, prepared.Built);
@@ -1612,6 +1859,7 @@ namespace VVardenfell.Importer.Bake
                 if (collisionIndex >= 0)
                     collisionIndices.Add(collisionIndex);
                 result.Add(new CellBakery.BakedRef(
+                    RefSpawnMode.RenderShard,
                     -1,
                     meshIndex,
                     materialIndex,
@@ -1624,6 +1872,31 @@ namespace VVardenfell.Importer.Bake
                     prepared.Position,
                     prepared.Rotation,
                     prepared.Scale));
+            }
+
+            for (int i = 0; i < placedCount; i++)
+            {
+                var placed = staged.PlacedRefs[i];
+                if (!modelPrefabs.TryGetAssignment(placed.ModelPath, out var assignment))
+                    continue;
+
+                if (assignment.CollisionIndex >= 0)
+                    collisionIndices.Add(assignment.CollisionIndex);
+
+                result.Add(new CellBakery.BakedRef(
+                    RefSpawnMode.ModelPrefab,
+                    assignment.ModelPrefabIndex,
+                    -1,
+                    -1,
+                    -1,
+                    assignment.CollisionIndex,
+                    placed.PlacedRefId,
+                    placed.DoorMetaIndex,
+                    placed.ContentReference.HandleValue,
+                    (int)placed.ContentReference.Kind,
+                    placed.Position,
+                    placed.Rotation,
+                    placed.Scale));
             }
 
             staged.BakedRefs = result;
@@ -2383,48 +2656,14 @@ namespace VVardenfell.Importer.Bake
 
         private static Dictionary<string, ContentReference> BuildGameplayContentLookup(GameplayContentData gameplayContent)
         {
-            var lookup = new Dictionary<string, ContentReference>(StringComparer.OrdinalIgnoreCase);
-            if (gameplayContent == null)
-                return lookup;
-
-            for (int i = 0; i < gameplayContent.Actors.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Actors[i].Id, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
-            for (int i = 0; i < gameplayContent.Activators.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Activators[i].Id, ContentReferenceKind.Activator, ActivatorDefHandle.FromIndex(i).Value);
-            for (int i = 0; i < gameplayContent.Doors.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Doors[i].Id, ContentReferenceKind.Door, DoorDefHandle.FromIndex(i).Value);
-            for (int i = 0; i < gameplayContent.Containers.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Containers[i].Id, ContentReferenceKind.Container, ContainerDefHandle.FromIndex(i).Value);
-            for (int i = 0; i < gameplayContent.Items.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Items[i].Id, ContentReferenceKind.Item, ItemDefHandle.FromIndex(i).Value);
-            for (int i = 0; i < gameplayContent.Lights.Length; i++)
-                AddGameplayContentLookup(lookup, gameplayContent.Lights[i].Id, ContentReferenceKind.Light, LightDefHandle.FromIndex(i).Value);
-
-            return lookup;
-        }
-
-        private static void AddGameplayContentLookup(
-            Dictionary<string, ContentReference> lookup,
-            string id,
-            ContentReferenceKind kind,
-            int handleValue)
-        {
-            if (string.IsNullOrWhiteSpace(id) || handleValue <= 0)
-                return;
-
-            lookup[id] = new ContentReference
-            {
-                Kind = kind,
-                HandleValue = handleValue,
-            };
+            return GameplayContentReferenceIndex.BuildPlaceableIndex(gameplayContent);
         }
 
         private static ContentReference ResolveGameplayContentReference(Dictionary<string, ContentReference> lookup, string baseId)
         {
-            if (lookup == null || string.IsNullOrWhiteSpace(baseId))
-                return default;
-
-            return lookup.TryGetValue(baseId, out var contentReference) ? contentReference : default;
+            return GameplayContentReferenceIndex.TryResolvePlaceable(lookup, baseId, out var contentReference)
+                ? contentReference
+                : default;
         }
 
         private static byte[] BuildTerrainNormalBytes(LandRecord land)
@@ -2449,11 +2688,12 @@ namespace VVardenfell.Importer.Bake
             if (count == 0)
                 return null;
 
-            using var ms = new MemoryStream(count * 68);
+            using var ms = new MemoryStream(count * 72);
             using var w = new BinaryWriter(ms);
             for (int i = 0; i < count; i++)
             {
                 var r = refs[i];
+                w.Write(r.SpawnModeRaw);
                 w.Write(r.RenderShardIndex);
                 w.Write(r.LocalMeshIndex);
                 w.Write(r.LocalMaterialIndex);
@@ -2633,7 +2873,7 @@ namespace VVardenfell.Importer.Bake
                 }
 
                 uint refCount = r.ReadUInt32();
-                SkipExact(r, checked((long)refCount * 68L), "ref table");
+                SkipExact(r, checked((long)refCount * 72L), "ref table");
 
                 uint doorCount = r.ReadUInt32();
                 for (int i = 0; i < doorCount; i++)
@@ -2912,6 +3152,92 @@ namespace VVardenfell.Importer.Bake
 
             UnityEngine.Debug.Log(
                 $"[VVardenfell] mesh cache: meshCount={meshes.Count}, meshes.bin={meshesFileBytes} bytes, mesh_catalog.bin={catalogFileBytes} bytes, sourcePreparedMeshes={sourcePreparedMeshCount}, combinedPreparedMeshes={combinedPreparedMeshCount}, combinedPreparedPayloadBytes={combinedPreparedPayloadBytes}");
+        }
+
+        private static void WriteWorldCollisionValidationReport(StagedCellData[] stagedCells)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(CachePaths.WorldCollisionValidationReport) ?? string.Empty);
+
+            int staticCandidates = 0;
+            int staticAggregates = 0;
+            int staticTriangles = 0;
+            int perPlacedRef = 0;
+            int missingPayloads = 0;
+            int authoredRootCollision = 0;
+            int autoVisualStaticCollision = 0;
+            int explicitNoCollisionMarkers = 0;
+            int noCollider = 0;
+            var topMissing = new List<(string Key, bool IsInterior, int Missing, int StaticCandidates, string[] Samples)>(stagedCells.Length);
+
+            for (int i = 0; i < stagedCells.Length; i++)
+            {
+                var cell = stagedCells[i];
+                staticCandidates += cell.CollisionStaticCandidateCount;
+                staticAggregates += cell.CollisionStaticAggregateCount;
+                staticTriangles += cell.CollisionStaticAggregateTriangleCount;
+                perPlacedRef += cell.CollisionPerPlacedRefCount;
+                missingPayloads += cell.CollisionMissingPayloadCount;
+                authoredRootCollision += cell.CollisionAuthoredRootCount;
+                autoVisualStaticCollision += cell.CollisionAutoVisualStaticCount;
+                explicitNoCollisionMarkers += cell.CollisionExplicitNoCollisionCount;
+                noCollider += cell.CollisionNoColliderCount;
+                if (cell.CollisionMissingPayloadCount > 0 || cell.CollisionStaticCandidateCount > 0)
+                {
+                    var samples = cell.CollisionMissingPayloadSamples != null
+                        ? cell.CollisionMissingPayloadSamples.ToArray()
+                        : Array.Empty<string>();
+                    topMissing.Add((cell.WorkItem.Key, cell.WorkItem.IsInterior, cell.CollisionMissingPayloadCount, cell.CollisionStaticCandidateCount, samples));
+                }
+            }
+
+            topMissing.Sort((a, b) => b.Missing != a.Missing
+                ? b.Missing.CompareTo(a.Missing)
+                : b.StaticCandidates.CompareTo(a.StaticCandidates));
+
+            var sb = new StringBuilder(2048);
+            sb.AppendLine("[VVardenfell] World Collision Validation");
+            sb.Append("cells=").Append(stagedCells.Length).AppendLine();
+            sb.Append("staticCandidates=").Append(staticCandidates).AppendLine();
+            sb.Append("staticAggregateRefs=").Append(staticAggregates).AppendLine();
+            sb.Append("staticAggregateTriangles=").Append(staticTriangles).AppendLine();
+            sb.Append("perPlacedRefColliders=").Append(perPlacedRef).AppendLine();
+            sb.Append("authoredRootCollisionRefs=").Append(authoredRootCollision).AppendLine();
+            sb.Append("autoVisualStaticRefs=").Append(autoVisualStaticCollision).AppendLine();
+            sb.Append("explicitNoCollisionMarkerRefs=").Append(explicitNoCollisionMarkers).AppendLine();
+            sb.Append("missingCollisionPayloads=").Append(missingPayloads).AppendLine();
+            sb.Append("noColliderRefs=").Append(noCollider).AppendLine();
+            sb.AppendLine();
+            sb.AppendLine("Top cells by missing collision payloads:");
+            int count = Math.Min(12, topMissing.Count);
+            for (int i = 0; i < count; i++)
+            {
+                var cell = topMissing[i];
+                sb.Append(" - ")
+                    .Append(cell.Key)
+                    .Append(" (")
+                    .Append(cell.IsInterior ? "interior" : "exterior")
+                    .Append(")")
+                    .Append(": missingPayloads=")
+                    .Append(cell.Missing)
+                    .Append(", staticCandidates=")
+                    .Append(cell.StaticCandidates);
+                if (cell.Samples.Length > 0)
+                {
+                    sb.Append(", samples=");
+                    for (int sampleIndex = 0; sampleIndex < cell.Samples.Length; sampleIndex++)
+                    {
+                        if (sampleIndex > 0)
+                            sb.Append(" | ");
+                        sb.Append(cell.Samples[sampleIndex]);
+                    }
+                }
+
+                sb.AppendLine();
+            }
+
+            File.WriteAllText(CachePaths.WorldCollisionValidationReport, sb.ToString(), Encoding.UTF8);
+            UnityEngine.Debug.Log(
+                $"[VVardenfell] world collision validation: staticCandidates={staticCandidates}, staticAggregateRefs={staticAggregates}, autoVisualStaticRefs={autoVisualStaticCollision}, perPlacedRefColliders={perPlacedRef}, missingPayloads={missingPayloads}, noColliderRefs={noCollider}");
         }
 
 

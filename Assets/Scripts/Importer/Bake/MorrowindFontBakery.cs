@@ -140,6 +140,7 @@ namespace VVardenfell.Importer.Bake
             float y = glyph.TopLeft.Y * texHeight;
             float width = (glyph.TopRight.X * texWidth) - x;
             float height = (glyph.BottomLeft.Y * texHeight) - y;
+            float advance = Math.Max(width, glyph.Kerning);
             float bearingY = fontSize - glyph.Ascent;
 
             w.Write(codepoint);
@@ -147,7 +148,7 @@ namespace VVardenfell.Importer.Bake
             w.Write(y);
             w.Write(width);
             w.Write(height);
-            w.Write(glyph.Width);
+            w.Write(advance);
             w.Write(glyph.Kerning);
             w.Write(bearingY);
         }

@@ -8,7 +8,7 @@ using UnityEngine.Networking;
 using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Runtime.Content;
-using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Audio
 {

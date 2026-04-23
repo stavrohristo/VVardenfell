@@ -9,10 +9,13 @@ using UnityEngine.Rendering;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
 {
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial class LightingBootstrapSystem : SystemBase
     {
         protected override void OnCreate()
@@ -60,8 +63,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
+    [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
     public partial class LightingEnvironmentResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_ResolveEnvironment = new("VV.Lighting.ResolveEnvironment");
@@ -266,7 +268,8 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
+    [UpdateAfter(typeof(LightingEnvironmentResolveSystem))]
     public partial class LightInstanceAnimationSystem : SystemBase
     {
         static readonly ProfilerMarker k_AnimateLights = new("VV.Lighting.AnimateInstances");
@@ -326,7 +329,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(PresentationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class EnvironmentPresentationSystem : SystemBase
     {
         static readonly ProfilerMarker k_SyncEnvironment = new("VV.Lighting.SyncEnvironment");
@@ -449,7 +452,7 @@ namespace VVardenfell.Runtime.Streaming
         static Color ToColor(float3 rgb) => new(rgb.x, rgb.y, rgb.z, 1f);
     }
 
-    [UpdateInGroup(typeof(PresentationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class LightPresentationSystem : SystemBase
     {
         const int MaxPresentedLights = 48;

@@ -3,13 +3,15 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(FixedStepSimulationSystemGroup))]
-    [UpdateBefore(typeof(TransformSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFixedPrePhysicsSystemGroup))]
     public partial struct PlayerVariableLookSystem : ISystem
     {
         EntityQuery _playerQuery;
@@ -21,6 +23,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
+                ComponentType.ReadWrite<MorrowindMovementIntent>(),
                 ComponentType.ReadWrite<LocalTransform>());
             _viewQuery = state.GetEntityQuery(
                 ComponentType.ReadWrite<PlayerViewComponent>(),
@@ -37,12 +40,14 @@ namespace VVardenfell.Runtime.Player
             Entity playerEntity = _playerQuery.GetSingletonEntity();
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
+            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
             var bodyTransformRef = _playerQuery.GetSingletonRW<LocalTransform>();
 
             var viewRef = _viewQuery.GetSingletonRW<PlayerViewComponent>();
             var viewTransformRef = _viewQuery.GetSingletonRW<LocalTransform>();
 
             ref var control = ref controlRef.ValueRW;
+            ref var intent = ref intentRef.ValueRW;
             ref var view = ref viewRef.ValueRW;
             if (view.ControlledCharacter != playerEntity)
                 return;
@@ -65,10 +70,55 @@ namespace VVardenfell.Runtime.Player
                 1f);
 
             control.LookDeltaDegrees = float2.zero;
+            intent.LookDeltaDegrees = float2.zero;
         }
     }
 
-    [UpdateInGroup(typeof(PresentationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateAfter(typeof(PlayerFixedStepMovementSystem))]
+    [UpdateBefore(typeof(PlayerInteractionRaycastSystem))]
+    public partial class PlayerPhysicsViewPoseSystem : SystemBase
+    {
+        EntityQuery _playerQuery;
+        EntityQuery _viewQuery;
+
+        protected override void OnCreate()
+        {
+            _playerQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            _viewQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerViewComponent>(),
+                ComponentType.ReadWrite<PlayerPhysicsViewPose>());
+
+            RequireForUpdate(_playerQuery);
+            RequireForUpdate(_viewQuery);
+            RequireForUpdate<FixedTickSystem.Singleton>();
+        }
+
+        protected override void OnUpdate()
+        {
+            Entity playerEntity = _playerQuery.GetSingletonEntity();
+            var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
+            var view = _viewQuery.GetSingleton<PlayerViewComponent>();
+            if (view.ControlledCharacter != playerEntity)
+                return;
+
+            quaternion worldRotation = math.normalize(math.mul(playerTransform.Rotation, view.LocalViewRotation));
+            float3 worldPosition = playerTransform.Position + math.rotate(playerTransform.Rotation, view.LocalEyeOffset);
+            uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick + 1u;
+
+            var poseRef = _viewQuery.GetSingletonRW<PlayerPhysicsViewPose>();
+            poseRef.ValueRW = new PlayerPhysicsViewPose
+            {
+                Position = worldPosition,
+                Rotation = worldRotation,
+                FixedTick = fixedTick,
+            };
+        }
+    }
+
+    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class PlayerCameraSyncSystem : SystemBase
     {
         EntityQuery _viewQuery;

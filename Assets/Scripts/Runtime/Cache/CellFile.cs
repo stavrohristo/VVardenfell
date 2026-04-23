@@ -46,7 +46,7 @@ namespace VVardenfell.Runtime.Cache
         const int TerrainSampleCount = TerrainSize * TerrainSize;
         const int TerrainNormalCount = 3 * TerrainSampleCount;
         const int LayerGridCount = 16 * 16;
-        const int RefEntrySizeBytes = 68;
+        const int RefEntrySizeBytes = 72;
         const int DoorEntryFixedBytes = 36;
 
         static readonly ProfilerMarker k_ReadHeader = new("VV.Runtime.CellRead.Header");
@@ -178,6 +178,7 @@ namespace VVardenfell.Runtime.Cache
                     {
                         cell.Refs[i] = new RefEntry
                         {
+                            SpawnModeRaw = r.ReadInt32(),
                             RenderShardIndex = r.ReadInt32(),
                             LocalMeshIndex = r.ReadInt32(),
                             LocalMaterialIndex = r.ReadInt32(),

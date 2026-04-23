@@ -8,10 +8,13 @@ using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Systems;
 
-namespace VVardenfell.Runtime.Streaming
+namespace VVardenfell.Runtime.Audio
 {
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial class AudioBootstrapSystem : SystemBase
     {
         protected override void OnCreate()
@@ -60,7 +63,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     public partial class AudioContextResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_ContextResolve = new("VV.Audio.ResolveContext");
@@ -107,7 +110,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class AmbientSettingsResolveSystem : SystemBase
     {
@@ -143,7 +146,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class MusicResolveSystem : SystemBase
     {
@@ -418,8 +421,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(LightingEnvironmentResolveSystem))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     public partial class RegionAmbientResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_RegionResolve = new("VV.Audio.ResolveRegionAmbient");
@@ -480,7 +482,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class InteriorAmbientResolveSystem : SystemBase
     {
@@ -615,7 +617,7 @@ namespace VVardenfell.Runtime.Streaming
         }
     }
 
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     [UpdateAfter(typeof(RegionAmbientResolveSystem))]
     [UpdateAfter(typeof(AmbientSettingsResolveSystem))]
     public partial class AmbientEventSchedulerSystem : SystemBase
@@ -699,7 +701,7 @@ namespace VVardenfell.Runtime.Streaming
         static uint EnsureSeed(uint seed) => seed == 0u ? 1u : seed;
     }
 
-    [UpdateInGroup(typeof(PresentationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class AudioPresentationSystem : SystemBase
     {
         static readonly ProfilerMarker k_SyncAudio = new("VV.Audio.SyncPlayback");

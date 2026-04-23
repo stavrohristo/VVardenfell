@@ -15,8 +15,8 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Dds;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
-using VVardenfell.Runtime.Streaming;
 using Debug = UnityEngine.Debug;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Cache
 {
@@ -49,6 +49,7 @@ namespace VVardenfell.Runtime.Cache
         public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
         public RenderShardCatalogData RenderShardCatalog { get; private set; }
+        public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
         public MaterialRegistry Registry { get; private set; }
@@ -81,11 +82,16 @@ namespace VVardenfell.Runtime.Cache
             {
                 if (!BakeManifest.TryRead(CachePaths.Manifest, out var manifest))
                     throw new InvalidDataException("manifest.bin unreadable");
+                if (manifest.FormatVersion != CacheFormat.FormatVersion)
+                    throw new InvalidDataException($"manifest.bin format mismatch (found {manifest.FormatVersion}, expected {CacheFormat.FormatVersion}); rebake required.");
                 Manifest = manifest;
                 MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
                 if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
                     throw new InvalidDataException("render_shards.bin unreadable");
                 RenderShardCatalog = renderShardCatalog;
+                if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
+                    throw new InvalidDataException("model_prefabs.bin unreadable");
+                ModelPrefabCatalog = modelPrefabCatalog;
             }
             finally
             {

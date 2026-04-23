@@ -1,7 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Physics;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -90,13 +89,4 @@ namespace VVardenfell.Runtime.Streaming
         public int2 Value;
     }
 
-    public struct RefCollisionSource : IComponentData
-    {
-        public BlobAssetReference<Collider> Value;
-    }
-
-    public struct StoredPhysicsColliderBlob : IComponentData
-    {
-        public BlobAssetReference<Collider> Value;
-    }
 }

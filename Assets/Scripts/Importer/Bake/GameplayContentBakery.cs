@@ -19,25 +19,41 @@ namespace VVardenfell.Importer.Bake
         static readonly uint AlchTag = EsmFourCC.Make('A', 'L', 'C', 'H');
         static readonly uint AppaTag = EsmFourCC.Make('A', 'P', 'P', 'A');
         static readonly uint ArmoTag = EsmFourCC.Make('A', 'R', 'M', 'O');
+        static readonly uint BodyTag = EsmFourCC.Make('B', 'O', 'D', 'Y');
         static readonly uint BookTag = EsmFourCC.Make('B', 'O', 'O', 'K');
+        static readonly uint BsgnTag = EsmFourCC.Make('B', 'S', 'G', 'N');
+        static readonly uint ClasTag = EsmFourCC.Make('C', 'L', 'A', 'S');
         static readonly uint CreaTag = EsmFourCC.Make('C', 'R', 'E', 'A');
         static readonly uint ClotTag = EsmFourCC.Make('C', 'L', 'O', 'T');
         static readonly uint ContTag = EsmFourCC.Make('C', 'O', 'N', 'T');
         static readonly uint DialTag = EsmFourCC.Make('D', 'I', 'A', 'L');
         static readonly uint DoorTag = EsmFourCC.Make('D', 'O', 'O', 'R');
         static readonly uint EnchTag = EsmFourCC.Make('E', 'N', 'C', 'H');
+        static readonly uint FactTag = EsmFourCC.Make('F', 'A', 'C', 'T');
+        static readonly uint GlobTag = EsmFourCC.Make('G', 'L', 'O', 'B');
+        static readonly uint GmstTag = EsmFourCC.Make('G', 'M', 'S', 'T');
         static readonly uint IngrTag = EsmFourCC.Make('I', 'N', 'G', 'R');
         static readonly uint InfoTag = EsmFourCC.Make('I', 'N', 'F', 'O');
+        static readonly uint LevcTag = EsmFourCC.Make('L', 'E', 'V', 'C');
         static readonly uint LighTag = EsmFourCC.Make('L', 'I', 'G', 'H');
+        static readonly uint LeviTag = EsmFourCC.Make('L', 'E', 'V', 'I');
         static readonly uint LockTag = EsmFourCC.Make('L', 'O', 'C', 'K');
+        static readonly uint LtexTag = EsmFourCC.Make('L', 'T', 'E', 'X');
         static readonly uint MgefTag = EsmFourCC.Make('M', 'G', 'E', 'F');
         static readonly uint MiscTag = EsmFourCC.Make('M', 'I', 'S', 'C');
         static readonly uint NpcTag = EsmFourCC.Make('N', 'P', 'C', '_');
+        static readonly uint PgrdTag = EsmFourCC.Make('P', 'G', 'R', 'D');
         static readonly uint ProbTag = EsmFourCC.Make('P', 'R', 'O', 'B');
+        static readonly uint RaceTag = EsmFourCC.Make('R', 'A', 'C', 'E');
         static readonly uint RegnTag = EsmFourCC.Make('R', 'E', 'G', 'N');
         static readonly uint RepaTag = EsmFourCC.Make('R', 'E', 'P', 'A');
+        static readonly uint ScptTag = EsmFourCC.Make('S', 'C', 'P', 'T');
+        static readonly uint SkilTag = EsmFourCC.Make('S', 'K', 'I', 'L');
+        static readonly uint SndgTag = EsmFourCC.Make('S', 'N', 'D', 'G');
         static readonly uint SounTag = EsmFourCC.Make('S', 'O', 'U', 'N');
         static readonly uint SpelTag = EsmFourCC.Make('S', 'P', 'E', 'L');
+        static readonly uint SscrTag = EsmFourCC.Make('S', 'S', 'C', 'R');
+        static readonly uint StatTag = EsmFourCC.Make('S', 'T', 'A', 'T');
         static readonly uint WeapTag = EsmFourCC.Make('W', 'E', 'A', 'P');
 
         static readonly uint AnamTag = EsmFourCC.Make('A', 'N', 'A', 'M');
@@ -52,10 +68,12 @@ namespace VVardenfell.Importer.Bake
         static readonly uint EndtTag = EsmFourCC.Make('E', 'N', 'D', 'T');
         static readonly uint EnamTag = EsmFourCC.Make('E', 'N', 'A', 'M');
         static readonly uint FlagTag = EsmFourCC.Make('F', 'L', 'A', 'G');
+        static readonly uint FltvTag = EsmFourCC.Make('F', 'L', 'T', 'V');
         static readonly uint HsndTag = EsmFourCC.Make('H', 'S', 'N', 'D');
         static readonly uint HvfxTag = EsmFourCC.Make('H', 'V', 'F', 'X');
         static readonly uint InamTag = EsmFourCC.Make('I', 'N', 'A', 'M');
         static readonly uint IndxTag = EsmFourCC.Make('I', 'N', 'D', 'X');
+        static readonly uint IntvTag = EsmFourCC.Make('I', 'N', 'T', 'V');
         static readonly uint ItexTag = EsmFourCC.Make('I', 'T', 'E', 'X');
         static readonly uint LhdtTag = EsmFourCC.Make('L', 'H', 'D', 'T');
         static readonly uint MedtTag = EsmFourCC.Make('M', 'E', 'D', 'T');
@@ -63,6 +81,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint NpdtTag = EsmFourCC.Make('N', 'P', 'D', 'T');
         static readonly uint OnamTag = EsmFourCC.Make('O', 'N', 'A', 'M');
         static readonly uint PnamTag = EsmFourCC.Make('P', 'N', 'A', 'M');
+        static readonly uint NpcoTag = EsmFourCC.Make('N', 'P', 'C', 'O');
         static readonly uint PtexTag = EsmFourCC.Make('P', 'T', 'E', 'X');
         static readonly uint QstfTag = EsmFourCC.Make('Q', 'S', 'T', 'F');
         static readonly uint QstnTag = EsmFourCC.Make('Q', 'S', 'T', 'N');
@@ -73,6 +92,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint ScriTag = EsmFourCC.Make('S', 'C', 'R', 'I');
         static readonly uint SnamTag = EsmFourCC.Make('S', 'N', 'A', 'M');
         static readonly uint SpdtTag = EsmFourCC.Make('S', 'P', 'D', 'T');
+        static readonly uint StrvTag = EsmFourCC.Make('S', 'T', 'R', 'V');
         static readonly uint WdatTag = EsmFourCC.Make('W', 'E', 'A', 'T');
         static readonly uint XsclTag = EsmFourCC.Make('X', 'S', 'C', 'L');
 
@@ -108,20 +128,43 @@ namespace VVardenfell.Importer.Bake
             public readonly List<RegionSoundRefDef> SoundRefs = new();
         }
 
+        sealed class ItemLeveledListAccumulator
+        {
+            public ItemLeveledListDef Def;
+            public readonly List<ItemLeveledListEntryDef> Entries = new();
+        }
+
         sealed class State
         {
             public readonly Dictionary<string, ActorDef> Actors = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Activators = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Doors = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Containers = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, List<ContainerItemDef>> ContainerItems = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Items = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, LightDef> Lights = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ItemLeveledListAccumulator> ItemLeveledLists = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ItemLeveledListAccumulator> CreatureLeveledLists = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, SoundDef> Sounds = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, DialogueAccumulator> Dialogues = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, SpellDef> Spells = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, EnchantmentDef> Enchantments = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<int, MagicEffectDef> MagicEffects = new();
             public readonly Dictionary<string, RegionAccumulator> Regions = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> GameSettings = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Globals = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Classes = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Factions = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Races = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Birthsigns = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Skills = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Scripts = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> StartScripts = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> SoundGenerators = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> LandTextures = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> Statics = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> BodyParts = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, GenericRecordDef> PathGrids = new(StringComparer.OrdinalIgnoreCase);
         }
 
         sealed class ValidationIssue
@@ -205,17 +248,65 @@ namespace VVardenfell.Importer.Bake
                     case var tag when tag == ActiTag:
                         ParseBaseDefRecord(esm, rec.Tag, state.Activators);
                         break;
+                    case var tag when tag == StatTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Statics);
+                        break;
+                    case var tag when tag == GmstTag:
+                        ParseGenericRecord(esm, rec.Tag, state.GameSettings);
+                        break;
+                    case var tag when tag == GlobTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Globals);
+                        break;
+                    case var tag when tag == ClasTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Classes);
+                        break;
+                    case var tag when tag == FactTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Factions);
+                        break;
+                    case var tag when tag == RaceTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Races);
+                        break;
+                    case var tag when tag == BsgnTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Birthsigns);
+                        break;
+                    case var tag when tag == SkilTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Skills);
+                        break;
+                    case var tag when tag == ScptTag:
+                        ParseGenericRecord(esm, rec.Tag, state.Scripts);
+                        break;
+                    case var tag when tag == SscrTag:
+                        ParseGenericRecord(esm, rec.Tag, state.StartScripts);
+                        break;
+                    case var tag when tag == SndgTag:
+                        ParseGenericRecord(esm, rec.Tag, state.SoundGenerators);
+                        break;
+                    case var tag when tag == LtexTag:
+                        ParseGenericRecord(esm, rec.Tag, state.LandTextures);
+                        break;
+                    case var tag when tag == BodyTag:
+                        ParseGenericRecord(esm, rec.Tag, state.BodyParts);
+                        break;
+                    case var tag when tag == PgrdTag:
+                        ParseGenericRecord(esm, rec.Tag, state.PathGrids);
+                        break;
                     case var tag when tag == DoorTag:
                         ParseBaseDefRecord(esm, rec.Tag, state.Doors, isDoor: true);
                         break;
                     case var tag when tag == ContTag:
-                        ParseBaseDefRecord(esm, rec.Tag, state.Containers, isContainer: true);
+                        ParseBaseDefRecord(esm, rec.Tag, state.Containers, isContainer: true, containerItems: state.ContainerItems);
                         break;
                     case var tag when ItemTags.Contains(tag):
                         ParseBaseDefRecord(esm, rec.Tag, state.Items);
                         break;
                     case var tag when tag == LighTag:
                         ParseLightRecord(esm, state.Lights);
+                        break;
+                    case var tag when tag == LeviTag:
+                        ParseLeveledListRecord(esm, state.ItemLeveledLists, LeviTag, InamTag);
+                        break;
+                    case var tag when tag == LevcTag:
+                        ParseLeveledListRecord(esm, state.CreatureLeveledLists, LevcTag, CnamTag);
                         break;
                     case var tag when tag == SounTag:
                         ParseSoundRecord(esm, state.Sounds);
@@ -253,9 +344,16 @@ namespace VVardenfell.Importer.Bake
             return currentDialogueId;
         }
 
-        static void ParseBaseDefRecord(EsmReader esm, uint recordTag, Dictionary<string, BaseDef> target, bool isDoor = false, bool isContainer = false)
+        static void ParseBaseDefRecord(
+            EsmReader esm,
+            uint recordTag,
+            Dictionary<string, BaseDef> target,
+            bool isDoor = false,
+            bool isContainer = false,
+            Dictionary<string, List<ContainerItemDef>> containerItems = null)
         {
             var def = new BaseDef { RecordTag = recordTag };
+            var parsedContainerItems = isContainer ? new List<ContainerItemDef>() : null;
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -298,6 +396,12 @@ namespace VVardenfell.Importer.Bake
                         else
                             esm.SkipSubrecord();
                         break;
+                    case var tag when tag == NpcoTag:
+                        if (isContainer)
+                            ParseContainerItemSubrecord(esm, parsedContainerItems);
+                        else
+                            esm.SkipSubrecord();
+                        break;
                     case var tag when tag == EnamTag:
                         def.EnchantId = esm.ReadSubrecordString();
                         break;
@@ -313,6 +417,132 @@ namespace VVardenfell.Importer.Bake
 
             if (string.IsNullOrWhiteSpace(def.Id))
                 return;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                if (isContainer && containerItems != null)
+                    containerItems.Remove(def.Id);
+                return;
+            }
+
+            def.ContentId = ContentId.FromTagAndId(recordTag, def.Id);
+            target[def.Id] = def;
+            if (isContainer && containerItems != null)
+                containerItems[def.Id] = parsedContainerItems ?? new List<ContainerItemDef>();
+        }
+
+        static void ParseContainerItemSubrecord(EsmReader esm, List<ContainerItemDef> items)
+        {
+            byte[] bytes = esm.ReadSubrecordBytes();
+            if (bytes == null || bytes.Length < 36)
+                return;
+
+            int count = ReadInt32(bytes, 0);
+            string itemId = ReadFixedString(bytes, 4, 32);
+            if (string.IsNullOrWhiteSpace(itemId) || count <= 0)
+                return;
+
+            items.Add(new ContainerItemDef
+            {
+                ItemId = itemId,
+                Count = count,
+            });
+        }
+
+        static void ParseGenericRecord(EsmReader esm, uint recordTag, Dictionary<string, GenericRecordDef> target)
+        {
+            var def = new GenericRecordDef { RecordTag = recordTag };
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.FNAM:
+                        def.Name = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.MODL:
+                        def.Model = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == ItexTag:
+                        def.Icon = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == ScriTag:
+                        def.ScriptId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == DescTag:
+                        def.Text = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == StrvTag:
+                        def.Text = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == IndxTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Int0 = ReadInt32(bytes, 0);
+                        else if (bytes.Length >= 2)
+                            def.Int0 = ReadInt16(bytes, 0);
+                        else if (bytes.Length >= 1)
+                            def.Int0 = bytes[0];
+                        break;
+                    }
+                    case var tag when tag == IntvTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Int0 = ReadInt32(bytes, 0);
+                        else if (bytes.Length >= 2)
+                            def.Int0 = ReadInt16(bytes, 0);
+                        else if (bytes.Length >= 1)
+                            def.Int0 = bytes[0];
+                        break;
+                    }
+                    case var tag when tag == FltvTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Float0 = ReadSingle(bytes, 0);
+                        break;
+                    }
+                    case var tag when tag == FlagTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Flags = ReadUInt32(bytes, 0);
+                        break;
+                    }
+                    case var tag when (tag == EsmFourCC.DATA || tag == MedtTag || tag == RdatTag || tag == WdatTag):
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                        {
+                            def.Int1 = ReadInt32(bytes, 0);
+                            def.Float0 = ReadSingle(bytes, 0);
+                        }
+                        if (bytes.Length >= 8)
+                        {
+                            def.Int2 = ReadInt32(bytes, 4);
+                            def.Float1 = ReadSingle(bytes, 4);
+                        }
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(def.Id))
+                def.Id = BuildGeneratedRecordId(recordTag, def.Int0, target.Count);
 
             if (deleted)
             {
@@ -386,6 +616,89 @@ namespace VVardenfell.Importer.Bake
 
             def.ContentId = ContentId.FromTagAndId(LighTag, def.Id);
             target[def.Id] = def;
+        }
+
+        static void ParseLeveledListRecord(
+            EsmReader esm,
+            Dictionary<string, ItemLeveledListAccumulator> target,
+            uint recordTag,
+            uint entryIdTag)
+        {
+            var def = new ItemLeveledListDef
+            {
+                FirstEntryIndex = -1,
+            };
+            var entries = new List<ItemLeveledListEntryDef>();
+            string pendingEntryId = null;
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.DATA:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Flags = ReadInt32(bytes, 0);
+                        break;
+                    }
+                    case var tag when tag == NnamTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 1)
+                            def.ChanceNone = bytes[0];
+                        break;
+                    }
+                    case var tag when tag == IndxTag:
+                        esm.SkipSubrecord();
+                        break;
+                    case var tag when tag == entryIdTag:
+                        pendingEntryId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == IntvTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (!string.IsNullOrWhiteSpace(pendingEntryId) && bytes.Length >= 2)
+                        {
+                            entries.Add(new ItemLeveledListEntryDef
+                            {
+                                ItemId = pendingEntryId,
+                                Level = BitConverter.ToUInt16(bytes, 0),
+                            });
+                        }
+
+                        pendingEntryId = null;
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(def.Id))
+                return;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                return;
+            }
+
+            def.ContentId = ContentId.FromTagAndId(recordTag, def.Id);
+            target[def.Id] = new ItemLeveledListAccumulator
+            {
+                Def = def,
+            };
+            target[def.Id].Entries.AddRange(entries);
         }
 
         static void ParseSoundRecord(EsmReader esm, Dictionary<string, SoundDef> target)
@@ -1066,13 +1379,34 @@ namespace VVardenfell.Importer.Bake
                 Containers = OrderByNormalizedId(state.Containers).ToArray(),
                 Items = OrderByNormalizedId(state.Items).ToArray(),
                 Lights = OrderByNormalizedId(state.Lights).ToArray(),
+                ItemLeveledLists = Array.Empty<ItemLeveledListDef>(),
+                ItemLeveledListEntries = Array.Empty<ItemLeveledListEntryDef>(),
+                CreatureLeveledLists = Array.Empty<ItemLeveledListDef>(),
+                CreatureLeveledListEntries = Array.Empty<ItemLeveledListEntryDef>(),
                 Sounds = OrderByNormalizedId(state.Sounds).ToArray(),
                 MagicEffects = state.MagicEffects.OrderBy(pair => pair.Key).Select(pair => pair.Value).ToArray(),
                 MusicTracks = BuildMusicTrackDefs(installPath),
                 AmbientSettings = BuildAmbientSettings(installPath),
+                GameSettings = OrderByNormalizedId(state.GameSettings).ToArray(),
+                Globals = OrderByNormalizedId(state.Globals).ToArray(),
+                Classes = OrderByNormalizedId(state.Classes).ToArray(),
+                Factions = OrderByNormalizedId(state.Factions).ToArray(),
+                Races = OrderByNormalizedId(state.Races).ToArray(),
+                Birthsigns = OrderByNormalizedId(state.Birthsigns).ToArray(),
+                Skills = OrderByNormalizedId(state.Skills).ToArray(),
+                Scripts = OrderByNormalizedId(state.Scripts).ToArray(),
+                StartScripts = OrderByNormalizedId(state.StartScripts).ToArray(),
+                SoundGenerators = OrderByNormalizedId(state.SoundGenerators).ToArray(),
+                LandTextures = OrderByNormalizedId(state.LandTextures).ToArray(),
+                Statics = OrderByNormalizedId(state.Statics).ToArray(),
+                BodyParts = OrderByNormalizedId(state.BodyParts).ToArray(),
+                PathGrids = OrderByNormalizedId(state.PathGrids).ToArray(),
             };
 
             BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
+            BuildContainerContentArrays(data.Containers, state.ContainerItems, out data.ContainerContentRanges, out data.ContainerItems);
+            BuildItemLeveledListArrays(state.ItemLeveledLists, out data.ItemLeveledLists, out data.ItemLeveledListEntries);
+            BuildItemLeveledListArrays(state.CreatureLeveledLists, out data.CreatureLeveledLists, out data.CreatureLeveledListEntries);
             BuildSpellArrays(state.Spells, s_SpellEffects, out data.Spells, ref data.MagicEffectInstances);
             BuildEnchantmentArrays(state.Enchantments, s_EnchantmentEffects, out data.Enchantments, ref data.MagicEffectInstances);
             BuildRegionArrays(state.Regions, out data.Regions, out data.RegionSoundRefs);
@@ -1110,6 +1444,60 @@ namespace VVardenfell.Importer.Bake
 
             dialogues = dialogueList.ToArray();
             infos = infoList.ToArray();
+        }
+
+        static void BuildContainerContentArrays(
+            BaseDef[] containers,
+            Dictionary<string, List<ContainerItemDef>> itemMap,
+            out ContainerContentRangeDef[] ranges,
+            out ContainerItemDef[] items)
+        {
+            ranges = new ContainerContentRangeDef[containers?.Length ?? 0];
+            var flatItems = new List<ContainerItemDef>();
+
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                string id = containers[i].Id ?? string.Empty;
+                if (!itemMap.TryGetValue(id, out var containerItems) || containerItems == null || containerItems.Count == 0)
+                {
+                    ranges[i] = new ContainerContentRangeDef
+                    {
+                        FirstItemIndex = -1,
+                        ItemCount = 0,
+                    };
+                    continue;
+                }
+
+                ranges[i] = new ContainerContentRangeDef
+                {
+                    FirstItemIndex = flatItems.Count,
+                    ItemCount = containerItems.Count,
+                };
+                flatItems.AddRange(containerItems);
+            }
+
+            items = flatItems.ToArray();
+        }
+
+        static void BuildItemLeveledListArrays(
+            Dictionary<string, ItemLeveledListAccumulator> map,
+            out ItemLeveledListDef[] defs,
+            out ItemLeveledListEntryDef[] entries)
+        {
+            var ordered = map.OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal).ToArray();
+            defs = new ItemLeveledListDef[ordered.Length];
+            var flatEntries = new List<ItemLeveledListEntryDef>(ordered.Sum(pair => pair.Value.Entries.Count));
+
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                var def = ordered[i].Value.Def;
+                def.FirstEntryIndex = flatEntries.Count;
+                def.EntryCount = ordered[i].Value.Entries.Count;
+                defs[i] = def;
+                flatEntries.AddRange(ordered[i].Value.Entries);
+            }
+
+            entries = flatEntries.ToArray();
         }
 
         static void BuildSpellArrays(
@@ -1269,6 +1657,24 @@ namespace VVardenfell.Importer.Bake
             return value;
         }
 
+        static string BuildGeneratedRecordId(uint recordTag, int primaryIndex, int sequence)
+        {
+            string tag = FourCcToString(recordTag).ToLowerInvariant();
+            return primaryIndex != 0
+                ? $"{tag}:{primaryIndex}"
+                : $"{tag}:record-{sequence}";
+        }
+
+        static string FourCcToString(uint tag)
+        {
+            Span<char> chars = stackalloc char[4];
+            chars[0] = (char)(tag & 0xFF);
+            chars[1] = (char)((tag >> 8) & 0xFF);
+            chars[2] = (char)((tag >> 16) & 0xFF);
+            chars[3] = (char)((tag >> 24) & 0xFF);
+            return new string(chars);
+        }
+
         static void PopulateManifestCounts(GameplayContentManifest manifest, GameplayContentData data)
         {
             manifest.ActorCount = data.Actors.Length;
@@ -1277,6 +1683,10 @@ namespace VVardenfell.Importer.Bake
             manifest.ContainerCount = data.Containers.Length;
             manifest.ItemCount = data.Items.Length;
             manifest.LightCount = data.Lights.Length;
+            manifest.ItemLeveledListCount = data.ItemLeveledLists.Length;
+            manifest.ItemLeveledListEntryCount = data.ItemLeveledListEntries.Length;
+            manifest.CreatureLeveledListCount = data.CreatureLeveledLists.Length;
+            manifest.CreatureLeveledListEntryCount = data.CreatureLeveledListEntries.Length;
             manifest.SoundCount = data.Sounds.Length;
             manifest.DialogueCount = data.Dialogues.Length;
             manifest.DialogueInfoCount = data.DialogueInfos.Length;
@@ -1288,6 +1698,20 @@ namespace VVardenfell.Importer.Bake
             manifest.RegionSoundRefCount = data.RegionSoundRefs.Length;
             manifest.MusicTrackCount = data.MusicTracks.Length;
             manifest.AmbientSettingsCount = 1;
+            manifest.GameSettingCount = data.GameSettings.Length;
+            manifest.GlobalCount = data.Globals.Length;
+            manifest.ClassCount = data.Classes.Length;
+            manifest.FactionCount = data.Factions.Length;
+            manifest.RaceCount = data.Races.Length;
+            manifest.BirthsignCount = data.Birthsigns.Length;
+            manifest.SkillCount = data.Skills.Length;
+            manifest.ScriptCount = data.Scripts.Length;
+            manifest.StartScriptCount = data.StartScripts.Length;
+            manifest.SoundGeneratorCount = data.SoundGenerators.Length;
+            manifest.LandTextureCount = data.LandTextures.Length;
+            manifest.StaticCount = data.Statics.Length;
+            manifest.BodyPartCount = data.BodyParts.Length;
+            manifest.PathGridCount = data.PathGrids.Length;
         }
 
         static void WriteValidationReport(string installPath, GameplayContentData data)
@@ -1302,6 +1726,8 @@ namespace VVardenfell.Importer.Bake
             ValidateBaseDefs("Item", data.Items, soundIds, assetIndex, issues);
             ValidateLights(data.Lights, soundIds, assetIndex, issues);
             ValidateActors(data.Actors, assetIndex, issues);
+            ValidateGenericRecords("Static", data.Statics, assetIndex, issues);
+            ValidateGenericRecords("BodyPart", data.BodyParts, assetIndex, issues);
             ValidateSounds(data.Sounds, assetIndex, issues);
             ValidateDialogue(data.Dialogues, data.DialogueInfos, issues);
             ValidateMagicEffects(data.MagicEffects, soundIds, assetIndex, issues);
@@ -1312,7 +1738,7 @@ namespace VVardenfell.Importer.Bake
             using var writer = new StreamWriter(CachePaths.GameplayValidationReport, false, Encoding.UTF8);
             writer.WriteLine("VVardenfell Gameplay Content Validation");
             writer.WriteLine($"Generated: {DateTime.UtcNow:O}");
-            writer.WriteLine($"Actors={data.Actors.Length}, Lights={data.Lights.Length}, Sounds={data.Sounds.Length}, Dialogues={data.Dialogues.Length}, Infos={data.DialogueInfos.Length}");
+            WriteRecordCounts(writer, data);
             writer.WriteLine($"AmbientSettings.MinSeconds={data.AmbientSettings.MinSecondsBetweenEnvironmentalSounds:0.###}, AmbientSettings.MaxSeconds={data.AmbientSettings.MaxSecondsBetweenEnvironmentalSounds:0.###}");
             writer.WriteLine();
 
@@ -1336,6 +1762,40 @@ namespace VVardenfell.Importer.Bake
 
             writer.WriteLine();
             writer.WriteLine($"Summary: {errorCount} error(s), {warningCount} warning(s)");
+        }
+
+        static void WriteRecordCounts(StreamWriter writer, GameplayContentData data)
+        {
+            writer.WriteLine("Record counts:");
+            writer.WriteLine($"  TES3=world-owned, CELL=world-owned, LAND=world-owned");
+            writer.WriteLine($"  GMST={data.GameSettings.Length}, GLOB={data.Globals.Length}, CLAS={data.Classes.Length}, FACT={data.Factions.Length}, RACE={data.Races.Length}, BSGN={data.Birthsigns.Length}, SKIL={data.Skills.Length}");
+            writer.WriteLine($"  MGEF={data.MagicEffects.Length}, SCPT={data.Scripts.Length}, SSCR={data.StartScripts.Length}, REGN={data.Regions.Length}, SOUN={data.Sounds.Length}, SNDG={data.SoundGenerators.Length}, LTEX={data.LandTextures.Length}");
+            writer.WriteLine($"  STAT={data.Statics.Length}, ACTI={data.Activators.Length}, DOOR={data.Doors.Length}, CONT={data.Containers.Length}, LIGH={data.Lights.Length}");
+            writer.WriteLine($"  LOCK={CountBaseByTag(data.Items, LockTag)}, PROB={CountBaseByTag(data.Items, ProbTag)}, REPA={CountBaseByTag(data.Items, RepaTag)}, MISC={CountBaseByTag(data.Items, MiscTag)}, WEAP={CountBaseByTag(data.Items, WeapTag)}, ARMO={CountBaseByTag(data.Items, ArmoTag)}, CLOT={CountBaseByTag(data.Items, ClotTag)}, BOOK={CountBaseByTag(data.Items, BookTag)}, ALCH={CountBaseByTag(data.Items, AlchTag)}, APPA={CountBaseByTag(data.Items, AppaTag)}, INGR={CountBaseByTag(data.Items, IngrTag)}");
+            writer.WriteLine($"  BODY={data.BodyParts.Length}, NPC_={CountActorsByKind(data.Actors, ActorDefKind.Npc)}, CREA={CountActorsByKind(data.Actors, ActorDefKind.Creature)}, LEVI={data.ItemLeveledLists.Length}, LEVI entries={data.ItemLeveledListEntries.Length}, LEVC={data.CreatureLeveledLists.Length}, LEVC entries={data.CreatureLeveledListEntries.Length}");
+            writer.WriteLine($"  SPEL={data.Spells.Length}, ENCH={data.Enchantments.Length}, DIAL={data.Dialogues.Length}, INFO={data.DialogueInfos.Length}, PGRD={data.PathGrids.Length}");
+        }
+
+        static int CountBaseByTag(BaseDef[] defs, uint tag)
+        {
+            int count = 0;
+            for (int i = 0; i < defs.Length; i++)
+            {
+                if (defs[i].RecordTag == tag)
+                    count++;
+            }
+            return count;
+        }
+
+        static int CountActorsByKind(ActorDef[] defs, ActorDefKind kind)
+        {
+            int count = 0;
+            for (int i = 0; i < defs.Length; i++)
+            {
+                if (defs[i].Kind == kind)
+                    count++;
+            }
+            return count;
         }
 
         static HashSet<string> BuildAssetIndex(string installPath)
@@ -1390,6 +1850,16 @@ namespace VVardenfell.Importer.Bake
             {
                 var def = defs[i];
                 ValidateAssetPath(def.Kind == ActorDefKind.Npc ? "NPC" : "Creature", def.Id, "model", def.Model, assetIndex, issues);
+            }
+        }
+
+        static void ValidateGenericRecords(string family, GenericRecordDef[] defs, HashSet<string> assetIndex, List<ValidationIssue> issues)
+        {
+            for (int i = 0; i < defs.Length; i++)
+            {
+                var def = defs[i];
+                ValidateAssetPath(family, def.Id, "model", def.Model, assetIndex, issues);
+                ValidateAssetPath(family, def.Id, "icon", def.Icon, assetIndex, issues);
             }
         }
 

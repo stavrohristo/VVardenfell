@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using System.Text;
@@ -19,6 +20,8 @@ using VVardenfell.Runtime.Player;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
 using Stopwatch = System.Diagnostics.Stopwatch;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -31,10 +34,10 @@ namespace VVardenfell.Runtime.Streaming
     {
         const int MergeBatchSize = 512;
 
-        public const int DefaultViewRadius = 8;
-        public const int DefaultMaxLoadsPerFrame = 64;
+        public const int DefaultViewRadius = 1;
+        public const int DefaultMaxLoadsPerFrame = 1;
         public const int DefaultMaxUnloadsPerFrame = 64;
-        public const bool DefaultGateTerrainByRadius = false;
+        public const bool DefaultGateTerrainByRadius = true;
 
         static readonly ProfilerMarker k_Install = new("VV.WorldBootstrap.Install");
         static readonly ProfilerMarker k_Managed = new("VV.Install.ManagedResources");
@@ -64,6 +67,8 @@ namespace VVardenfell.Runtime.Streaming
             BlobVersionMismatch,
             BlobPayloadMismatch,
             CorruptData,
+            PipelineMismatch,
+            UnsupportedSpawnMode,
             Other,
         }
 
@@ -349,6 +354,11 @@ namespace VVardenfell.Runtime.Streaming
                 progress?.CompleteStage("Preloaded cells installed");
                 Debug.Log($"[VVardenfell] preloaded {WorldResources.Cells.Count}/{cache.Manifest.CellGrid.Length} exterior cells and {WorldResources.InteriorCells.Count}/{cache.Manifest.InteriorCellCount} interiors");
 
+                var modelDefs = cache.ModelPrefabCatalog?.Records ?? System.Array.Empty<ModelPrefabDef>();
+                WorldResources.ModelPrefabs = new Entity[modelDefs.Length];
+                BuildRuntimeSpawnPrefabLookups(cache);
+                Debug.Log($"[VVardenfell] model prefab build deferred: catalog={modelDefs.Length}");
+
                 progress?.BeginStage("Cell collider transfer", "Registering collider blobs", WorldResources.Cells.Count);
                 WorldResources.StaticCellColliders.Clear();
                 WorldResources.TerrainColliders.Clear();
@@ -413,7 +423,34 @@ namespace VVardenfell.Runtime.Streaming
                     PendingEntityDestroy = new NativeList<int2>(32, Allocator.Persistent),
                 };
 
-                yield return WorldSpawner.SpawnAllIncremental(world, cache, loadedMap, logicalRefLookup, DefaultGateTerrainByRadius, progress);
+                var defaultSpawn = DefaultPlayerSpawnPosition();
+                var defaultCameraCell = WorldPositionToCell(defaultSpawn);
+                if (WorldResources.Cells.TryGetValue(defaultCameraCell, out var startCell) && startCell != null)
+                {
+                    progress?.BeginStage("Initial cell", $"Spawning start cell {defaultCameraCell.x},{defaultCameraCell.y}", 1);
+                    WorldSpawner.SpawnExteriorCell(
+                        world,
+                        defaultCameraCell,
+                        startCell,
+                        ref loadedMap,
+                        ref logicalRefLookup,
+                        active: true,
+                        gateTerrainByRadius: DefaultGateTerrainByRadius);
+                    progress?.Report("Start cell ready", 1, 1);
+                    progress?.CompleteStage();
+                    yield return null;
+                }
+                else
+                {
+                    Debug.LogWarning($"[VVardenfell] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player may spawn before terrain is available.");
+                }
+
+                QueueInitialExteriorCells(
+                    ref loadQueue,
+                    available,
+                    defaultCameraCell,
+                    DefaultViewRadius,
+                    DefaultMaxLoadsPerFrame);
 
                 progress?.BeginStage("Create singleton state", "Publishing streaming singletons", 1);
                 k_Singletons.Begin();
@@ -427,8 +464,8 @@ namespace VVardenfell.Runtime.Streaming
                         MaxLoadsPerFrame = DefaultMaxLoadsPerFrame,
                         MaxUnloadsPerFrame = DefaultMaxUnloadsPerFrame,
                         GateTerrainByRadius = DefaultGateTerrainByRadius,
-                        ExteriorStreamingPaused = false,
-                        CameraCell = new int2(int.MinValue, int.MinValue),
+                        ExteriorStreamingPaused = true,
+                        CameraCell = defaultCameraCell,
                     });
                     em.AddComponentData(singleton, new AvailableCells { Set = available });
                     em.AddComponentData(singleton, loadedMap);
@@ -448,6 +485,7 @@ namespace VVardenfell.Runtime.Streaming
                 progress?.BeginStage("Game initialization", "Publishing game initialization payload", 1);
                 try
                 {
+                    bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
                     var initEntity = em.CreateEntity();
                     em.SetName(initEntity, "VVardenfell.GameInitialization");
                     em.AddComponentData(initEntity, new GameInitializationSingleton
@@ -456,7 +494,8 @@ namespace VVardenfell.Runtime.Streaming
                         PlayerPosition = DefaultPlayerSpawnPosition(),
                         PlayerRotation = quaternion.identity,
                         PlayerPitchDegrees = 0f,
-                        HasSerializedSavePayload = false,
+                        HasSerializedSavePayload = hasSerializedSavePayload,
+                        SerializedSavePayloadStatus = new FixedString128Bytes(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
                     });
                 }
                 finally
@@ -495,6 +534,39 @@ namespace VVardenfell.Runtime.Streaming
             float oz = -9 * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float half = LandRecordSize.CellUnitsMw * 0.5f * WorldScale.MwUnitsToMeters;
             return new float3(ox + half, 10f, oz + half);
+        }
+
+        internal static int2 WorldPositionToCell(float3 position)
+        {
+            float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            return new int2(
+                (int)math.floor(position.x / cellM),
+                (int)math.floor(position.z / cellM));
+        }
+
+        private static void QueueInitialExteriorCells(
+            ref LoadQueue loadQueue,
+            NativeHashSet<int2> available,
+            int2 cameraCell,
+            int radius,
+            int maxCells)
+        {
+            if (!loadQueue.Queue.IsCreated || !available.IsCreated)
+                return;
+
+            int queued = 0;
+            for (int dy = -radius; dy <= radius && queued < maxCells; dy++)
+            {
+                for (int dx = -radius; dx <= radius && queued < maxCells; dx++)
+                {
+                    var coord = new int2(cameraCell.x + dx, cameraCell.y + dy);
+                    if (!available.Contains(coord))
+                        continue;
+
+                    loadQueue.Queue.Enqueue(coord);
+                    queued++;
+                }
+            }
         }
 
         private static PlayerCharacterComponent ResolvePlayerMovementSettings()
@@ -546,6 +618,267 @@ namespace VVardenfell.Runtime.Streaming
             WorldResources.Reset();
         }
 
+        private static Entity BuildModelPrefabEntityGraph(
+            EntityManager em,
+            CacheLoader cache,
+            ModelPrefabDef def,
+            int modelPrefabIndex,
+            Dictionary<long, RenderMeshArray> renderArrayCache)
+        {
+            if (def == null || def.Nodes == null || def.Nodes.Length == 0)
+                return Entity.Null;
+
+            var entities = new Entity[def.Nodes.Length];
+            for (int i = 0; i < entities.Length; i++)
+            {
+                entities[i] = em.CreateEntity();
+                em.AddComponent<Prefab>(entities[i]);
+                em.AddComponent<ModelPrefabNodeTag>(entities[i]);
+                em.AddComponentData(entities[i], LocalTransform.FromPositionRotationScale(
+                    new float3(def.Nodes[i].PosX, def.Nodes[i].PosY, def.Nodes[i].PosZ),
+                    new quaternion(def.Nodes[i].RotX, def.Nodes[i].RotY, def.Nodes[i].RotZ, def.Nodes[i].RotW),
+                    def.Nodes[i].Scale));
+                em.AddComponentData(entities[i], new LocalToWorld { Value = float4x4.identity });
+            }
+
+            int rootIndex = math.clamp(def.RootNodeIndex, 0, entities.Length - 1);
+            Entity root = entities[rootIndex];
+            em.SetName(root, $"VVardenfell.ModelPrefab[{modelPrefabIndex}]");
+            em.AddComponentData(root, new ModelPrefabRoot { ModelPrefabIndex = modelPrefabIndex });
+            var linkedGroup = em.AddBuffer<LinkedEntityGroup>(root);
+            for (int i = 0; i < entities.Length; i++)
+                linkedGroup.Add(new LinkedEntityGroup { Value = entities[i] });
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                var node = def.Nodes[i];
+                var entity = entities[i];
+
+                if (i != rootIndex && node.ParentIndex >= 0 && node.ParentIndex < entities.Length)
+                    em.AddComponentData(entity, new Parent { Value = entities[node.ParentIndex] });
+
+                if (node.Kind == ModelPrefabNodeKind.RenderLeaf && node.GlobalMeshIndex >= 0)
+                {
+                    int bucketIndex = node.TextureIndex >= 0 && node.TextureIndex < WorldResources.TexBucketInfo.Length
+                        ? WorldResources.TexBucketInfo[node.TextureIndex].x
+                        : WorldResources.FallbackBucketSlice.x;
+                    int textureSlice = node.TextureIndex >= 0 && node.TextureIndex < WorldResources.TexBucketInfo.Length
+                        ? WorldResources.TexBucketInfo[node.TextureIndex].y
+                        : WorldResources.FallbackBucketSlice.y;
+
+                    var rma = GetOrCreateLeafRenderMeshArray(cache, renderArrayCache, bucketIndex, node.GlobalMeshIndex);
+                    RenderMeshUtility.AddComponents(
+                        entity,
+                        em,
+                        WorldResources.Desc,
+                        rma,
+                        MaterialMeshInfo.FromRenderMeshArrayIndices(math.max(0, node.MaterialIndex), 0));
+                    em.AddComponentData(entity, new TextureSlice { Value = textureSlice });
+                    em.AddComponentData(entity, new RenderBounds
+                    {
+                        Value = new AABB
+                        {
+                            Center = new float3(node.BoundsCenterX, node.BoundsCenterY, node.BoundsCenterZ),
+                            Extents = new float3(node.BoundsExtentsX, node.BoundsExtentsY, node.BoundsExtentsZ),
+                        }
+                    });
+                    em.AddComponentData(entity, new ModelPrefabRenderLeaf
+                    {
+                        MeshIndex = node.GlobalMeshIndex,
+                        MaterialIndex = node.MaterialIndex,
+                        TextureIndex = node.TextureIndex,
+                    });
+                }
+
+                if (node.Kind == ModelPrefabNodeKind.Billboard)
+                {
+                    em.AddComponent<ModelBillboardTag>(entity);
+                    em.AddComponentData(entity, new ModelBillboardState
+                    {
+                        BaseLocalRotation = new quaternion(node.RotX, node.RotY, node.RotZ, node.RotW),
+                    });
+                }
+            }
+
+            return root;
+        }
+
+        internal static bool EnsureModelPrefabBuilt(EntityManager em, CacheLoader cache, int modelPrefabIndex)
+        {
+            if (cache?.ModelPrefabCatalog?.Records == null)
+                return false;
+
+            var modelDefs = cache.ModelPrefabCatalog.Records;
+            if ((uint)modelPrefabIndex >= (uint)modelDefs.Length)
+                return false;
+
+            if (WorldResources.ModelPrefabs == null || WorldResources.ModelPrefabs.Length != modelDefs.Length)
+                WorldResources.ModelPrefabs = new Entity[modelDefs.Length];
+
+            Entity existing = WorldResources.ModelPrefabs[modelPrefabIndex];
+            if (existing != Entity.Null && em.Exists(existing))
+                return true;
+
+            var localRenderArrayCache = new Dictionary<long, RenderMeshArray>();
+            Entity built = BuildModelPrefabEntityGraph(em, cache, modelDefs[modelPrefabIndex], modelPrefabIndex, localRenderArrayCache);
+            WorldResources.ModelPrefabs[modelPrefabIndex] = built;
+            return built != Entity.Null;
+        }
+
+        private static RenderMeshArray GetOrCreateLeafRenderMeshArray(
+            CacheLoader cache,
+            Dictionary<long, RenderMeshArray> renderArrayCache,
+            int bucketIndex,
+            int meshIndex)
+        {
+            long key = ((long)bucketIndex << 32) ^ (uint)meshIndex;
+            if (renderArrayCache.TryGetValue(key, out var existing))
+                return existing;
+
+            var materials = new Material[WorldResources.BlendVariantCount];
+            int materialStart = bucketIndex * WorldResources.BlendVariantCount;
+            for (int i = 0; i < materials.Length; i++)
+                materials[i] = cache.Materials[materialStart + i];
+
+            var rma = new RenderMeshArray(materials, new[] { cache.Meshes[meshIndex] });
+            renderArrayCache[key] = rma;
+            return rma;
+        }
+
+        private static void BuildRuntimeSpawnPrefabLookups(CacheLoader cache)
+        {
+            var modelDefs = cache?.ModelPrefabCatalog?.Records ?? System.Array.Empty<ModelPrefabDef>();
+            var modelLookup = new Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor>(modelDefs.Length, System.StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < modelDefs.Length; i++)
+            {
+                var def = modelDefs[i];
+                if (def == null || string.IsNullOrWhiteSpace(def.ModelPath))
+                    continue;
+
+                modelLookup[def.ModelPath] = new WorldResources.RuntimeSpawnPrefabDescriptor
+                {
+                    ModelPrefabIndex = i,
+                    CollisionIndex = def.CollisionIndex,
+                    Supported = 1,
+                };
+            }
+
+            var contentDb = cache?.ContentDatabase;
+            if (contentDb == null)
+            {
+                WorldResources.SpawnableCreaturePrefabs = System.Array.Empty<WorldResources.RuntimeSpawnPrefabDescriptor>();
+                WorldResources.SpawnableItemPrefabs = System.Array.Empty<WorldResources.RuntimeSpawnPrefabDescriptor>();
+                WorldResources.SpawnableLightPrefabs = System.Array.Empty<WorldResources.RuntimeSpawnPrefabDescriptor>();
+                return;
+            }
+
+            var creatures = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.ActorCount];
+            for (int i = 0; i < creatures.Length; i++)
+            {
+                ref readonly var actor = ref contentDb.Get(ActorDefHandle.FromIndex(i));
+                if (actor.Kind != ActorDefKind.Creature)
+                    continue;
+
+                creatures[i] = ResolveSpawnDescriptor(modelLookup, actor.Model);
+            }
+
+            var items = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.ItemCount];
+            for (int i = 0; i < items.Length; i++)
+            {
+                ref readonly var item = ref contentDb.Get(ItemDefHandle.FromIndex(i));
+                items[i] = ResolveSpawnDescriptor(modelLookup, item.Model);
+            }
+
+            var lights = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.LightCount];
+            for (int i = 0; i < lights.Length; i++)
+            {
+                ref readonly var light = ref contentDb.Get(LightDefHandle.FromIndex(i));
+                lights[i] = ResolveSpawnDescriptor(modelLookup, light.Model);
+            }
+
+            WorldResources.SpawnableCreaturePrefabs = creatures;
+            WorldResources.SpawnableItemPrefabs = items;
+            WorldResources.SpawnableLightPrefabs = lights;
+        }
+
+        private static WorldResources.RuntimeSpawnPrefabDescriptor ResolveSpawnDescriptor(
+            Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor> modelLookup,
+            string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return default;
+
+            string normalizedPath = NormalizeContentModelPath(modelPath);
+            return modelLookup.TryGetValue(normalizedPath, out var descriptor) ? descriptor : default;
+        }
+
+        private static string NormalizeContentModelPath(string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return string.Empty;
+
+            string trimmed = modelPath.Trim();
+            if (trimmed.StartsWith("meshes\\", System.StringComparison.OrdinalIgnoreCase))
+                return trimmed;
+
+            return $"meshes\\{trimmed}";
+        }
+
+        private static bool[] CollectRequiredBootModelPrefabs(int modelPrefabCount)
+        {
+            if (modelPrefabCount <= 0)
+                return System.Array.Empty<bool>();
+
+            var required = new bool[modelPrefabCount];
+            MarkRequiredModelPrefabs(required, WorldResources.Cells.Values);
+            MarkRequiredModelPrefabs(required, WorldResources.InteriorCells.Values);
+            return required;
+        }
+
+        private static void MarkRequiredModelPrefabs(bool[] required, Dictionary<int2, CellData>.ValueCollection cells)
+        {
+            foreach (var cell in cells)
+                MarkRequiredModelPrefabs(required, cell);
+        }
+
+        private static void MarkRequiredModelPrefabs(bool[] required, Dictionary<string, CellData>.ValueCollection cells)
+        {
+            foreach (var cell in cells)
+                MarkRequiredModelPrefabs(required, cell);
+        }
+
+        private static void MarkRequiredModelPrefabs(bool[] required, CellData cell)
+        {
+            var refs = cell?.Refs;
+            if (refs == null)
+                return;
+
+            for (int i = 0; i < refs.Length; i++)
+            {
+                if ((RefSpawnMode)refs[i].SpawnModeRaw != RefSpawnMode.ModelPrefab)
+                    continue;
+
+                int modelPrefabIndex = refs[i].ModelPrefabIndex;
+                if ((uint)modelPrefabIndex < (uint)required.Length)
+                    required[modelPrefabIndex] = true;
+            }
+        }
+
+        private static int CountRequiredModelPrefabs(bool[] required)
+        {
+            if (required == null)
+                return 0;
+
+            int count = 0;
+            for (int i = 0; i < required.Length; i++)
+            {
+                if (required[i])
+                    count++;
+            }
+
+            return count;
+        }
+
         private static PreloadResult PreloadCells(CacheLoader cache)
         {
             var cellGrid = cache.Manifest.CellGrid;
@@ -554,6 +887,7 @@ namespace VVardenfell.Runtime.Streaming
             var interiorIds = cache.Manifest.InteriorCellIds ?? System.Array.Empty<string>();
             var loadedInteriors = new CellData[interiorIds.Length];
             var interiorFailures = new PreloadFailureInfo[interiorIds.Length];
+            var stateByKey = BuildCellStateLookup(cache.Manifest.CellStates);
             var options = new ParallelOptions
             {
                 MaxDegreeOfParallelism = System.Math.Min(8, System.Math.Max(1, System.Environment.ProcessorCount / 2)),
@@ -575,6 +909,17 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     loaded[i] = CellFile.Read(path);
+                    failures[i] = ValidatePreloadedCell(
+                        loaded[i],
+                        ResolveCellState(stateByKey, false, g.Item1, g.Item2, null),
+                        false,
+                        $"({g.Item1},{g.Item2})",
+                        path);
+                    if (failures[i] != null)
+                    {
+                        loaded[i] = null;
+                        return;
+                    }
                     TryAttachPlacementAudit(loaded[i], CachePaths.CellPlacementAuditFile(g.Item1, g.Item2));
                 }
                 catch (System.Exception ex)
@@ -603,6 +948,17 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     loadedInteriors[i] = CellFile.Read(path, isInterior: true, cellId: cellId);
+                    interiorFailures[i] = ValidatePreloadedCell(
+                        loadedInteriors[i],
+                        ResolveCellState(stateByKey, true, 0, 0, cellId),
+                        true,
+                        cellId,
+                        path);
+                    if (interiorFailures[i] != null)
+                    {
+                        loadedInteriors[i] = null;
+                        return;
+                    }
                     TryAttachPlacementAudit(loadedInteriors[i], CachePaths.InteriorCellPlacementAuditFile(cellId));
                 }
                 catch (System.Exception ex)
@@ -622,6 +978,95 @@ namespace VVardenfell.Runtime.Streaming
                 InteriorCells = loadedInteriors,
                 InteriorFailures = interiorFailures,
             };
+        }
+
+        private static Dictionary<string, BakeManifest.BakedCellState> BuildCellStateLookup(BakeManifest.BakedCellState[] states)
+        {
+            var lookup = new Dictionary<string, BakeManifest.BakedCellState>(System.StringComparer.OrdinalIgnoreCase);
+            if (states == null)
+                return lookup;
+
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i];
+                if (state == null)
+                    continue;
+
+                string key = state.IsInterior
+                    ? BuildInteriorCellStateKey(state.InteriorId)
+                    : BuildExteriorCellStateKey(state.GridX, state.GridY);
+                lookup[key] = state;
+            }
+
+            return lookup;
+        }
+
+        private static BakeManifest.BakedCellState ResolveCellState(
+            Dictionary<string, BakeManifest.BakedCellState> stateByKey,
+            bool isInterior,
+            int gridX,
+            int gridY,
+            string interiorId)
+        {
+            if (stateByKey == null)
+                return null;
+
+            string key = isInterior
+                ? BuildInteriorCellStateKey(interiorId)
+                : BuildExteriorCellStateKey(gridX, gridY);
+            return stateByKey.TryGetValue(key, out var state) ? state : null;
+        }
+
+        private static string BuildExteriorCellStateKey(int gridX, int gridY) => $"ext:{gridX},{gridY}";
+
+        private static string BuildInteriorCellStateKey(string interiorId) => $"int:{(interiorId ?? string.Empty).Trim().ToLowerInvariant()}";
+
+        private static PreloadFailureInfo ValidatePreloadedCell(
+            CellData cell,
+            BakeManifest.BakedCellState state,
+            bool isInterior,
+            string cellLabel,
+            string path)
+        {
+            if (state == null)
+            {
+                return CreateValidationFailure(
+                    isInterior,
+                    cellLabel,
+                    path,
+                    PreloadFailureKind.PipelineMismatch,
+                    "missing manifest cell state; rebuild the world cache");
+            }
+
+            if (state.PipelineVersion != CacheFormat.WorldBakePipelineVersion)
+            {
+                return CreateValidationFailure(
+                    isInterior,
+                    cellLabel,
+                    path,
+                    PreloadFailureKind.PipelineMismatch,
+                    $"manifest pipeline {state.PipelineVersion} does not match runtime pipeline {CacheFormat.WorldBakePipelineVersion}; rebuild the world cache");
+            }
+
+            var refs = cell?.Refs ?? System.Array.Empty<RefEntry>();
+            for (int i = 0; i < refs.Length; i++)
+            {
+                int raw = refs[i].SpawnModeRaw;
+                if (raw != (int)RefSpawnMode.RenderShard)
+                {
+                    string mode = System.Enum.IsDefined(typeof(RefSpawnMode), raw)
+                        ? ((RefSpawnMode)raw).ToString()
+                        : $"unknown({raw})";
+                    return CreateValidationFailure(
+                        isInterior,
+                        cellLabel,
+                        path,
+                        PreloadFailureKind.UnsupportedSpawnMode,
+                        $"ref {i} uses spawn mode {mode}; normal world cells must be baked as {RefSpawnMode.RenderShard}");
+                }
+            }
+
+            return null;
         }
 
         private static void TryAttachPlacementAudit(CellData cell, string auditPath)
@@ -663,6 +1108,24 @@ namespace VVardenfell.Runtime.Streaming
                 Path = path,
                 Kind = kind,
                 Message = $"[VVardenfell] failed preloading {target} at '{path}': {ex.Message}",
+            };
+        }
+
+        private static PreloadFailureInfo CreateValidationFailure(
+            bool isInterior,
+            string cellLabel,
+            string path,
+            PreloadFailureKind kind,
+            string detail)
+        {
+            string target = isInterior ? $"interior '{cellLabel}'" : $"cell {cellLabel}";
+            return new PreloadFailureInfo
+            {
+                IsInterior = isInterior,
+                CellLabel = cellLabel,
+                Path = path,
+                Kind = kind,
+                Message = $"[VVardenfell] invalid baked {target} at '{path}': {detail}",
             };
         }
 

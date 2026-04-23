@@ -2,12 +2,12 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using VVardenfell.Runtime.Bootstrap;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(SimulationSystemGroup), OrderFirst = true)]
-    [UpdateBefore(typeof(FixedStepSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
     public partial class PlayerInputReceivingSystem : SystemBase
     {
         EntityQuery _playerQuery;
@@ -18,14 +18,15 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
-                ComponentType.ReadWrite<PlayerCharacterState>());
+                ComponentType.ReadWrite<PlayerCharacterState>(),
+                ComponentType.ReadWrite<MorrowindMovementIntent>());
             RequireForUpdate(_playerQuery);
             RequireForUpdate<FixedTickSystem.Singleton>();
         }
 
         protected override void OnStartRunning()
         {
-            ApplyCursorState(!BootstrapPresentationGate.BlocksGameplayInput);
+            ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);
         }
 
         protected override void OnStopRunning()
@@ -39,13 +40,15 @@ namespace VVardenfell.Runtime.Player
             uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick;
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
+            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
             var stateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
             var kb = Keyboard.current;
             var mouse = Mouse.current;
             ref var control = ref controlRef.ValueRW;
+            ref var intent = ref intentRef.ValueRW;
             ref var state = ref stateRef.ValueRW;
 
-            bool gameplayInputAllowed = !BootstrapPresentationGate.BlocksGameplayInput;
+            bool gameplayInputAllowed = !GameplayInputGate.BlocksGameplayInput;
             ApplyCursorState(gameplayInputAllowed);
 
             if (!gameplayInputAllowed || kb == null)
@@ -56,6 +59,7 @@ namespace VVardenfell.Runtime.Player
                 control.SprintHeld = false;
                 control.CrouchHeld = false;
                 control.InteractPressed = false;
+                intent = default;
                 return;
             }
 
@@ -68,16 +72,29 @@ namespace VVardenfell.Runtime.Player
             if (moveLengthSq > 1f)
                 move *= math.rsqrt(moveLengthSq);
 
-            control.MoveInput = move;
-            control.LookDeltaDegrees = mouse != null
+            float2 frameLookDelta = mouse != null
                 ? (float2)(Vector2)mouse.delta.ReadValue() * character.LookSensitivity
                 : float2.zero;
+            bool jumpPressedThisFrame = kb.spaceKey.wasPressedThisFrame;
+            bool interactPressedThisFrame = kb.eKey.wasPressedThisFrame;
+
+            control.MoveInput = move;
+            control.LookDeltaDegrees += frameLookDelta;
             control.JumpHeld = kb.spaceKey.isPressed;
             control.SprintHeld = kb.leftShiftKey.isPressed;
             control.CrouchHeld = kb.leftCtrlKey.isPressed || kb.cKey.isPressed;
-            control.InteractPressed = kb.eKey.wasPressedThisFrame;
+            control.InteractPressed |= interactPressedThisFrame;
 
-            if (kb.spaceKey.wasPressedThisFrame)
+            intent.LocalMove = new float3(move.x, move.y, math.max(intent.LocalMove.z, jumpPressedThisFrame ? 1f : 0f));
+            intent.LookDeltaDegrees = control.LookDeltaDegrees;
+            intent.JumpHeld = control.JumpHeld;
+            intent.RunHeld = control.SprintHeld;
+            intent.SneakHeld = control.CrouchHeld;
+            intent.InteractPressed = control.InteractPressed;
+            intent.SpeedFactor = math.saturate(math.length(move));
+            intent.IsStrafing = math.abs(move.x) > math.abs(move.y) * 2f;
+
+            if (jumpPressedThisFrame)
             {
                 control.JumpPressedEvent.Set(fixedTick);
                 state.LastJumpPressedTick = fixedTick;

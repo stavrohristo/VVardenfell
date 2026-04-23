@@ -1,11 +1,20 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Transforms;
 using UnityEngine;
-using VVardenfell.Runtime.Streaming;
 using Collider = Unity.Physics.Collider;
 using CapsuleCollider = Unity.Physics.CapsuleCollider;
+
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.WorldState;
+using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
@@ -24,17 +33,33 @@ namespace VVardenfell.Runtime.Player
         public quaternion PlayerRotation;
         public float PlayerPitchDegrees;
 
-        // Placeholder for future save restore support. Once we serialize runtime state,
-        // this singleton becomes the handoff point for mutating ECS world state first.
         public bool HasSerializedSavePayload;
+        public FixedString128Bytes SerializedSavePayloadStatus;
     }
 
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
+    [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
+    [UpdateAfter(typeof(RuntimeSpawnBootstrapSystem))]
+    [UpdateAfter(typeof(ContainerLootBootstrapSystem))]
+    [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class GameInitializationSystem : SystemBase
     {
         protected override void OnCreate()
         {
             RequireForUpdate<GameInitializationSingleton>();
+            RequireForUpdate<WorldJournalState>();
+            RequireForUpdate<RuntimeSpawnState>();
+            RequireForUpdate<RuntimeSpawnedRef>();
+            RequireForUpdate<ContainerSessionHeader>();
+            RequireForUpdate<ContainerSessionItem>();
+            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate<PickedItemRecord>();
+            RequireForUpdate<InteriorTransitionState>();
+            RequireForUpdate<InteriorSpawnedEntity>();
+            RequireForUpdate<StreamingConfig>();
+            RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<LoadedCellsMap>();
+            RequireForUpdate<AvailableCells>();
         }
 
         protected override void OnUpdate()
@@ -48,10 +73,17 @@ namespace VVardenfell.Runtime.Player
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
 
-            if (hasContinueRequest || init.HasSerializedSavePayload)
+            if (hasContinueRequest)
             {
-                // Future hook: deserialize save payload and mutate ECS world state here
-                // before creating the player from the restored data.
+                if (init.HasSerializedSavePayload)
+                {
+                    if (!WorldSaveReplayUtility.TryRestoreContinueSave(World, em, ref init, out string loadError))
+                        Debug.LogWarning($"[VVardenfell][Save] continue load failed; starting from default bootstrap state instead. {loadError}");
+                }
+                else
+                {
+                    Debug.LogWarning("[VVardenfell][Save] continue requested, but no serialized save payload was available.");
+                }
             }
 
             var standingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.StandingHeight);
@@ -68,12 +100,20 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, init.PlayerSettings);
             em.AddComponentData(player, new PlayerCharacterControl());
             em.AddComponentData(player, new PlayerCharacterState());
+            em.AddComponentData(player, new MorrowindMovementIntent());
+            em.AddComponentData(player, new MorrowindActorKinematicState
+            {
+                Grounded = true,
+            });
+            em.AddComponentData(player, MorrowindMovementTuning.OpenMwDefaults());
+            em.AddComponentData(player, new MorrowindMovementFrameTrace());
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
                 Crouching = crouchingBlob,
             });
             em.AddComponentData(player, new PhysicsCollider { Value = standingBlob });
+            em.AddSharedComponent(player, new PhysicsWorldIndex { Value = 0 });
 
             var viewEntity = em.CreateEntity();
             em.SetName(viewEntity, "VVardenfell.PlayerView");
@@ -91,6 +131,11 @@ namespace VVardenfell.Runtime.Player
                 LocalViewRotation = quaternion.identity,
                 LocalEyeOffset = initialEyeOffset,
             });
+            em.AddComponentData(viewEntity, new PlayerPhysicsViewPose
+            {
+                Position = init.PlayerPosition + math.rotate(init.PlayerRotation, initialEyeOffset),
+                Rotation = init.PlayerRotation,
+            });
 
             var cam = Camera.main;
             if (cam != null)
@@ -101,6 +146,20 @@ namespace VVardenfell.Runtime.Player
             {
                 Debug.LogWarning("[VVardenfell] Camera.main missing - player camera sync will have no target.");
             }
+
+            Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
+            var streamingConfig = em.GetComponentData<StreamingConfig>(streamingEntity);
+            streamingConfig.CameraCell = WorldBootstrap.WorldPositionToCell(init.PlayerPosition);
+            if (SystemAPI.HasSingleton<InteriorTransitionState>())
+            {
+                var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
+                streamingConfig.ExteriorStreamingPaused = transition.InteriorActive != 0;
+            }
+            else
+            {
+                streamingConfig.ExteriorStreamingPaused = false;
+            }
+            em.SetComponentData(streamingEntity, streamingConfig);
 
             if (hasNewGameRequest)
                 em.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
@@ -118,7 +177,7 @@ namespace VVardenfell.Runtime.Player
                     Vertex1 = new float3(0f, height - radius, 0f),
                     Radius = radius,
                 },
-                new CollisionFilter { BelongsTo = 1u << 1, CollidesWith = ~0u, GroupIndex = 0 });
+                InteractionCollisionLayers.PlayerBodyFilter);
         }
     }
 }

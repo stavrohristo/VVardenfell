@@ -1,3 +1,4 @@
+
 namespace VVardenfell.Runtime.Bootstrap
 {
     public static class BootstrapPresentationGate

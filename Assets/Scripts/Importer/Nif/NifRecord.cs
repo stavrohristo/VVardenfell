@@ -143,10 +143,61 @@ namespace VVardenfell.Importer.Nif
     public class RootCollisionNode : NiNode { }
     public class NiBSAnimationNode : NiNode { }
     public class NiBSParticleNode : NiNode { }
+    public class NiCollisionSwitch : NiNode { }
 
     public class NiBillboardNode : NiNode
     {
         // Morrowind billboard mode is encoded in the NiAVObject.Flags field, no extra bytes.
+    }
+
+    public class NiSwitchNode : NiNode
+    {
+        public uint InitialIndex;
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+            InitialIndex = s.ReadUInt32();
+        }
+    }
+
+    public class NiLODNode : NiSwitchNode
+    {
+        public Vector3 LodCenter;
+        public LodRange[] Levels;
+
+        public struct LodRange
+        {
+            public float MinRange;
+            public float MaxRange;
+        }
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+            LodCenter = s.ReadVec3();
+            uint count = s.ReadUInt32();
+            Levels = new LodRange[count];
+            for (int i = 0; i < count; i++)
+            {
+                Levels[i] = new LodRange
+                {
+                    MinRange = s.ReadFloat(),
+                    MaxRange = s.ReadFloat(),
+                };
+            }
+        }
+    }
+
+    public class NiFltAnimationNode : NiSwitchNode
+    {
+        public float Duration;
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+            Duration = s.ReadFloat();
+        }
     }
 
     // ------------------------------------------------------------------------

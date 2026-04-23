@@ -20,6 +20,8 @@ using VVardenfell.Runtime.Content;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
 using Stopwatch = System.Diagnostics.Stopwatch;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -34,6 +36,8 @@ namespace VVardenfell.Runtime.Streaming
         const int StaticBatchSize = 256;
         const int RefGatherBatchSize = 512;
         const int RefSliceSize = 32768;
+
+        static readonly HashSet<string> s_UnsupportedSpawnModeWarnings = new();
 
         static readonly ProfilerMarker k_SpawnAll = new("VV.WorldSpawner.SpawnAll");
         static readonly ProfilerMarker k_Terrain = new("VV.Spawn.TerrainCells");
@@ -137,9 +141,13 @@ namespace VVardenfell.Runtime.Streaming
                         em.AddComponentData(terrainEntity, new CellCoord { Value = coord });
                         em.AddComponentData(terrainEntity, new CellLink { Value = coord });
                         em.AddComponent<Unity.Transforms.Static>(terrainEntity);
-                        em.AddSharedComponent(terrainEntity, new PhysicsWorldIndex { Value = 0 });
-                        if (WorldResources.TerrainColliders.TryGetValue(coord, out var terrBlob) && terrBlob.IsCreated)
-                            em.AddComponentData(terrainEntity, new StoredPhysicsColliderBlob { Value = terrBlob });
+                        if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
+                            RuntimeColliderAttachmentUtility.AttachSource(
+                                em,
+                                terrainEntity,
+                                terrBlob,
+                                RuntimeColliderKind.TerrainCell,
+                                active: false);
                     }
                     finally
                     {
@@ -188,10 +196,14 @@ namespace VVardenfell.Runtime.Streaming
                         {
                             Value = float4x4.Translate(new float3(coord.x * cellMeters, 0f, coord.y * cellMeters))
                         });
-                        em.AddComponentData(e, new StoredPhysicsColliderBlob { Value = blob });
                         em.AddComponent<Unity.Transforms.Static>(e);
-                        em.AddSharedComponent(e, new PhysicsWorldIndex { Value = 0 });
                         em.AddComponentData(e, new CellLink { Value = coord });
+                        RuntimeColliderAttachmentUtility.AttachSource(
+                            em,
+                            e,
+                            blob,
+                            RuntimeColliderKind.StaticCell,
+                            active: false);
                         staticCellsSpawned++;
                     }
                     finally
@@ -218,7 +230,7 @@ namespace VVardenfell.Runtime.Streaming
             var refArr = default(NativeArray<RefEntry>);
             var coordArr = default(NativeArray<int2>);
             Entity[] spawnedRefEntities = null;
-            if (totalRefs > 0 && WorldResources.RefPrefabs != null)
+            if (totalRefs > 0)
             {
                 refArr = new NativeArray<RefEntry>(totalRefs, Allocator.Persistent);
                 coordArr = new NativeArray<int2>(totalRefs, Allocator.Persistent);
@@ -261,157 +273,35 @@ namespace VVardenfell.Runtime.Streaming
                 }
 
                 progress?.CompleteStage("Refs gathered");
-
-                progress?.BeginStage("Sort refs", "Sorting gathered refs", totalRefs);
-                k_RefSort.Begin();
-                try
-                {
-                    var paired = new NativeArray<PairedRef>(totalRefs, Allocator.TempJob);
-                    for (int i = 0; i < totalRefs; i++)
-                        paired[i] = new PairedRef { Ref = refArr[i], Coord = coordArr[i] };
-
-                    paired.Sort(new PairedBucketComparer
-                    {
-                        TexBucketInfo = WorldResources.TexBucketInfo,
-                        FallbackBucket = WorldResources.FallbackBucketSlice.x,
-                    });
-
-                    for (int i = 0; i < totalRefs; i++)
-                    {
-                        refArr[i] = paired[i].Ref;
-                        coordArr[i] = paired[i].Coord;
-                    }
-
-                    paired.Dispose();
-                }
-                finally
-                {
-                    k_RefSort.End();
-                }
-
-                progress?.Report("Refs sorted", totalRefs, totalRefs);
-                progress?.CompleteStage();
-                yield return null;
-
                 progress?.BeginStage("Spawn refs", "Instantiating and applying refs", totalRefs);
-                for (int start = 0; start < totalRefs; start += RefSliceSize)
+                var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
+                for (int i = 0; i < totalRefs; i++)
                 {
-                        int chunkLen = System.Math.Min(RefSliceSize, totalRefs - start);
-                        var chunkRefs = new NativeArray<RefEntry>(chunkLen, Allocator.TempJob);
-                        var chunkCoords = new NativeArray<int2>(chunkLen, Allocator.TempJob);
-                        var entities = new NativeArray<Entity>(chunkLen, Allocator.TempJob);
-                        var spawnData = new NativeArray<RefSpawnData>(chunkLen, Allocator.TempJob);
-
-                        try
-                        {
-                            for (int i = 0; i < chunkLen; i++)
-                            {
-                                chunkRefs[i] = refArr[start + i];
-                                chunkCoords[i] = coordArr[start + i];
-                            }
-
-                            k_RefInstantiate.Begin();
-                            try
-                            {
-                                var prefabs = WorldResources.RefPrefabs;
-                                int runStart = 0;
-                                int runBucket = chunkRefs[0].RenderShardIndex;
-                                for (int i = 1; i <= chunkLen; i++)
-                                {
-                                    int bucket = i < chunkLen ? chunkRefs[i].RenderShardIndex : -1;
-                                    if (bucket != runBucket)
-                                    {
-                                        var slice = entities.GetSubArray(runStart, i - runStart);
-                                        em.Instantiate(prefabs[runBucket], slice);
-                                        runStart = i;
-                                        runBucket = bucket;
-                                    }
-                                }
-                            }
-                            finally
-                            {
-                                k_RefInstantiate.End();
-                            }
-
-                            k_RefBuildJob.Begin();
-                            try
-                            {
-                                new BuildRefSpawnDataJob
-                                {
-                                    Refs = chunkRefs,
-                                    Coords = chunkCoords,
-                                    TexBucketInfo = WorldResources.TexBucketInfo,
-                                    ShardMeshRanges = WorldResources.RefShardMeshRanges,
-                                    ShardGlobalMeshIndices = WorldResources.RefShardGlobalMeshIndices,
-                                    FallbackBucketSlice = WorldResources.FallbackBucketSlice,
-                                    MeshBounds = WorldResources.MeshBounds,
-                                    MeshCount = WorldResources.MeshBounds.Length,
-                                    Output = spawnData,
-                                }.Schedule(chunkLen, 128).Complete();
-                            }
-                            finally
-                            {
-                                k_RefBuildJob.End();
-                            }
-
-                            var ecb = new EntityCommandBuffer(Allocator.TempJob);
-                            try
-                            {
-                                k_RefApplyJob.Begin();
-                                try
-                                {
-                                    new ApplyRefSpawnDataJob
-                                    {
-                                        Entities = entities,
-                                        SpawnData = spawnData,
-                                        CommandBuf = ecb.AsParallelWriter(),
-                                    }.Schedule(chunkLen, 128).Complete();
-                                }
-                                finally
-                                {
-                                    k_RefApplyJob.End();
-                                }
-
-                                k_RefEcbPlayback.Begin();
-                                try
-                                {
-                                    ecb.Playback(em);
-                                    ApplyRefGameplayMetadata(em, chunkRefs, entities);
-                                    for (int i = 0; i < chunkLen; i++)
-                                        spawnedRefEntities[start + i] = entities[i];
-                                }
-                                finally
-                                {
-                                    k_RefEcbPlayback.End();
-                                }
-                            }
-                            finally
-                            {
-                                ecb.Dispose();
-                            }
-                        }
-                        finally
-                        {
-                            if (chunkRefs.IsCreated)
-                                chunkRefs.Dispose();
-                            if (chunkCoords.IsCreated)
-                                chunkCoords.Dispose();
-                            if (entities.IsCreated)
-                                entities.Dispose();
-                            if (spawnData.IsCreated)
-                                spawnData.Dispose();
-                        }
-
-                        int completed = start + chunkLen;
+                    spawnedRefEntities[i] = SpawnExteriorRef(em, refArr[i], coordArr[i], shardCatalog);
+                    int completed = i + 1;
+                    if (completed == totalRefs || (completed % RefGatherBatchSize) == 0)
+                    {
                         progress?.Report($"Instantiating and applying refs {completed}/{totalRefs}", completed, totalRefs);
                         yield return null;
+                    }
                 }
 
                 progress?.CompleteStage("Refs ready");
                 yield return null;
 
                 progress?.BeginStage("Spawn logical refs", "Creating logical placed refs", totalRefs);
-                BuildLogicalRefs(em, cache.ContentDatabase, refArr, coordArr, spawnedRefEntities, false, default, float3.zero, ref logicalRefs, progress);
+                BuildLogicalRefs(
+                    em,
+                    cache.ContentDatabase,
+                    refArr,
+                    coordArr,
+                    spawnedRefEntities,
+                    false,
+                    default,
+                    float3.zero,
+                    ref logicalRefs,
+                    progress,
+                    out _);
                 progress?.CompleteStage("Logical refs ready");
             }
             else
@@ -460,10 +350,9 @@ namespace VVardenfell.Runtime.Streaming
                 return;
 
             var em = world.EntityManager;
+            var cellSw = Stopwatch.StartNew();
             var spawnedEntities = new System.Collections.Generic.List<Entity>(cell.Refs?.Length + (cell.HasStaticCollider ? 1 : 0) ?? 1);
             var interiorChildEntities = cell.Refs != null ? new Entity[cell.Refs.Length] : System.Array.Empty<Entity>();
-            var texInfo = WorldResources.TexBucketInfo;
-            var meshBounds = WorldResources.MeshBounds;
 
             if (cell.HasStaticCollider)
             {
@@ -474,67 +363,242 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     Value = float4x4.Translate(worldOffset)
                 });
-                em.AddComponentData(staticEntity, new StoredPhysicsColliderBlob { Value = cell.StaticColliderBlob });
-                em.AddComponentData(staticEntity, new PhysicsCollider { Value = cell.StaticColliderBlob });
                 em.AddComponent<InteriorCellMember>(staticEntity);
                 em.AddComponent<Unity.Transforms.Static>(staticEntity);
-                em.AddSharedComponent(staticEntity, new PhysicsWorldIndex { Value = 0 });
+                RuntimeColliderAttachmentUtility.AttachSource(
+                    em,
+                    staticEntity,
+                    cell.StaticColliderBlob,
+                    RuntimeColliderKind.StaticCell,
+                    active: true);
                 spawnedEntities.Add(staticEntity);
             }
 
-            var prefabs = WorldResources.RefPrefabs;
-            var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();
             if (cell.Refs != null)
             {
                 for (int i = 0; i < cell.Refs.Length; i++)
                 {
                     var entry = cell.Refs[i];
-                    var entity = em.Instantiate(prefabs[entry.RenderShardIndex]);
-                    em.SetComponentData(entity, LocalTransform.FromPositionRotationScale(
-                        new float3(entry.PosX, entry.PosY, entry.PosZ) + worldOffset,
-                        new quaternion(entry.RotX, entry.RotY, entry.RotZ, entry.RotW),
-                        entry.Scale));
-                    em.SetComponentData(entity, MaterialMeshInfo.FromRenderMeshArrayIndices(entry.LocalMaterialIndex, entry.LocalMeshIndex));
-
-                    int textureSlice = entry.SliceIndex < 0 ? WorldResources.FallbackBucketSlice.y : texInfo[entry.SliceIndex].y;
-                    em.SetComponentData(entity, new TextureSlice { Value = textureSlice });
-                    var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
-                    int globalMeshIndex = TryResolveGlobalMeshIndex(shardCatalog, entry.RenderShardIndex, entry.LocalMeshIndex);
-                    var aabb = (uint)globalMeshIndex < (uint)meshBounds.Length
-                        ? meshBounds[globalMeshIndex]
-                        : new AABB { Center = float3.zero, Extents = new float3(1f) };
-                    em.SetComponentData(entity, new RenderBounds { Value = aabb });
-
-                    if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[entry.CollisionIndex].IsCreated)
-                    {
-                        var colliderBlob = colliderBlobs[entry.CollisionIndex];
-                        em.AddComponentData(entity, new RefCollisionSource { Value = colliderBlob });
-                        em.AddComponentData(entity, new PhysicsCollider { Value = colliderBlob });
-                    }
-
-                    if (em.HasComponent<CellLink>(entity))
-                        em.RemoveComponent<CellLink>(entity);
-
-                    em.AddComponent<InteriorCellMember>(entity);
-                    if (entry.PlacedRefId != 0u)
-                    {
-                        em.AddComponentData(entity, new PlacedRefIdentity
-                        {
-                            Value = entry.PlacedRefId
-                        });
-                    }
-
-                    interiorChildEntities[i] = entity;
-                    spawnedEntities.Add(entity);
+                    interiorChildEntities[i] = SpawnInteriorRef(em, entry, worldOffset, new FixedString128Bytes(cell.CellId ?? string.Empty), spawnedEntities);
                 }
             }
 
+            int logicalRefCount = 0;
+            int proxyQueueCount = 0;
             if (cell.Refs != null && cell.Refs.Length > 0)
-                BuildLogicalRefs(em, WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active, cell.Refs, interiorChildEntities, true, new FixedString128Bytes(cell.CellId ?? string.Empty), worldOffset, ref logicalRefs, spawnedEntities);
+            {
+                logicalRefCount = BuildLogicalRefs(
+                    em,
+                    WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
+                    cell.Refs,
+                    interiorChildEntities,
+                    true,
+                    new FixedString128Bytes(cell.CellId ?? string.Empty),
+                    worldOffset,
+                    ref logicalRefs,
+                    spawnedEntities,
+                    out proxyQueueCount);
+            }
 
             var spawnedBuffer = em.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
             for (int i = 0; i < spawnedEntities.Count; i++)
                 spawnedBuffer.Add(new InteriorSpawnedEntity { Value = spawnedEntities[i] });
+
+            cellSw.Stop();
+            Debug.Log($"[VVardenfell] spawn interior '{cell.CellId ?? string.Empty}': refs={cell.Refs?.Length ?? 0}, logical={logicalRefCount}, proxiesQueued={proxyQueueCount}, terrainColliders=0, staticColliders={(cell.HasStaticCollider ? 1 : 0)}, ms={cellSw.ElapsedMilliseconds}");
+        }
+
+        public static bool SpawnExteriorCell(
+            World world,
+            int2 coord,
+            CellData data,
+            ref LoadedCellsMap loaded,
+            ref LogicalRefLookup logicalRefs,
+            bool active,
+            bool gateTerrainByRadius)
+        {
+            if (world == null || data == null)
+                return false;
+
+            var em = world.EntityManager;
+            Entity terrainEntity = Entity.Null;
+            var cellSw = Stopwatch.StartNew();
+            int terrainColliderCount = 0;
+            int staticColliderCount = 0;
+            int logicalRefCount = 0;
+            int proxyQueueCount = 0;
+
+            if (data.HasTerrain)
+            {
+                var managed = new WorldResources.PerCellManaged();
+                managed.TerrainMesh = BuildTerrainMesh(data);
+                managed.TerrainMat = BuildTerrainMaterial(data);
+                managed.SplatMap = (managed.TerrainMat != null && managed.TerrainMat != WorldResources.TerrainFallbackMat)
+                    ? managed.TerrainMat.GetTexture("_Splat") as Texture2D
+                    : null;
+                managed.TerrainRma = new RenderMeshArray(
+                    new Material[] { managed.TerrainMat },
+                    new Mesh[] { managed.TerrainMesh });
+
+                terrainEntity = em.CreateEntity();
+                em.SetName(terrainEntity, $"Terrain({coord.x},{coord.y})");
+                RenderMeshUtility.AddComponents(
+                    terrainEntity,
+                    em,
+                    WorldResources.Desc,
+                    managed.TerrainRma,
+                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+
+                float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+                float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+                em.AddComponentData(terrainEntity, LocalTransform.FromPositionRotationScale(
+                    new float3(ox, 0, oz),
+                    quaternion.identity,
+                    1f));
+
+                float cellHalf = LandRecordSize.CellUnitsMw * 0.5f * WorldScale.MwUnitsToMeters;
+                em.SetComponentData(terrainEntity, new RenderBounds
+                {
+                    Value = new AABB
+                    {
+                        Center = new float3(cellHalf, 0f, cellHalf),
+                        Extents = new float3(cellHalf, 1000f, cellHalf),
+                    }
+                });
+
+                em.AddComponentData(terrainEntity, new CellCoord { Value = coord });
+                em.AddComponentData(terrainEntity, new CellLink { Value = coord });
+                em.AddComponent<Unity.Transforms.Static>(terrainEntity);
+                if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
+                {
+                    RuntimeColliderAttachmentUtility.AttachSource(
+                        em,
+                        terrainEntity,
+                        terrBlob,
+                        RuntimeColliderKind.TerrainCell,
+                        active);
+                    terrainColliderCount = 1;
+                }
+
+                if (!active && gateTerrainByRadius)
+                    em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, false);
+
+                WorldResources.LoadedManaged[coord] = managed;
+            }
+
+            if (WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
+            {
+                var staticEntity = em.CreateEntity();
+                em.SetName(staticEntity, $"CellStatic({coord.x},{coord.y})");
+                float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+                em.AddComponentData(staticEntity, LocalTransform.FromPositionRotationScale(
+                    new float3(coord.x * cellMeters, 0f, coord.y * cellMeters),
+                    quaternion.identity,
+                    1f));
+                em.AddComponentData(staticEntity, new LocalToWorld
+                {
+                    Value = float4x4.Translate(new float3(coord.x * cellMeters, 0f, coord.y * cellMeters))
+                });
+                staticColliderCount = 1;
+                em.AddComponent<Unity.Transforms.Static>(staticEntity);
+                em.AddComponentData(staticEntity, new CellLink { Value = coord });
+                RuntimeColliderAttachmentUtility.AttachSource(
+                    em,
+                    staticEntity,
+                    staticBlob,
+                    RuntimeColliderKind.StaticCell,
+                    active);
+            }
+
+            var refs = data.Refs;
+            if (refs != null && refs.Length > 0)
+            {
+                var spawnedRefEntities = new Entity[refs.Length];
+                var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
+                for (int i = 0; i < refs.Length; i++)
+                    spawnedRefEntities[i] = SpawnExteriorRef(em, refs[i], coord, shardCatalog);
+
+                var refArray = new NativeArray<RefEntry>(refs.Length, Allocator.Temp);
+                for (int i = 0; i < refs.Length; i++)
+                    refArray[i] = refs[i];
+                var coordArray = BuildCoordArray(coord, refs.Length);
+                logicalRefCount = BuildLogicalRefs(
+                    em,
+                    WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
+                    refArray,
+                    coordArray,
+                    spawnedRefEntities,
+                    false,
+                    default,
+                    float3.zero,
+                    ref logicalRefs,
+                    null,
+                    out proxyQueueCount);
+                coordArray.Dispose();
+                refArray.Dispose();
+
+                if (!active)
+                    SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
+            }
+
+            if (loaded.Map.IsCreated)
+                loaded.Map[coord] = terrainEntity;
+            if (active && loaded.Active.IsCreated)
+                loaded.Active.Add(coord);
+
+            cellSw.Stop();
+            Debug.Log($"[VVardenfell] spawn cell ({coord.x},{coord.y}): refs={data.Refs?.Length ?? 0}, logical={logicalRefCount}, proxiesQueued={proxyQueueCount}, terrainColliders={terrainColliderCount}, staticColliders={staticColliderCount}, ms={cellSw.ElapsedMilliseconds}");
+            return true;
+        }
+
+        private static NativeArray<int2> BuildCoordArray(int2 coord, int length)
+        {
+            var coords = new NativeArray<int2>(length, Allocator.Temp);
+            for (int i = 0; i < length; i++)
+                coords[i] = coord;
+            return coords;
+        }
+
+        public static void SetExteriorCellActiveState(EntityManager em, int2 coord, bool active, bool gateTerrainByRadius)
+        {
+            var targetQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<CellLink>()
+                .WithPresent<MaterialMeshInfo>();
+            if (!gateTerrainByRadius)
+                targetQueryBuilder = targetQueryBuilder.WithNone<CellCoord>();
+
+            var targetQuery = em.CreateEntityQuery(targetQueryBuilder);
+            using (var entities = targetQuery.ToEntityArray(Allocator.Temp))
+            using (var links = targetQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (links[i].Value.Equals(coord))
+                        em.SetComponentEnabled<MaterialMeshInfo>(entities[i], active);
+                }
+            }
+            targetQuery.Dispose();
+            targetQueryBuilder.Dispose();
+
+            var physicsQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<CellLink, RuntimeColliderSource>();
+            var physicsQuery = em.CreateEntityQuery(physicsQueryBuilder);
+            using (var entities = physicsQuery.ToEntityArray(Allocator.Temp))
+            using (var links = physicsQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!links[i].Value.Equals(coord))
+                        continue;
+
+                    if (active)
+                        RuntimeColliderAttachmentUtility.EnablePhysics(em, entities[i]);
+                    else
+                        RuntimeColliderAttachmentUtility.DisablePhysics(em, entities[i]);
+                }
+            }
+            physicsQuery.Dispose();
+            physicsQueryBuilder.Dispose();
         }
 
         public static void HideExteriorVisibility(World world, ref LoadedCellsMap loaded)
@@ -568,6 +632,36 @@ namespace VVardenfell.Runtime.Streaming
                     if (available.Set.Contains(coord))
                         desired.Add(coord);
                 }
+            }
+
+            Entity streamingEntity = TryGetStreamingEntity(em);
+            bool spawnedMissingCells = false;
+            if (streamingEntity != Entity.Null && em.HasComponent<LogicalRefLookup>(streamingEntity))
+            {
+                var logicalRefs = em.GetComponentData<LogicalRefLookup>(streamingEntity);
+                var desiredEnumeratorForSpawn = desired.GetEnumerator();
+                while (desiredEnumeratorForSpawn.MoveNext())
+                {
+                    var coord = desiredEnumeratorForSpawn.Current;
+                    if (loaded.Map.ContainsKey(coord))
+                        continue;
+
+                    if (!WorldResources.Cells.TryGetValue(coord, out var cellData) || cellData == null)
+                        continue;
+
+                    SpawnExteriorCell(
+                        world,
+                        coord,
+                        cellData,
+                        ref loaded,
+                        ref logicalRefs,
+                        active: true,
+                        gateTerrainByRadius: config.GateTerrainByRadius);
+                    spawnedMissingCells = true;
+                }
+
+                if (spawnedMissingCells)
+                    em.SetComponentData(streamingEntity, logicalRefs);
             }
 
             var refsQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
@@ -604,6 +698,15 @@ namespace VVardenfell.Runtime.Streaming
             desired.Dispose();
         }
 
+        private static Entity TryGetStreamingEntity(EntityManager em)
+        {
+            using var query = em.CreateEntityQuery(
+                ComponentType.ReadOnly<StreamingConfig>(),
+                ComponentType.ReadOnly<LoadedCellsMap>(),
+                ComponentType.ReadOnly<LogicalRefLookup>());
+            return query.CalculateEntityCount() > 0 ? query.GetSingletonEntity() : Entity.Null;
+        }
+
         private static void ApplyRefGameplayMetadata(
             EntityManager em,
             NativeArray<RefEntry> refs,
@@ -625,8 +728,13 @@ namespace VVardenfell.Runtime.Streaming
                 if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length)
                 {
                     var colliderBlob = colliderBlobs[entry.CollisionIndex];
-                    if (colliderBlob.IsCreated && !em.HasComponent<RefCollisionSource>(entity))
-                        em.AddComponentData(entity, new RefCollisionSource { Value = colliderBlob });
+                    if (colliderBlob.IsCreated && !em.HasComponent<RuntimeColliderSource>(entity))
+                        RuntimeColliderAttachmentUtility.AttachSource(
+                            em,
+                            entity,
+                            colliderBlob,
+                            RuntimeColliderKind.PlacedRef,
+                            active: false);
                 }
             }
         }
@@ -635,19 +743,12 @@ namespace VVardenfell.Runtime.Streaming
         {
             using var _ = k_PhysicsSync.Auto();
 
-            var refQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RefCollisionSource, PhysicsCollider>();
-            var refQuery = em.CreateEntityQuery(refQueryBuilder);
-            em.RemoveComponent<PhysicsCollider>(refQuery);
-            refQuery.Dispose();
-            refQueryBuilder.Dispose();
-
-            var proxyQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, StoredPhysicsColliderBlob, PhysicsCollider>();
-            var proxyQuery = em.CreateEntityQuery(proxyQueryBuilder);
-            em.RemoveComponent<PhysicsCollider>(proxyQuery);
-            proxyQuery.Dispose();
-            proxyQueryBuilder.Dispose();
+            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
+            var query = em.CreateEntityQuery(queryBuilder);
+            em.RemoveComponent<PhysicsCollider>(query);
+            query.Dispose();
+            queryBuilder.Dispose();
 
             if (UnityEngine.Debug.isDebugBuild)
                 LogActivePhysicsSummary(em, "hide-exterior");
@@ -657,45 +758,24 @@ namespace VVardenfell.Runtime.Streaming
         {
             using var _ = k_PhysicsSync.Auto();
 
-            var refQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RefCollisionSource>();
-            var refQuery = em.CreateEntityQuery(refQueryBuilder);
-            using (var refEntities = refQuery.ToEntityArray(Allocator.Temp))
-            using (var refLinks = refQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
-            using (var refSources = refQuery.ToComponentDataArray<RefCollisionSource>(Allocator.Temp))
+            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<CellLink, RuntimeColliderSource>();
+            var query = em.CreateEntityQuery(queryBuilder);
+            using (var entities = query.ToEntityArray(Allocator.Temp))
+            using (var links = query.ToComponentDataArray<CellLink>(Allocator.Temp))
             {
-                for (int i = 0; i < refEntities.Length; i++)
+                for (int i = 0; i < entities.Length; i++)
                 {
-                    bool shouldBeActive = desired.Contains(refLinks[i].Value);
-                    bool isActive = em.HasComponent<PhysicsCollider>(refEntities[i]);
+                    bool shouldBeActive = desired.Contains(links[i].Value);
+                    bool isActive = em.HasComponent<PhysicsCollider>(entities[i]);
                     if (shouldBeActive && !isActive)
-                        em.AddComponentData(refEntities[i], new PhysicsCollider { Value = refSources[i].Value });
+                        RuntimeColliderAttachmentUtility.EnablePhysics(em, entities[i]);
                     else if (!shouldBeActive && isActive)
-                        em.RemoveComponent<PhysicsCollider>(refEntities[i]);
+                        RuntimeColliderAttachmentUtility.DisablePhysics(em, entities[i]);
                 }
             }
-            refQuery.Dispose();
-            refQueryBuilder.Dispose();
-
-            var proxyQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, StoredPhysicsColliderBlob>();
-            var proxyQuery = em.CreateEntityQuery(proxyQueryBuilder);
-            using (var proxyEntities = proxyQuery.ToEntityArray(Allocator.Temp))
-            using (var proxyLinks = proxyQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
-            using (var proxySources = proxyQuery.ToComponentDataArray<StoredPhysicsColliderBlob>(Allocator.Temp))
-            {
-                for (int i = 0; i < proxyEntities.Length; i++)
-                {
-                    bool shouldBeActive = desired.Contains(proxyLinks[i].Value);
-                    bool isActive = em.HasComponent<PhysicsCollider>(proxyEntities[i]);
-                    if (shouldBeActive && !isActive)
-                        em.AddComponentData(proxyEntities[i], new PhysicsCollider { Value = proxySources[i].Value });
-                    else if (!shouldBeActive && isActive)
-                        em.RemoveComponent<PhysicsCollider>(proxyEntities[i]);
-                }
-            }
-            proxyQuery.Dispose();
-            proxyQueryBuilder.Dispose();
+            query.Dispose();
+            queryBuilder.Dispose();
 
             if (UnityEngine.Debug.isDebugBuild)
                 LogActivePhysicsSummary(em, "sync-exterior");
@@ -703,32 +783,235 @@ namespace VVardenfell.Runtime.Streaming
 
         private static void LogActivePhysicsSummary(EntityManager em, string contextLabel)
         {
-            var terrainQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellCoord, StoredPhysicsColliderBlob, PhysicsCollider>();
-            var terrainQuery = em.CreateEntityQuery(terrainQueryBuilder);
-            int activeTerrain = terrainQuery.CalculateEntityCount();
-            terrainQuery.Dispose();
-            terrainQueryBuilder.Dispose();
+            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<RuntimeColliderSource, PhysicsCollider>();
+            var query = em.CreateEntityQuery(queryBuilder);
+            int activeTerrain = 0;
+            int activeStatic = 0;
+            int activeRefs = 0;
+            int activeProxies = 0;
+            using (var sources = query.ToComponentDataArray<RuntimeColliderSource>(Allocator.Temp))
+            {
+                for (int i = 0; i < sources.Length; i++)
+                {
+                    switch (sources[i].Kind)
+                    {
+                        case RuntimeColliderKind.TerrainCell:
+                            activeTerrain++;
+                            break;
+                        case RuntimeColliderKind.StaticCell:
+                            activeStatic++;
+                            break;
+                        case RuntimeColliderKind.PlacedRef:
+                        case RuntimeColliderKind.RuntimeSpawn:
+                            activeRefs++;
+                            break;
+                        case RuntimeColliderKind.ActivationProxy:
+                            activeProxies++;
+                            break;
+                    }
+                }
+            }
+            query.Dispose();
+            queryBuilder.Dispose();
 
-            var staticQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, StoredPhysicsColliderBlob, PhysicsCollider>()
-                .WithNone<CellCoord>();
-            var staticQuery = em.CreateEntityQuery(staticQueryBuilder);
-            int activeStatic = staticQuery.CalculateEntityCount();
-            staticQuery.Dispose();
-            staticQueryBuilder.Dispose();
-
-            var refQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RefCollisionSource, PhysicsCollider>();
-            var refQuery = em.CreateEntityQuery(refQueryBuilder);
-            int activeRefs = refQuery.CalculateEntityCount();
-            refQuery.Dispose();
-            refQueryBuilder.Dispose();
-
-            Debug.Log($"[VVardenfell][Physics] {contextLabel}: terrain={activeTerrain}, static={activeStatic}, refs={activeRefs}");
+            Debug.Log($"[VVardenfell][Physics] {contextLabel}: terrain={activeTerrain}, static={activeStatic}, refs={activeRefs}, proxies={activeProxies}");
         }
 
-        private static void BuildLogicalRefs(
+        private static Entity SpawnExteriorRef(EntityManager em, RefEntry entry, int2 coord, RenderShardRecord[] shardCatalog)
+        {
+            WarnUnsupportedSpawnMode(entry, $"exterior ({coord.x},{coord.y})");
+            return (RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab
+                ? SpawnModelPrefabRef(em, entry, false, coord, default, float3.zero)
+                : SpawnRenderShardRef(em, entry, false, coord, default, float3.zero, shardCatalog);
+        }
+
+        private static Entity SpawnInteriorRef(EntityManager em, RefEntry entry, float3 worldOffset, FixedString128Bytes interiorCellId, List<Entity> spawnedEntities)
+        {
+            WarnUnsupportedSpawnMode(entry, $"interior '{interiorCellId}'");
+            Entity root;
+            if ((RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab)
+            {
+                root = SpawnModelPrefabRef(em, entry, true, default, interiorCellId, worldOffset, spawnedEntities);
+            }
+            else
+            {
+                root = SpawnRenderShardRef(em, entry, true, default, interiorCellId, worldOffset, WorldResources.Cache?.RenderShardCatalog?.Records);
+                AppendSpawnedEntities(em, root, spawnedEntities);
+            }
+
+            return root;
+        }
+
+        private static Entity SpawnRenderShardRef(
+            EntityManager em,
+            RefEntry entry,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            RenderShardRecord[] shardCatalog)
+        {
+            var prefabs = WorldResources.RefPrefabs;
+            if (prefabs == null || (uint)entry.RenderShardIndex >= (uint)prefabs.Length)
+                return Entity.Null;
+
+            var entity = em.Instantiate(prefabs[entry.RenderShardIndex]);
+            float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
+            position += worldOffset;
+            quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
+
+            em.SetComponentData(entity, LocalTransform.FromPositionRotationScale(position, rotation, entry.Scale));
+            em.SetComponentData(entity, new LocalToWorld
+            {
+                Value = float4x4.TRS(position, rotation, new float3(entry.Scale))
+            });
+            em.SetComponentData(entity, MaterialMeshInfo.FromRenderMeshArrayIndices(entry.LocalMaterialIndex, entry.LocalMeshIndex));
+
+            int textureSlice = entry.SliceIndex < 0 ? WorldResources.FallbackBucketSlice.y : WorldResources.TexBucketInfo[entry.SliceIndex].y;
+            em.SetComponentData(entity, new TextureSlice { Value = textureSlice });
+
+            int globalMeshIndex = TryResolveGlobalMeshIndex(shardCatalog, entry.RenderShardIndex, entry.LocalMeshIndex);
+            var aabb = (uint)globalMeshIndex < (uint)WorldResources.MeshBounds.Length
+                ? WorldResources.MeshBounds[globalMeshIndex]
+                : new AABB { Center = float3.zero, Extents = new float3(1f) };
+            em.SetComponentData(entity, new RenderBounds { Value = aabb });
+
+            ApplyRefRootMetadata(em, entity, entry, isInterior, exteriorCell, interiorCellId);
+            return entity;
+        }
+
+        private static Entity SpawnModelPrefabRef(
+            EntityManager em,
+            RefEntry entry,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            List<Entity> spawnedEntities = null)
+        {
+            var prefabs = WorldResources.ModelPrefabs;
+            if (prefabs == null || (uint)entry.ModelPrefabIndex >= (uint)prefabs.Length)
+                return Entity.Null;
+
+            if (!WorldBootstrap.EnsureModelPrefabBuilt(em, WorldResources.Cache, entry.ModelPrefabIndex))
+                return Entity.Null;
+
+            prefabs = WorldResources.ModelPrefabs;
+            var root = em.Instantiate(prefabs[entry.ModelPrefabIndex]);
+            Entity[] linkedEntities = SnapshotLinkedEntityGroup(em, root);
+            float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
+            position += worldOffset;
+            quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
+
+            em.SetComponentData(root, LocalTransform.FromPositionRotationScale(position, rotation, entry.Scale));
+            em.SetComponentData(root, new LocalToWorld
+            {
+                Value = float4x4.TRS(position, rotation, new float3(entry.Scale))
+            });
+
+            ApplyRefRootMetadata(em, root, entry, isInterior, exteriorCell, interiorCellId);
+
+            if (linkedEntities != null)
+            {
+                for (int i = 0; i < linkedEntities.Length; i++)
+                {
+                    Entity linkedEntity = linkedEntities[i];
+                    if (linkedEntity == root || !em.Exists(linkedEntity))
+                        continue;
+
+                    if (isInterior)
+                    {
+                        if (!em.HasComponent<InteriorCellMember>(linkedEntity))
+                            em.AddComponent<InteriorCellMember>(linkedEntity);
+                    }
+                    else
+                    {
+                        if (em.HasComponent<CellLink>(linkedEntity))
+                            em.SetComponentData(linkedEntity, new CellLink { Value = exteriorCell });
+                        else
+                            em.AddComponentData(linkedEntity, new CellLink { Value = exteriorCell });
+                    }
+                }
+            }
+
+            AppendSpawnedEntities(root, spawnedEntities, linkedEntities);
+            return root;
+        }
+
+        private static void ApplyRefRootMetadata(
+            EntityManager em,
+            Entity entity,
+            RefEntry entry,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId)
+        {
+            if (entry.PlacedRefId != 0u)
+            {
+                if (em.HasComponent<PlacedRefIdentity>(entity))
+                    em.SetComponentData(entity, new PlacedRefIdentity { Value = entry.PlacedRefId });
+                else
+                    em.AddComponentData(entity, new PlacedRefIdentity { Value = entry.PlacedRefId });
+            }
+
+            if (isInterior)
+            {
+                if (!em.HasComponent<InteriorCellMember>(entity))
+                    em.AddComponent<InteriorCellMember>(entity);
+                if (em.HasComponent<CellLink>(entity))
+                    em.RemoveComponent<CellLink>(entity);
+            }
+            else
+            {
+                if (em.HasComponent<CellLink>(entity))
+                    em.SetComponentData(entity, new CellLink { Value = exteriorCell });
+                else
+                    em.AddComponentData(entity, new CellLink { Value = exteriorCell });
+            }
+
+            var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();
+            if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[entry.CollisionIndex].IsCreated)
+            {
+                var colliderBlob = colliderBlobs[entry.CollisionIndex];
+                RuntimeColliderAttachmentUtility.AttachSource(
+                    em,
+                    entity,
+                    colliderBlob,
+                    RuntimeColliderKind.PlacedRef,
+                    active: true);
+            }
+        }
+
+        private static void AppendSpawnedEntities(EntityManager em, Entity root, List<Entity> spawnedEntities)
+        {
+            if (root == Entity.Null || spawnedEntities == null)
+                return;
+
+            if (em.Exists(root))
+                spawnedEntities.Add(root);
+        }
+
+        private static void AppendSpawnedEntities(Entity root, List<Entity> spawnedEntities, Entity[] linkedEntities)
+        {
+            if (root == Entity.Null || spawnedEntities == null)
+                return;
+
+            if (linkedEntities == null)
+            {
+                spawnedEntities.Add(root);
+                return;
+            }
+
+            for (int i = 0; i < linkedEntities.Length; i++)
+            {
+                Entity linkedEntity = linkedEntities[i];
+                if (linkedEntity != Entity.Null)
+                    spawnedEntities.Add(linkedEntity);
+            }
+        }
+
+        private static int BuildLogicalRefs(
             EntityManager em,
             RuntimeContentDatabase contentDb,
             NativeArray<RefEntry> refs,
@@ -738,13 +1021,17 @@ namespace VVardenfell.Runtime.Streaming
             FixedString128Bytes interiorCellId,
             float3 worldOffset,
             ref LogicalRefLookup logicalRefs,
-            RuntimeLoadProgress progress)
+            RuntimeLoadProgress progress,
+            out int proxyQueueCount)
         {
             using var _ = k_LogicalRefs.Auto();
+            proxyQueueCount = 0;
             if (contentDb == null || childEntities == null)
-                return;
+                return 0;
 
+            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
+            int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
             {
                 if (i >= childEntities.Length)
@@ -783,6 +1070,7 @@ namespace VVardenfell.Runtime.Streaming
                         k_LogicalRefCreate.End();
                     }
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
+                    logicalRefCount++;
                     k_LogicalRefLookup.Begin();
                     try
                     {
@@ -797,10 +1085,11 @@ namespace VVardenfell.Runtime.Streaming
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    if (!em.HasComponent<LogicalRefParent>(child))
-                        em.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
-
-                    em.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
+                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
+                    if (logicalByPlacedRef[placedRefId] == logicalEntity
+                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
+                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
+                        proxyQueueCount++;
                 }
                 finally
                 {
@@ -812,9 +1101,10 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             progress?.Report($"Creating logical placed refs {refs.Length}/{refs.Length}", refs.Length, refs.Length);
+            return logicalRefCount;
         }
 
-        private static void BuildLogicalRefs(
+        private static int BuildLogicalRefs(
             EntityManager em,
             RuntimeContentDatabase contentDb,
             RefEntry[] refs,
@@ -823,13 +1113,17 @@ namespace VVardenfell.Runtime.Streaming
             FixedString128Bytes interiorCellId,
             float3 worldOffset,
             ref LogicalRefLookup logicalRefs,
-            List<Entity> spawnedEntities)
+            List<Entity> spawnedEntities,
+            out int proxyQueueCount)
         {
             using var _ = k_LogicalRefs.Auto();
+            proxyQueueCount = 0;
             if (contentDb == null || refs == null || childEntities == null)
-                return;
+                return 0;
 
+            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
+            int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
             {
                 if (i >= childEntities.Length)
@@ -868,6 +1162,7 @@ namespace VVardenfell.Runtime.Streaming
                         k_LogicalRefCreate.End();
                     }
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
+                    logicalRefCount++;
                     k_LogicalRefLookup.Begin();
                     try
                     {
@@ -883,16 +1178,34 @@ namespace VVardenfell.Runtime.Streaming
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    if (!em.HasComponent<LogicalRefParent>(child))
-                        em.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
-
-                    em.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
+                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
+                    if (logicalByPlacedRef[placedRefId] == logicalEntity
+                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
+                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
+                        proxyQueueCount++;
                 }
                 finally
                 {
                     k_LogicalRefLink.End();
                 }
             }
+
+            return logicalRefCount;
+        }
+
+        private static void WarnUnsupportedSpawnMode(RefEntry entry, string cellLabel)
+        {
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
+                return;
+
+            string key = $"{cellLabel}:{entry.PlacedRefId}:{entry.SpawnModeRaw}";
+            if (!s_UnsupportedSpawnModeWarnings.Add(key))
+                return;
+
+            string mode = System.Enum.IsDefined(typeof(RefSpawnMode), entry.SpawnModeRaw)
+                ? ((RefSpawnMode)entry.SpawnModeRaw).ToString()
+                : $"unknown({entry.SpawnModeRaw})";
+            Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
         }
 
         private static Entity CreateLogicalRefEntity(
@@ -942,6 +1255,59 @@ namespace VVardenfell.Runtime.Streaming
             return logicalEntity;
         }
 
+        private static Entity[][] SnapshotLogicalChildGroups(EntityManager em, Entity[] rootChildren)
+        {
+            var snapshots = new Entity[rootChildren.Length][];
+            for (int i = 0; i < rootChildren.Length; i++)
+            {
+                Entity rootChild = rootChildren[i];
+                if (rootChild == Entity.Null || !em.Exists(rootChild))
+                    continue;
+
+                snapshots[i] = SnapshotLinkedEntityGroup(em, rootChild) ?? new[] { rootChild };
+            }
+
+            return snapshots;
+        }
+
+        private static Entity[] SnapshotLinkedEntityGroup(EntityManager em, Entity root)
+        {
+            if (root == Entity.Null || !em.Exists(root))
+                return null;
+
+            if (!em.HasBuffer<LinkedEntityGroup>(root))
+                return null;
+
+            var linked = em.GetBuffer<LinkedEntityGroup>(root);
+            var linkedEntities = new Entity[linked.Length];
+            for (int i = 0; i < linked.Length; i++)
+                linkedEntities[i] = linked[i].Value;
+
+            return linkedEntities;
+        }
+
+        private static void AppendLogicalChildren(EntityManager em, Entity logicalEntity, Entity[] children)
+        {
+            if (children == null)
+                return;
+
+            for (int i = 0; i < children.Length; i++)
+                LinkLogicalChild(em, logicalEntity, children[i]);
+        }
+
+        private static void LinkLogicalChild(EntityManager em, Entity logicalEntity, Entity child)
+        {
+            if (child == Entity.Null || !em.Exists(child))
+                return;
+
+            if (em.HasComponent<LogicalRefParent>(child))
+                em.SetComponentData(child, new LogicalRefParent { Value = logicalEntity });
+            else
+                em.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
+
+            em.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
+        }
+
         private static void AttachLogicalAuthoring(
             EntityManager em,
             Entity logicalEntity,
@@ -952,138 +1318,16 @@ namespace VVardenfell.Runtime.Streaming
             bool isInterior,
             FixedString128Bytes interiorCellId)
         {
-            switch (contentReference.Kind)
+            bool attachDoor = false;
+            DoorInteractable door = default;
+            if (contentReference.Kind == ContentReferenceKind.Door)
             {
-                case ContentReferenceKind.Actor:
-                {
-                    var handle = new ActorDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new ActorSpawnSource { Definition = handle });
-                    em.AddComponentData(logicalEntity, new DialogueSpeakerAuthoring { Definition = handle });
-                    break;
-                }
-                case ContentReferenceKind.Activator:
-                {
-                    var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new ActivatorAuthoring { Definition = handle });
-                    ref readonly var def = ref contentDb.Get(handle);
-                    TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
-                    break;
-                }
-                case ContentReferenceKind.Door:
-                {
-                    var handle = new DoorDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new DoorAuthoring { Definition = handle });
-                    ref readonly var def = ref contentDb.Get(handle);
-                    TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
-                    if (!isInterior && TryResolveDoorInteractable(exteriorCell, entry.PlacedRefId, out var exteriorDoor))
-                        em.AddComponentData(logicalEntity, exteriorDoor);
-                    else if (isInterior && TryResolveInteriorDoorInteractable(entry.PlacedRefId, interiorCellId, out var interiorDoor))
-                        em.AddComponentData(logicalEntity, interiorDoor);
-                    break;
-                }
-                case ContentReferenceKind.Container:
-                {
-                    var handle = new ContainerDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new ContainerAuthoring { Definition = handle });
-                    ref readonly var def = ref contentDb.Get(handle);
-                    TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
-                    break;
-                }
-                case ContentReferenceKind.Item:
-                {
-                    var handle = new ItemDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new ItemPickupAuthoring { Definition = handle });
-                    ref readonly var def = ref contentDb.Get(handle);
-                    TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
-                    break;
-                }
-                case ContentReferenceKind.Light:
-                {
-                    var handle = new LightDefHandle { Value = contentReference.HandleValue };
-                    em.AddComponentData(logicalEntity, new LightSourceAuthoring { Definition = handle });
-                    ref readonly var def = ref contentDb.Get(handle);
-                    em.AddComponentData(logicalEntity, BuildLightInstanceFlags(def.Flags));
-                    em.AddComponentData(logicalEntity, BuildLightInstanceState(def));
-                    em.AddComponentData(logicalEntity, new LightPresentationLink { Slot = -1 });
-                    TryAddAudioEmitterAuthoring(em, logicalEntity, contentDb, def.SoundId, null);
-                    if (contentDb.TryGetSoundHandle(def.SoundId, out SoundDefHandle ambientSound) && ambientSound.IsValid)
-                    {
-                        em.AddComponentData(logicalEntity, new InteriorAmbientSourceAuthoring
-                        {
-                            AmbientSound = ambientSound,
-                        });
-                    }
-                    break;
-                }
+                attachDoor = !isInterior
+                    ? TryResolveDoorInteractable(exteriorCell, entry.PlacedRefId, out door)
+                    : TryResolveInteriorDoorInteractable(entry.PlacedRefId, interiorCellId, out door);
             }
-        }
 
-        private static LightInstanceFlags BuildLightInstanceFlags(int flags)
-        {
-            const int Carry = 0x002;
-            const int Negative = 0x004;
-            const int Flicker = 0x008;
-            const int OffDefault = 0x020;
-            const int FlickerSlow = 0x040;
-            const int Pulse = 0x080;
-            const int PulseSlow = 0x100;
-
-            return new LightInstanceFlags
-            {
-                Carry = (byte)((flags & Carry) != 0 ? 1 : 0),
-                Negative = (byte)((flags & Negative) != 0 ? 1 : 0),
-                Flicker = (byte)((flags & Flicker) != 0 ? 1 : 0),
-                FlickerSlow = (byte)((flags & FlickerSlow) != 0 ? 1 : 0),
-                Pulse = (byte)((flags & Pulse) != 0 ? 1 : 0),
-                PulseSlow = (byte)((flags & PulseSlow) != 0 ? 1 : 0),
-                OffDefault = (byte)((flags & OffDefault) != 0 ? 1 : 0),
-            };
-        }
-
-        private static LightInstanceState BuildLightInstanceState(in LightDef def)
-        {
-            float3 color = DecodeRgb(def.ColorRgba);
-            float rangeMeters = math.max(0.25f, def.Radius * WorldScale.MwUnitsToMeters);
-            float intensity = math.max(0.25f, math.cmax(color));
-            bool enabled = (def.Flags & 0x020) == 0;
-
-            return new LightInstanceState
-            {
-                Enabled = (byte)(enabled ? 1 : 0),
-                BaseColorRgb = color,
-                BaseIntensity = intensity,
-                BaseRange = rangeMeters,
-                CurrentIntensity = intensity,
-                CurrentRange = rangeMeters,
-                AnimationTime = 0f,
-            };
-        }
-
-        private static float3 DecodeRgb(uint value)
-        {
-            return new float3(
-                ((value >> 0) & 0xFFu) / 255f,
-                ((value >> 8) & 0xFFu) / 255f,
-                ((value >> 16) & 0xFFu) / 255f);
-        }
-
-        private static void TryAddAudioEmitterAuthoring(
-            EntityManager em,
-            Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
-            string primarySoundId,
-            string secondarySoundId)
-        {
-            contentDb.TryGetSoundHandle(primarySoundId, out SoundDefHandle primarySound);
-            contentDb.TryGetSoundHandle(secondarySoundId, out SoundDefHandle secondarySound);
-            if (!primarySound.IsValid && !secondarySound.IsValid)
-                return;
-
-            em.AddComponentData(logicalEntity, new AudioEmitterAuthoring
-            {
-                PrimarySound = primarySound,
-                SecondarySound = secondarySound,
-            });
+            LogicalRefAuthoringUtility.TryAttach(em, logicalEntity, contentDb, contentReference, attachDoor, door);
         }
 
         private static bool TryGetContentReference(RefEntry entry, out ContentReference contentReference)

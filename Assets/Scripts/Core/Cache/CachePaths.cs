@@ -19,6 +19,7 @@ namespace VVardenfell.Core.Cache
         public static string Materials => Path.Combine(Root, "materials.bin");
         public static string MeshNames => Path.Combine(Root, "meshnames.bin");
         public static string RenderShards => Path.Combine(Root, "render_shards.bin");
+        public static string ModelPrefabs => Path.Combine(Root, "model_prefabs.bin");
         public static string TexturesIndex => Path.Combine(Root, "textures.bin");
         public static string TerrainLayers => Path.Combine(Root, "terrain_layers.bin");
         public static string Collisions => Path.Combine(Root, "collisions.bin");
@@ -31,6 +32,7 @@ namespace VVardenfell.Core.Cache
         public static string GameplayContentManifest => Path.Combine(Root, "gameplay_content_manifest.bin");
         public static string GameplayContent => Path.Combine(Root, "gameplay_content.bin");
         public static string GameplayValidationReport => Path.Combine(Root, "gameplay_content_validation.txt");
+        public static string WorldCollisionValidationReport => Path.Combine(Root, "world_collision_validation.txt");
         public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");
         public static string TexturesDir => Path.Combine(Root, "textures");
         public static string CellsDir => Path.Combine(Root, "cells");

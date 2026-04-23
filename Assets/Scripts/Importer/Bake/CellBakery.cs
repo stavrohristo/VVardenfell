@@ -42,7 +42,7 @@ namespace VVardenfell.Importer.Bake
     ///     u32 staticBlobLen
     ///     byte[staticBlobLen] pre-built MeshCollider blob
     ///   u32 refCount
-    ///   RefEntry[refCount]     (68 bytes each)
+    ///   RefEntry[refCount]     (72 bytes each)
     ///   u32 doorCount
     ///   DoorRefEntry[doorCount]
     /// </summary>
@@ -52,7 +52,9 @@ namespace VVardenfell.Importer.Bake
 
         public readonly struct BakedRef
         {
+            public readonly int SpawnModeRaw;
             public readonly int RenderShardIndex;
+            public readonly int ModelPrefabIndex;
             public readonly int LocalMeshIndex;
             public readonly int LocalMaterialIndex;
             public readonly int SliceIndex;
@@ -66,6 +68,7 @@ namespace VVardenfell.Importer.Bake
             public readonly float Scale;
 
             public BakedRef(
+                RefSpawnMode spawnMode,
                 int renderShardIndex,
                 int localMeshIndex,
                 int localMaterialIndex,
@@ -79,7 +82,9 @@ namespace VVardenfell.Importer.Bake
                 Quaternion rot,
                 float scale)
             {
+                SpawnModeRaw = (int)spawnMode;
                 RenderShardIndex = renderShardIndex;
+                ModelPrefabIndex = renderShardIndex;
                 LocalMeshIndex = localMeshIndex;
                 LocalMaterialIndex = localMaterialIndex;
                 SliceIndex = slice;
@@ -222,6 +227,7 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < refs.Count; i++)
             {
                 var r = refs[i];
+                w.Write(r.SpawnModeRaw);
                 w.Write(r.RenderShardIndex);
                 w.Write(r.LocalMeshIndex);
                 w.Write(r.LocalMaterialIndex);

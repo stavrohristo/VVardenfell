@@ -170,7 +170,7 @@ namespace VVardenfell.Core.Cache
     public sealed class UiCacheManifest
     {
         const uint Magic = 0x49555656u; // 'VVUI'
-        const uint Version = 3;
+        const uint Version = 4;
 
         public const int MovieTranscodeProfileVersion = 4;
 
