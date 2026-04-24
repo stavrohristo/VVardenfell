@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.UI.Shell
         public string WeaponLabel;
         public string SpellLabel;
         public string SneakLabel;
+        public LocalMapViewModel LocalMap;
         // Vanilla MW shows a yellow health bar above the player vitals while targeting
         // a hostile actor (openmw_hud.layout "EnemyHealth"). Hidden until the targeting
         // pipeline decides to surface it.
@@ -144,6 +145,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
     public sealed class SpellWindowEntryViewModel
     {
+        public int SpellIndex;
         public string Name;
         public string CostText;
         public string TypeText;
@@ -160,6 +162,8 @@ namespace VVardenfell.Runtime.UI.Shell
     {
         public Rect NormalizedRect;
         public bool Pinned;
+        public MapWindowMode Mode;
+        public bool GlobalEnabled;
         public string Title;
         public string ToggleButtonText;
         public string ViewSummaryText;
@@ -168,6 +172,69 @@ namespace VVardenfell.Runtime.UI.Shell
         public string CellText;
         public string StreamingText;
         public bool InteriorActive;
+        public LocalMapViewModel LocalMap;
+        public GlobalMapViewModel GlobalMap;
+    }
+
+    public sealed class LocalMapViewModel
+    {
+        public bool Ready;
+        public bool InteriorActive;
+        public float PlayerCellX;
+        public float PlayerCellY;
+        public float PlayerHeadingDegrees;
+        public float ViewportCellSpan = 1f;
+        public float PanCellX;
+        public float PanCellY;
+        public float Zoom = 1f;
+        public bool ShowShroud = true;
+        public bool ShowMarkers = true;
+        public LocalMapTileViewModel[] Tiles = Array.Empty<LocalMapTileViewModel>();
+        public LocalMapMarkerViewModel[] Markers = Array.Empty<LocalMapMarkerViewModel>();
+    }
+
+    public sealed class LocalMapTileViewModel
+    {
+        public int OffsetX;
+        public int OffsetY;
+        public Texture MapTexture;
+        public Rect MapUvRect;
+        public Texture ShroudTexture;
+        public bool HasMapTexture;
+    }
+
+    public sealed class LocalMapMarkerViewModel
+    {
+        public int OffsetX;
+        public int OffsetY;
+        public float CellX;
+        public float CellY;
+        public string Label;
+        public byte Kind;
+    }
+
+    public sealed class GlobalMapViewModel
+    {
+        public bool Ready;
+        public Texture BaseTexture;
+        public Texture OverlayTexture;
+        public int Width;
+        public int Height;
+        public float PlayerX;
+        public float PlayerY;
+        public float PlayerHeadingDegrees;
+        public float PanX;
+        public float PanY;
+        public float Zoom = 1f;
+        public GlobalMapMarkerViewModel[] Markers = Array.Empty<GlobalMapMarkerViewModel>();
+    }
+
+    public sealed class GlobalMapMarkerViewModel
+    {
+        public float X;
+        public float Y;
+        public string Label;
+        public int AggregateWeight;
     }
 
     public sealed class SaveSlotRowViewModel

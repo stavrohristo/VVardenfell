@@ -173,12 +173,6 @@ namespace VVardenfell.Runtime.Movement
                 return;
             }
 
-            if (support.Kind != MorrowindSupportKind.RecoveryFlat)
-            {
-                kinematic.StuckFrames = 0;
-                kinematic.LastStuckPosition = position;
-            }
-
             if (!support.HasSolidSupport)
             {
                 kinematic.Grounded = false;

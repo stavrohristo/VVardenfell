@@ -37,7 +37,13 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color BodyTextColor = new(0.94f, 0.85f, 0.68f);
         static readonly Color SectionHeaderColor = new(0.96f, 0.82f, 0.44f);
         static readonly Color BarOverlayColor = new(0.98f, 0.94f, 0.84f);
-        static readonly Color SectionBoxCenterColor = new(0f, 0f, 0f, 0.0f);
+        // Subtle dark fill inside each MW_Box section so the gold filigree
+        // frame reads as a distinct container over the window background.
+        // Previously 0 alpha — which rendered the frame but left the interior
+        // indistinguishable from the parent, making narrower boxes (like the
+        // Attributes column on the left pane) look borderless even though the
+        // filigree was drawn.
+        static readonly Color SectionBoxCenterColor = new(0f, 0f, 0f, 0.28f);
         static readonly Color BarFrameCenterColor = new(0f, 0f, 0f, 0.35f);
         static readonly Color HealthFillColor = new(0.70f, 0.22f, 0.16f, 0.96f);
         static readonly Color MagickaFillColor = new(0.17f, 0.33f, 0.68f, 0.96f);
@@ -66,10 +72,15 @@ namespace VVardenfell.Runtime.UI.Shell
         const float IdentityBoxHeight = 62f;    // 3 text rows x 18 + 4+4 padding
         const float RowHeight = 18f;
 
-        // Column widths within a row (sum to 204 = MW_Box interior width at 500-wide default).
+        // Column widths within a row. Interior content width at the default
+        // 500-wide window + 220-wide left pane is:
+        //   pane 220  -  SectionMargin*2 (8+8)  -  SectionPadding*2 (4+4)  =  196.
+        // Prior math was off by 8 (assumed interior=204) which pushed the bars
+        // 8 px past the Vitals MW_Box right edge, clipping the right-hand
+        // frame filigree visibly in the rendered window.
         const float LabelColumnWidth = 70f;
         const float BarGap = 4f;                // gap between label and bar start
-        const float BarWidth = 130f;            // 70 + 4 + 130 = 204
+        const float BarWidth = 122f;            // 70 + 4 + 122 = 196
 
         // Section header + internal gap inside the skills scroll.
         const float SectionHeaderHeight = 22f;
@@ -83,12 +94,17 @@ namespace VVardenfell.Runtime.UI.Shell
 
         sealed class BarRow
         {
+            public string Label;
+            public RectTransform Root;
             public RectTransform Fill;
             public BitmapTextGraphic Overlay;
         }
 
         sealed class ValueRow
         {
+            public string LabelText;
+            public RectTransform Root;
+            public BitmapTextGraphic Label;
             public BitmapTextGraphic Value;
         }
 
@@ -223,14 +239,18 @@ namespace VVardenfell.Runtime.UI.Shell
             ApplyBar(_fatigueBar, model.FatigueFillNormalized, model.FatigueText);
 
             _levelRow.Value.Text = model.LevelText ?? "--";
+            SetValueRowTooltip(_levelRow, null, _levelRow.Value.Text);
             _raceRow.Value.Text = model.RaceText ?? "--";
+            SetValueRowTooltip(_raceRow, null, _raceRow.Value.Text);
             _classRow.Value.Text = model.ClassText ?? "--";
+            SetValueRowTooltip(_classRow, null, _classRow.Value.Text);
 
             var attrs = model.Attributes ?? Array.Empty<StatsWindowAttributeRow>();
             for (int i = 0; i < _attributeRows.Length; i++)
             {
                 string value = i < attrs.Length ? attrs[i].Value : "--";
                 _attributeRows[i].Value.Text = string.IsNullOrWhiteSpace(value) ? "--" : value.Trim();
+                SetValueRowTooltip(_attributeRows[i], i < attrs.Length ? attrs[i].Name : null, _attributeRows[i].Value.Text);
             }
 
             SyncSkillSection("Major Skills", _majorHeader, _majorRowsRoot, _majorSkillRowPool, model.MajorSkills);
@@ -293,6 +313,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 new Vector2(0f, -RuntimeClassicUiMetrics.Ui(yOffset)),
                 new Vector2(0f, rowHeight));
             row.pivot = new Vector2(0f, 1f);
+            BuildHoverTarget(row);
 
             CreateLabel(row, labelText, alignLeft: true);
 
@@ -337,7 +358,7 @@ namespace VVardenfell.Runtime.UI.Shell
             overlay.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             RuntimeUiFactory.Stretch(overlay.rectTransform);
 
-            return new BarRow { Fill = fill.rectTransform, Overlay = overlay };
+            return new BarRow { Label = labelText, Root = row, Fill = fill.rectTransform, Overlay = overlay };
         }
 
         // ----- Left pane: Identity box -----------------------------------------
@@ -486,6 +507,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 Vector2.zero,
                 new Vector2(0f, rowHeight));
             row.pivot = new Vector2(0f, 1f);
+            BuildHoverTarget(row);
 
             var value = RuntimeUiFactory.CreateBitmapText(
                 "Value",
@@ -523,16 +545,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 SectionBoxCenterColor);
             RuntimeUiFactory.Stretch(frame.Root);
 
-            var content = RuntimeUiFactory.CreateAnchorRect(
-                "Content",
-                frame.Client,
-                Vector2.zero,
-                Vector2.one,
-                new Vector2(0.5f, 0.5f),
-                new Vector2(RuntimeClassicUiMetrics.Ui(SectionPadding), RuntimeClassicUiMetrics.Ui(SectionPadding)),
-                new Vector2(-RuntimeClassicUiMetrics.Ui(SectionPadding), -RuntimeClassicUiMetrics.Ui(SectionPadding)));
-
-            return content;
+            return CreateSectionContent(frame.Client);
         }
 
         /// <summary>MW_Box at a fixed Y offset that stretches to fill the rest of the pane.
@@ -555,15 +568,30 @@ namespace VVardenfell.Runtime.UI.Shell
                 SectionBoxCenterColor);
             RuntimeUiFactory.Stretch(frame.Root);
 
+            return CreateSectionContent(frame.Client);
+        }
+
+        /// <summary>
+        /// Builds a padded content rect inside the section frame's client area
+        /// and attaches a <see cref="RectMask2D"/> so any rows whose vertical
+        /// extent would exceed the section interior (e.g. when the window is
+        /// resized smaller than the attribute list's natural height) are
+        /// clipped at the section's gold filigree border instead of drawing
+        /// over it. Mirrors how the Skills scrollview already masks its
+        /// viewport; this extends the same contract to every section built
+        /// via the stats helpers.
+        /// </summary>
+        RectTransform CreateSectionContent(RectTransform frameClient)
+        {
             var content = RuntimeUiFactory.CreateAnchorRect(
                 "Content",
-                frame.Client,
+                frameClient,
                 Vector2.zero,
                 Vector2.one,
                 new Vector2(0.5f, 0.5f),
                 new Vector2(RuntimeClassicUiMetrics.Ui(SectionPadding), RuntimeClassicUiMetrics.Ui(SectionPadding)),
                 new Vector2(-RuntimeClassicUiMetrics.Ui(SectionPadding), -RuntimeClassicUiMetrics.Ui(SectionPadding)));
-
+            content.gameObject.AddComponent<RectMask2D>();
             return content;
         }
 
@@ -581,10 +609,20 @@ namespace VVardenfell.Runtime.UI.Shell
                 new Vector2(0f, -RuntimeClassicUiMetrics.Ui(yOffset)),
                 new Vector2(0f, rowHeight));
             row.pivot = new Vector2(0f, 1f);
+            BuildHoverTarget(row);
 
-            CreateLabel(row, label, alignLeft: true);
+            var labelGraphic = CreateLabel(row, label, alignLeft: true);
             var value = CreateLabel(row, string.Empty, alignLeft: false);
-            return new ValueRow { Value = value };
+            return new ValueRow { LabelText = label, Root = row, Label = labelGraphic, Value = value };
+        }
+
+        Image BuildHoverTarget(RectTransform row)
+        {
+            var hover = RuntimeUiFactory.CreateImage("HoverTarget", row, new Color(1f, 1f, 1f, 0.001f));
+            RuntimeUiFactory.Stretch(hover.rectTransform);
+            hover.raycastTarget = true;
+            hover.transform.SetAsFirstSibling();
+            return hover;
         }
 
         /// <summary>Shared label/value text graphic. Left or right anchored.</summary>
@@ -606,6 +644,7 @@ namespace VVardenfell.Runtime.UI.Shell
             label.rectTransform.pivot = new Vector2(0.5f, 0.5f);
             label.rectTransform.offsetMin = Vector2.zero;
             label.rectTransform.offsetMax = Vector2.zero;
+            label.raycastTarget = false;
             return label;
         }
 
@@ -666,12 +705,16 @@ namespace VVardenfell.Runtime.UI.Shell
                 var rowRect = (RectTransform)pool[i].Value.transform.parent;
                 rowRect.gameObject.SetActive(rowVisible);
                 if (!rowVisible)
+                {
+                    RuntimeUiPopupUtility.SetTooltip(rowRect.gameObject, null);
                     continue;
+                }
 
                 var row = skills[i];
-                if (rowRect.GetChild(0).TryGetComponent<BitmapTextGraphic>(out var nameText))
-                    nameText.Text = string.IsNullOrWhiteSpace(row?.Name) ? "--" : row.Name.Trim();
+                pool[i].LabelText = string.IsNullOrWhiteSpace(row?.Name) ? "--" : row.Name.Trim();
+                pool[i].Label.Text = pool[i].LabelText;
                 pool[i].Value.Text = string.IsNullOrWhiteSpace(row?.Value) ? "--" : row.Value.Trim();
+                SetValueRowTooltip(pool[i], null, pool[i].Value.Text);
             }
         }
 
@@ -808,12 +851,16 @@ namespace VVardenfell.Runtime.UI.Shell
                 var rowRect = (RectTransform)_factionRowPool[i].Value.transform.parent;
                 rowRect.gameObject.SetActive(rowVisible);
                 if (!rowVisible)
+                {
+                    RuntimeUiPopupUtility.SetTooltip(rowRect.gameObject, null);
                     continue;
+                }
 
                 var row = factions[i];
-                if (rowRect.GetChild(0).TryGetComponent<BitmapTextGraphic>(out var nameText))
-                    nameText.Text = string.IsNullOrWhiteSpace(row?.Name) ? "--" : row.Name.Trim();
+                _factionRowPool[i].LabelText = string.IsNullOrWhiteSpace(row?.Name) ? "--" : row.Name.Trim();
+                _factionRowPool[i].Label.Text = _factionRowPool[i].LabelText;
                 _factionRowPool[i].Value.Text = string.IsNullOrWhiteSpace(row?.Rank) ? "--" : row.Rank.Trim();
+                SetValueRowTooltip(_factionRowPool[i], null, _factionRowPool[i].Value.Text);
             }
         }
 
@@ -825,7 +872,14 @@ namespace VVardenfell.Runtime.UI.Shell
             if (header.childCount > 0 && header.GetChild(0).TryGetComponent<BitmapTextGraphic>(out var headerTextGraphic))
                 headerTextGraphic.Text = headerLabel;
             if (visible)
+            {
                 valueText.Text = value.Trim();
+                RuntimeUiPopupUtility.SetTooltip(valueText.transform.parent.gameObject, $"{headerLabel}: {valueText.Text}");
+            }
+            else
+            {
+                RuntimeUiPopupUtility.SetTooltip(valueText.transform.parent.gameObject, null);
+            }
         }
 
         // ----- Bar sync --------------------------------------------------------
@@ -836,6 +890,14 @@ namespace VVardenfell.Runtime.UI.Shell
             float width = parentRect.rect.width * Mathf.Clamp01(normalizedFill);
             row.Fill.sizeDelta = new Vector2(width, 0f);
             row.Overlay.Text = string.IsNullOrWhiteSpace(text) ? "0/0" : text.Trim();
+            RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, $"{row.Label}: {row.Overlay.Text}");
+        }
+
+        static void SetValueRowTooltip(ValueRow row, string label, string value)
+        {
+            string resolvedLabel = string.IsNullOrWhiteSpace(label) ? row.LabelText : label.Trim();
+            string resolvedValue = string.IsNullOrWhiteSpace(value) ? "--" : value.Trim();
+            RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, $"{resolvedLabel}: {resolvedValue}");
         }
     }
 }

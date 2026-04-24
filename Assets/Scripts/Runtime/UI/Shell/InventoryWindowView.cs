@@ -661,10 +661,14 @@ namespace VVardenfell.Runtime.UI.Shell
                 var cell = _cells[i];
                 cell.Root.gameObject.SetActive(active);
                 if (!active)
+                {
+                    RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, null);
                     continue;
+                }
 
                 var entry = entries[i];
                 cell.InventoryIndex = entry.InventoryIndex;
+                RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, BuildItemTooltip(entry));
                 cell.Icon.sprite = _iconService.GetSprite(entry.IconPath);
                 cell.Icon.preserveAspect = true;
                 bool hasStack = !string.IsNullOrWhiteSpace(entry.CountText) && entry.CountText != "1";
@@ -699,6 +703,24 @@ namespace VVardenfell.Runtime.UI.Shell
                 ? padding * 2f
                 : padding * 2f + rowCount * cellSize + Mathf.Max(0, rowCount - 1) * spacing;
             _gridContent.sizeDelta = new Vector2(0f, totalHeight);
+        }
+
+        static string BuildItemTooltip(InventoryWindowEntryViewModel entry)
+        {
+            if (entry == null)
+                return null;
+
+            var lines = new List<string>(5);
+            lines.Add(string.IsNullOrWhiteSpace(entry.Name) ? "Unknown item" : entry.Name.Trim());
+            if (!string.IsNullOrWhiteSpace(entry.CountText) && entry.CountText.Trim() != "1")
+                lines.Add($"Count: {entry.CountText.Trim()}");
+            if (!string.IsNullOrWhiteSpace(entry.WeightText))
+                lines.Add($"Weight: {entry.WeightText.Trim()}");
+            if (!string.IsNullOrWhiteSpace(entry.ValueText))
+                lines.Add($"Value: {entry.ValueText.Trim()}");
+            if (!string.IsNullOrWhiteSpace(entry.EquippedText))
+                lines.Add(entry.EquippedText.Trim());
+            return string.Join("\n", lines);
         }
 
         CellView CreateCell(Transform parent, int index)

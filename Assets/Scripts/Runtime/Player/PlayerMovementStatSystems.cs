@@ -106,7 +106,7 @@ namespace VVardenfell.Runtime.Player
             var intent = _playerQuery.GetSingleton<MorrowindMovementIntent>();
             var trace = _playerQuery.GetSingleton<MorrowindMovementFrameTrace>();
 
-            vitals.ModifiedFatigueBase = MorrowindActorMovementStats.ComputeModifiedFatigueBase(attributes);
+            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: false);
             var context = MorrowindPlayerSpeedResolver.Build(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, derived);
 
             float fatigue = vitals.CurrentFatigue;
@@ -150,7 +150,7 @@ namespace VVardenfell.Runtime.Player
             ref var vitals = ref _playerQuery.GetSingletonRW<ActorVitalSet>().ValueRW;
             var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
             ref var derived = ref _playerQuery.GetSingletonRW<ActorDerivedMovementStats>().ValueRW;
-            vitals.ModifiedFatigueBase = MorrowindActorMovementStats.ComputeModifiedFatigueBase(attributes);
+            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: false);
             MorrowindActorMovementStats.ApplyMovementDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, ref derived);
         }
     }

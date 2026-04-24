@@ -119,8 +119,12 @@ namespace VVardenfell.Runtime.Movement
             if (math.lengthsq(velocity) > MinMoveEpsilon)
                 MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref trace);
 
-            bool allowGroundedRecoveryFallback = wasGrounded && kinematic.StuckFrames > 0;
-            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f || kinematic.StuckFrames > 0;
+            // A stale grounded flag can survive focus loss or save replay while the
+            // player is actually airborne. Always probe for real support during the
+            // normal movement path; recovery fallback is only safe for explicit stuck
+            // recovery.
+            bool allowGroundedRecoveryFallback = false;
+            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f;
             var support = shouldResolveSupport
                 ? FindGroundSupport(
                     entityManager,
@@ -150,7 +154,6 @@ namespace VVardenfell.Runtime.Movement
 
             trace.FinalVelocity = velocity;
             trace.EndPosition = position;
-            UpdateStuckState(ref kinematic, trace.StartPosition, trace.EndPosition, velocity, dt);
             return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
         }
     }

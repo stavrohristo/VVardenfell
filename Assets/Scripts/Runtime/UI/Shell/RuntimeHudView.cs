@@ -51,6 +51,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Image _weaponStatusFill;
         readonly Image _spellStatusFill;
         readonly RectTransform _sneakSlotRow;
+        LocalMapTileGridView _miniMapGrid;
 
         public RuntimeHudView(RectTransform parent, RuntimeUiTheme theme)
         {
@@ -135,6 +136,7 @@ namespace VVardenfell.Runtime.UI.Shell
             if (model.ShowEnemyHealth)
                 SetBarFill(_enemyHealthFill, model.EnemyHealthFillNormalized);
             _sneakSlotRow.gameObject.SetActive(model.ShowSneakIndicator);
+            _miniMapGrid.Sync(model.LocalMap);
         }
 
         // Vanilla stacks the bars at y = 176 / 161 / 146 / 131 (fatigue / magicka / health / enemy)
@@ -376,29 +378,20 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeUiFactory.ResolveThinFrame(_theme),
                 new Color(0f, 0f, 0f, 0.82f));
             RuntimeUiFactory.Stretch(miniMapFrame.Root);
-            var miniMapFace = RuntimeUiFactory.CreateImage("MiniMapFace", miniMapFrame.Client, new Color(0.16f, 0.17f, 0.12f, 0.92f));
-            RuntimeUiFactory.SetInset(
-                miniMapFace.rectTransform,
-                RuntimeClassicUiMetrics.HudLayout(2f),
-                RuntimeClassicUiMetrics.HudLayout(2f),
-                RuntimeClassicUiMetrics.HudLayout(-2f),
-                RuntimeClassicUiMetrics.HudLayout(-2f));
-            miniMapFace.raycastTarget = false;
-
-            // Vanilla minimap compass - baked from Textures/compass.dds. In vanilla MW this
-            // is a 32x32 sprite overlaid on the minimap, rotated at runtime to match the
-            // player's facing. For now we render it statically centered on the minimap
-            // face; rotation can be wired once actor heading is available.
-            var compass = RuntimeUiFactory.CreateImage("Compass", miniMapFrame.Client, Color.white);
-            compass.sprite = _theme.CompassSprite;
-            compass.type = Image.Type.Simple;
-            compass.preserveAspect = true;
-            compass.raycastTarget = false;
-            compass.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
-            compass.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
-            compass.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            compass.rectTransform.anchoredPosition = Vector2.zero;
-            compass.rectTransform.sizeDelta = RuntimeClassicUiMetrics.HudLayout(new Vector2(32f, 32f));
+            var miniMapFace = RuntimeUiFactory.CreateAnchorRect(
+                "MiniMapFace",
+                miniMapFrame.Client,
+                Vector2.zero,
+                Vector2.one,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(RuntimeClassicUiMetrics.HudLayout(2f), RuntimeClassicUiMetrics.HudLayout(2f)),
+                new Vector2(-RuntimeClassicUiMetrics.HudLayout(2f), -RuntimeClassicUiMetrics.HudLayout(2f)));
+            _miniMapGrid = new LocalMapTileGridView(
+                "MiniMapGrid",
+                miniMapFace,
+                _theme,
+                RuntimeClassicUiMetrics.HudLayout(new Vector2(32f, 32f)),
+                new Color(0.16f, 0.17f, 0.12f, 0.92f));
             return cellName;
         }
 

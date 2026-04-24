@@ -1,13 +1,16 @@
-﻿using System;
+using System;
 using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Core;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
-using VVardenfell.Runtime.UI.Shell;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.Shell
 {
@@ -27,6 +30,7 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<ActorSkillSet>(),
                 ComponentType.ReadOnly<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorDerivedMovementStats>(),
+                ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<PlayerKnownSpell>());
 
             RequireForUpdate<RuntimeShellState>();
@@ -79,12 +83,6 @@ namespace VVardenfell.Runtime.Shell
             var containerItems = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var playerStats = BuildPlayerPresentationStats();
             var location = BuildLocationPresentation(RuntimeContentDatabase.Active);
-            // MW_Window_Pinnable rule: the inventory-group subwindows
-            // (Inventory / Stats / Spell / Map) render whenever the group is
-            // open, OR — if the group is closed — whenever their own Pinned
-            // byte is set. Pinned subwindows stay visible through the menu
-            // canvas while the player runs around. Container is not part of
-            // the pin group.
             bool suiteOpen = shell.InventoryOpen != 0 && shell.ContainerOpen == 0;
             bool inventoryVisible = suiteOpen || (shell.ContainerOpen == 0 && inventoryState.Pinned != 0);
             bool statsVisible = suiteOpen || (shell.ContainerOpen == 0 && statsState.Pinned != 0);
@@ -100,14 +98,16 @@ namespace VVardenfell.Runtime.Shell
                 ? BuildContainerModel(RuntimeContentDatabase.Active, containerState, containerItems)
                 : null;
             bool visible = !BootstrapPresentationGate.BlocksGameplayInput;
-            // HUD lives on its own canvas at a lower sortingOrder than the menu
-            // canvas, so windows that open (inventory, pause, options, save/load,
-            // modals, etc.) naturally draw over the HUD while the gauges stay
-            // visible behind them. The only gate that fully hides the HUD is
-            // HudVisible itself, which the shell state system drops to 0 during
-            // bootstrap / loading screens.
             bool showHud = shell.HudVisible != 0;
-            RuntimeHudViewModel hudModel = BuildHudModel(showHud, interaction, playerStats, location);
+            RuntimeHudViewModel hudModel = BuildHudModel(
+                showHud,
+                RuntimeContentDatabase.Active,
+                interaction,
+                playerStats,
+                location,
+                inventoryState,
+                inventory,
+                spellState);
             StatsWindowViewModel statsModel = statsVisible
                 ? BuildStatsModel(RuntimeContentDatabase.Active, statsState, playerStats)
                 : null;
@@ -119,7 +119,7 @@ namespace VVardenfell.Runtime.Shell
             if (spellModel != null)
                 spellModel.Pinned = spellState.Pinned != 0;
             MapWindowViewModel mapModel = mapVisible
-                ? BuildMapModel(mapState, location)
+                ? BuildMapModel(mapState, location, playerStats)
                 : null;
             if (mapModel != null)
                 mapModel.Pinned = mapState.Pinned != 0;
@@ -151,7 +151,18 @@ namespace VVardenfell.Runtime.Shell
 
             var vitals = _playerStatsQuery.GetSingleton<ActorVitalSet>();
             var derived = _playerStatsQuery.GetSingleton<ActorDerivedMovementStats>();
+            var transform = _playerStatsQuery.GetSingleton<LocalTransform>();
             var playerEntity = _playerStatsQuery.GetSingletonEntity();
+            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            var exteriorCell = new int2(
+                (int)math.floor(transform.Position.x / cellMeters),
+                (int)math.floor(transform.Position.z / cellMeters));
+            var cellNormalized = new float2(
+                math.saturate((transform.Position.x - exteriorCell.x * cellMeters) / cellMeters),
+                math.saturate((transform.Position.z - exteriorCell.y * cellMeters) / cellMeters));
+            float3 forward = math.mul(transform.Rotation, new float3(0f, 0f, 1f));
+            float headingDegrees = math.degrees(math.atan2(forward.x, forward.z));
+
             return new PlayerPresentationStats(
                 true,
                 playerEntity,
@@ -160,11 +171,19 @@ namespace VVardenfell.Runtime.Shell
                 _playerStatsQuery.GetSingleton<ActorSkillSet>(),
                 vitals,
                 derived,
+                transform.Position,
+                transform.Rotation,
+                cellNormalized,
+                exteriorCell,
+                headingDegrees,
+                Normalize(vitals.CurrentHealth, vitals.ModifiedHealthBase),
+                Normalize(vitals.CurrentMagicka, vitals.ModifiedMagickaBase),
                 Normalize(vitals.CurrentFatigue, vitals.ModifiedFatigueBase),
                 derived.CarryCapacity > 0f
                     ? Math.Clamp(derived.Encumbrance / derived.CarryCapacity, 0f, 1f)
                     : 0f);
         }
+
         static float Normalize(float current, float max)
         {
             if (max <= 0f)
@@ -174,4 +193,3 @@ namespace VVardenfell.Runtime.Shell
         }
     }
 }
-

@@ -225,24 +225,5 @@ namespace VVardenfell.Runtime.Movement
             return normal * math.dot(direction, normal);
         }
 
-        static void UpdateStuckState(
-            ref MorrowindActorKinematicState kinematic,
-            float3 startPosition,
-            float3 endPosition,
-            float3 attemptedVelocity,
-            float dt)
-        {
-            bool attemptedMeaningfulMove = math.lengthsq(attemptedVelocity) * dt * dt > 0.000001f;
-            bool barelyMoved = math.lengthsq(endPosition - startPosition) < 0.000001f;
-            if (attemptedMeaningfulMove && barelyMoved)
-            {
-                kinematic.StuckFrames++;
-                kinematic.LastStuckPosition = endPosition;
-            }
-            else
-            {
-                kinematic.StuckFrames = 0;
-            }
-        }
     }
 }

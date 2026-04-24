@@ -282,6 +282,22 @@ namespace VVardenfell.Runtime.UI.Shell
             return true;
         }
 
+        public static bool TrySetSpellFilterText(string text, out string error)
+        {
+            if (!TryGetSpellRequestSingleton(out var em, out Entity entity, out error))
+                return false;
+
+            if (text != null && text.Length > 63)
+                text = text.Substring(0, 63);
+
+            var request = em.GetComponentData<SpellWindowRequest>(entity);
+            request.PendingFilterTextChange = 1;
+            request.FilterText = string.IsNullOrEmpty(text) ? default : text;
+            em.SetComponentData(entity, request);
+            error = null;
+            return true;
+        }
+
         public static bool TrySetMapWindowRect(Rect normalizedRect, out string error)
         {
             if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
@@ -293,6 +309,47 @@ namespace VVardenfell.Runtime.UI.Shell
             request.NormalizedY = normalizedRect.y;
             request.NormalizedWidth = normalizedRect.width;
             request.NormalizedHeight = normalizedRect.height;
+            em.SetComponentData(entity, request);
+            error = null;
+            return true;
+        }
+
+        public static bool TrySetMapWindowMode(MapWindowMode mode, out string error)
+        {
+            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
+                return false;
+
+            var request = em.GetComponentData<MapWindowRequest>(entity);
+            request.PendingModeChange = 1;
+            request.Mode = (byte)mode;
+            em.SetComponentData(entity, request);
+            error = null;
+            return true;
+        }
+
+        public static bool TrySetMapViewport(MapWindowMode mode, float panX, float panY, float zoom, out string error)
+        {
+            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
+                return false;
+
+            var request = em.GetComponentData<MapWindowRequest>(entity);
+            request.PendingViewportChange = 1;
+            request.ViewportMode = (byte)mode;
+            request.PanX = panX;
+            request.PanY = panY;
+            request.Zoom = zoom;
+            em.SetComponentData(entity, request);
+            error = null;
+            return true;
+        }
+
+        public static bool TryCenterMapOnPlayer(out string error)
+        {
+            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
+                return false;
+
+            var request = em.GetComponentData<MapWindowRequest>(entity);
+            request.PendingCenterOnPlayer = 1;
             em.SetComponentData(entity, request);
             error = null;
             return true;

@@ -49,6 +49,10 @@ namespace VVardenfell.Runtime.Components
 
     public struct ActorVitalSet : IComponentData
     {
+        public float CurrentHealth;
+        public float ModifiedHealthBase;
+        public float CurrentMagicka;
+        public float ModifiedMagickaBase;
         public float CurrentFatigue;
         public float ModifiedFatigueBase;
     }

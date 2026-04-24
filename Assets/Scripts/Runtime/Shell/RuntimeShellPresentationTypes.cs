@@ -1,4 +1,5 @@
-﻿using Unity.Entities;
+using Unity.Entities;
+using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Shell
@@ -12,6 +13,13 @@ namespace VVardenfell.Runtime.Shell
         public readonly ActorSkillSet Skills;
         public readonly ActorVitalSet Vitals;
         public readonly ActorDerivedMovementStats DerivedMovement;
+        public readonly float3 Position;
+        public readonly quaternion Rotation;
+        public readonly float2 CellNormalizedPosition;
+        public readonly int2 ExteriorCell;
+        public readonly float HeadingDegrees;
+        public readonly float HealthFill;
+        public readonly float MagickaFill;
         public readonly float FatigueFill;
         public readonly float EncumbranceFill;
 
@@ -23,6 +31,13 @@ namespace VVardenfell.Runtime.Shell
             in ActorSkillSet skills,
             in ActorVitalSet vitals,
             in ActorDerivedMovementStats derivedMovement,
+            float3 position,
+            quaternion rotation,
+            float2 cellNormalizedPosition,
+            int2 exteriorCell,
+            float headingDegrees,
+            float healthFill,
+            float magickaFill,
             float fatigueFill,
             float encumbranceFill)
         {
@@ -33,6 +48,13 @@ namespace VVardenfell.Runtime.Shell
             Skills = skills;
             Vitals = vitals;
             DerivedMovement = derivedMovement;
+            Position = position;
+            Rotation = rotation;
+            CellNormalizedPosition = cellNormalizedPosition;
+            ExteriorCell = exteriorCell;
+            HeadingDegrees = headingDegrees;
+            HealthFill = healthFill;
+            MagickaFill = magickaFill;
             FatigueFill = fatigueFill;
             EncumbranceFill = encumbranceFill;
         }
@@ -47,4 +69,3 @@ namespace VVardenfell.Runtime.Shell
         public string StreamingText;
     }
 }
-

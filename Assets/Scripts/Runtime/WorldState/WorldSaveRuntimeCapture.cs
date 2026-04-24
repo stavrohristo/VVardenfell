@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.WorldState
@@ -65,6 +66,8 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < spellBuffer.Length; i++)
                     knownSpells[i] = spellBuffer[i];
             }
+            var exteriorMapDiscovery = CaptureExteriorMapDiscovery(entityManager);
+            var globalMapOverlay = GlobalMapPresentationCache.CaptureOverlayPayload();
 
             payload = new WorldSavePayload
             {
@@ -80,8 +83,41 @@ namespace VVardenfell.Runtime.WorldState
                 JournalEntries = journalEntries,
                 Inventory = inventoryEntries,
                 KnownSpells = knownSpells,
+                ExteriorMapDiscovery = exteriorMapDiscovery,
+                GlobalMapOverlay = globalMapOverlay,
             };
             return true;
+        }
+
+        static LocalMapDiscoveryTilePayload[] CaptureExteriorMapDiscovery(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ExteriorMapDiscoveryTile>(),
+                ComponentType.ReadOnly<ExteriorMapDiscoverySample>());
+            int count = query.CalculateEntityCount();
+            if (count == 0)
+                return Array.Empty<LocalMapDiscoveryTilePayload>();
+
+            using var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using var tiles = query.ToComponentDataArray<ExteriorMapDiscoveryTile>(Unity.Collections.Allocator.Temp);
+            var payloads = new LocalMapDiscoveryTilePayload[entities.Length];
+            for (int i = 0; i < entities.Length; i++)
+            {
+                var samples = entityManager.GetBuffer<ExteriorMapDiscoverySample>(entities[i]);
+                var alpha = new byte[samples.Length];
+                for (int s = 0; s < samples.Length; s++)
+                    alpha[s] = samples[s].Alpha;
+
+                int resolution = samples.Length > 0 ? (int)Math.Round(Math.Sqrt(samples.Length)) : 0;
+                payloads[i] = new LocalMapDiscoveryTilePayload
+                {
+                    Cell = tiles[i].Cell,
+                    Resolution = resolution,
+                    Alpha = alpha,
+                };
+            }
+
+            return payloads;
         }
     }
 }

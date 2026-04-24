@@ -40,8 +40,6 @@ namespace VVardenfell.Runtime.Movement
         public bool OnSlope;
         public bool WalkingOnWater;
         public Entity StandingOn;
-        public uint StuckFrames;
-        public float3 LastStuckPosition;
     }
 
     public struct MorrowindMovementTuning : IComponentData

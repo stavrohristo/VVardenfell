@@ -16,6 +16,26 @@ namespace VVardenfell.Runtime.WorldState
         public uint NextRuntimeRefId;
         public PlayerInventoryItem[] Inventory;
         public PlayerKnownSpell[] KnownSpells;
+        public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
+        public GlobalMapOverlayPayload GlobalMapOverlay;
         public WorldJournalEntry[] JournalEntries;
+    }
+
+    public struct LocalMapDiscoveryTilePayload
+    {
+        public int2 Cell;
+        public int Resolution;
+        public byte[] Alpha;
+    }
+
+    public struct GlobalMapOverlayPayload
+    {
+        public int2 MinCell;
+        public int2 MaxCell;
+        public int CellPixelSize;
+        public int Width;
+        public int Height;
+        public int2[] VisitedCells;
+        public byte[] PngBytes;
     }
 }

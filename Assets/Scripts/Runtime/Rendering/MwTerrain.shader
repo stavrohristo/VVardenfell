@@ -58,6 +58,8 @@ Shader "VVardenfell/MwTerrain"
                 float _SplatSize;
             CBUFFER_END
 
+            float _VV_LocalMapRender;
+
             struct Attributes
             {
                 float3 positionOS : POSITION;
@@ -143,6 +145,9 @@ Shader "VVardenfell/MwTerrain"
                 float4 cx0 = lerp(c00, c10, f.x);
                 float4 cx1 = lerp(c01, c11, f.x);
                 float3 albedo = lerp(cx0, cx1, f.y).rgb;
+
+                if (_VV_LocalMapRender > 0.5)
+                    return half4(albedo, 1.0);
 
                 // Minimal Lambert + ambient + main-light shadows. Compute shadow
                 // coord per-pixel from positionWS so cascade selection is per-pixel

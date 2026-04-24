@@ -15,14 +15,14 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 28;
+        public const uint FormatVersion = 29;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 14;
+        public const uint WorldBakePipelineVersion = 15;
         public const uint GameplayContentVersion = 6;
 
         /// <summary>
@@ -58,6 +58,7 @@ namespace VVardenfell.Core.Cache
         public const uint CellFlagHasVtex            = 1 << 2;
         public const uint CellFlagHasStaticCollision = 1 << 3;  // per-cell combined STAT triangle soup
         public const uint CellFlagHasEnvironment     = 1 << 4;
+        public const uint CellFlagHasWorldMap        = 1 << 5;  // LAND WNAM 9x9 global-map color indices
     }
 
     public enum RefSpawnMode : int

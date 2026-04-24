@@ -106,20 +106,23 @@ namespace VVardenfell.Runtime.Movement
 
         public static ActorRuntimeStatSeed CreateDefaultPlayerSeed()
         {
-            float fatigueBase = 40f + 40f + 40f + 40f;
+            var attributes = new ActorAttributeSet
+            {
+                Strength = 40f,
+                Intelligence = 40f,
+                Willpower = 40f,
+                Agility = 40f,
+                Speed = 40f,
+                Endurance = 40f,
+                Personality = 40f,
+                Luck = 40f,
+            };
+
+            var vitals = new ActorVitalSet();
+            ApplyVitalBases(null, attributes, ref vitals, initializeMissingCurrents: true);
             return new ActorRuntimeStatSeed
             {
-                Attributes = new ActorAttributeSet
-                {
-                    Strength = 40f,
-                    Intelligence = 40f,
-                    Willpower = 40f,
-                    Agility = 40f,
-                    Speed = 40f,
-                    Endurance = 40f,
-                    Personality = 40f,
-                    Luck = 40f,
-                },
+                Attributes = attributes,
                 Skills = new ActorSkillSet
                 {
                     Block = 30f,
@@ -150,11 +153,7 @@ namespace VVardenfell.Runtime.Movement
                     Speechcraft = 30f,
                     HandToHand = 30f,
                 },
-                Vitals = new ActorVitalSet
-                {
-                    CurrentFatigue = fatigueBase,
-                    ModifiedFatigueBase = fatigueBase,
-                },
+                Vitals = vitals,
                 EffectModifiers = new ActorEffectStatModifiers
                 {
                     JumpMagnitude = 0f,
@@ -184,6 +183,37 @@ namespace VVardenfell.Runtime.Movement
 
         public static float ComputeModifiedFatigueBase(in ActorAttributeSet attributes)
             => math.max(0f, attributes.Strength + attributes.Willpower + attributes.Agility + attributes.Endurance);
+
+        public static float ComputeModifiedHealthBase(in ActorAttributeSet attributes)
+            => math.max(1f, (attributes.Strength + attributes.Endurance) * 0.5f);
+
+        public static float ComputeModifiedMagickaBase(RuntimeContentDatabase contentDb, in ActorAttributeSet attributes)
+            => math.max(0f, attributes.Intelligence * Gmst(contentDb, "fPCbaseMagickaMult", 1f));
+
+        public static void ApplyVitalBases(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attributes,
+            ref ActorVitalSet vitals,
+            bool initializeMissingCurrents)
+        {
+            vitals.ModifiedHealthBase = ComputeModifiedHealthBase(attributes);
+            vitals.ModifiedMagickaBase = ComputeModifiedMagickaBase(contentDb, attributes);
+            vitals.ModifiedFatigueBase = ComputeModifiedFatigueBase(attributes);
+
+            if (initializeMissingCurrents)
+            {
+                if (vitals.CurrentHealth <= 0f)
+                    vitals.CurrentHealth = vitals.ModifiedHealthBase;
+                if (vitals.CurrentMagicka <= 0f)
+                    vitals.CurrentMagicka = vitals.ModifiedMagickaBase;
+                if (vitals.CurrentFatigue <= 0f)
+                    vitals.CurrentFatigue = vitals.ModifiedFatigueBase;
+            }
+
+            vitals.CurrentHealth = ClampVital(vitals.CurrentHealth, vitals.ModifiedHealthBase);
+            vitals.CurrentMagicka = ClampVital(vitals.CurrentMagicka, vitals.ModifiedMagickaBase);
+            vitals.CurrentFatigue = ClampVital(vitals.CurrentFatigue, vitals.ModifiedFatigueBase);
+        }
 
         public static float ComputeCarryCapacity(RuntimeContentDatabase contentDb, in ActorAttributeSet attributes)
             => math.max(0f, attributes.Strength * Gmst(contentDb, "fEncumbranceStrMult", 5f));
@@ -288,6 +318,14 @@ namespace VVardenfell.Runtime.Movement
             builder.Append(skills.Athletics.ToString("F0"));
             builder.Append(" acro=");
             builder.Append(skills.Acrobatics.ToString("F0"));
+            builder.Append(" health=");
+            builder.Append(vitals.CurrentHealth.ToString("F1"));
+            builder.Append("/");
+            builder.Append(vitals.ModifiedHealthBase.ToString("F1"));
+            builder.Append(" magicka=");
+            builder.Append(vitals.CurrentMagicka.ToString("F1"));
+            builder.Append("/");
+            builder.Append(vitals.ModifiedMagickaBase.ToString("F1"));
             builder.Append(" fatigue=");
             builder.Append(vitals.CurrentFatigue.ToString("F1"));
             builder.Append("/");
@@ -320,6 +358,17 @@ namespace VVardenfell.Runtime.Movement
             if (contentDb != null && contentDb.TryGetGameSettingFloat(id, out float value))
                 return value;
             return fallback;
+        }
+
+        static float ClampVital(float current, float max)
+        {
+            if (max <= 0f)
+                return 0f;
+
+            if (float.IsNaN(current) || float.IsInfinity(current))
+                return max;
+
+            return math.clamp(current, 0f, max);
         }
     }
 

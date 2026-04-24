@@ -87,6 +87,8 @@ Shader "VVardenfell/MwRef"
             #define _Slice UNITY_ACCESS_DOTS_INSTANCED_PROP_WITH_DEFAULT(float, _Slice)
             #endif
 
+            float _VV_LocalMapRender;
+
             struct Attributes
             {
                 float3 positionOS : POSITION;
@@ -133,6 +135,15 @@ Shader "VVardenfell/MwRef"
                 #ifdef _ALPHATEST_ON
                 clip(albedo.a - _Cutoff);
                 #endif
+
+                if (_VV_LocalMapRender > 0.5)
+                {
+                    #ifdef _SURFACE_TYPE_TRANSPARENT
+                    return half4(albedo.rgb, albedo.a);
+                    #else
+                    return half4(albedo.rgb, 1.0);
+                    #endif
+                }
 
                 // Per-pixel shadow coord — cascade selection is distance-based, so
                 // baking it per-vertex produces ring seams on large refs (same issue

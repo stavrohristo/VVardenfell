@@ -130,6 +130,13 @@ namespace VVardenfell.Importer.Esm
                     land.Colors = ReadBytes(esm, 3 * LandRecord.NumVerts);
                     if (esm.SubrecordBytesLeft > 0) esm.SkipSubrecord();
                 }
+                else if (sub.Tag == EsmFourCC.WNAM && sub.Size >= 81)
+                {
+                    var bytes = ReadBytes(esm, 81);
+                    land.WorldMap = new sbyte[bytes.Length];
+                    for (int i = 0; i < bytes.Length; i++) land.WorldMap[i] = (sbyte)bytes[i];
+                    if (esm.SubrecordBytesLeft > 0) esm.SkipSubrecord();
+                }
                 else if (sub.Tag == EsmFourCC.VTEX && sub.Size >= 2 * LandRecord.NumTextures)
                 {
                     // Morrowind's on-disk layout chops the 16x16 grid into sixteen 4x4 blocks stored

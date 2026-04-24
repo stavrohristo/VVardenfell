@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.Cache
         public bool HasTerrain;
         public float[] Heights;        // null if !HasTerrain; length = 65 * 65
         public sbyte[] Normals;        // null if absent; length = 3 * 65 * 65
+        public sbyte[] WorldMap;       // null if absent; length = 9 * 9, LAND WNAM signed color indices
         public ushort[] LayerGrid;     // null if absent; length = 16 * 16, dense bakery layer indices
 
         // Pre-built Unity Physics blobs. The combined STAT blob covers every non-interactable
@@ -71,6 +72,7 @@ namespace VVardenfell.Runtime.Cache
                 bool hasVtex;
                 bool hasStaticCollision;
                 bool hasEnvironment;
+                bool hasWorldMap;
 
                 using (k_ReadHeader.Auto())
                 {
@@ -100,6 +102,7 @@ namespace VVardenfell.Runtime.Cache
                     hasVtex = (flags & CacheFormat.CellFlagHasVtex) != 0;
                     hasStaticCollision = (flags & CacheFormat.CellFlagHasStaticCollision) != 0;
                     hasEnvironment = (flags & CacheFormat.CellFlagHasEnvironment) != 0;
+                    hasWorldMap = (flags & CacheFormat.CellFlagHasWorldMap) != 0;
                 }
 
                 if (hasEnvironment)
@@ -150,6 +153,15 @@ namespace VVardenfell.Runtime.Cache
                             for (int i = 0; i < cell.LayerGrid.Length; i++)
                                 cell.LayerGrid[i] = r.ReadUInt16();
                         }
+                    }
+
+                    if (hasWorldMap)
+                    {
+                        currentSection = "world map";
+                        EnsureRemaining(r, 81, path, cellId, isInterior, currentSection);
+                        cell.WorldMap = new sbyte[81];
+                        for (int i = 0; i < cell.WorldMap.Length; i++)
+                            cell.WorldMap[i] = r.ReadSByte();
                     }
                 }
 

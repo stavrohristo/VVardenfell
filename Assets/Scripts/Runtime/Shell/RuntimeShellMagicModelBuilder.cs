@@ -18,7 +18,7 @@ namespace VVardenfell.Runtime.Shell
             {
                 NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
                 Title = "Magic",
-                FilterText = string.Empty,
+                FilterText = state.FilterText.ToString(),
                 FooterButtonText = "Delete",
                 EmptyStateText = "No known spells",
                 SpellSummaryText = $"Known spells: 0   Cached definitions: {spellCount}",
@@ -31,6 +31,7 @@ namespace VVardenfell.Runtime.Shell
             var knownSpells = EntityManager.GetBuffer<PlayerKnownSpell>(playerStats.PlayerEntity);
             var entries = new List<SpellWindowEntryViewModel>(knownSpells.Length);
             int selectedIndex = knownSpells.Length == 0 ? -1 : Math.Clamp(state.SelectedSpellIndex, 0, knownSpells.Length - 1);
+            string filter = state.FilterText.ToString();
             for (int i = 0; i < knownSpells.Length; i++)
             {
                 var spellHandle = knownSpells[i].Spell;
@@ -38,8 +39,12 @@ namespace VVardenfell.Runtime.Shell
                     continue;
 
                 ref readonly var spell = ref contentDb.Get(spellHandle);
+                if (!MatchesSpellFilter(spell, filter))
+                    continue;
+
                 entries.Add(new SpellWindowEntryViewModel
                 {
+                    SpellIndex = i,
                     Name = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim(),
                     CostText = spell.Cost.ToString(),
                     TypeText = ResolveSpellTypeName(spell.SpellType),
@@ -49,6 +54,9 @@ namespace VVardenfell.Runtime.Shell
 
             model.Entries = entries.ToArray();
             model.SpellSummaryText = $"Known spells: {entries.Count}   Cached definitions: {spellCount}";
+            model.EmptyStateText = entries.Count == 0 && !string.IsNullOrWhiteSpace(filter)
+                ? $"No spells match \"{filter.Trim()}\""
+                : "No known spells";
             if (selectedIndex >= 0 && selectedIndex < knownSpells.Length)
             {
                 var spellHandle = knownSpells[selectedIndex].Spell;
@@ -61,6 +69,20 @@ namespace VVardenfell.Runtime.Shell
             }
 
             return model;
+        }
+
+        static bool MatchesSpellFilter(in SpellDef spell, string filter)
+        {
+            if (string.IsNullOrWhiteSpace(filter))
+                return true;
+
+            string needle = filter.Trim();
+            if (!string.IsNullOrWhiteSpace(spell.Name) && spell.Name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            if (!string.IsNullOrWhiteSpace(spell.Id) && spell.Id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            return ResolveSpellTypeName(spell.SpellType).IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static SpellWindowEffectRow[] BuildSpellEffectRows(RuntimeContentDatabase contentDb, in SpellDef spell)

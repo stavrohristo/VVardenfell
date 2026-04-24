@@ -1,7 +1,9 @@
+using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
@@ -22,6 +24,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_focusQuery);
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<DialogueReadinessState>();
+            RequireForUpdate<RuntimeShellState>();
         }
 
         protected override void OnUpdate()
@@ -61,6 +64,8 @@ namespace VVardenfell.Runtime.Interactions
                 : default;
             dialogue.LastActivationSequence = sequence;
 
+            ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
+            RuntimeShellStateUtility.ShowDialog(ref shell, displayName, "Dialogue is not implemented yet.");
 
             ClearFocus();
 
@@ -97,6 +102,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_requestQuery);
             RequireForUpdate(_focusQuery);
             RequireForUpdate<InteractionActivationResult>();
+            RequireForUpdate<RuntimeShellState>();
         }
 
         protected override void OnUpdate()
@@ -131,9 +137,11 @@ namespace VVardenfell.Runtime.Interactions
             ref var result = ref SystemAPI.GetSingletonRW<InteractionActivationResult>().ValueRW;
             result.Sequence = sequence;
             result.Kind = (byte)InteractableKind.Activator;
-            result.Success = 0;
-            result.PendingNotification = 0;
-            result.NotificationText = default;
+            result.Success = 1;
+            result.PendingNotification = 1;
+            result.NotificationText = ToFixedString(string.IsNullOrWhiteSpace(displayName)
+                ? "Nothing happens."
+                : $"{displayName}: Nothing happens.");
         }
 
         void ClearFocus()
@@ -143,6 +151,17 @@ namespace VVardenfell.Runtime.Interactions
             {
                 TargetEntity = Entity.Null,
             };
+        }
+
+        static FixedString128Bytes ToFixedString(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return default;
+
+            if (value.Length > 127)
+                value = value.Substring(0, 127);
+
+            return new FixedString128Bytes(value);
         }
     }
 

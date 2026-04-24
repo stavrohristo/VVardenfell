@@ -21,6 +21,7 @@ namespace VVardenfell.Importer.Esm
         public float[] Heights; // size NumVerts, absolute heights in MW units
         public sbyte[] Normals; // optional, 3 * NumVerts, may be null
         public byte[] Colors;   // optional, 3 * NumVerts, may be null
+        public sbyte[] WorldMap; // optional WNAM 9x9 signed color indices for OpenMW-style global map
         public ushort[] VtexIndices; // optional, 256 entries (row-major, already un-transposed); null if absent
     }
 }

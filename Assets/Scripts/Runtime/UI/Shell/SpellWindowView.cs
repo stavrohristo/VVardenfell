@@ -83,7 +83,9 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeWindowDragHandle _dragHandle;
         readonly RuntimeWindowResizeHandle _resizeHandle;
         readonly Action<int> _onSelectionChanged;
+        readonly Action<string> _onFilterChanged;
 
+        readonly GameObject _effectsTooltipTarget;
         readonly BitmapTextGraphic _effectsSummaryText;
         readonly BitmapTextGraphic _emptyText;
         readonly RectTransform _listClient;
@@ -91,6 +93,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeUiTextInputView _filterInput;
         readonly MorrowindButtonView _deleteButton;
         readonly List<SpellRow> _spellRows = new();
+        bool _suppressFieldEvents;
 
         public SpellWindowView(
             RectTransform parent,
@@ -98,11 +101,13 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiTheme theme,
             Action onRectChanged,
             Action<int> onSelectionChanged,
+            Action<string> onFilterChanged,
             Action onPinToggled = null)
         {
             _theme = theme;
             _viewport = viewport;
             _onSelectionChanged = onSelectionChanged;
+            _onFilterChanged = onFilterChanged;
 
             _window = RuntimeUiFactory.CreateMorrowindWindow(
                 "SpellWindow",
@@ -129,7 +134,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeClassicUiMetrics.Ui(new Vector2(MinWindowWidth, MinWindowHeight)),
                 onRectChanged);
 
-            (_effectsSummaryText, _listClient, _rowsRoot, _emptyText, _filterInput, _deleteButton) = BuildClient();
+            (_effectsTooltipTarget, _effectsSummaryText, _listClient, _rowsRoot, _emptyText, _filterInput, _deleteButton) = BuildClient();
+            _filterInput.InputField.onValueChanged.AddListener(OnFilterValueChanged);
         }
 
         public RectTransform Root => _window.Root;
@@ -166,6 +172,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _effectsSummaryText.Text = string.IsNullOrWhiteSpace(model.EffectSummaryText)
                 ? "No spell selected"
                 : model.EffectSummaryText.Trim();
+            RuntimeUiPopupUtility.SetTooltip(_effectsTooltipTarget, BuildEffectsTooltip(model));
 
             SyncSpellRows(model.Entries ?? Array.Empty<SpellWindowEntryViewModel>());
 
@@ -182,6 +189,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 "Filter",
                 BodyTextColor,
                 new Color(0.58f, 0.55f, 0.52f));
+            SyncFilterText(model.FilterText);
 
             // Delete button caption comes from the view model (typically "Delete").
             string deleteLabel = string.IsNullOrWhiteSpace(model.FooterButtonText) ? "Delete" : model.FooterButtonText.Trim();
@@ -190,7 +198,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         // ----- Build ------------------------------------------------------------
 
-        (BitmapTextGraphic effects, RectTransform listClient, RectTransform rowsRoot, BitmapTextGraphic emptyText, RuntimeUiTextInputView filterInput, MorrowindButtonView deleteButton) BuildClient()
+        (GameObject effectsTooltipTarget, BitmapTextGraphic effects, RectTransform listClient, RectTransform rowsRoot, BitmapTextGraphic emptyText, RuntimeUiTextInputView filterInput, MorrowindButtonView deleteButton) BuildClient()
         {
             float margin = RuntimeClassicUiMetrics.Ui(Margin);
             float effectsHeight = RuntimeClassicUiMetrics.Ui(EffectsStripHeight);
@@ -214,6 +222,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeUiFactory.ResolveThinFrame(_theme),
                 EffectsBoxCenterColor);
             RuntimeUiFactory.Stretch(effectsFrame.Root);
+            effectsFrame.Center.raycastTarget = true;
 
             var effectsText = RuntimeUiFactory.CreateBitmapText(
                 "Summary",
@@ -274,8 +283,8 @@ namespace VVardenfell.Runtime.UI.Shell
             filterInput.OverlayText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             // Read-only until the shell wires the filter callback; vanilla MW type-ahead
             // maps to the same Bridge pipeline as inventory filter — not yet exposed here.
-            filterInput.InputField.readOnly = true;
-            filterInput.InputField.interactable = false;
+            filterInput.InputField.readOnly = false;
+            filterInput.InputField.interactable = true;
 
             // Delete button pinned to the right side of the bottom row.
             var deleteRoot = RuntimeUiFactory.CreateAnchorRect(
@@ -354,7 +363,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _ = margin; // Margin is implicit via anchored offsets above; kept for docs.
 
-            return (effectsText, listFrame.Client, rowsRoot, emptyText, filterInput, deleteButton);
+            return (effectsFrame.Center.gameObject, effectsText, listFrame.Client, rowsRoot, emptyText, filterInput, deleteButton);
         }
 
         // ----- Rows -------------------------------------------------------------
@@ -371,10 +380,14 @@ namespace VVardenfell.Runtime.UI.Shell
                 var row = _spellRows[i];
                 row.Root.gameObject.SetActive(visible);
                 if (!visible)
+                {
+                    RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, null);
                     continue;
+                }
 
                 var entry = entries[i];
-                row.EntryIndex = i;
+                row.EntryIndex = entry.SpellIndex;
+                RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, BuildSpellTooltip(entry));
                 row.Root.anchoredPosition = new Vector2(0f, -rowHeight * i);
                 row.Root.sizeDelta = new Vector2(0f, rowHeight);
                 row.Name.Text = string.IsNullOrWhiteSpace(entry.Name) ? "--" : entry.Name.Trim();
@@ -388,6 +401,44 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             _rowsRoot.sizeDelta = new Vector2(0f, rowHeight * entries.Length);
+        }
+
+        static string BuildSpellTooltip(SpellWindowEntryViewModel entry)
+        {
+            if (entry == null)
+                return null;
+
+            var lines = new List<string>(3);
+            lines.Add(string.IsNullOrWhiteSpace(entry.Name) ? "--" : entry.Name.Trim());
+            if (!string.IsNullOrWhiteSpace(entry.TypeText))
+                lines.Add(entry.TypeText.Trim());
+            if (!string.IsNullOrWhiteSpace(entry.CostText))
+                lines.Add($"Cost: {entry.CostText.Trim()}");
+            return string.Join("\n", lines);
+        }
+
+        static string BuildEffectsTooltip(SpellWindowViewModel model)
+        {
+            if (model == null)
+                return null;
+
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(model.EffectSummaryText))
+                lines.Add(model.EffectSummaryText.Trim());
+
+            var effects = model.Effects ?? Array.Empty<SpellWindowEffectRow>();
+            for (int i = 0; i < effects.Length; i++)
+            {
+                var effect = effects[i];
+                if (effect == null)
+                    continue;
+
+                string name = string.IsNullOrWhiteSpace(effect.Name) ? "Effect" : effect.Name.Trim();
+                string detail = string.IsNullOrWhiteSpace(effect.DetailText) ? string.Empty : effect.DetailText.Trim();
+                lines.Add(string.IsNullOrEmpty(detail) ? name : $"{name}: {detail}");
+            }
+
+            return lines.Count == 0 ? null : string.Join("\n", lines);
         }
 
         static string FormatCost(SpellWindowEntryViewModel entry)
@@ -469,6 +520,25 @@ namespace VVardenfell.Runtime.UI.Shell
 
             button.onClick.AddListener(() => _onSelectionChanged?.Invoke(row.EntryIndex));
             return row;
+        }
+
+        void SyncFilterText(string filterText)
+        {
+            string value = filterText ?? string.Empty;
+            if (_filterInput.InputField.text == value)
+                return;
+
+            _suppressFieldEvents = true;
+            _filterInput.InputField.SetTextWithoutNotify(value);
+            _suppressFieldEvents = false;
+        }
+
+        void OnFilterValueChanged(string value)
+        {
+            if (_suppressFieldEvents)
+                return;
+
+            _onFilterChanged?.Invoke(value);
         }
     }
 }

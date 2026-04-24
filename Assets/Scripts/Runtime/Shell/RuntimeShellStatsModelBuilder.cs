@@ -47,10 +47,14 @@ namespace VVardenfell.Runtime.Shell
             {
                 NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
                 CharacterName = playerStats.HasPlayer ? ToDisplay(playerStats.Identity.CharacterName, "Player") : "--",
-                HealthFillNormalized = 0f,
-                HealthText = "0/0",
-                MagickaFillNormalized = 0f,
-                MagickaText = "0/0",
+                HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f,
+                HealthText = playerStats.HasPlayer
+                    ? $"{playerStats.Vitals.CurrentHealth:0}/{playerStats.Vitals.ModifiedHealthBase:0}"
+                    : "0/0",
+                MagickaFillNormalized = playerStats.HasPlayer ? playerStats.MagickaFill : 0f,
+                MagickaText = playerStats.HasPlayer
+                    ? $"{playerStats.Vitals.CurrentMagicka:0}/{playerStats.Vitals.ModifiedMagickaBase:0}"
+                    : "0/0",
                 FatigueFillNormalized = playerStats.HasPlayer ? playerStats.FatigueFill : 0f,
                 FatigueText = playerStats.HasPlayer
                     ? $"{playerStats.Vitals.CurrentFatigue:0}/{playerStats.Vitals.ModifiedFatigueBase:0}"

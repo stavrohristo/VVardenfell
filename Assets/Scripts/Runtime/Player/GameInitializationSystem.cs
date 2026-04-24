@@ -7,6 +7,7 @@ using UnityEngine;
 using Collider = Unity.Physics.Collider;
 using CapsuleCollider = Unity.Physics.CapsuleCollider;
 
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
@@ -52,6 +53,15 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class GameInitializationSystem : SystemBase
     {
+        const int MaxDefaultStarterSpells = 3;
+
+        static readonly string[] k_DefaultStarterSpellIds =
+        {
+            "fire bite",
+            "hearth heal",
+            "water walking",
+        };
+
         protected override void OnCreate()
         {
             RequireForUpdate<GameInitializationSingleton>();
@@ -96,6 +106,7 @@ namespace VVardenfell.Runtime.Player
                     init.PlayerActorStats = payload.ActorStats;
                     init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
                     PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
+                    WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
                     if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
                         Debug.LogWarning($"[VVardenfell][Save] load slot location restore failed; starting from default bootstrap state instead. {locationError}");
                     else
@@ -125,8 +136,10 @@ namespace VVardenfell.Runtime.Player
             var skills = init.PlayerActorStats.Skills;
             var vitals = init.PlayerActorStats.Vitals;
             var effectModifiers = init.PlayerActorStats.EffectModifiers;
-            vitals.ModifiedFatigueBase = MorrowindActorMovementStats.ComputeModifiedFatigueBase(attributes);
+            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: true);
             var derivedStats = MorrowindActorMovementStats.BuildDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, 0f);
+            if (hasNewGameRequest)
+                SeedDefaultNewGameSpellbook(em, initEntity, RuntimeContentDatabase.Active);
 
             var player = em.CreateEntity();
             em.SetName(player, "VVardenfell.Player");
@@ -142,7 +155,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, new MorrowindMovementIntent());
             em.AddComponentData(player, new MorrowindActorKinematicState
             {
-                Grounded = true,
+                Grounded = hasNewGameRequest,
             });
             em.AddComponentData(player, MorrowindMovementTuning.OpenMwDefaults());
             em.AddComponentData(player, attributes);
@@ -240,6 +253,51 @@ namespace VVardenfell.Runtime.Player
                 if (knownSpells[i].Spell.IsValid)
                     buffer.Add(knownSpells[i]);
             }
+        }
+
+        static void SeedDefaultNewGameSpellbook(EntityManager em, Entity initEntity, RuntimeContentDatabase contentDb)
+        {
+            var buffer = em.HasBuffer<PlayerKnownSpell>(initEntity)
+                ? em.GetBuffer<PlayerKnownSpell>(initEntity)
+                : em.AddBuffer<PlayerKnownSpell>(initEntity);
+
+            if (buffer.Length > 0 || contentDb?.Data.Spells == null || contentDb.Data.Spells.Length == 0)
+                return;
+
+            for (int i = 0; i < k_DefaultStarterSpellIds.Length && buffer.Length < MaxDefaultStarterSpells; i++)
+            {
+                if (contentDb.TryGetSpellHandle(k_DefaultStarterSpellIds[i], out var handle) && handle.IsValid)
+                    AddKnownSpellIfMissing(buffer, handle);
+            }
+
+            for (int i = 0; i < contentDb.Data.Spells.Length && buffer.Length < MaxDefaultStarterSpells; i++)
+            {
+                var spell = contentDb.Data.Spells[i];
+                if (spell.SpellType != 0 || spell.EffectCount <= 0)
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(spell.Id) && string.IsNullOrWhiteSpace(spell.Name))
+                    continue;
+
+                AddKnownSpellIfMissing(buffer, SpellDefHandle.FromIndex(i));
+            }
+        }
+
+        static void AddKnownSpellIfMissing(DynamicBuffer<PlayerKnownSpell> buffer, SpellDefHandle handle)
+        {
+            if (!handle.IsValid)
+                return;
+
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                if (buffer[i].Spell.Value == handle.Value)
+                    return;
+            }
+
+            buffer.Add(new PlayerKnownSpell
+            {
+                Spell = handle,
+            });
         }
 
         private static BlobAssetReference<Collider> CreatePlayerCapsule(float radius, float height)

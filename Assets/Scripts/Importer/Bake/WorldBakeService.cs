@@ -418,6 +418,7 @@ namespace VVardenfell.Importer.Bake
             public byte[] TerrainHeightBytes;
             public byte[] TerrainNormalBytes;
             public byte[] LayerGridBytes;
+            public byte[] WorldMapBytes;
             public byte[] RefBytes;
             public byte[] DoorBytes;
             public byte[] PlacementAuditBytes;
@@ -442,6 +443,7 @@ namespace VVardenfell.Importer.Bake
             public byte[] TerrainNormalBytes;
             public byte[] TerrainColliderChunkBytes;
             public byte[] LayerGridBytes;
+            public byte[] WorldMapBytes;
             public byte[] StaticCollisionChunkBytes;
             public byte[] RefCountBytes;
             public byte[] RefBytes;
@@ -2266,6 +2268,7 @@ namespace VVardenfell.Importer.Bake
                 bool hasTerrain = staged.Land != null && staged.Land.HasHeights;
                 bool hasNormals = hasTerrain && staged.Land.Normals != null;
                 bool hasVtex = hasTerrain && staged.LayerGrid != null && staged.LayerGrid.Length == LandRecord.NumTextures;
+                bool hasWorldMap = hasTerrain && staged.Land.WorldMap != null && staged.Land.WorldMap.Length == 81;
                 bool hasStaticCollision = !staged.StaticCollision.IsEmpty;
                 bool hasEnvironment = staged.Environment.HasAnyData;
                 if (hasTerrain) flags |= CacheFormat.CellFlagHasTerrain;
@@ -2273,6 +2276,7 @@ namespace VVardenfell.Importer.Bake
                 if (hasVtex) flags |= CacheFormat.CellFlagHasVtex;
                 if (hasStaticCollision) flags |= CacheFormat.CellFlagHasStaticCollision;
                 if (hasEnvironment) flags |= CacheFormat.CellFlagHasEnvironment;
+                if (hasWorldMap) flags |= CacheFormat.CellFlagHasWorldMap;
 
                 return new PreparedCellWriteData
                 {
@@ -2290,6 +2294,7 @@ namespace VVardenfell.Importer.Bake
                     TerrainHeightBytes = hasTerrain ? BuildTerrainHeightBytes(staged.Land) : null,
                     TerrainNormalBytes = hasNormals ? BuildTerrainNormalBytes(staged.Land) : null,
                     LayerGridBytes = hasVtex ? BuildLayerGridBytes(staged.LayerGrid) : null,
+                    WorldMapBytes = hasWorldMap ? BuildWorldMapBytes(staged.Land) : null,
                     RefBytes = BuildRefBytes(staged.BakedRefs),
                     DoorBytes = BuildDoorBytes(staged.DoorEntries),
                     PlacementAuditBytes = BuildPlacementAuditBytes(staged),
@@ -2516,6 +2521,7 @@ namespace VVardenfell.Importer.Bake
                     ? BuildLengthPrefixedBytes(preparedWrite.BlobData?.TerrainColliderBlobBytes)
                     : null,
                 LayerGridBytes = preparedWrite.LayerGridBytes,
+                WorldMapBytes = preparedWrite.WorldMapBytes,
                 StaticCollisionChunkBytes = ((preparedWrite.Flags & CacheFormat.CellFlagHasStaticCollision) != 0)
                     ? BuildLengthPrefixedBytes(preparedWrite.BlobData?.StaticCollisionBlobBytes)
                     : null,
@@ -2607,6 +2613,7 @@ namespace VVardenfell.Importer.Bake
                 WriteSegment(fs, preparedWrite.FinalBuffer.TerrainNormalBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.TerrainColliderChunkBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.LayerGridBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.WorldMapBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.StaticCollisionChunkBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.RefCountBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.RefBytes);
@@ -2679,6 +2686,14 @@ namespace VVardenfell.Importer.Bake
             int offset = 0;
             for (int i = 0; i < layerGrid.Length; i++)
                 WriteUInt16(bytes, ref offset, layerGrid[i]);
+            return bytes;
+        }
+
+        private static byte[] BuildWorldMapBytes(LandRecord land)
+        {
+            var bytes = new byte[land.WorldMap.Length];
+            for (int i = 0; i < land.WorldMap.Length; i++)
+                bytes[i] = unchecked((byte)land.WorldMap[i]);
             return bytes;
         }
 
@@ -2836,6 +2851,7 @@ namespace VVardenfell.Importer.Bake
                 bool hasVtex = (flags & CacheFormat.CellFlagHasVtex) != 0;
                 bool hasStaticCollision = (flags & CacheFormat.CellFlagHasStaticCollision) != 0;
                 bool hasEnvironment = (flags & CacheFormat.CellFlagHasEnvironment) != 0;
+                bool hasWorldMap = (flags & CacheFormat.CellFlagHasWorldMap) != 0;
 
                 if (hasEnvironment)
                 {
@@ -2860,6 +2876,8 @@ namespace VVardenfell.Importer.Bake
 
                     if (hasVtex)
                         SkipExact(r, 16L * 16L * sizeof(ushort), "layer grid");
+                    if (hasWorldMap)
+                        SkipExact(r, 81L, "world map");
                 }
 
                 if (hasStaticCollision)
@@ -3335,6 +3353,15 @@ namespace VVardenfell.Importer.Bake
                             w.Write(vtex);
                             w.Write(LtexIndex.ResolveVtex(vtex, ltexMap) ?? string.Empty);
                         }
+                    }
+
+                    bool hasWorldMap = land.WorldMap != null;
+                    w.Write(hasWorldMap);
+                    if (hasWorldMap)
+                    {
+                        w.Write(land.WorldMap.Length);
+                        for (int i = 0; i < land.WorldMap.Length; i++)
+                            w.Write(land.WorldMap[i]);
                     }
                 }
             }

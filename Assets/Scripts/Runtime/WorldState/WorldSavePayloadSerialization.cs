@@ -12,7 +12,12 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 4;
+        const int PayloadVersion = 8;
+        const int GlobalMapPayloadVersion = 7;
+        const int GlobalMapVisitedCellsPayloadVersion = 8;
+        const int MapPayloadVersion = 6;
+        const int ExpandedVitalsPayloadVersion = 5;
+        const int IdentityPayloadVersion = 4;
         const int LegacyPayloadVersion = 3;
 
         static void ValidatePayloadHeader(BinaryReader r)
@@ -22,7 +27,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != LegacyPayloadVersion)
+            if (version < LegacyPayloadVersion || version > PayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
         }
 
@@ -67,6 +72,13 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < payload.KnownSpells.Length; i++)
                     WriteKnownSpell(w, payload.KnownSpells[i]);
             }
+            w.Write(payload.ExteriorMapDiscovery?.Length ?? 0);
+            if (payload.ExteriorMapDiscovery != null)
+            {
+                for (int i = 0; i < payload.ExteriorMapDiscovery.Length; i++)
+                    WriteMapDiscoveryTile(w, payload.ExteriorMapDiscovery[i]);
+            }
+            WriteGlobalMapOverlay(w, payload.GlobalMapOverlay);
 
             w.Write(payload.InteriorActive);
             w.Write(payload.ActiveInteriorCellId ?? string.Empty);
@@ -95,7 +107,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != LegacyPayloadVersion)
+            if (version < LegacyPayloadVersion || version > PayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
 
             var payload = new WorldSavePayload
@@ -106,8 +118,8 @@ namespace VVardenfell.Runtime.WorldState
                 ActorStats = ReadActorStats(r, version),
             };
 
-            payload.PlayerIdentity = version >= PayloadVersion ? ReadActorIdentity(r) : ActorIdentitySet.DefaultPlayer();
-            if (version >= PayloadVersion)
+            payload.PlayerIdentity = version >= IdentityPayloadVersion ? ReadActorIdentity(r) : ActorIdentitySet.DefaultPlayer();
+            if (version >= IdentityPayloadVersion)
             {
                 int knownSpellCount = ReadCount(r, "known spell");
                 payload.KnownSpells = new PlayerKnownSpell[knownSpellCount];
@@ -118,6 +130,22 @@ namespace VVardenfell.Runtime.WorldState
             {
                 payload.KnownSpells = Array.Empty<PlayerKnownSpell>();
             }
+
+            if (version >= MapPayloadVersion)
+            {
+                int mapTileCount = ReadCount(r, "map discovery tile");
+                payload.ExteriorMapDiscovery = new LocalMapDiscoveryTilePayload[mapTileCount];
+                for (int i = 0; i < mapTileCount; i++)
+                    payload.ExteriorMapDiscovery[i] = ReadMapDiscoveryTile(r);
+            }
+            else
+            {
+                payload.ExteriorMapDiscovery = Array.Empty<LocalMapDiscoveryTilePayload>();
+            }
+
+            payload.GlobalMapOverlay = version >= GlobalMapPayloadVersion
+                ? ReadGlobalMapOverlay(r, version)
+                : default;
 
             payload.InteriorActive = r.ReadBoolean();
             payload.ActiveInteriorCellId = r.ReadString();
@@ -232,6 +260,10 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.Skills.Mercantile);
             w.Write(value.Skills.Speechcraft);
             w.Write(value.Skills.HandToHand);
+            w.Write(value.Vitals.CurrentHealth);
+            w.Write(value.Vitals.ModifiedHealthBase);
+            w.Write(value.Vitals.CurrentMagicka);
+            w.Write(value.Vitals.ModifiedMagickaBase);
             w.Write(value.Vitals.CurrentFatigue);
             w.Write(value.Vitals.ModifiedFatigueBase);
             w.Write(value.EffectModifiers.JumpMagnitude);
@@ -256,6 +288,7 @@ namespace VVardenfell.Runtime.WorldState
                     CurrentFatigue = r.ReadSingle(),
                     ModifiedFatigueBase = r.ReadSingle(),
                 };
+                MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, legacy.Attributes, ref legacy.Vitals, initializeMissingCurrents: true);
                 legacy.EffectModifiers = new ActorEffectStatModifiers
                 {
                     JumpMagnitude = r.ReadSingle(),
@@ -265,7 +298,7 @@ namespace VVardenfell.Runtime.WorldState
                 return legacy;
             }
 
-            return new ActorRuntimeStatSeed
+            var result = new ActorRuntimeStatSeed
             {
                 Attributes = new ActorAttributeSet
                 {
@@ -308,18 +341,41 @@ namespace VVardenfell.Runtime.WorldState
                     Speechcraft = r.ReadSingle(),
                     HandToHand = r.ReadSingle(),
                 },
-                Vitals = new ActorVitalSet
+                EffectModifiers = new ActorEffectStatModifiers
+                {
+                },
+            };
+
+            if (version >= ExpandedVitalsPayloadVersion)
+            {
+                result.Vitals = new ActorVitalSet
+                {
+                    CurrentHealth = r.ReadSingle(),
+                    ModifiedHealthBase = r.ReadSingle(),
+                    CurrentMagicka = r.ReadSingle(),
+                    ModifiedMagickaBase = r.ReadSingle(),
+                    CurrentFatigue = r.ReadSingle(),
+                    ModifiedFatigueBase = r.ReadSingle(),
+                };
+            }
+            else
+            {
+                result.Vitals = new ActorVitalSet
                 {
                     CurrentFatigue = r.ReadSingle(),
                     ModifiedFatigueBase = r.ReadSingle(),
-                },
-                EffectModifiers = new ActorEffectStatModifiers
-                {
-                    JumpMagnitude = r.ReadSingle(),
-                    FeatherMagnitude = r.ReadSingle(),
-                    BurdenMagnitude = r.ReadSingle(),
-                },
+                };
+                MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, result.Attributes, ref result.Vitals, initializeMissingCurrents: true);
+            }
+
+            result.EffectModifiers = new ActorEffectStatModifiers
+            {
+                JumpMagnitude = r.ReadSingle(),
+                FeatherMagnitude = r.ReadSingle(),
+                BurdenMagnitude = r.ReadSingle(),
             };
+            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, result.Attributes, ref result.Vitals, initializeMissingCurrents: true);
+            return result;
         }
 
         static void WriteActorIdentity(BinaryWriter w, in ActorIdentitySet value)
@@ -354,6 +410,84 @@ namespace VVardenfell.Runtime.WorldState
             {
                 Spell = new SpellDefHandle { Value = r.ReadInt32() },
             };
+        }
+
+        static void WriteMapDiscoveryTile(BinaryWriter w, in LocalMapDiscoveryTilePayload value)
+        {
+            w.Write(value.Cell.x);
+            w.Write(value.Cell.y);
+            w.Write(value.Resolution);
+            w.Write(value.Alpha?.Length ?? 0);
+            if (value.Alpha == null)
+                return;
+
+            w.Write(value.Alpha);
+        }
+
+        static LocalMapDiscoveryTilePayload ReadMapDiscoveryTile(BinaryReader r)
+        {
+            var payload = new LocalMapDiscoveryTilePayload
+            {
+                Cell = new int2(r.ReadInt32(), r.ReadInt32()),
+                Resolution = r.ReadInt32(),
+            };
+            int byteCount = ReadCount(r, "map discovery byte");
+            payload.Alpha = r.ReadBytes(byteCount);
+            if (payload.Alpha.Length != byteCount)
+                throw new EndOfStreamException("truncated map discovery payload");
+            return payload;
+        }
+
+        static void WriteGlobalMapOverlay(BinaryWriter w, in GlobalMapOverlayPayload value)
+        {
+            w.Write(value.MinCell.x);
+            w.Write(value.MinCell.y);
+            w.Write(value.MaxCell.x);
+            w.Write(value.MaxCell.y);
+            w.Write(value.CellPixelSize);
+            w.Write(value.Width);
+            w.Write(value.Height);
+            w.Write(value.VisitedCells?.Length ?? 0);
+            if (value.VisitedCells != null)
+            {
+                for (int i = 0; i < value.VisitedCells.Length; i++)
+                {
+                    w.Write(value.VisitedCells[i].x);
+                    w.Write(value.VisitedCells[i].y);
+                }
+            }
+            w.Write(value.PngBytes?.Length ?? 0);
+            if (value.PngBytes != null && value.PngBytes.Length > 0)
+                w.Write(value.PngBytes);
+        }
+
+        static GlobalMapOverlayPayload ReadGlobalMapOverlay(BinaryReader r, int version)
+        {
+            var payload = new GlobalMapOverlayPayload
+            {
+                MinCell = new int2(r.ReadInt32(), r.ReadInt32()),
+                MaxCell = new int2(r.ReadInt32(), r.ReadInt32()),
+                CellPixelSize = r.ReadInt32(),
+                Width = r.ReadInt32(),
+                Height = r.ReadInt32(),
+            };
+            if (version >= GlobalMapVisitedCellsPayloadVersion)
+            {
+                // Payload version 8 stores vanilla GMAP-style visited-cell markers before the overlay PNG.
+                int visitedCount = ReadCount(r, "global map visited cell");
+                payload.VisitedCells = new int2[visitedCount];
+                for (int i = 0; i < visitedCount; i++)
+                    payload.VisitedCells[i] = new int2(r.ReadInt32(), r.ReadInt32());
+            }
+            else
+            {
+                payload.VisitedCells = Array.Empty<int2>();
+            }
+            int byteCount = ReadCount(r, "global map overlay byte");
+            payload.PngBytes = r.ReadBytes(byteCount);
+            if (payload.PngBytes.Length != byteCount)
+                throw new EndOfStreamException("truncated global map overlay payload");
+            return payload;
         }
 
         static void WriteContentReference(BinaryWriter w, in ContentReference value)

@@ -68,12 +68,21 @@ namespace VVardenfell.Runtime.Shell
             EnsureComponent(runtimeEntity, new SpellWindowRequest());
             EnsureComponent(runtimeEntity, new MapWindowState
             {
+                Mode = (byte)MapWindowMode.Local,
                 NormalizedX = 0.63f,
                 NormalizedY = 0.015f,
                 NormalizedWidth = 0.36f,
                 NormalizedHeight = 0.37f,
+                LocalZoom = 1f,
+                GlobalZoom = 1f,
             });
             EnsureComponent(runtimeEntity, new MapWindowRequest());
+            EnsureComponent(runtimeEntity, new LocalMapDiscoveryState
+            {
+                MaskResolution = 64,
+                RenderResolution = 256,
+                RevealRadiusFraction = 0.17f,
+            });
             Enabled = false;
         }
 

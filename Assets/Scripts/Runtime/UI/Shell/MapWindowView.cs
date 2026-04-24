@@ -1,74 +1,45 @@
 using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.UI.Framework;
 
 namespace VVardenfell.Runtime.UI.Shell
 {
-    /// <summary>
-    /// Vanilla Morrowind Map window.
-    ///
-    /// Mirrors <c>openmw_map_window.layout</c> (see <c>docs/ui-reference/openmw-ui-skins.md</c>)
-    /// at the reference 300x300 size:
-    /// <list type="bullet">
-    ///   <item>Local map panel - MW_ScrollView-equivalent fills the full client area
-    ///     (minus a thin footer for the toggle button). Shows the zoomed local map tiles
-    ///     around the player's position.</item>
-    ///   <item>Global map panel - same rect, overlaid. Toggled via the World button.
-    ///     Only one of the two panels is visible at a time.</item>
-    ///   <item>Compass - 32x32 <c>textures\compass.dds</c> in the top-left corner of the
-    ///     active map panel (RotatingSkin in MyGUI; rotated by the player's heading).</item>
-    ///   <item>World / Local toggle - AutoSizedButton MW_Button pinned bottom-right.
-    ///     Caption flips between "World" and "Local" based on the active panel. Hidden
-    ///     while in an interior cell (no world map available).</item>
-    /// </list>
-    ///
-    /// Both map panels are reserved but render no tiles yet - the map-tile pipeline
-    /// lands later. The compass and toggle button are wired; the MW_Box backdrop
-    /// stands in for the future map image. Cell/region names surface through tooltips
-    /// in vanilla; we drop the old summary/region/cell/streaming text lines entirely.
-    /// </summary>
     sealed class MapWindowView
     {
-        // Palette.
         static readonly Color BodyTextColor = new(0.94f, 0.85f, 0.68f);
         static readonly Color MapPanelCenterColor = new(0.02f, 0.02f, 0.02f, 0.86f);
         static readonly Color ButtonCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
+        static readonly Color MapMarkerColor = new(0.86f, 0.68f, 0.28f, 0.95f);
 
-        // Pixel heights.
         const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
         const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
-
-        // Window geometry (matches openmw_map_window.layout position "0 0 300 300").
-        const float DefaultWindowWidth = 300f;
-        const float DefaultWindowHeight = 300f;
         const float MinWindowWidth = 240f;
         const float MinWindowHeight = 220f;
         const float CaptionHeight = 20f;
         const float ClientInset = 8f;
-
-        // Compass: vanilla compass.dds is 32x32.
-        const float CompassSize = 32f;
-
-        // World button: AutoSizedButton position="213 233 61 22" -> 61w 22h right-anchored.
         const float ToggleButtonWidth = 61f;
         const float ToggleButtonHeight = 22f;
-        const float ToggleButtonMargin = 4f;      // small gap from panel edge
+        const float ToggleButtonRightMargin = 10f;
+        const float ToggleButtonBottomMargin = 9f;
+        const float MaxMapZoom = 4f;
+        const float MinGlobalMapZoom = 0.125f;
+        const float MinLocalMapZoom = 1f / 3f;
 
         readonly RuntimeUiTheme _theme;
         readonly RectTransform _viewport;
         readonly MorrowindWindowView _window;
         readonly RuntimeWindowDragHandle _dragHandle;
         readonly RuntimeWindowResizeHandle _resizeHandle;
-
         readonly RectTransform _localMapRoot;
         readonly RectTransform _globalMapRoot;
-        readonly Image _localCompass;
-        readonly Image _globalCompass;
         readonly MorrowindButtonView _toggleButton;
-
-        // True while the Global (world) panel is active; otherwise Local.
-        bool _globalActive;
+        readonly LocalMapTileGridView _localGrid;
+        readonly GlobalMapView _globalMap;
+        readonly BitmapTextGraphic _placeholderText;
+        MapWindowViewModel _model;
 
         public MapWindowView(RectTransform parent, RectTransform viewport, RuntimeUiTheme theme, Action onRectChanged, Action onPinToggled = null)
         {
@@ -100,8 +71,10 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeClassicUiMetrics.Ui(new Vector2(MinWindowWidth, MinWindowHeight)),
                 onRectChanged);
 
-            (_localMapRoot, _globalMapRoot, _localCompass, _globalCompass, _toggleButton) = BuildClient();
-            ApplyPanelVisibility();
+            (_localMapRoot, _globalMapRoot, _toggleButton, _localGrid, _globalMap, _placeholderText) = BuildClient();
+            _localMapRoot.gameObject.SetActive(true);
+            _globalMapRoot.gameObject.SetActive(false);
+            _toggleButton.Root.gameObject.SetActive(false);
         }
 
         public RectTransform Root => _window.Root;
@@ -126,55 +99,75 @@ namespace VVardenfell.Runtime.UI.Shell
                 return;
             }
 
+            _model = model;
             SetVisible(true);
             _window.Title.Text = string.IsNullOrWhiteSpace(model.Title) ? "Map" : model.Title.Trim();
             _window.PinButton?.SetPinned(model.Pinned);
             if (!IsInteracting)
                 RuntimeWindowSurfaceUtility.ApplyNormalizedRect(_window.Root, _viewport, model.NormalizedRect);
 
-            // Toggle button caption: VM drives ("World" / "Local" depending on active panel).
-            string toggleLabel = string.IsNullOrWhiteSpace(model.ToggleButtonText) ? "World" : model.ToggleButtonText.Trim();
-            _toggleButton.Label.Text = toggleLabel;
-
-            // Interior cells hide the world-map toggle entirely (no global map to show).
-            _toggleButton.Root.gameObject.SetActive(!model.InteriorActive);
-
-            // If we're forced into an interior, fall back to the local panel.
-            if (model.InteriorActive && _globalActive)
-            {
-                _globalActive = false;
-                ApplyPanelVisibility();
-            }
+            bool showGlobal = model.GlobalEnabled && model.Mode == MapWindowMode.Global;
+            _localMapRoot.gameObject.SetActive(!showGlobal);
+            _globalMapRoot.gameObject.SetActive(showGlobal);
+            _toggleButton.Root.gameObject.SetActive(model.GlobalEnabled);
+            _toggleButton.Label.Text = string.IsNullOrWhiteSpace(model.ToggleButtonText) ? (showGlobal ? "Local" : "World") : model.ToggleButtonText;
+            _localGrid.Sync(model.LocalMap);
+            _globalMap.Sync(model.GlobalMap);
+            bool ready = model.LocalMap?.Ready == true;
+            _placeholderText.gameObject.SetActive(!showGlobal && !ready);
+            _placeholderText.Text = string.IsNullOrWhiteSpace(model.ViewSummaryText)
+                ? "Local map unavailable."
+                : model.ViewSummaryText.Trim();
         }
 
-        // ----- Build ------------------------------------------------------------
-
-        (RectTransform localRoot, RectTransform globalRoot, Image localCompass, Image globalCompass, MorrowindButtonView toggleButton) BuildClient()
+        (RectTransform localRoot, RectTransform globalRoot, MorrowindButtonView toggleButton, LocalMapTileGridView localGrid, GlobalMapView globalMap, BitmapTextGraphic placeholderText) BuildClient()
         {
-            // Map area fills the full client - vanilla overlays the World button on top
-            // of the map panel, not below it. Compass and toggle button both live inside
-            // the map panel stack and float above the tiles.
-            var local = BuildMapPanel("LocalMap");
-            var global = BuildMapPanel("GlobalMap");
+            var local = BuildMapPanel("LocalMap", out RectTransform localClient);
+            var global = BuildMapPanel("GlobalMap", out RectTransform globalClient);
 
-            var localCompass = BuildCompass("CompassLocal", local);
-            var globalCompass = BuildCompass("CompassGlobal", global);
+            var localGrid = new LocalMapTileGridView(
+                "LocalMapGrid",
+                localClient,
+                _theme,
+                RuntimeClassicUiMetrics.Ui(new Vector2(32f, 32f)),
+                MapPanelCenterColor,
+                RuntimeClassicUiMetrics.Ui(new Vector2(256f, 256f)).x);
+            var globalMap = new GlobalMapView(
+                "GlobalMapGrid",
+                globalClient,
+                _theme,
+                RuntimeClassicUiMetrics.Ui(new Vector2(32f, 32f)));
+            AttachInputSurface(localClient);
+            AttachInputSurface(globalClient);
 
-            // World / Local toggle - bottom-right of the window client. The layout pins
-            // it at (213, 233) inside a 300x300 window, which is margin-from-bottom-right
-            // of (300-213-61, 300-233-22) = (26, 45) — but vanilla MW renders it right
-            // up against the bottom-right corner in-engine. We split the difference and
-            // use a small 4 px margin so the filigree border isn't touched.
+            var placeholder = RuntimeUiFactory.CreateBitmapText(
+                "UnavailableText",
+                localClient,
+                _theme?.DefaultFont,
+                1f,
+                BodyTextColor,
+                BitmapTextAlignment.Center);
+            RuntimeUiFactory.SetInsetText(
+                placeholder.rectTransform,
+                placeholder,
+                8f,
+                8f,
+                -8f,
+                -8f,
+                BitmapTextVerticalAlignment.Middle);
+            placeholder.gameObject.SetActive(false);
+
             float btnWidth = RuntimeClassicUiMetrics.Ui(ToggleButtonWidth);
             float btnHeight = RuntimeClassicUiMetrics.Ui(ToggleButtonHeight);
-            float btnMargin = RuntimeClassicUiMetrics.Ui(ToggleButtonMargin);
+            float btnRightMargin = RuntimeClassicUiMetrics.Ui(ToggleButtonRightMargin);
+            float btnBottomMargin = RuntimeClassicUiMetrics.Ui(ToggleButtonBottomMargin);
 
             var buttonRect = RuntimeUiFactory.CreateAnchoredRect(
                 "WorldButtonRect",
                 _window.Client,
                 new Vector2(1f, 0f),
                 new Vector2(1f, 0f),
-                new Vector2(-btnMargin - btnWidth, btnMargin),
+                new Vector2(-btnRightMargin, btnBottomMargin),
                 new Vector2(btnWidth, btnHeight));
 
             var toggleButton = RuntimeUiFactory.CreateMorrowindButton(
@@ -189,22 +182,94 @@ namespace VVardenfell.Runtime.UI.Shell
             toggleButton.Label.PixelHeight = RuntimeClassicUiMetrics.Ui(BodyTextPixelHeight);
             toggleButton.Label.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             toggleButton.Button.transition = Selectable.Transition.ColorTint;
-            toggleButton.Button.onClick.AddListener(OnToggleClicked);
+            toggleButton.Button.interactable = true;
+            toggleButton.Button.onClick.AddListener(ToggleMode);
 
-            return (local, global, localCompass, globalCompass, toggleButton);
+            return (local, global, toggleButton, localGrid, globalMap, placeholder);
         }
 
-        RectTransform BuildMapPanel(string name)
+        void AttachInputSurface(RectTransform parent)
         {
-            // Full-client panel - the MW_MapView scrollview in vanilla. The inner frame
-            // uses the same thin MW_Box border used throughout, with a nearly-opaque
-            // black center that stands in for the map tiles until the tile pipeline is
-            // online (reserve space, draw nothing inside).
+            var image = RuntimeUiFactory.CreateImage("InputSurface", parent, new Color(0f, 0f, 0f, 0f));
+            RuntimeUiFactory.Stretch(image.rectTransform);
+            image.raycastTarget = true;
+            var input = image.gameObject.AddComponent<MapInputSurface>();
+            input.Initialize(OnMapDragged, OnMapScrolled);
+            image.rectTransform.SetAsFirstSibling();
+        }
+
+        void ToggleMode()
+        {
+            if (_model == null || !_model.GlobalEnabled)
+                return;
+            var next = _model.Mode == MapWindowMode.Global ? MapWindowMode.Local : MapWindowMode.Global;
+            if (!RuntimeShellRequestBridge.TrySetMapWindowMode(next, out string error))
+                Debug.LogWarning(error);
+        }
+
+        void OnMapDragged(Vector2 delta)
+        {
+            if (_model == null)
+                return;
+            if (_model.Mode == MapWindowMode.Global && _model.GlobalMap?.Ready == true)
+            {
+                float zoom = ClampGlobalZoom(_model.GlobalMap.Zoom, _model.GlobalMap);
+                float panX = _model.GlobalMap.PanX + delta.x / zoom;
+                float panY = _model.GlobalMap.PanY + delta.y / zoom;
+                if (_globalMap.TryClampPan(_model.GlobalMap, panX, panY, zoom, out float clampedPanX, out float clampedPanY))
+                    RequestViewport(MapWindowMode.Global, clampedPanX, clampedPanY, zoom);
+            }
+            else if (_model.LocalMap?.Ready == true)
+            {
+                float tileSize = Mathf.Max(1f, _localGrid.LastTilePixelSize);
+                float zoom = Mathf.Clamp(_model.LocalMap.Zoom, MinLocalMapZoom, MaxMapZoom);
+                float panX = _model.LocalMap.PanCellX + delta.x / tileSize;
+                float panY = _model.LocalMap.PanCellY + delta.y / tileSize;
+                if (_localGrid.TryClampPan(_model.LocalMap, panX, panY, zoom, out float clampedPanX, out float clampedPanY))
+                    RequestViewport(MapWindowMode.Local, clampedPanX, clampedPanY, zoom);
+            }
+        }
+
+        void OnMapScrolled(PointerEventData eventData)
+        {
+            float scroll = eventData.scrollDelta.y;
+            if (_model == null || Mathf.Approximately(scroll, 0f))
+                return;
+            float factor = scroll > 0f ? 1.08f : 1f / 1.08f;
+            if (_model.Mode == MapWindowMode.Global && _model.GlobalMap?.Ready == true)
+            {
+                float zoom = ClampGlobalZoom(_model.GlobalMap.Zoom * factor, _model.GlobalMap);
+                if (_globalMap.TryCalculateCursorAnchoredPan(_model.GlobalMap, eventData.position, eventData.pressEventCamera ?? eventData.enterEventCamera, zoom, out float panX, out float panY))
+                    RequestViewport(MapWindowMode.Global, panX, panY, zoom);
+                else
+                    RequestViewport(MapWindowMode.Global, _model.GlobalMap.PanX, _model.GlobalMap.PanY, zoom);
+            }
+            else if (_model.LocalMap?.Ready == true)
+            {
+                float zoom = Mathf.Clamp(_model.LocalMap.Zoom * factor, MinLocalMapZoom, MaxMapZoom);
+                if (_localGrid.TryCalculateCursorAnchoredPan(_model.LocalMap, eventData.position, eventData.pressEventCamera ?? eventData.enterEventCamera, zoom, out float panX, out float panY))
+                    RequestViewport(MapWindowMode.Local, panX, panY, zoom);
+                else
+                    RequestViewport(MapWindowMode.Local, _model.LocalMap.PanCellX, _model.LocalMap.PanCellY, zoom);
+            }
+        }
+
+        static void RequestViewport(MapWindowMode mode, float panX, float panY, float zoom)
+        {
+            if (!RuntimeShellRequestBridge.TrySetMapViewport(mode, panX, panY, zoom, out string error))
+                Debug.LogWarning(error);
+        }
+
+        float ClampGlobalZoom(float zoom, GlobalMapViewModel model)
+            => Mathf.Clamp(zoom <= 0f ? 1f : zoom, MinGlobalMapZoom, MaxMapZoom);
+
+        RectTransform BuildMapPanel(string name, out RectTransform client)
+        {
             var root = RuntimeUiFactory.CreateAnchorRect(
                 name,
                 _window.Client,
-                new Vector2(0f, 0f),
-                new Vector2(1f, 1f),
+                Vector2.zero,
+                Vector2.one,
                 new Vector2(0.5f, 0.5f),
                 Vector2.zero,
                 Vector2.zero);
@@ -216,55 +281,240 @@ namespace VVardenfell.Runtime.UI.Shell
                 MapPanelCenterColor);
             RuntimeUiFactory.Stretch(frame.Root);
             frame.Center.raycastTarget = false;
-
+            client = frame.Client;
             return root;
         }
 
-        Image BuildCompass(string name, RectTransform panel)
+        sealed class MapInputSurface : MonoBehaviour, IDragHandler, IScrollHandler
         {
-            float size = RuntimeClassicUiMetrics.Ui(CompassSize);
-            var rect = RuntimeUiFactory.CreateAnchoredRect(
-                name,
-                panel,
-                new Vector2(0f, 1f),
-                new Vector2(0f, 1f),
-                new Vector2(0f, 0f),
-                new Vector2(size, size));
-            rect.pivot = new Vector2(0f, 1f);
+            Action<Vector2> _onDrag;
+            Action<PointerEventData> _onScroll;
 
-            var image = RuntimeUiFactory.CreateImage("Image", rect, Color.white);
-            RuntimeUiFactory.Stretch(image.rectTransform);
-            image.sprite = _theme?.CompassSprite;
-            image.preserveAspect = true;
-            image.raycastTarget = false;
-            // Vanilla wraps the compass in RotatingSkin - rotated by the player's heading
-            // via the bridge. We leave the transform un-rotated until the heading wire
-            // lands; the compass then just shows north-up like a static icon.
+            public void Initialize(Action<Vector2> onDrag, Action<PointerEventData> onScroll)
+            {
+                _onDrag = onDrag;
+                _onScroll = onScroll;
+            }
 
-            return image;
+            public void OnDrag(PointerEventData eventData)
+            {
+                if (eventData.button == PointerEventData.InputButton.Left)
+                    _onDrag?.Invoke(eventData.delta);
+            }
+
+            public void OnScroll(PointerEventData eventData)
+            {
+                _onScroll?.Invoke(eventData);
+            }
         }
 
-        // ----- Toggle -----------------------------------------------------------
-
-        void OnToggleClicked()
+        sealed class GlobalMapView
         {
-            _globalActive = !_globalActive;
-            ApplyPanelVisibility();
-        }
+            readonly RectTransform _viewport;
+            readonly RectTransform _content;
+            readonly RawImage _baseImage;
+            readonly RawImage _overlayImage;
+            readonly Image _playerMarker;
+            readonly System.Collections.Generic.List<Image> _markerPool = new();
+            float _lastZoom = 1f;
 
-        void ApplyPanelVisibility()
-        {
-            _localMapRoot.gameObject.SetActive(!_globalActive);
-            _globalMapRoot.gameObject.SetActive(_globalActive);
-            // Caption flips to match the *other* panel (vanilla convention: button shows
-            // what you'll switch *to*). The view model's ToggleButtonText is authoritative
-            // when present, but we nudge the local state so the caption reads sensibly
-            // until the next Sync.
-            _toggleButton.Label.Text = _globalActive ? "Local" : "World";
+            public GlobalMapView(string name, RectTransform parent, RuntimeUiTheme theme, Vector2 markerSize)
+            {
+                _viewport = RuntimeUiFactory.CreateAnchorRect(
+                    name,
+                    parent,
+                    Vector2.zero,
+                    Vector2.one,
+                    new Vector2(0.5f, 0.5f),
+                    Vector2.zero,
+                    Vector2.zero);
+                _viewport.gameObject.AddComponent<RectMask2D>();
 
-            // Keep compass references live (used by future heading-sync code).
-            _ = _localCompass;
-            _ = _globalCompass;
+                _content = RuntimeUiFactory.CreateAnchoredRect(
+                    "Content",
+                    _viewport,
+                    Vector2.zero,
+                    Vector2.zero,
+                    Vector2.zero,
+                    Vector2.zero);
+                _content.pivot = Vector2.zero;
+
+                _baseImage = RuntimeUiFactory.CreateRawImage("Base", _content, Color.white);
+                _baseImage.raycastTarget = false;
+                RuntimeUiFactory.Stretch(_baseImage.rectTransform);
+
+                _overlayImage = RuntimeUiFactory.CreateRawImage("Overlay", _content, Color.white);
+                _overlayImage.raycastTarget = false;
+                RuntimeUiFactory.Stretch(_overlayImage.rectTransform);
+
+                _playerMarker = RuntimeUiFactory.CreateImage("PlayerMarker", _content, Color.white);
+                _playerMarker.sprite = theme?.CompassSprite;
+                _playerMarker.type = Image.Type.Simple;
+                _playerMarker.preserveAspect = true;
+                _playerMarker.raycastTarget = false;
+                _playerMarker.rectTransform.anchorMin = Vector2.zero;
+                _playerMarker.rectTransform.anchorMax = Vector2.zero;
+                _playerMarker.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                _playerMarker.rectTransform.anchoredPosition = Vector2.zero;
+                _playerMarker.rectTransform.sizeDelta = markerSize;
+                _playerMarker.rectTransform.SetAsLastSibling();
+            }
+
+            public float LastZoom => _lastZoom;
+
+            public bool TryCalculateCursorAnchoredPan(
+                GlobalMapViewModel model,
+                Vector2 screenPosition,
+                Camera eventCamera,
+                float targetZoom,
+                out float panX,
+                out float panY)
+            {
+                panX = model?.PanX ?? 0f;
+                panY = model?.PanY ?? 0f;
+                if (model?.Ready != true
+                    || !RectTransformUtility.ScreenPointToLocalPointInRectangle(_viewport, screenPosition, eventCamera, out Vector2 localPoint))
+                {
+                    return false;
+                }
+
+                Vector2 cursor = localPoint + _viewport.rect.size * 0.5f;
+                float oldZoom = Mathf.Clamp(model.Zoom <= 0f ? 1f : model.Zoom, MinGlobalMapZoom, MaxMapZoom);
+                float newZoom = Mathf.Clamp(targetZoom <= 0f ? oldZoom : targetZoom, MinGlobalMapZoom, MaxMapZoom);
+                float oldPlayerX = model.PlayerX * oldZoom;
+                float oldPlayerY = model.PlayerY * oldZoom;
+                Vector2 oldContent = new(
+                    _viewport.rect.width * 0.5f - oldPlayerX + model.PanX * oldZoom,
+                    _viewport.rect.height * 0.5f - oldPlayerY + model.PanY * oldZoom);
+                oldContent = ClampContentPosition(oldContent, new Vector2(model.Width * oldZoom, model.Height * oldZoom), _viewport.rect.size);
+                Vector2 imagePoint = (cursor - oldContent) / oldZoom;
+                Vector2 newContent = cursor - imagePoint * newZoom;
+                newContent = ClampContentPosition(newContent, new Vector2(model.Width * newZoom, model.Height * newZoom), _viewport.rect.size);
+                panX = (newContent.x - _viewport.rect.width * 0.5f + model.PlayerX * newZoom) / newZoom;
+                panY = (newContent.y - _viewport.rect.height * 0.5f + model.PlayerY * newZoom) / newZoom;
+                return true;
+            }
+
+            public bool TryClampPan(GlobalMapViewModel model, float panX, float panY, float zoom, out float clampedPanX, out float clampedPanY)
+            {
+                clampedPanX = panX;
+                clampedPanY = panY;
+                if (model?.Ready != true)
+                    return false;
+
+                float clampedZoom = Mathf.Clamp(zoom <= 0f ? 1f : zoom, MinGlobalMapZoom, MaxMapZoom);
+                Vector2 viewportSize = _viewport.rect.size;
+                Vector2 playerPosition = new(model.PlayerX * clampedZoom, model.PlayerY * clampedZoom);
+                Vector2 contentSize = new(Mathf.Max(1f, model.Width) * clampedZoom, Mathf.Max(1f, model.Height) * clampedZoom);
+                Vector2 contentPosition = ClampContentPosition(
+                    new Vector2(
+                        viewportSize.x * 0.5f - playerPosition.x + panX * clampedZoom,
+                        viewportSize.y * 0.5f - playerPosition.y + panY * clampedZoom),
+                    contentSize,
+                    viewportSize);
+                clampedPanX = (contentPosition.x - viewportSize.x * 0.5f + playerPosition.x) / clampedZoom;
+                clampedPanY = (contentPosition.y - viewportSize.y * 0.5f + playerPosition.y) / clampedZoom;
+                return true;
+            }
+
+            public void Sync(GlobalMapViewModel model)
+            {
+                bool ready = model?.Ready == true && model.BaseTexture != null;
+                _content.gameObject.SetActive(ready);
+                _playerMarker.gameObject.SetActive(ready);
+                if (!ready)
+                    return;
+
+                float zoom = Mathf.Clamp(model.Zoom <= 0f ? 1f : model.Zoom, MinGlobalMapZoom, MaxMapZoom);
+                _lastZoom = zoom;
+                float width = Mathf.Max(1f, model.Width) * zoom;
+                float height = Mathf.Max(1f, model.Height) * zoom;
+                _content.sizeDelta = new Vector2(width, height);
+                _baseImage.texture = model.BaseTexture;
+                _overlayImage.texture = model.OverlayTexture;
+
+                float playerX = model.PlayerX * zoom;
+                float playerY = model.PlayerY * zoom;
+                _content.anchoredPosition = ClampContentPosition(
+                    new Vector2(
+                        _viewport.rect.width * 0.5f - playerX + model.PanX * zoom,
+                        _viewport.rect.height * 0.5f - playerY + model.PanY * zoom),
+                    new Vector2(width, height),
+                    _viewport.rect.size);
+                _playerMarker.rectTransform.anchoredPosition = new Vector2(playerX, playerY);
+                _playerMarker.rectTransform.localEulerAngles = new Vector3(0f, 0f, 180f - model.PlayerHeadingDegrees);
+                SyncMarkers(model, zoom);
+            }
+
+            void SyncMarkers(GlobalMapViewModel model, float zoom)
+            {
+                var markers = model.Markers;
+                int count = markers?.Length ?? 0;
+                EnsureMarkerPool(count);
+
+                for (int i = 0; i < _markerPool.Count; i++)
+                {
+                    var marker = _markerPool[i];
+                    bool active = i < count;
+                    marker.gameObject.SetActive(active);
+                    if (!active)
+                    {
+                        RuntimeUiPopupUtility.SetTooltip(marker.gameObject, null);
+                        continue;
+                    }
+
+                    var entry = markers[i];
+                    float markerSize = 12f * zoom;
+                    if (zoom < 1f)
+                        markerSize *= Mathf.Sqrt(Mathf.Max(0, entry.AggregateWeight));
+                    else if (entry.AggregateWeight > 0)
+                        markerSize = 0f;
+
+                    active = markerSize >= 6f;
+                    marker.gameObject.SetActive(active);
+                    if (!active)
+                    {
+                        RuntimeUiPopupUtility.SetTooltip(marker.gameObject, null);
+                        continue;
+                    }
+
+                    marker.rectTransform.anchoredPosition = new Vector2(entry.X * zoom, entry.Y * zoom);
+                    marker.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(markerSize, markerSize));
+                    RuntimeUiPopupUtility.SetTooltip(marker.gameObject, entry.Label);
+                    marker.rectTransform.SetAsLastSibling();
+                }
+
+                _playerMarker.rectTransform.SetAsLastSibling();
+            }
+
+            void EnsureMarkerPool(int count)
+            {
+                while (_markerPool.Count < count)
+                {
+                    var marker = RuntimeUiFactory.CreateImage($"PlaceMarker_{_markerPool.Count}", _content, MapMarkerColor);
+                    marker.raycastTarget = true;
+                    RuntimeUiPopupUtility.SetTooltip(marker.gameObject, null);
+                    marker.rectTransform.anchorMin = Vector2.zero;
+                    marker.rectTransform.anchorMax = Vector2.zero;
+                    marker.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                    marker.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(12f, 12f));
+                    _markerPool.Add(marker);
+                }
+            }
+
+            static Vector2 ClampContentPosition(Vector2 position, Vector2 contentSize, Vector2 viewportSize)
+            {
+                return new Vector2(
+                    ClampAxis(position.x, contentSize.x, viewportSize.x),
+                    ClampAxis(position.y, contentSize.y, viewportSize.y));
+            }
+
+            static float ClampAxis(float position, float contentSize, float viewportSize)
+            {
+                if (contentSize <= viewportSize)
+                    return (viewportSize - contentSize) * 0.5f;
+                return Mathf.Clamp(position, viewportSize - contentSize, 0f);
+            }
         }
     }
 }

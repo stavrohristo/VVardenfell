@@ -99,6 +99,7 @@ namespace VVardenfell.Runtime.WorldState
         {
             DestroySingletonEntities<PlayerViewComponent>(entityManager);
             DestroySingletonEntities<PlayerTag>(entityManager);
+            ClearMapDiscovery(entityManager);
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
@@ -146,7 +147,7 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(playerEntity, payload.ActorStats.Attributes);
             entityManager.SetComponentData(playerEntity, payload.ActorStats.Skills);
             var vitals = payload.ActorStats.Vitals;
-            vitals.ModifiedFatigueBase = MorrowindActorMovementStats.ComputeModifiedFatigueBase(payload.ActorStats.Attributes);
+            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, payload.ActorStats.Attributes, ref vitals, initializeMissingCurrents: true);
             entityManager.SetComponentData(playerEntity, vitals);
             entityManager.SetComponentData(playerEntity, payload.ActorStats.EffectModifiers);
             var derived = MorrowindActorMovementStats.BuildDerived(
@@ -158,6 +159,11 @@ namespace VVardenfell.Runtime.WorldState
                 0f);
             entityManager.SetComponentData(playerEntity, derived);
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            entityManager.SetComponentData(playerEntity, new PlayerCharacterControl());
+            entityManager.SetComponentData(playerEntity, new PlayerCharacterState());
+            entityManager.SetComponentData(playerEntity, new MorrowindMovementIntent());
+            entityManager.SetComponentData(playerEntity, new MorrowindActorKinematicState());
+            entityManager.SetComponentData(playerEntity, new MorrowindMovementFrameTrace());
 
             if (entityManager.HasBuffer<PlayerKnownSpell>(playerEntity))
             {
@@ -350,8 +356,94 @@ namespace VVardenfell.Runtime.WorldState
             }
         }
 
+        public static void ApplyMapDiscoveryPayload(EntityManager entityManager, in WorldSavePayload payload)
+        {
+            ClearMapDiscovery(entityManager);
+            RestoreMapDiscoveryPayload(entityManager, payload.ExteriorMapDiscovery);
+            GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
+        }
+
+        static void ClearMapDiscovery(EntityManager entityManager)
+        {
+            using (var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ExteriorMapDiscoveryTile>()))
+            {
+                if (!query.IsEmptyIgnoreFilter)
+                    entityManager.DestroyEntity(query);
+            }
+
+            Entity stateEntity = EnsureMapDiscoveryState(entityManager);
+            var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
+            if (state.MaskResolution <= 0)
+                state.MaskResolution = 64;
+            if (state.RenderResolution <= 0)
+                state.RenderResolution = 256;
+            if (state.RevealRadiusFraction <= 0f)
+                state.RevealRadiusFraction = 0.17f;
+            state.Revision++;
+            entityManager.SetComponentData(stateEntity, state);
+            GlobalMapPresentationCache.ClearOverlay();
+        }
+
+        static void RestoreMapDiscoveryPayload(EntityManager entityManager, LocalMapDiscoveryTilePayload[] tiles)
+        {
+            Entity stateEntity = EnsureMapDiscoveryState(entityManager);
+            var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
+            int fallbackResolution = state.MaskResolution > 0 ? state.MaskResolution : 64;
+            if (tiles != null)
+            {
+                for (int i = 0; i < tiles.Length; i++)
+                {
+                    var payload = tiles[i];
+                    int resolution = payload.Resolution > 0 ? payload.Resolution : fallbackResolution;
+                    int expected = resolution * resolution;
+                    if (payload.Alpha == null || payload.Alpha.Length != expected)
+                        continue;
+
+                    var entity = entityManager.CreateEntity();
+                    entityManager.SetName(entity, $"LocalMapDiscovery({payload.Cell.x},{payload.Cell.y})");
+                    entityManager.AddComponentData(entity, new ExteriorMapDiscoveryTile
+                    {
+                        Cell = payload.Cell,
+                        Revision = 1,
+                        Dirty = 1,
+                    });
+                    var buffer = entityManager.AddBuffer<ExteriorMapDiscoverySample>(entity);
+                    buffer.ResizeUninitialized(expected);
+                    for (int s = 0; s < expected; s++)
+                        buffer[s] = new ExteriorMapDiscoverySample { Alpha = payload.Alpha[s] };
+                }
+            }
+
+            if (state.MaskResolution <= 0)
+                state.MaskResolution = fallbackResolution;
+            if (state.RenderResolution <= 0)
+                state.RenderResolution = 256;
+            if (state.RevealRadiusFraction <= 0f)
+                state.RevealRadiusFraction = 0.17f;
+            state.Revision++;
+            entityManager.SetComponentData(stateEntity, state);
+        }
+
+        static Entity EnsureMapDiscoveryState(EntityManager entityManager)
+        {
+            Entity stateEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LocalMapDiscoveryState>(entityManager);
+            if (stateEntity != Entity.Null)
+                return stateEntity;
+
+            stateEntity = entityManager.CreateEntity();
+            entityManager.SetName(stateEntity, "VVardenfell.LocalMapDiscovery");
+            entityManager.AddComponentData(stateEntity, new LocalMapDiscoveryState
+            {
+                MaskResolution = 64,
+                RenderResolution = 256,
+                RevealRadiusFraction = 0.17f,
+            });
+            return stateEntity;
+        }
+
         static void ClearRuntimeState(EntityManager entityManager, Entity journalEntity, Entity runtimeEntity, Entity spawnEntity)
         {
+            ClearMapDiscovery(entityManager);
             entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
             entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
@@ -375,6 +467,9 @@ namespace VVardenfell.Runtime.WorldState
             Entity runtimeEntity,
             Entity spawnEntity)
         {
+            RestoreMapDiscoveryPayload(entityManager, payload.ExteriorMapDiscovery);
+            GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
+
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             uint maxSequence = 0u;
             for (int i = 0; i < payload.JournalEntries.Length; i++)

@@ -73,6 +73,7 @@ namespace VVardenfell.Runtime.UI.Shell
         MapWindowView _mapView;
         SaveLoadBrowserView _saveLoadBrowserView;
         OptionsWindowView _optionsView;
+        RuntimeUiPopupLayer _popupLayer;
         VVardenfell.Core.Config.MorrowindConfig _config;
 
         RectTransform _pauseRoot;
@@ -156,6 +157,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 RequestSpellWindowRectUpdate,
                 RequestSpellSelection,
+                RequestSpellFilterText,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Spell));
             _mapView = new MapWindowView(
                 _suiteRoot,
@@ -190,6 +192,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
             BuildPauseMenu();
             BuildModal();
+            _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme);
             gameObject.SetActive(false);
         }
 
@@ -273,6 +276,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _pauseRoot.gameObject.SetActive(pauseMenuOpen && !saveLoadVisible && !optionsOpen);
             _modalRoot.gameObject.SetActive(pauseMenuOpen && modalOpen && !optionsOpen);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
+            _popupLayer?.Sync();
 
             if (_modalRoot.gameObject.activeSelf)
             {
@@ -542,6 +546,12 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             if (!RuntimeShellRequestBridge.TrySelectSpell(spellIndex, out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed selecting spell {spellIndex}: {error}");
+        }
+
+        void RequestSpellFilterText(string value)
+        {
+            if (!RuntimeShellRequestBridge.TrySetSpellFilterText(value, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed setting spell filter text: {error}");
         }
 
         void RequestMapWindowRectUpdate()

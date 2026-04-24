@@ -122,6 +122,7 @@ namespace VVardenfell.Runtime.Components
         public float NormalizedHeight;
         public int SelectedSpellIndex;
         public byte Pinned;
+        public FixedString64Bytes FilterText;
     }
 
     public struct SpellWindowRequest : IComponentData
@@ -133,16 +134,31 @@ namespace VVardenfell.Runtime.Components
         public float NormalizedHeight;
         public byte PendingSelectionChange;
         public int SelectedSpellIndex;
+        public byte PendingFilterTextChange;
+        public FixedString64Bytes FilterText;
+    }
+
+    public enum MapWindowMode : byte
+    {
+        Local = 0,
+        Global = 1,
     }
 
     public struct MapWindowState : IComponentData
     {
         public byte Visible;
+        public byte Mode;
         public float NormalizedX;
         public float NormalizedY;
         public float NormalizedWidth;
         public float NormalizedHeight;
         public byte Pinned;
+        public float LocalPanX;
+        public float LocalPanY;
+        public float LocalZoom;
+        public float GlobalPanX;
+        public float GlobalPanY;
+        public float GlobalZoom;
     }
 
     public struct MapWindowRequest : IComponentData
@@ -152,5 +168,13 @@ namespace VVardenfell.Runtime.Components
         public float NormalizedY;
         public float NormalizedWidth;
         public float NormalizedHeight;
+        public byte PendingModeChange;
+        public byte Mode;
+        public byte PendingViewportChange;
+        public byte ViewportMode;
+        public float PanX;
+        public float PanY;
+        public float Zoom;
+        public byte PendingCenterOnPlayer;
     }
 }
