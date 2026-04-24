@@ -175,7 +175,8 @@ namespace VVardenfell.Runtime.Interactions
             kind = InteractableKind.None;
 
             if (entityManager.HasComponent<DoorInteractable>(logicalEntity)
-                || (entityManager.HasComponent<DoorAuthoring>(logicalEntity) && DoorInteractableResolver.TryHydrate(entityManager, logicalEntity)))
+                || (entityManager.HasComponent<DoorAuthoring>(logicalEntity)
+                    && DoorInteractableResolver.TryResolve(entityManager, logicalEntity, out _)))
             {
                 kind = InteractableKind.Door;
                 return true;

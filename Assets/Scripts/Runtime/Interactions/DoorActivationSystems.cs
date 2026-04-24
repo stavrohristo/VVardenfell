@@ -21,6 +21,7 @@ using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.WorldState;
+using VVardenfell.Runtime.WorldRefs;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -29,10 +30,10 @@ namespace VVardenfell.Runtime.Interactions
 
     static class DoorInteractableResolver
     {
-        public static bool TryHydrate(EntityManager entityManager, Entity logicalEntity)
+        public static bool TryResolve(EntityManager entityManager, Entity logicalEntity, out DoorInteractable interactable)
         {
+            interactable = default;
             if (!entityManager.Exists(logicalEntity)
-                || !entityManager.HasComponent<DoorAuthoring>(logicalEntity)
                 || !entityManager.HasComponent<PlacedRefIdentity>(logicalEntity)
                 || !entityManager.HasComponent<LogicalRefLocation>(logicalEntity))
             {
@@ -41,11 +42,7 @@ namespace VVardenfell.Runtime.Interactions
 
             uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
             var location = entityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
-            if (!TryBuild(location, placedRefId, out DoorInteractable interactable))
-                return false;
-
-            entityManager.AddComponentData(logicalEntity, interactable);
-            return true;
+            return TryBuild(location, placedRefId, out interactable);
         }
 
         static bool TryBuild(in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
@@ -161,7 +158,9 @@ namespace VVardenfell.Runtime.Interactions
             request.Pending = 0;
             request.TargetEntity = Entity.Null;
 
-            if (!EntityManager.Exists(target) || !EntityManager.HasComponent<DoorInteractable>(target))
+            if (!EntityManager.Exists(target)
+                || (!EntityManager.HasComponent<DoorInteractable>(target)
+                    && !DoorInteractableResolver.TryResolve(EntityManager, target, out DoorInteractable _)))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] door activation request resolved to a missing or non-door logical entity.");
                 ClearFocus();
@@ -169,7 +168,11 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            var door = EntityManager.GetComponentData<DoorInteractable>(target);
+            var door = EntityManager.HasComponent<DoorInteractable>(target)
+                ? EntityManager.GetComponentData<DoorInteractable>(target)
+                : DoorInteractableResolver.TryResolve(EntityManager, target, out DoorInteractable resolvedDoor)
+                    ? resolvedDoor
+                    : default;
             if (door.IsTeleport == 0)
             {
                 TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
@@ -239,7 +242,7 @@ namespace VVardenfell.Runtime.Interactions
             EntityManager.SetComponentData(transitionEntity, transition);
 
             if (goesToInterior)
-                RuntimeSpawnProjectionUtility.RestoreAliveRefsForCurrentWorld(World, EntityManager, RuntimeContentDatabase.Active);
+                RestoreAliveRefsForCurrentWorld();
 
             ClearFocus();
             transition.TransitionInProgress = 0;
@@ -311,13 +314,15 @@ namespace VVardenfell.Runtime.Interactions
             for (int i = 0; i < spawnedBuffer.Length; i++)
                 entitiesToDestroy[i] = spawnedBuffer[i].Value;
 
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
             for (int i = 0; i < entitiesToDestroy.Length; i++)
             {
                 if (EntityManager.Exists(entitiesToDestroy[i])
                     && EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
                 {
-                    InteractionEntityDestroyUtility.DestroyLogicalRef(
+                    LogicalRefDestroyUtility.QueueDestroyLogicalRef(
                         EntityManager,
+                        ref ecb,
                         entitiesToDestroy[i],
                         ref logicalRefLookup,
                         preserveRuntimeSpawnRegistration: true);
@@ -325,10 +330,38 @@ namespace VVardenfell.Runtime.Interactions
                 }
 
                 if (EntityManager.Exists(entitiesToDestroy[i]))
-                    EntityManager.DestroyEntity(entitiesToDestroy[i]);
+                    ecb.DestroyEntity(entitiesToDestroy[i]);
             }
 
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
             EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity).Clear();
+        }
+
+        void RestoreAliveRefsForCurrentWorld()
+        {
+            var createEcb = new EntityCommandBuffer(Allocator.Temp);
+            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
+                    EntityManager,
+                    RuntimeContentDatabase.Active,
+                    ref createEcb,
+                    out var projection))
+            {
+                createEcb.Dispose();
+                return;
+            }
+
+            createEcb.Playback(EntityManager);
+            createEcb.Dispose();
+
+            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
+            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
+                EntityManager,
+                ref materializeEcb,
+                ref projection);
+            materializeEcb.Playback(EntityManager);
+            materializeEcb.Dispose();
+            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(EntityManager, projection);
         }
 
         void ClearFocus()

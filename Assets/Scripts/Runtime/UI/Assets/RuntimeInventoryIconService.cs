@@ -10,13 +10,14 @@ using Object = UnityEngine.Object;
 namespace VVardenfell.Runtime.UI.Assets
 {
     /// <summary>
-    /// Loads inventory icon textures on demand and caches them as sprites.
+    /// Loads vanilla UI icon textures on demand and caches them as sprites.
     ///
-    /// Important: MW inventory icon paths (ITEX subrecord values) are relative to
+    /// Important: MW inventory ITEX and magic effect ITEX paths are relative to
     /// <c>Icons\</c>, NOT <c>Textures\</c> - unlike mesh/material textures. A vanilla
-    /// ITEX looks like <c>w\silver_longsword.tga</c> and the engine prepends
-    /// <c>Icons\</c> at load time. Some content DBs / mods pre-mangle the path with
-    /// a <c>textures\</c> prefix; we strip that and retry under <c>icons\</c>.
+    /// value looks like <c>w\silver_longsword.tga</c> or <c>m\tx_fire_damage.tga</c>,
+    /// and the engine prepends <c>Icons\</c> at load time. Some content DBs / mods
+    /// pre-mangle the path with a <c>textures\</c> prefix; we strip that and retry
+    /// under <c>icons\</c>.
     /// Falls back through loose files first, then the install's Morrowind.bsa.
     /// </summary>
     public sealed class RuntimeInventoryIconService : IDisposable
@@ -60,6 +61,8 @@ namespace VVardenfell.Runtime.UI.Assets
             _spriteCache[normalized] = sprite;
             return sprite;
         }
+
+        public Sprite GetMagicEffectSprite(string rawIconPath) => GetSprite(rawIconPath);
 
         public void Dispose()
         {
@@ -254,7 +257,7 @@ namespace VVardenfell.Runtime.UI.Assets
         }
 
         /// <summary>
-        /// Vanilla MW ITEX records are relative to <c>Icons\</c>. This normalizer produces
+        /// Vanilla MW ITEX records, including MGEF icons, are relative to <c>Icons\</c>. This normalizer produces
         /// an <c>icons\...</c> path regardless of what the raw input looks like:
         /// <list type="bullet">
         ///   <item>Already <c>icons\...</c> - pass through.</item>

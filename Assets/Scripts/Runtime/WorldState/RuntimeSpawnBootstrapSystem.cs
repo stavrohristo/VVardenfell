@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Systems;
@@ -12,6 +13,8 @@ namespace VVardenfell.Runtime.WorldState
         protected override void OnUpdate()
         {
             Entity runtimeEntity;
+            bool created = false;
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
             if (SystemAPI.HasSingleton<PlayerInteractionFocus>())
             {
                 runtimeEntity = SystemAPI.GetSingletonEntity<PlayerInteractionFocus>();
@@ -22,32 +25,35 @@ namespace VVardenfell.Runtime.WorldState
             }
             else
             {
-                runtimeEntity = EntityManager.CreateEntity();
-                EntityManager.SetName(runtimeEntity, "VVardenfell.RuntimeSpawn");
+                runtimeEntity = ecb.CreateEntity();
+                ecb.SetName(runtimeEntity, new FixedString64Bytes("VVardenfell.RuntimeSpawn"));
+                created = true;
             }
 
-            EnsureComponent(runtimeEntity, new RuntimeSpawnState());
+            EnsureComponent(runtimeEntity, new RuntimeSpawnState(), ref ecb, created);
             EnsureComponent(runtimeEntity, new RuntimeSpawnResult
             {
                 LogicalEntity = Entity.Null,
-            });
-            EnsureBuffer<RuntimeSpawnRequest>(runtimeEntity);
-            EnsureBuffer<RuntimeSpawnedRef>(runtimeEntity);
+            }, ref ecb, created);
+            EnsureBuffer<RuntimeSpawnRequest>(runtimeEntity, ref ecb, created);
+            EnsureBuffer<RuntimeSpawnedRef>(runtimeEntity, ref ecb, created);
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
             Enabled = false;
         }
 
-        void EnsureComponent<T>(Entity entity, T value)
+        void EnsureComponent<T>(Entity entity, T value, ref EntityCommandBuffer ecb, bool created)
             where T : unmanaged, IComponentData
         {
-            if (!EntityManager.HasComponent<T>(entity))
-                EntityManager.AddComponentData(entity, value);
+            if (created || !EntityManager.HasComponent<T>(entity))
+                ecb.AddComponent(entity, value);
         }
 
-        void EnsureBuffer<T>(Entity entity)
+        void EnsureBuffer<T>(Entity entity, ref EntityCommandBuffer ecb, bool created)
             where T : unmanaged, IBufferElementData
         {
-            if (!EntityManager.HasBuffer<T>(entity))
-                EntityManager.AddBuffer<T>(entity);
+            if (created || !EntityManager.HasBuffer<T>(entity))
+                ecb.AddBuffer<T>(entity);
         }
     }
 }

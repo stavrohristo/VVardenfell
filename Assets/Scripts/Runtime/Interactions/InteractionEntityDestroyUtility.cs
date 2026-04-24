@@ -6,14 +6,16 @@ namespace VVardenfell.Runtime.Interactions
 {
     static class InteractionEntityDestroyUtility
     {
-        public static void DestroyLogicalRef(
+        public static void QueueDestroyLogicalRef(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             ref LogicalRefLookup logicalRefLookup,
             bool preserveRuntimeSpawnRegistration = false)
         {
-            LogicalRefDestroyUtility.DestroyLogicalRef(
+            LogicalRefDestroyUtility.QueueDestroyLogicalRef(
                 entityManager,
+                ref ecb,
                 logicalEntity,
                 ref logicalRefLookup,
                 preserveRuntimeSpawnRegistration);

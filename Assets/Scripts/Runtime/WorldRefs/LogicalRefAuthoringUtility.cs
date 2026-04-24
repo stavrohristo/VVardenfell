@@ -8,8 +8,9 @@ namespace VVardenfell.Runtime.Components
 {
     public static class LogicalRefAuthoringUtility
     {
-        public static bool TryAttach(
+        public static bool QueueAttach(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             RuntimeContentDatabase contentDb,
             ContentReference contentReference,
@@ -25,9 +26,9 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new ActorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var actor = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new ActorSpawnSource { Definition = handle });
-                    entityManager.AddComponentData(logicalEntity, new DialogueSpeakerAuthoring { Definition = handle });
-                    entityManager.AddComponentData(logicalEntity, BuildPassiveActorPresence(handle, actor));
+                    ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
+                    ecb.AddComponent(logicalEntity, new DialogueSpeakerAuthoring { Definition = handle });
+                    ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(handle, actor));
                     return true;
                 }
 
@@ -35,8 +36,8 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new ActivatorAuthoring { Definition = handle });
-                    TryAddAudioEmitterAuthoring(entityManager, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
                 }
 
@@ -44,10 +45,10 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new DoorAuthoring { Definition = handle });
-                    TryAddAudioEmitterAuthoring(entityManager, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     if (attachDoorInteractable)
-                        entityManager.AddComponentData(logicalEntity, doorInteractable);
+                        ecb.AddComponent(logicalEntity, doorInteractable);
                     return true;
                 }
 
@@ -55,8 +56,8 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new ContainerDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new ContainerAuthoring { Definition = handle });
-                    TryAddAudioEmitterAuthoring(entityManager, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    ecb.AddComponent(logicalEntity, new ContainerAuthoring { Definition = handle });
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
                 }
 
@@ -64,8 +65,8 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new ItemDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new ItemPickupAuthoring { Definition = handle });
-                    TryAddAudioEmitterAuthoring(entityManager, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    ecb.AddComponent(logicalEntity, new ItemPickupAuthoring { Definition = handle });
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
                 }
 
@@ -73,14 +74,14 @@ namespace VVardenfell.Runtime.Components
                 {
                     var handle = new LightDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
-                    entityManager.AddComponentData(logicalEntity, new LightSourceAuthoring { Definition = handle });
-                    entityManager.AddComponentData(logicalEntity, BuildLightInstanceFlags(def.Flags));
-                    entityManager.AddComponentData(logicalEntity, BuildLightInstanceState(def));
-                    entityManager.AddComponentData(logicalEntity, new LightPresentationLink { Slot = -1 });
-                    TryAddAudioEmitterAuthoring(entityManager, logicalEntity, contentDb, def.SoundId, null);
+                    ecb.AddComponent(logicalEntity, new LightSourceAuthoring { Definition = handle });
+                    ecb.AddComponent(logicalEntity, BuildLightInstanceFlags(def.Flags));
+                    ecb.AddComponent(logicalEntity, BuildLightInstanceState(def));
+                    ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, null);
                     if (contentDb.TryGetSoundHandle(def.SoundId, out SoundDefHandle ambientSound) && ambientSound.IsValid)
                     {
-                        entityManager.AddComponentData(logicalEntity, new InteriorAmbientSourceAuthoring
+                        ecb.AddComponent(logicalEntity, new InteriorAmbientSourceAuthoring
                         {
                             AmbientSound = ambientSound,
                         });
@@ -91,21 +92,21 @@ namespace VVardenfell.Runtime.Components
                 case ContentReferenceKind.Static:
                 {
                     var handle = new GenericRecordDefHandle { Value = contentReference.HandleValue };
-                    entityManager.AddComponentData(logicalEntity, new StaticRefAuthoring { Definition = handle });
+                    ecb.AddComponent(logicalEntity, new StaticRefAuthoring { Definition = handle });
                     return true;
                 }
 
                 case ContentReferenceKind.LeveledItem:
                 {
                     var handle = new ItemLeveledListDefHandle { Value = contentReference.HandleValue };
-                    entityManager.AddComponentData(logicalEntity, new LeveledItemAuthoring { Definition = handle });
+                    ecb.AddComponent(logicalEntity, new LeveledItemAuthoring { Definition = handle });
                     return true;
                 }
 
                 case ContentReferenceKind.LeveledCreature:
                 {
                     var handle = new CreatureLeveledListDefHandle { Value = contentReference.HandleValue };
-                    entityManager.AddComponentData(logicalEntity, new LeveledCreatureAuthoring { Definition = handle });
+                    ecb.AddComponent(logicalEntity, new LeveledCreatureAuthoring { Definition = handle });
                     return true;
                 }
 
@@ -183,8 +184,8 @@ namespace VVardenfell.Runtime.Components
                 ((value >> 16) & 0xFFu) / 255f);
         }
 
-        static void TryAddAudioEmitterAuthoring(
-            EntityManager entityManager,
+        static void TryQueueAudioEmitterAuthoring(
+            ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             RuntimeContentDatabase contentDb,
             string primarySoundId,
@@ -195,7 +196,7 @@ namespace VVardenfell.Runtime.Components
             if (!primarySound.IsValid && !secondarySound.IsValid)
                 return;
 
-            entityManager.AddComponentData(logicalEntity, new AudioEmitterAuthoring
+            ecb.AddComponent(logicalEntity, new AudioEmitterAuthoring
             {
                 PrimarySound = primarySound,
                 SecondarySound = secondarySound,

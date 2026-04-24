@@ -199,7 +199,10 @@ namespace VVardenfell.Runtime.Interactions
 
         void DestroyLogicalRef(Entity logicalEntity, ref LogicalRefLookup logicalRefLookup)
         {
-            InteractionEntityDestroyUtility.DestroyLogicalRef(EntityManager, logicalEntity, ref logicalRefLookup);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            InteractionEntityDestroyUtility.QueueDestroyLogicalRef(EntityManager, ref ecb, logicalEntity, ref logicalRefLookup);
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         static string ResolveCarryableName(RuntimeContentDatabase contentDb, ContentReference content)
@@ -270,15 +273,14 @@ namespace VVardenfell.Runtime.Interactions
 
             Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
             var logicalRefLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
             for (int i = 0; i < entitiesToDestroy.Count; i++)
-                DestroyLogicalRef(entitiesToDestroy[i], ref logicalRefLookup);
+                InteractionEntityDestroyUtility.QueueDestroyLogicalRef(EntityManager, ref ecb, entitiesToDestroy[i], ref logicalRefLookup);
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
             EntityManager.SetComponentData(lookupEntity, logicalRefLookup);
 
         }
 
-        void DestroyLogicalRef(Entity logicalEntity, ref LogicalRefLookup logicalRefLookup)
-        {
-            InteractionEntityDestroyUtility.DestroyLogicalRef(EntityManager, logicalEntity, ref logicalRefLookup);
-        }
     }
 }

@@ -171,6 +171,18 @@ namespace VVardenfell.Runtime.Content
             return false;
         }
 
+        public bool TryGetGameSettingString(string id, out string value)
+        {
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
+            {
+                value = GetGameSetting(handle).Text;
+                return !string.IsNullOrWhiteSpace(value);
+            }
+
+            value = default;
+            return false;
+        }
+
         public bool IsValid(ContentReference contentRef)
         {
             if (!contentRef.IsValid)
@@ -197,9 +209,9 @@ namespace VVardenfell.Runtime.Content
         public ref readonly AmbientSettingsDef GetAmbientSettings() => ref Data.AmbientSettings;
         public ref readonly GenericRecordDef GetGameSetting(GenericRecordDefHandle handle) => ref Data.GameSettings[handle.Index];
         public ref readonly GenericRecordDef GetStatic(GenericRecordDefHandle handle) => ref Data.Statics[handle.Index];
-        public ref readonly GenericRecordDef GetClass(GenericRecordDefHandle handle) => ref Data.Classes[handle.Index];
-        public ref readonly GenericRecordDef GetFaction(GenericRecordDefHandle handle) => ref Data.Factions[handle.Index];
-        public ref readonly GenericRecordDef GetRace(GenericRecordDefHandle handle) => ref Data.Races[handle.Index];
+        public ref readonly ClassDef GetClass(GenericRecordDefHandle handle) => ref Data.Classes[handle.Index];
+        public ref readonly FactionDef GetFaction(GenericRecordDefHandle handle) => ref Data.Factions[handle.Index];
+        public ref readonly RaceDef GetRace(GenericRecordDefHandle handle) => ref Data.Races[handle.Index];
         public ref readonly GenericRecordDef GetBirthsign(GenericRecordDefHandle handle) => ref Data.Birthsigns[handle.Index];
         public ref readonly GenericRecordDef GetSkill(GenericRecordDefHandle handle) => ref Data.Skills[handle.Index];
         public ref readonly GenericRecordDef GetScript(GenericRecordDefHandle handle) => ref Data.Scripts[handle.Index];
@@ -220,6 +232,38 @@ namespace VVardenfell.Runtime.Content
                 return ReadOnlySpan<ContainerItemDef>.Empty;
 
             return new ReadOnlySpan<ContainerItemDef>(Data.ContainerItems, range.FirstItemIndex, range.ItemCount);
+        }
+
+        public ReadOnlySpan<ActorSpellDef> GetActorSpells(ActorDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.Actors.Length)
+                return ReadOnlySpan<ActorSpellDef>.Empty;
+
+            var actor = Data.Actors[handle.Index];
+            if (actor.FirstSpellIndex < 0 || actor.SpellCount <= 0 || Data.ActorSpells == null)
+                return ReadOnlySpan<ActorSpellDef>.Empty;
+
+            if (actor.FirstSpellIndex >= Data.ActorSpells.Length)
+                return ReadOnlySpan<ActorSpellDef>.Empty;
+
+            int count = Math.Min(actor.SpellCount, Data.ActorSpells.Length - actor.FirstSpellIndex);
+            return new ReadOnlySpan<ActorSpellDef>(Data.ActorSpells, actor.FirstSpellIndex, count);
+        }
+
+        public ReadOnlySpan<ContainerItemDef> GetActorInventoryItems(ActorDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.Actors.Length)
+                return ReadOnlySpan<ContainerItemDef>.Empty;
+
+            var actor = Data.Actors[handle.Index];
+            if (actor.FirstInventoryIndex < 0 || actor.InventoryCount <= 0 || Data.ActorInventoryItems == null)
+                return ReadOnlySpan<ContainerItemDef>.Empty;
+
+            if (actor.FirstInventoryIndex >= Data.ActorInventoryItems.Length)
+                return ReadOnlySpan<ContainerItemDef>.Empty;
+
+            int count = Math.Min(actor.InventoryCount, Data.ActorInventoryItems.Length - actor.FirstInventoryIndex);
+            return new ReadOnlySpan<ContainerItemDef>(Data.ActorInventoryItems, actor.FirstInventoryIndex, count);
         }
 
         public ReadOnlySpan<DialogueInfoDef> GetDialogueInfos(DialogueDefHandle handle)

@@ -66,6 +66,14 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < spellBuffer.Length; i++)
                     knownSpells[i] = spellBuffer[i];
             }
+            ActorActiveMagicEffect[] activeMagicEffects = Array.Empty<ActorActiveMagicEffect>();
+            if (entityManager.HasBuffer<ActorActiveMagicEffect>(playerEntity))
+            {
+                var effectBuffer = entityManager.GetBuffer<ActorActiveMagicEffect>(playerEntity);
+                activeMagicEffects = new ActorActiveMagicEffect[effectBuffer.Length];
+                for (int i = 0; i < effectBuffer.Length; i++)
+                    activeMagicEffects[i] = effectBuffer[i];
+            }
             var exteriorMapDiscovery = CaptureExteriorMapDiscovery(entityManager);
             var globalMapOverlay = GlobalMapPresentationCache.CaptureOverlayPayload();
 
@@ -83,6 +91,7 @@ namespace VVardenfell.Runtime.WorldState
                 JournalEntries = journalEntries,
                 Inventory = inventoryEntries,
                 KnownSpells = knownSpells,
+                ActiveMagicEffects = activeMagicEffects,
                 ExteriorMapDiscovery = exteriorMapDiscovery,
                 GlobalMapOverlay = globalMapOverlay,
             };

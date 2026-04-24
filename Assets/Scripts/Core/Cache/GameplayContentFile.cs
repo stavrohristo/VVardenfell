@@ -130,6 +130,76 @@ namespace VVardenfell.Core.Cache
         public float Float1;
     }
 
+    public struct ClassDef
+    {
+        public ContentId ContentId;
+        public uint RecordTag;
+        public string Id;
+        public string Name;
+        public string Description;
+        public int FavoredAttribute0;
+        public int FavoredAttribute1;
+        public int Specialization;
+        public int[] MinorSkills;
+        public int[] MajorSkills;
+        public int Playable;
+        public int Services;
+    }
+
+    public struct RaceSkillBonusDef
+    {
+        public int Skill;
+        public int Bonus;
+    }
+
+    public struct RaceDef
+    {
+        public ContentId ContentId;
+        public uint RecordTag;
+        public string Id;
+        public string Name;
+        public string Description;
+        public RaceSkillBonusDef[] SkillBonuses;
+        public int[] MaleAttributes;
+        public int[] FemaleAttributes;
+        public float MaleHeight;
+        public float FemaleHeight;
+        public float MaleWeight;
+        public float FemaleWeight;
+        public int Flags;
+        public string[] PowerSpellIds;
+    }
+
+    public struct FactionRankRequirementDef
+    {
+        public int Attribute1;
+        public int Attribute2;
+        public int PrimarySkill;
+        public int FavoredSkill;
+        public int Reaction;
+    }
+
+    public struct FactionReactionDef
+    {
+        public string FactionId;
+        public int Reaction;
+    }
+
+    public struct FactionDef
+    {
+        public ContentId ContentId;
+        public uint RecordTag;
+        public string Id;
+        public string Name;
+        public int FavoredAttribute0;
+        public int FavoredAttribute1;
+        public FactionRankRequirementDef[] RankRequirements;
+        public int[] Skills;
+        public int Hidden;
+        public string[] RankNames;
+        public FactionReactionDef[] Reactions;
+    }
+
     public struct ContainerContentRangeDef
     {
         public int FirstItemIndex;
@@ -140,6 +210,70 @@ namespace VVardenfell.Core.Cache
     {
         public string ItemId;
         public int Count;
+    }
+
+    public struct ActorAttributeDef
+    {
+        public int Strength;
+        public int Intelligence;
+        public int Willpower;
+        public int Agility;
+        public int Speed;
+        public int Endurance;
+        public int Personality;
+        public int Luck;
+    }
+
+    public struct ActorSkillDef
+    {
+        public int Block;
+        public int Armorer;
+        public int MediumArmor;
+        public int HeavyArmor;
+        public int BluntWeapon;
+        public int LongBlade;
+        public int Axe;
+        public int Spear;
+        public int Athletics;
+        public int Enchant;
+        public int Destruction;
+        public int Alteration;
+        public int Illusion;
+        public int Conjuration;
+        public int Mysticism;
+        public int Restoration;
+        public int Alchemy;
+        public int Unarmored;
+        public int Security;
+        public int Sneak;
+        public int Acrobatics;
+        public int LightArmor;
+        public int ShortBlade;
+        public int Marksman;
+        public int Mercantile;
+        public int Speechcraft;
+        public int HandToHand;
+    }
+
+    public struct ActorVitalDef
+    {
+        public int Health;
+        public int Magicka;
+        public int Fatigue;
+    }
+
+    public struct ActorAiDataDef
+    {
+        public int Hello;
+        public byte Fight;
+        public byte Flee;
+        public byte Alarm;
+        public int Services;
+    }
+
+    public struct ActorSpellDef
+    {
+        public string SpellId;
     }
 
     public struct ItemLeveledListEntryDef
@@ -176,6 +310,25 @@ namespace VVardenfell.Core.Cache
         public uint Flags;
         public int Level;
         public float Scale;
+        public byte AutoCalculatedStats;
+        public int BloodType;
+        public int Disposition;
+        public int Reputation;
+        public int Rank;
+        public int Gold;
+        public int CreatureType;
+        public int SoulValue;
+        public int Combat;
+        public int Magic;
+        public int Stealth;
+        public ActorAttributeDef Attributes;
+        public ActorSkillDef Skills;
+        public ActorVitalDef Vitals;
+        public ActorAiDataDef AiData;
+        public int FirstSpellIndex;
+        public int SpellCount;
+        public int FirstInventoryIndex;
+        public int InventoryCount;
     }
 
     public struct LightDef
@@ -347,6 +500,8 @@ namespace VVardenfell.Core.Cache
     public sealed class GameplayContentData
     {
         public ActorDef[] Actors = Array.Empty<ActorDef>();
+        public ActorSpellDef[] ActorSpells = Array.Empty<ActorSpellDef>();
+        public ContainerItemDef[] ActorInventoryItems = Array.Empty<ContainerItemDef>();
         public BaseDef[] Activators = Array.Empty<BaseDef>();
         public BaseDef[] Doors = Array.Empty<BaseDef>();
         public BaseDef[] Containers = Array.Empty<BaseDef>();
@@ -371,9 +526,9 @@ namespace VVardenfell.Core.Cache
         public AmbientSettingsDef AmbientSettings;
         public GenericRecordDef[] GameSettings = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Globals = Array.Empty<GenericRecordDef>();
-        public GenericRecordDef[] Classes = Array.Empty<GenericRecordDef>();
-        public GenericRecordDef[] Factions = Array.Empty<GenericRecordDef>();
-        public GenericRecordDef[] Races = Array.Empty<GenericRecordDef>();
+        public ClassDef[] Classes = Array.Empty<ClassDef>();
+        public FactionDef[] Factions = Array.Empty<FactionDef>();
+        public RaceDef[] Races = Array.Empty<RaceDef>();
         public GenericRecordDef[] Birthsigns = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Skills = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Scripts = Array.Empty<GenericRecordDef>();
@@ -400,6 +555,8 @@ namespace VVardenfell.Core.Cache
             w.Write(CacheFormat.GameplayContentVersion);
 
             WriteActorArray(w, data?.Actors);
+            WriteActorSpellArray(w, data?.ActorSpells);
+            WriteContainerItemArray(w, data?.ActorInventoryItems);
             WriteBaseDefArray(w, data?.Activators);
             WriteBaseDefArray(w, data?.Doors);
             WriteBaseDefArray(w, data?.Containers);
@@ -424,9 +581,9 @@ namespace VVardenfell.Core.Cache
             WriteAmbientSettings(w, data?.AmbientSettings ?? default);
             WriteGenericRecordArray(w, data?.GameSettings);
             WriteGenericRecordArray(w, data?.Globals);
-            WriteGenericRecordArray(w, data?.Classes);
-            WriteGenericRecordArray(w, data?.Factions);
-            WriteGenericRecordArray(w, data?.Races);
+            WriteClassArray(w, data?.Classes);
+            WriteFactionArray(w, data?.Factions);
+            WriteRaceArray(w, data?.Races);
             WriteGenericRecordArray(w, data?.Birthsigns);
             WriteGenericRecordArray(w, data?.Skills);
             WriteGenericRecordArray(w, data?.Scripts);
@@ -458,6 +615,8 @@ namespace VVardenfell.Core.Cache
             return new GameplayContentData
             {
                 Actors = ReadActorArray(r),
+                ActorSpells = ReadActorSpellArray(r),
+                ActorInventoryItems = ReadContainerItemArray(r),
                 Activators = ReadBaseDefArray(r),
                 Doors = ReadBaseDefArray(r),
                 Containers = ReadBaseDefArray(r),
@@ -482,9 +641,9 @@ namespace VVardenfell.Core.Cache
                 AmbientSettings = ReadAmbientSettings(r),
                 GameSettings = ReadGenericRecordArray(r),
                 Globals = ReadGenericRecordArray(r),
-                Classes = ReadGenericRecordArray(r),
-                Factions = ReadGenericRecordArray(r),
-                Races = ReadGenericRecordArray(r),
+                Classes = ReadClassArray(r),
+                Factions = ReadFactionArray(r),
+                Races = ReadRaceArray(r),
                 Birthsigns = ReadGenericRecordArray(r),
                 Skills = ReadGenericRecordArray(r),
                 Scripts = ReadGenericRecordArray(r),
@@ -580,6 +739,164 @@ namespace VVardenfell.Core.Cache
             };
         }
 
+        static void WriteClass(BinaryWriter w, ClassDef value)
+        {
+            WriteContentId(w, value.ContentId);
+            w.Write(value.RecordTag);
+            WriteString(w, value.Id);
+            WriteString(w, value.Name);
+            WriteString(w, value.Description);
+            w.Write(value.FavoredAttribute0);
+            w.Write(value.FavoredAttribute1);
+            w.Write(value.Specialization);
+            WriteIntArray(w, value.MinorSkills);
+            WriteIntArray(w, value.MajorSkills);
+            w.Write(value.Playable);
+            w.Write(value.Services);
+        }
+
+        static ClassDef ReadClass(BinaryReader r)
+        {
+            return new ClassDef
+            {
+                ContentId = ReadContentId(r),
+                RecordTag = r.ReadUInt32(),
+                Id = ReadString(r),
+                Name = ReadString(r),
+                Description = ReadString(r),
+                FavoredAttribute0 = r.ReadInt32(),
+                FavoredAttribute1 = r.ReadInt32(),
+                Specialization = r.ReadInt32(),
+                MinorSkills = ReadIntArray(r),
+                MajorSkills = ReadIntArray(r),
+                Playable = r.ReadInt32(),
+                Services = r.ReadInt32(),
+            };
+        }
+
+        static void WriteRace(BinaryWriter w, RaceDef value)
+        {
+            WriteContentId(w, value.ContentId);
+            w.Write(value.RecordTag);
+            WriteString(w, value.Id);
+            WriteString(w, value.Name);
+            WriteString(w, value.Description);
+            WriteRaceSkillBonusArray(w, value.SkillBonuses);
+            WriteIntArray(w, value.MaleAttributes);
+            WriteIntArray(w, value.FemaleAttributes);
+            w.Write(value.MaleHeight);
+            w.Write(value.FemaleHeight);
+            w.Write(value.MaleWeight);
+            w.Write(value.FemaleWeight);
+            w.Write(value.Flags);
+            WriteStringArray(w, value.PowerSpellIds);
+        }
+
+        static RaceDef ReadRace(BinaryReader r)
+        {
+            return new RaceDef
+            {
+                ContentId = ReadContentId(r),
+                RecordTag = r.ReadUInt32(),
+                Id = ReadString(r),
+                Name = ReadString(r),
+                Description = ReadString(r),
+                SkillBonuses = ReadRaceSkillBonusArray(r),
+                MaleAttributes = ReadIntArray(r),
+                FemaleAttributes = ReadIntArray(r),
+                MaleHeight = r.ReadSingle(),
+                FemaleHeight = r.ReadSingle(),
+                MaleWeight = r.ReadSingle(),
+                FemaleWeight = r.ReadSingle(),
+                Flags = r.ReadInt32(),
+                PowerSpellIds = ReadStringArray(r),
+            };
+        }
+
+        static void WriteRaceSkillBonus(BinaryWriter w, RaceSkillBonusDef value)
+        {
+            w.Write(value.Skill);
+            w.Write(value.Bonus);
+        }
+
+        static RaceSkillBonusDef ReadRaceSkillBonus(BinaryReader r)
+        {
+            return new RaceSkillBonusDef
+            {
+                Skill = r.ReadInt32(),
+                Bonus = r.ReadInt32(),
+            };
+        }
+
+        static void WriteFaction(BinaryWriter w, FactionDef value)
+        {
+            WriteContentId(w, value.ContentId);
+            w.Write(value.RecordTag);
+            WriteString(w, value.Id);
+            WriteString(w, value.Name);
+            w.Write(value.FavoredAttribute0);
+            w.Write(value.FavoredAttribute1);
+            WriteFactionRankRequirementArray(w, value.RankRequirements);
+            WriteIntArray(w, value.Skills);
+            w.Write(value.Hidden);
+            WriteStringArray(w, value.RankNames);
+            WriteFactionReactionArray(w, value.Reactions);
+        }
+
+        static FactionDef ReadFaction(BinaryReader r)
+        {
+            return new FactionDef
+            {
+                ContentId = ReadContentId(r),
+                RecordTag = r.ReadUInt32(),
+                Id = ReadString(r),
+                Name = ReadString(r),
+                FavoredAttribute0 = r.ReadInt32(),
+                FavoredAttribute1 = r.ReadInt32(),
+                RankRequirements = ReadFactionRankRequirementArray(r),
+                Skills = ReadIntArray(r),
+                Hidden = r.ReadInt32(),
+                RankNames = ReadStringArray(r),
+                Reactions = ReadFactionReactionArray(r),
+            };
+        }
+
+        static void WriteFactionRankRequirement(BinaryWriter w, FactionRankRequirementDef value)
+        {
+            w.Write(value.Attribute1);
+            w.Write(value.Attribute2);
+            w.Write(value.PrimarySkill);
+            w.Write(value.FavoredSkill);
+            w.Write(value.Reaction);
+        }
+
+        static FactionRankRequirementDef ReadFactionRankRequirement(BinaryReader r)
+        {
+            return new FactionRankRequirementDef
+            {
+                Attribute1 = r.ReadInt32(),
+                Attribute2 = r.ReadInt32(),
+                PrimarySkill = r.ReadInt32(),
+                FavoredSkill = r.ReadInt32(),
+                Reaction = r.ReadInt32(),
+            };
+        }
+
+        static void WriteFactionReaction(BinaryWriter w, FactionReactionDef value)
+        {
+            WriteString(w, value.FactionId);
+            w.Write(value.Reaction);
+        }
+
+        static FactionReactionDef ReadFactionReaction(BinaryReader r)
+        {
+            return new FactionReactionDef
+            {
+                FactionId = ReadString(r),
+                Reaction = r.ReadInt32(),
+            };
+        }
+
         static void WriteActor(BinaryWriter w, ActorDef value)
         {
             WriteContentId(w, value.ContentId);
@@ -598,6 +915,25 @@ namespace VVardenfell.Core.Cache
             w.Write(value.Flags);
             w.Write(value.Level);
             w.Write(value.Scale);
+            w.Write(value.AutoCalculatedStats);
+            w.Write(value.BloodType);
+            w.Write(value.Disposition);
+            w.Write(value.Reputation);
+            w.Write(value.Rank);
+            w.Write(value.Gold);
+            w.Write(value.CreatureType);
+            w.Write(value.SoulValue);
+            w.Write(value.Combat);
+            w.Write(value.Magic);
+            w.Write(value.Stealth);
+            WriteActorAttributes(w, value.Attributes);
+            WriteActorSkills(w, value.Skills);
+            WriteActorVitals(w, value.Vitals);
+            WriteActorAiData(w, value.AiData);
+            w.Write(value.FirstSpellIndex);
+            w.Write(value.SpellCount);
+            w.Write(value.FirstInventoryIndex);
+            w.Write(value.InventoryCount);
         }
 
         static ActorDef ReadActor(BinaryReader r)
@@ -620,6 +956,166 @@ namespace VVardenfell.Core.Cache
                 Flags = r.ReadUInt32(),
                 Level = r.ReadInt32(),
                 Scale = r.ReadSingle(),
+                AutoCalculatedStats = r.ReadByte(),
+                BloodType = r.ReadInt32(),
+                Disposition = r.ReadInt32(),
+                Reputation = r.ReadInt32(),
+                Rank = r.ReadInt32(),
+                Gold = r.ReadInt32(),
+                CreatureType = r.ReadInt32(),
+                SoulValue = r.ReadInt32(),
+                Combat = r.ReadInt32(),
+                Magic = r.ReadInt32(),
+                Stealth = r.ReadInt32(),
+                Attributes = ReadActorAttributes(r),
+                Skills = ReadActorSkills(r),
+                Vitals = ReadActorVitals(r),
+                AiData = ReadActorAiData(r),
+                FirstSpellIndex = r.ReadInt32(),
+                SpellCount = r.ReadInt32(),
+                FirstInventoryIndex = r.ReadInt32(),
+                InventoryCount = r.ReadInt32(),
+            };
+        }
+
+        static void WriteActorAttributes(BinaryWriter w, ActorAttributeDef value)
+        {
+            w.Write(value.Strength);
+            w.Write(value.Intelligence);
+            w.Write(value.Willpower);
+            w.Write(value.Agility);
+            w.Write(value.Speed);
+            w.Write(value.Endurance);
+            w.Write(value.Personality);
+            w.Write(value.Luck);
+        }
+
+        static ActorAttributeDef ReadActorAttributes(BinaryReader r)
+        {
+            return new ActorAttributeDef
+            {
+                Strength = r.ReadInt32(),
+                Intelligence = r.ReadInt32(),
+                Willpower = r.ReadInt32(),
+                Agility = r.ReadInt32(),
+                Speed = r.ReadInt32(),
+                Endurance = r.ReadInt32(),
+                Personality = r.ReadInt32(),
+                Luck = r.ReadInt32(),
+            };
+        }
+
+        static void WriteActorSkills(BinaryWriter w, ActorSkillDef value)
+        {
+            w.Write(value.Block);
+            w.Write(value.Armorer);
+            w.Write(value.MediumArmor);
+            w.Write(value.HeavyArmor);
+            w.Write(value.BluntWeapon);
+            w.Write(value.LongBlade);
+            w.Write(value.Axe);
+            w.Write(value.Spear);
+            w.Write(value.Athletics);
+            w.Write(value.Enchant);
+            w.Write(value.Destruction);
+            w.Write(value.Alteration);
+            w.Write(value.Illusion);
+            w.Write(value.Conjuration);
+            w.Write(value.Mysticism);
+            w.Write(value.Restoration);
+            w.Write(value.Alchemy);
+            w.Write(value.Unarmored);
+            w.Write(value.Security);
+            w.Write(value.Sneak);
+            w.Write(value.Acrobatics);
+            w.Write(value.LightArmor);
+            w.Write(value.ShortBlade);
+            w.Write(value.Marksman);
+            w.Write(value.Mercantile);
+            w.Write(value.Speechcraft);
+            w.Write(value.HandToHand);
+        }
+
+        static ActorSkillDef ReadActorSkills(BinaryReader r)
+        {
+            return new ActorSkillDef
+            {
+                Block = r.ReadInt32(),
+                Armorer = r.ReadInt32(),
+                MediumArmor = r.ReadInt32(),
+                HeavyArmor = r.ReadInt32(),
+                BluntWeapon = r.ReadInt32(),
+                LongBlade = r.ReadInt32(),
+                Axe = r.ReadInt32(),
+                Spear = r.ReadInt32(),
+                Athletics = r.ReadInt32(),
+                Enchant = r.ReadInt32(),
+                Destruction = r.ReadInt32(),
+                Alteration = r.ReadInt32(),
+                Illusion = r.ReadInt32(),
+                Conjuration = r.ReadInt32(),
+                Mysticism = r.ReadInt32(),
+                Restoration = r.ReadInt32(),
+                Alchemy = r.ReadInt32(),
+                Unarmored = r.ReadInt32(),
+                Security = r.ReadInt32(),
+                Sneak = r.ReadInt32(),
+                Acrobatics = r.ReadInt32(),
+                LightArmor = r.ReadInt32(),
+                ShortBlade = r.ReadInt32(),
+                Marksman = r.ReadInt32(),
+                Mercantile = r.ReadInt32(),
+                Speechcraft = r.ReadInt32(),
+                HandToHand = r.ReadInt32(),
+            };
+        }
+
+        static void WriteActorVitals(BinaryWriter w, ActorVitalDef value)
+        {
+            w.Write(value.Health);
+            w.Write(value.Magicka);
+            w.Write(value.Fatigue);
+        }
+
+        static ActorVitalDef ReadActorVitals(BinaryReader r)
+        {
+            return new ActorVitalDef
+            {
+                Health = r.ReadInt32(),
+                Magicka = r.ReadInt32(),
+                Fatigue = r.ReadInt32(),
+            };
+        }
+
+        static void WriteActorAiData(BinaryWriter w, ActorAiDataDef value)
+        {
+            w.Write(value.Hello);
+            w.Write(value.Fight);
+            w.Write(value.Flee);
+            w.Write(value.Alarm);
+            w.Write(value.Services);
+        }
+
+        static ActorAiDataDef ReadActorAiData(BinaryReader r)
+        {
+            return new ActorAiDataDef
+            {
+                Hello = r.ReadInt32(),
+                Fight = r.ReadByte(),
+                Flee = r.ReadByte(),
+                Alarm = r.ReadByte(),
+                Services = r.ReadInt32(),
+            };
+        }
+
+        static void WriteActorSpell(BinaryWriter w, ActorSpellDef value)
+            => WriteString(w, value.SpellId);
+
+        static ActorSpellDef ReadActorSpell(BinaryReader r)
+        {
+            return new ActorSpellDef
+            {
+                SpellId = ReadString(r),
             };
         }
 
@@ -1093,6 +1589,142 @@ namespace VVardenfell.Core.Cache
             return values;
         }
 
+        static void WriteClassArray(BinaryWriter w, ClassDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteClass(w, values[i]);
+        }
+
+        static ClassDef[] ReadClassArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ClassDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadClass(r);
+            return values;
+        }
+
+        static void WriteRaceArray(BinaryWriter w, RaceDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteRace(w, values[i]);
+        }
+
+        static RaceDef[] ReadRaceArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new RaceDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadRace(r);
+            return values;
+        }
+
+        static void WriteFactionArray(BinaryWriter w, FactionDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteFaction(w, values[i]);
+        }
+
+        static FactionDef[] ReadFactionArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new FactionDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadFaction(r);
+            return values;
+        }
+
+        static void WriteIntArray(BinaryWriter w, int[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                w.Write(values[i]);
+        }
+
+        static int[] ReadIntArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new int[count];
+            for (int i = 0; i < count; i++)
+                values[i] = r.ReadInt32();
+            return values;
+        }
+
+        static void WriteStringArray(BinaryWriter w, string[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteString(w, values[i]);
+        }
+
+        static string[] ReadStringArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new string[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadString(r);
+            return values;
+        }
+
+        static void WriteRaceSkillBonusArray(BinaryWriter w, RaceSkillBonusDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteRaceSkillBonus(w, values[i]);
+        }
+
+        static RaceSkillBonusDef[] ReadRaceSkillBonusArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new RaceSkillBonusDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadRaceSkillBonus(r);
+            return values;
+        }
+
+        static void WriteFactionRankRequirementArray(BinaryWriter w, FactionRankRequirementDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteFactionRankRequirement(w, values[i]);
+        }
+
+        static FactionRankRequirementDef[] ReadFactionRankRequirementArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new FactionRankRequirementDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadFactionRankRequirement(r);
+            return values;
+        }
+
+        static void WriteFactionReactionArray(BinaryWriter w, FactionReactionDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteFactionReaction(w, values[i]);
+        }
+
+        static FactionReactionDef[] ReadFactionReactionArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new FactionReactionDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadFactionReaction(r);
+            return values;
+        }
+
         static void WriteContainerContentRangeArray(BinaryWriter w, ContainerContentRangeDef[] values)
         {
             int count = values?.Length ?? 0;
@@ -1141,6 +1773,23 @@ namespace VVardenfell.Core.Cache
             var values = new ActorDef[count];
             for (int i = 0; i < count; i++)
                 values[i] = ReadActor(r);
+            return values;
+        }
+
+        static void WriteActorSpellArray(BinaryWriter w, ActorSpellDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteActorSpell(w, values[i]);
+        }
+
+        static ActorSpellDef[] ReadActorSpellArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ActorSpellDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadActorSpell(r);
             return values;
         }
 

@@ -36,38 +36,47 @@ namespace VVardenfell.Runtime.WorldRefs
             return linkedEntities;
         }
 
-        public static void AppendChildren(EntityManager entityManager, Entity logicalEntity, Entity[] children)
+        public static void QueueAppendChildren(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, Entity[] children)
         {
             if (children == null)
                 return;
 
             for (int i = 0; i < children.Length; i++)
-                LinkChild(entityManager, logicalEntity, children[i]);
+                QueueLinkChild(entityManager, ref ecb, logicalEntity, children[i]);
         }
 
-        public static void AppendLinkedEntityGroup(EntityManager entityManager, Entity logicalEntity, Entity root)
+        public static void QueueAppendLinkedEntityGroup(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, Entity root)
         {
             Entity[] linkedEntities = SnapshotLinkedEntityGroup(entityManager, root);
             if (linkedEntities == null)
             {
-                LinkChild(entityManager, logicalEntity, root);
+                QueueLinkChild(entityManager, ref ecb, logicalEntity, root);
                 return;
             }
 
-            AppendChildren(entityManager, logicalEntity, linkedEntities);
+            QueueAppendChildren(entityManager, ref ecb, logicalEntity, linkedEntities);
         }
 
-        public static void LinkChild(EntityManager entityManager, Entity logicalEntity, Entity child)
+        public static void QueueLinkChild(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, Entity child)
         {
             if (child == Entity.Null || !entityManager.Exists(child))
                 return;
 
             if (entityManager.HasComponent<LogicalRefParent>(child))
-                entityManager.SetComponentData(child, new LogicalRefParent { Value = logicalEntity });
+                ecb.SetComponent(child, new LogicalRefParent { Value = logicalEntity });
             else
-                entityManager.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
+                ecb.AddComponent(child, new LogicalRefParent { Value = logicalEntity });
 
-            entityManager.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
+            ecb.AppendToBuffer(logicalEntity, new LogicalRefChild { Value = child });
+        }
+
+        public static void QueueLinkNewChild(ref EntityCommandBuffer ecb, Entity logicalEntity, Entity child)
+        {
+            if (child == Entity.Null)
+                return;
+
+            ecb.AddComponent(child, new LogicalRefParent { Value = logicalEntity });
+            ecb.AppendToBuffer(logicalEntity, new LogicalRefChild { Value = child });
         }
 
         public static Entity[] SnapshotChildBuffer(EntityManager entityManager, Entity logicalEntity)

@@ -1,6 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Text;
+using Unity.Collections;
 using Unity.Mathematics;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 
@@ -162,6 +166,257 @@ namespace VVardenfell.Runtime.Movement
                 },
             };
         }
+
+        public static ActorRuntimeStatSeed CreateSeedFromActor(RuntimeContentDatabase contentDb, in ActorDef actor)
+        {
+            var attributes = new ActorAttributeSet
+            {
+                Strength = actor.Attributes.Strength,
+                Intelligence = actor.Attributes.Intelligence,
+                Willpower = actor.Attributes.Willpower,
+                Agility = actor.Attributes.Agility,
+                Speed = actor.Attributes.Speed,
+                Endurance = actor.Attributes.Endurance,
+                Personality = actor.Attributes.Personality,
+                Luck = actor.Attributes.Luck,
+            };
+
+            var skills = new ActorSkillSet
+            {
+                Block = actor.Skills.Block,
+                Armorer = actor.Skills.Armorer,
+                MediumArmor = actor.Skills.MediumArmor,
+                HeavyArmor = actor.Skills.HeavyArmor,
+                BluntWeapon = actor.Skills.BluntWeapon,
+                LongBlade = actor.Skills.LongBlade,
+                Axe = actor.Skills.Axe,
+                Spear = actor.Skills.Spear,
+                Athletics = actor.Skills.Athletics,
+                Enchant = actor.Skills.Enchant,
+                Destruction = actor.Skills.Destruction,
+                Alteration = actor.Skills.Alteration,
+                Illusion = actor.Skills.Illusion,
+                Conjuration = actor.Skills.Conjuration,
+                Mysticism = actor.Skills.Mysticism,
+                Restoration = actor.Skills.Restoration,
+                Alchemy = actor.Skills.Alchemy,
+                Unarmored = actor.Skills.Unarmored,
+                Security = actor.Skills.Security,
+                Sneak = actor.Skills.Sneak,
+                Acrobatics = actor.Skills.Acrobatics,
+                LightArmor = actor.Skills.LightArmor,
+                ShortBlade = actor.Skills.ShortBlade,
+                Marksman = actor.Skills.Marksman,
+                Mercantile = actor.Skills.Mercantile,
+                Speechcraft = actor.Skills.Speechcraft,
+                HandToHand = actor.Skills.HandToHand,
+            };
+
+            var vitals = new ActorVitalSet
+            {
+                CurrentHealth = actor.Vitals.Health,
+                ModifiedHealthBase = actor.Vitals.Health,
+                CurrentMagicka = actor.Vitals.Magicka,
+                ModifiedMagickaBase = actor.Vitals.Magicka,
+                CurrentFatigue = actor.Vitals.Fatigue,
+                ModifiedFatigueBase = actor.Vitals.Fatigue,
+            };
+
+            if (actor.AutoCalculatedStats != 0
+                || vitals.ModifiedHealthBase <= 0f
+                || vitals.ModifiedFatigueBase <= 0f)
+            {
+                ApplyVitalBases(contentDb, attributes, ref vitals, initializeMissingCurrents: true);
+            }
+
+            return new ActorRuntimeStatSeed
+            {
+                Attributes = attributes,
+                Skills = skills,
+                Vitals = vitals,
+                EffectModifiers = new ActorEffectStatModifiers(),
+            };
+        }
+
+        public static ActorIdentitySet CreateIdentityFromActor(in ActorDef actor)
+        {
+            string characterName = string.IsNullOrWhiteSpace(actor.Name)
+                ? (string.Equals(actor.Id, "player", StringComparison.OrdinalIgnoreCase) ? "Player" : actor.Id)
+                : actor.Name;
+
+            return new ActorIdentitySet
+            {
+                CharacterName = ToFixed64(characterName),
+                Level = math.max(1, actor.Level),
+                RaceName = ToFixed64(actor.RaceId),
+                ClassName = ToFixed64(actor.ClassId),
+                BirthSignName = default,
+                Reputation = actor.Reputation,
+            };
+        }
+
+        public static PlayerKnownSpell[] BuildKnownSpellListFromActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        {
+            if (contentDb == null || !actorHandle.IsValid)
+                return Array.Empty<PlayerKnownSpell>();
+
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            var actorSpells = contentDb.GetActorSpells(actorHandle);
+            var raceHandle = default(GenericRecordDefHandle);
+            bool hasRacePowers = !string.IsNullOrWhiteSpace(actor.RaceId)
+                && contentDb.TryGetRaceHandle(actor.RaceId, out raceHandle)
+                && raceHandle.IsValid
+                && contentDb.GetRace(raceHandle).PowerSpellIds != null
+                && contentDb.GetRace(raceHandle).PowerSpellIds.Length > 0;
+
+            if (actorSpells.Length == 0 && !hasRacePowers)
+                return Array.Empty<PlayerKnownSpell>();
+
+            var results = new List<PlayerKnownSpell>(actorSpells.Length + (hasRacePowers ? contentDb.GetRace(raceHandle).PowerSpellIds.Length : 0));
+            for (int i = 0; i < actorSpells.Length; i++)
+                AddKnownSpell(contentDb, actorSpells[i].SpellId, results);
+
+            if (hasRacePowers)
+            {
+                ref readonly var race = ref contentDb.GetRace(raceHandle);
+                for (int i = 0; i < race.PowerSpellIds.Length; i++)
+                    AddKnownSpell(contentDb, race.PowerSpellIds[i], results);
+            }
+
+            return results.ToArray();
+        }
+
+        static void AddKnownSpell(RuntimeContentDatabase contentDb, string spellId, List<PlayerKnownSpell> results)
+        {
+            if (string.IsNullOrWhiteSpace(spellId) || !contentDb.TryGetSpellHandle(spellId, out var spellHandle) || !spellHandle.IsValid)
+                return;
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                if (results[i].Spell.Value == spellHandle.Value)
+                    return;
+            }
+
+            results.Add(new PlayerKnownSpell
+            {
+                Spell = spellHandle,
+            });
+        }
+
+        public static bool TryCreatePlayerSeedFromContent(
+            RuntimeContentDatabase contentDb,
+            out ActorRuntimeStatSeed stats,
+            out ActorIdentitySet identity,
+            out PlayerKnownSpell[] knownSpells,
+            out PlayerInitialInventoryItem[] initialInventory)
+        {
+            stats = CreateDefaultPlayerSeed();
+            identity = ActorIdentitySet.DefaultPlayer();
+            knownSpells = Array.Empty<PlayerKnownSpell>();
+            initialInventory = Array.Empty<PlayerInitialInventoryItem>();
+
+            if (contentDb == null || !contentDb.TryGetActorHandle("player", out var actorHandle) || !actorHandle.IsValid)
+                return false;
+
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            if (actor.Kind != ActorDefKind.Npc)
+                return false;
+
+            stats = HasManualActorStats(actor)
+                ? CreateSeedFromActor(contentDb, actor)
+                : CreateDefaultPlayerSeed(contentDb);
+            identity = CreateIdentityFromActor(actor);
+            knownSpells = BuildKnownSpellListFromActor(contentDb, actorHandle);
+            initialInventory = BuildInitialInventoryListFromActor(contentDb, actorHandle);
+            return true;
+        }
+
+        static ActorRuntimeStatSeed CreateDefaultPlayerSeed(RuntimeContentDatabase contentDb)
+        {
+            var seed = CreateDefaultPlayerSeed();
+            var vitals = new ActorVitalSet();
+            ApplyVitalBases(contentDb, seed.Attributes, ref vitals, initializeMissingCurrents: true);
+            seed.Vitals = vitals;
+            return seed;
+        }
+
+        public static PlayerInitialInventoryItem[] BuildInitialInventoryListFromActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        {
+            if (contentDb == null || !actorHandle.IsValid)
+                return Array.Empty<PlayerInitialInventoryItem>();
+
+            var actorItems = contentDb.GetActorInventoryItems(actorHandle);
+            if (actorItems.Length == 0)
+                return Array.Empty<PlayerInitialInventoryItem>();
+
+            var results = new List<PlayerInitialInventoryItem>(actorItems.Length);
+            for (int i = 0; i < actorItems.Length; i++)
+            {
+                var item = actorItems[i];
+                if (item.Count <= 0 || string.IsNullOrWhiteSpace(item.ItemId))
+                    continue;
+
+                if (!contentDb.TryResolvePlaceable(item.ItemId, out var contentRef) || !contentRef.IsValid)
+                    continue;
+
+                results.Add(new PlayerInitialInventoryItem
+                {
+                    Content = contentRef,
+                    Count = item.Count,
+                });
+            }
+
+            return results.ToArray();
+        }
+
+        static bool HasManualActorStats(in ActorDef actor)
+        {
+            if (actor.AutoCalculatedStats != 0)
+                return false;
+
+            return HasAnyAttribute(actor.Attributes)
+                && HasAnySkill(actor.Skills)
+                && (actor.Vitals.Health > 0 || actor.Vitals.Magicka > 0 || actor.Vitals.Fatigue > 0);
+        }
+
+        static bool HasAnyAttribute(in ActorAttributeDef attributes)
+            => attributes.Strength != 0
+               || attributes.Intelligence != 0
+               || attributes.Willpower != 0
+               || attributes.Agility != 0
+               || attributes.Speed != 0
+               || attributes.Endurance != 0
+               || attributes.Personality != 0
+               || attributes.Luck != 0;
+
+        static bool HasAnySkill(in ActorSkillDef skills)
+            => skills.Block != 0
+               || skills.Armorer != 0
+               || skills.MediumArmor != 0
+               || skills.HeavyArmor != 0
+               || skills.BluntWeapon != 0
+               || skills.LongBlade != 0
+               || skills.Axe != 0
+               || skills.Spear != 0
+               || skills.Athletics != 0
+               || skills.Enchant != 0
+               || skills.Destruction != 0
+               || skills.Alteration != 0
+               || skills.Illusion != 0
+               || skills.Conjuration != 0
+               || skills.Mysticism != 0
+               || skills.Restoration != 0
+               || skills.Alchemy != 0
+               || skills.Unarmored != 0
+               || skills.Security != 0
+               || skills.Sneak != 0
+               || skills.Acrobatics != 0
+               || skills.LightArmor != 0
+               || skills.ShortBlade != 0
+               || skills.Marksman != 0
+               || skills.Mercantile != 0
+               || skills.Speechcraft != 0
+               || skills.HandToHand != 0;
 
         public static ActorDerivedMovementStats BuildDerived(
             RuntimeContentDatabase contentDb,
@@ -369,6 +624,16 @@ namespace VVardenfell.Runtime.Movement
                 return max;
 
             return math.clamp(current, 0f, max);
+        }
+
+        static FixedString64Bytes ToFixed64(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return default;
+
+            var result = default(FixedString64Bytes);
+            result.CopyFromTruncated(value);
+            return result;
         }
     }
 

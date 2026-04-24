@@ -64,6 +64,31 @@ namespace VVardenfell.Runtime.Components
         public float BurdenMagnitude;
     }
 
+    public enum ActorActiveMagicEffectSourceKind : byte
+    {
+        Unknown = 0,
+        PassiveSpell = 1,
+        TimedSpell = 2,
+    }
+
+    public struct ActorActiveMagicEffect : IBufferElementData
+    {
+        public short EffectId;
+        public sbyte Skill;
+        public sbyte Attribute;
+        public float Magnitude;
+        /// <summary>
+        /// Permanent effects use -1 for both duration and time-left, matching OpenMW's
+        /// active effect convention for effects without an expiry.
+        /// </summary>
+        public float DurationSeconds;
+        public float TimeLeftSeconds;
+        public byte Applied;
+        public ActorActiveMagicEffectSourceKind SourceKind;
+        public FixedString64Bytes SourceName;
+        public FixedString64Bytes SourceId;
+    }
+
     public struct ActorDerivedMovementStats : IComponentData
     {
         public float CarryCapacity;
@@ -111,5 +136,11 @@ namespace VVardenfell.Runtime.Components
     public struct PlayerKnownSpell : IBufferElementData
     {
         public SpellDefHandle Spell;
+    }
+
+    public struct PlayerInitialInventoryItem : IBufferElementData
+    {
+        public ContentReference Content;
+        public int Count;
     }
 }

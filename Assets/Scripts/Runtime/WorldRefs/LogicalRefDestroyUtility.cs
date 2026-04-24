@@ -7,8 +7,9 @@ namespace VVardenfell.Runtime.WorldRefs
 {
     internal static class LogicalRefDestroyUtility
     {
-        public static void DestroyLogicalRef(
+        public static void QueueDestroyLogicalRef(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             ref LogicalRefLookup logicalRefLookup,
             bool preserveRuntimeSpawnRegistration = false)
@@ -49,11 +50,11 @@ namespace VVardenfell.Runtime.WorldRefs
                 }
 
                 if (entityManager.Exists(child))
-                    entityManager.DestroyEntity(child);
+                    ecb.DestroyEntity(child);
             }
 
             if (entityManager.Exists(logicalEntity))
-                entityManager.DestroyEntity(logicalEntity);
+                ecb.DestroyEntity(logicalEntity);
         }
     }
 }

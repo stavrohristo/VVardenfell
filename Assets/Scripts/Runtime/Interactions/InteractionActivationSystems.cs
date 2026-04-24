@@ -104,7 +104,7 @@ namespace VVardenfell.Runtime.Interactions
 
     static class InteractionActivationProxyBuildUtility
     {
-        public static bool EnsureQueued(EntityManager entityManager, Entity logicalEntity)
+        public static bool QueueEnsureQueued(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
         {
             if (!entityManager.Exists(logicalEntity))
                 return false;
@@ -122,7 +122,7 @@ namespace VVardenfell.Runtime.Interactions
             {
                 Entity existingProxy = entityManager.GetComponentData<InteractionActivationProxyState>(logicalEntity).ProxyEntity;
                 if (existingProxy == Entity.Null || !entityManager.Exists(existingProxy))
-                    entityManager.RemoveComponent<InteractionActivationProxyState>(logicalEntity);
+                    ecb.RemoveComponent<InteractionActivationProxyState>(logicalEntity);
                 else
                     return false;
             }
@@ -130,14 +130,14 @@ namespace VVardenfell.Runtime.Interactions
             if (!InteractionTargetResolver.TryResolveSupportedKind(entityManager, logicalEntity, out _))
                 return false;
 
-            entityManager.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+            ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
             return true;
         }
 
-        public static void EnsurePendingCleared(EntityManager entityManager, Entity logicalEntity)
+        public static void QueuePendingCleared(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
         {
             if (entityManager.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity))
-                entityManager.RemoveComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+                ecb.RemoveComponent<InteractionActivationProxyBuildPending>(logicalEntity);
         }
 
         public static bool HasLiveProxy(EntityManager entityManager, Entity logicalEntity)
@@ -168,6 +168,7 @@ namespace VVardenfell.Runtime.Interactions
                 ComponentType.ReadOnly<PlacedRefIdentity>());
             using (var pending = pendingQuery.ToEntityArray(Allocator.Temp))
             {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
                 for (int i = 0; i < pending.Length; i++)
                 {
                     var logicalEntity = pending[i];
@@ -176,7 +177,7 @@ namespace VVardenfell.Runtime.Interactions
 
                     if (InteractionActivationProxyBuildUtility.HasLiveProxy(EntityManager, logicalEntity))
                     {
-                        InteractionActivationProxyBuildUtility.EnsurePendingCleared(EntityManager, logicalEntity);
+                        InteractionActivationProxyBuildUtility.QueuePendingCleared(EntityManager, ref ecb, logicalEntity);
                         continue;
                     }
 
@@ -189,41 +190,44 @@ namespace VVardenfell.Runtime.Interactions
 
                     if (!InteractionTargetResolver.TryResolveSupportedKind(EntityManager, logicalEntity, out _))
                     {
-                        InteractionActivationProxyBuildUtility.EnsurePendingCleared(EntityManager, logicalEntity);
+                        InteractionActivationProxyBuildUtility.QueuePendingCleared(EntityManager, ref ecb, logicalEntity);
                         continue;
                     }
 
                     if (!InteractionProxyBoundsUtility.TryBuildAggregateWorldBounds(EntityManager, logicalEntity, out AABB worldBounds))
                     {
-                        InteractionActivationProxyBuildUtility.EnsurePendingCleared(EntityManager, logicalEntity);
+                        InteractionActivationProxyBuildUtility.QueuePendingCleared(EntityManager, ref ecb, logicalEntity);
                         continue;
                     }
 
-                    Entity proxyEntity = CreateProxyEntity(logicalEntity, worldBounds, exteriorActive);
+                    Entity proxyEntity = QueueCreateProxyEntity(ref ecb, logicalEntity, worldBounds, exteriorActive);
                     if (EntityManager.HasComponent<InteractionActivationProxyState>(logicalEntity))
                     {
-                        EntityManager.SetComponentData(logicalEntity, new InteractionActivationProxyState
+                        ecb.SetComponent(logicalEntity, new InteractionActivationProxyState
                         {
                             ProxyEntity = proxyEntity,
                         });
                     }
                     else
                     {
-                        EntityManager.AddComponentData(logicalEntity, new InteractionActivationProxyState
+                        ecb.AddComponent(logicalEntity, new InteractionActivationProxyState
                         {
                             ProxyEntity = proxyEntity,
                         });
                     }
 
                     if (EntityManager.HasBuffer<LogicalRefChild>(logicalEntity))
-                        EntityManager.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = proxyEntity });
+                        ecb.AppendToBuffer(logicalEntity, new LogicalRefChild { Value = proxyEntity });
 
-                    InteractionActivationProxyBuildUtility.EnsurePendingCleared(EntityManager, logicalEntity);
+                    InteractionActivationProxyBuildUtility.QueuePendingCleared(EntityManager, ref ecb, logicalEntity);
                 }
+
+                ecb.Playback(EntityManager);
+                ecb.Dispose();
             }
         }
 
-        Entity CreateProxyEntity(Entity logicalEntity, in AABB worldBounds, bool exteriorActive)
+        Entity QueueCreateProxyEntity(ref EntityCommandBuffer ecb, Entity logicalEntity, in AABB worldBounds, bool exteriorActive)
         {
             float3 size = math.max(worldBounds.Extents * 2f, new float3(0.16f));
             BlobAssetReference<Collider> collider = BoxCollider.Create(
@@ -236,27 +240,28 @@ namespace VVardenfell.Runtime.Interactions
                 },
                 InteractionCollisionLayers.ActivationProxyFilter);
 
-            Entity proxyEntity = EntityManager.CreateEntity();
-            EntityManager.AddComponentData(proxyEntity, LocalTransform.FromPositionRotationScale(worldBounds.Center, quaternion.identity, 1f));
-            EntityManager.AddComponentData(proxyEntity, new LocalToWorld
+            Entity proxyEntity = ecb.CreateEntity();
+            ecb.SetName(proxyEntity, new FixedString64Bytes("InteractionActivationProxy"));
+            ecb.AddComponent(proxyEntity, LocalTransform.FromPositionRotationScale(worldBounds.Center, quaternion.identity, 1f));
+            ecb.AddComponent(proxyEntity, new LocalToWorld
             {
                 Value = float4x4.TRS(worldBounds.Center, quaternion.identity, new float3(1f)),
             });
-            RuntimeColliderAttachmentUtility.AttachSource(
-                EntityManager,
+            RuntimeColliderAttachmentUtility.QueueAttachNewSource(
+                ref ecb,
                 proxyEntity,
                 collider,
                 RuntimeColliderKind.ActivationProxy,
                 active: exteriorActive || !EntityManager.HasComponent<CellLink>(logicalEntity),
                 temporary: true);
-            EntityManager.AddComponentData(proxyEntity, new LogicalRefParent { Value = logicalEntity });
-            EntityManager.AddComponent<InteractionActivationProxyTag>(proxyEntity);
-            EntityManager.AddComponent<Unity.Transforms.Static>(proxyEntity);
+            ecb.AddComponent(proxyEntity, new LogicalRefParent { Value = logicalEntity });
+            ecb.AddComponent<InteractionActivationProxyTag>(proxyEntity);
+            ecb.AddComponent<Unity.Transforms.Static>(proxyEntity);
 
             if (EntityManager.HasComponent<CellLink>(logicalEntity))
-                EntityManager.AddComponentData(proxyEntity, EntityManager.GetComponentData<CellLink>(logicalEntity));
+                ecb.AddComponent(proxyEntity, EntityManager.GetComponentData<CellLink>(logicalEntity));
             if (EntityManager.HasComponent<InteriorCellMember>(logicalEntity))
-                EntityManager.AddComponent<InteriorCellMember>(proxyEntity);
+                ecb.AddComponent<InteriorCellMember>(proxyEntity);
 
             return proxyEntity;
         }

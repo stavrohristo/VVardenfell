@@ -74,6 +74,8 @@ namespace VVardenfell.Runtime.Streaming
 
             Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
+            var placedRefsToResolve = new List<uint>();
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
             int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
             {
@@ -97,8 +99,9 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefCreate.Begin();
                     try
                     {
-                        logicalEntity = LogicalRefEntityFactory.Create(
+                        logicalEntity = LogicalRefEntityFactory.QueueCreate(
                             em,
+                            ref ecb,
                             contentDb,
                             BuildLogicalRefDescriptor(
                                 contentReference,
@@ -114,25 +117,16 @@ namespace VVardenfell.Runtime.Streaming
                         k_LogicalRefCreate.End();
                     }
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
+                    placedRefsToResolve.Add(placedRefId);
                     logicalRefCount++;
-                    k_LogicalRefLookup.Begin();
-                    try
-                    {
-                        LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
-                    }
-                    finally
-                    {
-                        k_LogicalRefLookup.End();
-                    }
+                    if (LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
+                        proxyQueueCount++;
                 }
 
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    LogicalRefChildUtility.AppendChildren(em, logicalEntity, childSnapshots[i]);
-                    if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && LogicalRefEntityFactory.EnsureInteractionProxyQueued(em, logicalEntity))
-                        proxyQueueCount++;
+                    LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
                 }
                 finally
                 {
@@ -143,6 +137,9 @@ namespace VVardenfell.Runtime.Streaming
                     progress?.Report($"Creating logical placed refs {i + 1}/{refs.Length}", i + 1, refs.Length);
             }
 
+            ecb.Playback(em);
+            ecb.Dispose();
+            ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, null);
             progress?.Report($"Creating logical placed refs {refs.Length}/{refs.Length}", refs.Length, refs.Length);
             return logicalRefCount;
         }
@@ -166,6 +163,8 @@ namespace VVardenfell.Runtime.Streaming
 
             Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
+            var placedRefsToResolve = new List<uint>();
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
             int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
             {
@@ -189,8 +188,9 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefCreate.Begin();
                     try
                     {
-                        logicalEntity = LogicalRefEntityFactory.Create(
+                        logicalEntity = LogicalRefEntityFactory.QueueCreate(
                             em,
+                            ref ecb,
                             contentDb,
                             BuildLogicalRefDescriptor(
                                 contentReference,
@@ -206,26 +206,16 @@ namespace VVardenfell.Runtime.Streaming
                         k_LogicalRefCreate.End();
                     }
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
+                    placedRefsToResolve.Add(placedRefId);
                     logicalRefCount++;
-                    k_LogicalRefLookup.Begin();
-                    try
-                    {
-                        LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
-                    }
-                    finally
-                    {
-                        k_LogicalRefLookup.End();
-                    }
-                    spawnedEntities?.Add(logicalEntity);
+                    if (LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
+                        proxyQueueCount++;
                 }
 
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    LogicalRefChildUtility.AppendChildren(em, logicalEntity, childSnapshots[i]);
-                    if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && LogicalRefEntityFactory.EnsureInteractionProxyQueued(em, logicalEntity))
-                        proxyQueueCount++;
+                    LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
                 }
                 finally
                 {
@@ -233,7 +223,53 @@ namespace VVardenfell.Runtime.Streaming
                 }
             }
 
+            ecb.Playback(em);
+            ecb.Dispose();
+            ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, spawnedEntities);
             return logicalRefCount;
+        }
+
+        static void ResolveQueuedLogicalRefs(
+            EntityManager em,
+            List<uint> placedRefsToResolve,
+            bool isInterior,
+            ref LogicalRefLookup logicalRefs,
+            List<Entity> spawnedEntities)
+        {
+            k_LogicalRefLookup.Begin();
+            try
+            {
+                for (int i = 0; i < placedRefsToResolve.Count; i++)
+                {
+                    uint placedRefId = placedRefsToResolve[i];
+                    Entity logicalEntity = FindLogicalRefByPlacedRef(em, placedRefId);
+                    if (logicalEntity == Entity.Null)
+                        continue;
+
+                    LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
+                    spawnedEntities?.Add(logicalEntity);
+                }
+            }
+            finally
+            {
+                k_LogicalRefLookup.End();
+            }
+        }
+
+        static Entity FindLogicalRefByPlacedRef(EntityManager em, uint placedRefId)
+        {
+            using var query = em.CreateEntityQuery(
+                ComponentType.ReadOnly<LogicalRefTag>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (identities[i].Value == placedRefId)
+                    return entities[i];
+            }
+
+            return Entity.Null;
         }
 
         static Entity SpawnRenderShardRef(

@@ -57,16 +57,19 @@ namespace VVardenfell.Importer.Bake
         static readonly uint WeapTag = EsmFourCC.Make('W', 'E', 'A', 'P');
 
         static readonly uint AnamTag = EsmFourCC.Make('A', 'N', 'A', 'M');
+        static readonly uint AidtTag = EsmFourCC.Make('A', 'I', 'D', 'T');
         static readonly uint AvfxTag = EsmFourCC.Make('A', 'V', 'F', 'X');
         static readonly uint BnamTag = EsmFourCC.Make('B', 'N', 'A', 'M');
         static readonly uint BsndTag = EsmFourCC.Make('B', 'S', 'N', 'D');
         static readonly uint BvfxTag = EsmFourCC.Make('B', 'V', 'F', 'X');
         static readonly uint CnamTag = EsmFourCC.Make('C', 'N', 'A', 'M');
+        static readonly uint CldtTag = EsmFourCC.Make('C', 'L', 'D', 'T');
         static readonly uint CsndTag = EsmFourCC.Make('C', 'S', 'N', 'D');
         static readonly uint CvfxTag = EsmFourCC.Make('C', 'V', 'F', 'X');
         static readonly uint DescTag = EsmFourCC.Make('D', 'E', 'S', 'C');
         static readonly uint EndtTag = EsmFourCC.Make('E', 'N', 'D', 'T');
         static readonly uint EnamTag = EsmFourCC.Make('E', 'N', 'A', 'M');
+        static readonly uint FadtTag = EsmFourCC.Make('F', 'A', 'D', 'T');
         static readonly uint FlagTag = EsmFourCC.Make('F', 'L', 'A', 'G');
         static readonly uint FltvTag = EsmFourCC.Make('F', 'L', 'T', 'V');
         static readonly uint HsndTag = EsmFourCC.Make('H', 'S', 'N', 'D');
@@ -82,10 +85,12 @@ namespace VVardenfell.Importer.Bake
         static readonly uint OnamTag = EsmFourCC.Make('O', 'N', 'A', 'M');
         static readonly uint PnamTag = EsmFourCC.Make('P', 'N', 'A', 'M');
         static readonly uint NpcoTag = EsmFourCC.Make('N', 'P', 'C', 'O');
+        static readonly uint NpcsTag = EsmFourCC.Make('N', 'P', 'C', 'S');
         static readonly uint PtexTag = EsmFourCC.Make('P', 'T', 'E', 'X');
         static readonly uint QstfTag = EsmFourCC.Make('Q', 'S', 'T', 'F');
         static readonly uint QstnTag = EsmFourCC.Make('Q', 'S', 'T', 'N');
         static readonly uint QstrTag = EsmFourCC.Make('Q', 'S', 'T', 'R');
+        static readonly uint RadtTag = EsmFourCC.Make('R', 'A', 'D', 'T');
         static readonly uint RdatTag = EsmFourCC.Make('R', 'D', 'A', 'T');
         static readonly uint RnamTag = EsmFourCC.Make('R', 'N', 'A', 'M');
         static readonly uint ScvrTag = EsmFourCC.Make('S', 'C', 'V', 'R');
@@ -134,9 +139,16 @@ namespace VVardenfell.Importer.Bake
             public readonly List<ItemLeveledListEntryDef> Entries = new();
         }
 
+        sealed class ActorAccumulator
+        {
+            public ActorDef Def;
+            public readonly List<ActorSpellDef> Spells = new();
+            public readonly List<ContainerItemDef> InventoryItems = new();
+        }
+
         sealed class State
         {
-            public readonly Dictionary<string, ActorDef> Actors = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ActorAccumulator> Actors = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Activators = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Doors = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Containers = new(StringComparer.OrdinalIgnoreCase);
@@ -153,9 +165,9 @@ namespace VVardenfell.Importer.Bake
             public readonly Dictionary<string, RegionAccumulator> Regions = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> GameSettings = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> Globals = new(StringComparer.OrdinalIgnoreCase);
-            public readonly Dictionary<string, GenericRecordDef> Classes = new(StringComparer.OrdinalIgnoreCase);
-            public readonly Dictionary<string, GenericRecordDef> Factions = new(StringComparer.OrdinalIgnoreCase);
-            public readonly Dictionary<string, GenericRecordDef> Races = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ClassDef> Classes = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, FactionDef> Factions = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, RaceDef> Races = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> Birthsigns = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> Skills = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> Scripts = new(StringComparer.OrdinalIgnoreCase);
@@ -258,13 +270,13 @@ namespace VVardenfell.Importer.Bake
                         ParseGenericRecord(esm, rec.Tag, state.Globals);
                         break;
                     case var tag when tag == ClasTag:
-                        ParseGenericRecord(esm, rec.Tag, state.Classes);
+                        ParseClassRecord(esm, state.Classes);
                         break;
                     case var tag when tag == FactTag:
-                        ParseGenericRecord(esm, rec.Tag, state.Factions);
+                        ParseFactionRecord(esm, state.Factions);
                         break;
                     case var tag when tag == RaceTag:
-                        ParseGenericRecord(esm, rec.Tag, state.Races);
+                        ParseRaceRecord(esm, state.Races);
                         break;
                     case var tag when tag == BsgnTag:
                         ParseGenericRecord(esm, rec.Tag, state.Birthsigns);
@@ -554,6 +566,273 @@ namespace VVardenfell.Importer.Bake
             target[def.Id] = def;
         }
 
+        static void ParseClassRecord(EsmReader esm, Dictionary<string, ClassDef> target)
+        {
+            var def = new ClassDef
+            {
+                RecordTag = ClasTag,
+                MinorSkills = Array.Empty<int>(),
+                MajorSkills = Array.Empty<int>(),
+            };
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.FNAM:
+                        def.Name = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == DescTag:
+                        def.Description = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == CldtTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 60)
+                        {
+                            def.FavoredAttribute0 = ReadInt32(bytes, 0);
+                            def.FavoredAttribute1 = ReadInt32(bytes, 4);
+                            def.Specialization = ReadInt32(bytes, 8);
+                            var minor = new int[5];
+                            var major = new int[5];
+                            for (int i = 0; i < 5; i++)
+                            {
+                                int offset = 12 + i * 8;
+                                minor[i] = ReadInt32(bytes, offset);
+                                major[i] = ReadInt32(bytes, offset + 4);
+                            }
+
+                            def.MinorSkills = minor;
+                            def.MajorSkills = major;
+                            def.Playable = ReadInt32(bytes, 52);
+                            def.Services = ReadInt32(bytes, 56);
+                        }
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(def.Id))
+                return;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                return;
+            }
+
+            def.ContentId = ContentId.FromTagAndId(ClasTag, def.Id);
+            target[def.Id] = def;
+        }
+
+        static void ParseRaceRecord(EsmReader esm, Dictionary<string, RaceDef> target)
+        {
+            var def = new RaceDef
+            {
+                RecordTag = RaceTag,
+                SkillBonuses = Array.Empty<RaceSkillBonusDef>(),
+                MaleAttributes = Array.Empty<int>(),
+                FemaleAttributes = Array.Empty<int>(),
+                PowerSpellIds = Array.Empty<string>(),
+            };
+            var powers = new List<string>();
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.FNAM:
+                        def.Name = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == DescTag:
+                        def.Description = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == RadtTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 140)
+                        {
+                            var bonuses = new RaceSkillBonusDef[7];
+                            for (int i = 0; i < bonuses.Length; i++)
+                            {
+                                int offset = i * 8;
+                                bonuses[i] = new RaceSkillBonusDef
+                                {
+                                    Skill = ReadInt32(bytes, offset),
+                                    Bonus = ReadInt32(bytes, offset + 4),
+                                };
+                            }
+
+                            var maleAttributes = new int[8];
+                            var femaleAttributes = new int[8];
+                            for (int i = 0; i < 8; i++)
+                            {
+                                int offset = 56 + i * 8;
+                                maleAttributes[i] = ReadInt32(bytes, offset);
+                                femaleAttributes[i] = ReadInt32(bytes, offset + 4);
+                            }
+
+                            def.SkillBonuses = bonuses;
+                            def.MaleAttributes = maleAttributes;
+                            def.FemaleAttributes = femaleAttributes;
+                            def.MaleHeight = ReadSingle(bytes, 120);
+                            def.FemaleHeight = ReadSingle(bytes, 124);
+                            def.MaleWeight = ReadSingle(bytes, 128);
+                            def.FemaleWeight = ReadSingle(bytes, 132);
+                            def.Flags = ReadInt32(bytes, 136);
+                        }
+                        break;
+                    }
+                    case var tag when tag == NpcsTag:
+                    {
+                        string spellId = esm.ReadSubrecordString();
+                        if (!string.IsNullOrWhiteSpace(spellId))
+                            powers.Add(spellId);
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(def.Id))
+                return;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                return;
+            }
+
+            def.PowerSpellIds = powers.ToArray();
+            def.ContentId = ContentId.FromTagAndId(RaceTag, def.Id);
+            target[def.Id] = def;
+        }
+
+        static void ParseFactionRecord(EsmReader esm, Dictionary<string, FactionDef> target)
+        {
+            var def = new FactionDef
+            {
+                RecordTag = FactTag,
+                RankRequirements = Array.Empty<FactionRankRequirementDef>(),
+                Skills = Array.Empty<int>(),
+                RankNames = Array.Empty<string>(),
+                Reactions = Array.Empty<FactionReactionDef>(),
+            };
+            var ranks = new List<string>(10);
+            var reactionsByFaction = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            string pendingReactionFaction = null;
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.FNAM:
+                        def.Name = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == RnamTag:
+                        ranks.Add(esm.ReadSubrecordString());
+                        break;
+                    case var tag when tag == FadtTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 240)
+                        {
+                            def.FavoredAttribute0 = ReadInt32(bytes, 0);
+                            def.FavoredAttribute1 = ReadInt32(bytes, 4);
+
+                            var rankRequirements = new FactionRankRequirementDef[10];
+                            for (int i = 0; i < rankRequirements.Length; i++)
+                            {
+                                int offset = 8 + i * 20;
+                                rankRequirements[i] = new FactionRankRequirementDef
+                                {
+                                    Attribute1 = ReadInt32(bytes, offset),
+                                    Attribute2 = ReadInt32(bytes, offset + 4),
+                                    PrimarySkill = ReadInt32(bytes, offset + 8),
+                                    FavoredSkill = ReadInt32(bytes, offset + 12),
+                                    Reaction = ReadInt32(bytes, offset + 16),
+                                };
+                            }
+
+                            var skills = new int[7];
+                            for (int i = 0; i < skills.Length; i++)
+                                skills[i] = ReadInt32(bytes, 208 + i * 4);
+
+                            def.RankRequirements = rankRequirements;
+                            def.Skills = skills;
+                            def.Hidden = ReadInt32(bytes, 236);
+                        }
+                        break;
+                    }
+                    case var tag when tag == AnamTag:
+                        pendingReactionFaction = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == IntvTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (!string.IsNullOrWhiteSpace(pendingReactionFaction) && bytes.Length >= 4)
+                        {
+                            int reaction = ReadInt32(bytes, 0);
+                            if (!reactionsByFaction.TryGetValue(pendingReactionFaction, out int existing) || existing > reaction)
+                                reactionsByFaction[pendingReactionFaction] = reaction;
+                        }
+
+                        pendingReactionFaction = null;
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(def.Id))
+                return;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                return;
+            }
+
+            def.RankNames = ranks.ToArray();
+            def.Reactions = reactionsByFaction
+                .OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal)
+                .Select(pair => new FactionReactionDef { FactionId = pair.Key, Reaction = pair.Value })
+                .ToArray();
+            def.ContentId = ContentId.FromTagAndId(FactTag, def.Id);
+            target[def.Id] = def;
+        }
+
         static void ParseLightRecord(EsmReader esm, Dictionary<string, LightDef> target)
         {
             var def = new LightDef { RecordTag = LighTag };
@@ -750,14 +1029,21 @@ namespace VVardenfell.Importer.Bake
             target[def.Id] = def;
         }
 
-        static void ParseActorRecord(EsmReader esm, uint recordTag, ActorDefKind kind, Dictionary<string, ActorDef> target)
+        static void ParseActorRecord(EsmReader esm, uint recordTag, ActorDefKind kind, Dictionary<string, ActorAccumulator> target)
         {
             var def = new ActorDef
             {
                 Kind = kind,
                 RecordTag = recordTag,
                 Scale = 1f,
+                FirstSpellIndex = -1,
+                FirstInventoryIndex = -1,
+                AiData = kind == ActorDefKind.Npc
+                    ? new ActorAiDataDef { Hello = 30, Fight = 30, Flee = 30 }
+                    : new ActorAiDataDef { Fight = 90, Flee = 20 },
             };
+            var spells = new List<ActorSpellDef>();
+            var inventoryItems = new List<ContainerItemDef>();
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -807,7 +1093,11 @@ namespace VVardenfell.Importer.Bake
                         break;
                     case var tag when tag == FlagTag:
                         if (sub.Size >= 4)
-                            def.Flags = ReadUInt32(esm.ReadSubrecordBytes(), 0);
+                        {
+                            uint flags = ReadUInt32(esm.ReadSubrecordBytes(), 0);
+                            def.Flags = flags;
+                            def.BloodType = (int)(((flags >> 8) & 0xFF) >> 2);
+                        }
                         else
                             esm.SkipSubrecord();
                         break;
@@ -819,17 +1109,84 @@ namespace VVardenfell.Importer.Bake
                             if (bytes.Length == 12)
                             {
                                 def.Level = ReadInt16(bytes, 0);
-                                def.Flags = bytes[11];
+                                def.AutoCalculatedStats = 1;
+                                def.Disposition = bytes[2];
+                                def.Reputation = bytes[3];
+                                def.Rank = bytes[4];
+                                def.Gold = ReadInt32(bytes, 8);
                             }
                             else if (bytes.Length >= 52)
                             {
                                 def.Level = ReadInt16(bytes, 0);
-                                def.Flags = bytes[51];
+                                def.Attributes = ReadNpcAttributes(bytes, 2);
+                                def.Skills = ReadNpcSkills(bytes, 10);
+                                def.Vitals = new ActorVitalDef
+                                {
+                                    Health = ReadUInt16(bytes, 38),
+                                    Magicka = ReadUInt16(bytes, 40),
+                                    Fatigue = ReadUInt16(bytes, 42),
+                                };
+                                def.Disposition = bytes[44];
+                                def.Reputation = bytes[45];
+                                def.Rank = bytes[46];
+                                def.Gold = ReadInt32(bytes, 48);
                             }
                         }
-                        else if (bytes.Length >= 8)
+                        else if (bytes.Length >= 96)
                         {
+                            def.CreatureType = ReadInt32(bytes, 0);
                             def.Level = ReadInt32(bytes, 4);
+                            def.Attributes = ReadCreatureAttributes(bytes, 8);
+                            def.Vitals = new ActorVitalDef
+                            {
+                                Health = ReadInt32(bytes, 40),
+                                Magicka = ReadInt32(bytes, 44),
+                                Fatigue = ReadInt32(bytes, 48),
+                            };
+                            def.SoulValue = ReadInt32(bytes, 52);
+                            def.Combat = ReadInt32(bytes, 56);
+                            def.Magic = ReadInt32(bytes, 60);
+                            def.Stealth = ReadInt32(bytes, 64);
+                            def.Gold = ReadInt32(bytes, 92);
+                        }
+                        else if (kind == ActorDefKind.Creature && bytes.Length >= 8)
+                        {
+                            def.CreatureType = ReadInt32(bytes, 0);
+                            def.Level = ReadInt32(bytes, 4);
+                        }
+                        break;
+                    }
+                    case var tag when tag == NpcsTag:
+                    {
+                        string spellId = esm.ReadSubrecordString();
+                        if (!string.IsNullOrWhiteSpace(spellId))
+                        {
+                            spells.Add(new ActorSpellDef
+                            {
+                                SpellId = spellId,
+                            });
+                        }
+                        break;
+                    }
+                    case var tag when tag == NpcoTag:
+                    {
+                        if (TryReadContainerItem(esm.ReadSubrecordBytes(), out var item))
+                            inventoryItems.Add(item);
+                        break;
+                    }
+                    case var tag when tag == AidtTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 12)
+                        {
+                            def.AiData = new ActorAiDataDef
+                            {
+                                Hello = ReadUInt16(bytes, 0),
+                                Fight = bytes[2],
+                                Flee = bytes[3],
+                                Alarm = bytes[4],
+                                Services = ReadInt32(bytes, 8),
+                            };
                         }
                         break;
                     }
@@ -859,7 +1216,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             def.ContentId = ContentId.FromTagAndId(recordTag, def.Id);
-            target[def.Id] = def;
+            var accumulator = new ActorAccumulator
+            {
+                Def = def,
+            };
+            accumulator.Spells.AddRange(spells);
+            accumulator.InventoryItems.AddRange(inventoryItems);
+            target[def.Id] = accumulator;
         }
 
         static readonly uint KnamTag = EsmFourCC.Make('K', 'N', 'A', 'M');
@@ -1373,7 +1736,6 @@ namespace VVardenfell.Importer.Bake
         {
             var data = new GameplayContentData
             {
-                Actors = OrderByNormalizedId(state.Actors).ToArray(),
                 Activators = OrderByNormalizedId(state.Activators).ToArray(),
                 Doors = OrderByNormalizedId(state.Doors).ToArray(),
                 Containers = OrderByNormalizedId(state.Containers).ToArray(),
@@ -1403,6 +1765,7 @@ namespace VVardenfell.Importer.Bake
                 PathGrids = OrderByNormalizedId(state.PathGrids).ToArray(),
             };
 
+            BuildActorArrays(state.Actors, out data.Actors, out data.ActorSpells, out data.ActorInventoryItems);
             BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
             BuildContainerContentArrays(data.Containers, state.ContainerItems, out data.ContainerContentRanges, out data.ContainerItems);
             BuildItemLeveledListArrays(state.ItemLeveledLists, out data.ItemLeveledLists, out data.ItemLeveledListEntries);
@@ -1422,6 +1785,34 @@ namespace VVardenfell.Importer.Bake
                 .OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal)
                 .Select(pair => pair.Value)
                 .ToArray();
+        }
+
+        static void BuildActorArrays(
+            Dictionary<string, ActorAccumulator> map,
+            out ActorDef[] actors,
+            out ActorSpellDef[] spells,
+            out ContainerItemDef[] inventoryItems)
+        {
+            var ordered = map.OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal).ToArray();
+            actors = new ActorDef[ordered.Length];
+            var flatSpells = new List<ActorSpellDef>(ordered.Sum(pair => pair.Value.Spells.Count));
+            var flatItems = new List<ContainerItemDef>(ordered.Sum(pair => pair.Value.InventoryItems.Count));
+
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                var accumulator = ordered[i].Value;
+                var def = accumulator.Def;
+                def.FirstSpellIndex = accumulator.Spells.Count > 0 ? flatSpells.Count : -1;
+                def.SpellCount = accumulator.Spells.Count;
+                def.FirstInventoryIndex = accumulator.InventoryItems.Count > 0 ? flatItems.Count : -1;
+                def.InventoryCount = accumulator.InventoryItems.Count;
+                actors[i] = def;
+                flatSpells.AddRange(accumulator.Spells);
+                flatItems.AddRange(accumulator.InventoryItems);
+            }
+
+            spells = flatSpells.ToArray();
+            inventoryItems = flatItems.ToArray();
         }
 
         static void BuildDialogueArrays(
@@ -1718,6 +2109,8 @@ namespace VVardenfell.Importer.Bake
         {
             var issues = new List<ValidationIssue>(256);
             var soundIds = new HashSet<string>(data.Sounds.Select(sound => ContentId.NormalizeId(sound.Id)), StringComparer.OrdinalIgnoreCase);
+            var spellIds = new HashSet<string>(data.Spells.Select(spell => ContentId.NormalizeId(spell.Id)), StringComparer.OrdinalIgnoreCase);
+            var placeableIds = new HashSet<string>(GameplayContentReferenceIndex.BuildPlaceableIndex(data).Keys, StringComparer.OrdinalIgnoreCase);
             var assetIndex = BuildAssetIndex(installPath);
 
             ValidateBaseDefs("Activator", data.Activators, soundIds, assetIndex, issues);
@@ -1725,7 +2118,7 @@ namespace VVardenfell.Importer.Bake
             ValidateBaseDefs("Container", data.Containers, soundIds, assetIndex, issues);
             ValidateBaseDefs("Item", data.Items, soundIds, assetIndex, issues);
             ValidateLights(data.Lights, soundIds, assetIndex, issues);
-            ValidateActors(data.Actors, assetIndex, issues);
+            ValidateActors(data, spellIds, placeableIds, assetIndex, issues);
             ValidateGenericRecords("Static", data.Statics, assetIndex, issues);
             ValidateGenericRecords("BodyPart", data.BodyParts, assetIndex, issues);
             ValidateSounds(data.Sounds, assetIndex, issues);
@@ -1739,6 +2132,7 @@ namespace VVardenfell.Importer.Bake
             writer.WriteLine("VVardenfell Gameplay Content Validation");
             writer.WriteLine($"Generated: {DateTime.UtcNow:O}");
             WriteRecordCounts(writer, data);
+            WriteActorStatCoverage(writer, data);
             writer.WriteLine($"AmbientSettings.MinSeconds={data.AmbientSettings.MinSecondsBetweenEnvironmentalSounds:0.###}, AmbientSettings.MaxSeconds={data.AmbientSettings.MaxSecondsBetweenEnvironmentalSounds:0.###}");
             writer.WriteLine();
 
@@ -1772,7 +2166,7 @@ namespace VVardenfell.Importer.Bake
             writer.WriteLine($"  MGEF={data.MagicEffects.Length}, SCPT={data.Scripts.Length}, SSCR={data.StartScripts.Length}, REGN={data.Regions.Length}, SOUN={data.Sounds.Length}, SNDG={data.SoundGenerators.Length}, LTEX={data.LandTextures.Length}");
             writer.WriteLine($"  STAT={data.Statics.Length}, ACTI={data.Activators.Length}, DOOR={data.Doors.Length}, CONT={data.Containers.Length}, LIGH={data.Lights.Length}");
             writer.WriteLine($"  LOCK={CountBaseByTag(data.Items, LockTag)}, PROB={CountBaseByTag(data.Items, ProbTag)}, REPA={CountBaseByTag(data.Items, RepaTag)}, MISC={CountBaseByTag(data.Items, MiscTag)}, WEAP={CountBaseByTag(data.Items, WeapTag)}, ARMO={CountBaseByTag(data.Items, ArmoTag)}, CLOT={CountBaseByTag(data.Items, ClotTag)}, BOOK={CountBaseByTag(data.Items, BookTag)}, ALCH={CountBaseByTag(data.Items, AlchTag)}, APPA={CountBaseByTag(data.Items, AppaTag)}, INGR={CountBaseByTag(data.Items, IngrTag)}");
-            writer.WriteLine($"  BODY={data.BodyParts.Length}, NPC_={CountActorsByKind(data.Actors, ActorDefKind.Npc)}, CREA={CountActorsByKind(data.Actors, ActorDefKind.Creature)}, LEVI={data.ItemLeveledLists.Length}, LEVI entries={data.ItemLeveledListEntries.Length}, LEVC={data.CreatureLeveledLists.Length}, LEVC entries={data.CreatureLeveledListEntries.Length}");
+            writer.WriteLine($"  BODY={data.BodyParts.Length}, NPC_={CountActorsByKind(data.Actors, ActorDefKind.Npc)}, CREA={CountActorsByKind(data.Actors, ActorDefKind.Creature)}, NPCS actor spells={data.ActorSpells.Length}, NPCO actor items={data.ActorInventoryItems.Length}, LEVI={data.ItemLeveledLists.Length}, LEVI entries={data.ItemLeveledListEntries.Length}, LEVC={data.CreatureLeveledLists.Length}, LEVC entries={data.CreatureLeveledListEntries.Length}");
             writer.WriteLine($"  SPEL={data.Spells.Length}, ENCH={data.Enchantments.Length}, DIAL={data.Dialogues.Length}, INFO={data.DialogueInfos.Length}, PGRD={data.PathGrids.Length}");
         }
 
@@ -1796,6 +2190,44 @@ namespace VVardenfell.Importer.Bake
                     count++;
             }
             return count;
+        }
+
+        static void WriteActorStatCoverage(StreamWriter writer, GameplayContentData data)
+        {
+            int npcManual = 0;
+            int npcAuto = 0;
+            int npcWithSpells = 0;
+            int npcWithInventory = 0;
+            int creaturesWithVitals = 0;
+            int creaturesWithSpells = 0;
+            int creaturesWithInventory = 0;
+
+            for (int i = 0; i < data.Actors.Length; i++)
+            {
+                var actor = data.Actors[i];
+                if (actor.Kind == ActorDefKind.Npc)
+                {
+                    if (actor.AutoCalculatedStats != 0)
+                        npcAuto++;
+                    else
+                        npcManual++;
+                    if (actor.SpellCount > 0)
+                        npcWithSpells++;
+                    if (actor.InventoryCount > 0)
+                        npcWithInventory++;
+                }
+                else
+                {
+                    if (actor.Vitals.Health > 0 || actor.Vitals.Magicka > 0 || actor.Vitals.Fatigue > 0)
+                        creaturesWithVitals++;
+                    if (actor.SpellCount > 0)
+                        creaturesWithSpells++;
+                    if (actor.InventoryCount > 0)
+                        creaturesWithInventory++;
+                }
+            }
+
+            writer.WriteLine($"Actor stat coverage: NPC manual={npcManual}, NPC autocalc={npcAuto}, NPC with spells={npcWithSpells}, NPC with inventory={npcWithInventory}, CREA with vitals={creaturesWithVitals}, CREA with spells={creaturesWithSpells}, CREA with inventory={creaturesWithInventory}");
         }
 
         static HashSet<string> BuildAssetIndex(string installPath)
@@ -1844,14 +2276,184 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
-        static void ValidateActors(ActorDef[] defs, HashSet<string> assetIndex, List<ValidationIssue> issues)
+        static void ValidateActors(
+            GameplayContentData data,
+            HashSet<string> spellIds,
+            HashSet<string> placeableIds,
+            HashSet<string> assetIndex,
+            List<ValidationIssue> issues)
         {
+            var defs = data.Actors ?? Array.Empty<ActorDef>();
             for (int i = 0; i < defs.Length; i++)
             {
                 var def = defs[i];
-                ValidateAssetPath(def.Kind == ActorDefKind.Npc ? "NPC" : "Creature", def.Id, "model", def.Model, assetIndex, issues);
+                string family = def.Kind == ActorDefKind.Npc ? "NPC" : "Creature";
+                ValidateAssetPath(family, def.Id, "model", def.Model, assetIndex, issues);
+                ValidateActorStats(family, def, issues);
+                ValidateActorSpellRange(family, def, data.ActorSpells, spellIds, issues);
+                ValidateActorInventoryRange(family, def, data.ActorInventoryItems, placeableIds, issues);
             }
         }
+
+        static void ValidateActorStats(string family, ActorDef def, List<ValidationIssue> issues)
+        {
+            if (def.Kind == ActorDefKind.Npc && def.AutoCalculatedStats != 0)
+                return;
+
+            if (def.Level <= 0)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = false,
+                    Message = $"{family} '{def.Id}' has non-positive level {def.Level}.",
+                });
+            }
+
+            if (def.Kind == ActorDefKind.Npc)
+            {
+                if (!HasAnyAttribute(def.Attributes) || !HasAnySkill(def.Skills))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"NPC '{def.Id}' is missing manual NPDT attributes or skills.",
+                    });
+                }
+
+                if (def.Vitals.Health <= 0 || def.Vitals.Fatigue <= 0)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = false,
+                        Message = $"NPC '{def.Id}' has incomplete manual vitals health={def.Vitals.Health}, magicka={def.Vitals.Magicka}, fatigue={def.Vitals.Fatigue}.",
+                    });
+                }
+            }
+            else if (!HasAnyAttribute(def.Attributes) || def.Vitals.Health <= 0 || def.Vitals.Fatigue <= 0)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"Creature '{def.Id}' is missing NPDT attributes or vitals.",
+                });
+            }
+        }
+
+        static void ValidateActorSpellRange(
+            string family,
+            ActorDef def,
+            ActorSpellDef[] actorSpells,
+            HashSet<string> spellIds,
+            List<ValidationIssue> issues)
+        {
+            if (def.SpellCount <= 0)
+                return;
+
+            if (actorSpells == null || def.FirstSpellIndex < 0 || def.FirstSpellIndex + def.SpellCount > actorSpells.Length)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' has an out-of-range actor spell window ({def.FirstSpellIndex}, {def.SpellCount}).",
+                });
+                return;
+            }
+
+            for (int i = 0; i < def.SpellCount; i++)
+            {
+                string spellId = actorSpells[def.FirstSpellIndex + i].SpellId;
+                if (spellIds.Contains(ContentId.NormalizeId(spellId)))
+                    continue;
+
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' references missing spell '{spellId}'.",
+                });
+            }
+        }
+
+        static void ValidateActorInventoryRange(
+            string family,
+            ActorDef def,
+            ContainerItemDef[] actorInventoryItems,
+            HashSet<string> placeableIds,
+            List<ValidationIssue> issues)
+        {
+            if (def.InventoryCount <= 0)
+                return;
+
+            if (actorInventoryItems == null || def.FirstInventoryIndex < 0 || def.FirstInventoryIndex + def.InventoryCount > actorInventoryItems.Length)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' has an out-of-range actor inventory window ({def.FirstInventoryIndex}, {def.InventoryCount}).",
+                });
+                return;
+            }
+
+            for (int i = 0; i < def.InventoryCount; i++)
+            {
+                var item = actorInventoryItems[def.FirstInventoryIndex + i];
+                if (item.Count == 0)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = false,
+                        Message = $"{family} '{def.Id}' has inventory item '{item.ItemId}' with count 0.",
+                    });
+                }
+
+                if (placeableIds.Contains(ContentId.NormalizeId(item.ItemId)))
+                    continue;
+
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' references missing inventory item '{item.ItemId}'.",
+                });
+            }
+        }
+
+        static bool HasAnyAttribute(ActorAttributeDef attributes)
+            => attributes.Strength != 0
+            || attributes.Intelligence != 0
+            || attributes.Willpower != 0
+            || attributes.Agility != 0
+            || attributes.Speed != 0
+            || attributes.Endurance != 0
+            || attributes.Personality != 0
+            || attributes.Luck != 0;
+
+        static bool HasAnySkill(ActorSkillDef skills)
+            => skills.Block != 0
+            || skills.Armorer != 0
+            || skills.MediumArmor != 0
+            || skills.HeavyArmor != 0
+            || skills.BluntWeapon != 0
+            || skills.LongBlade != 0
+            || skills.Axe != 0
+            || skills.Spear != 0
+            || skills.Athletics != 0
+            || skills.Enchant != 0
+            || skills.Destruction != 0
+            || skills.Alteration != 0
+            || skills.Illusion != 0
+            || skills.Conjuration != 0
+            || skills.Mysticism != 0
+            || skills.Restoration != 0
+            || skills.Alchemy != 0
+            || skills.Unarmored != 0
+            || skills.Security != 0
+            || skills.Sneak != 0
+            || skills.Acrobatics != 0
+            || skills.LightArmor != 0
+            || skills.ShortBlade != 0
+            || skills.Marksman != 0
+            || skills.Mercantile != 0
+            || skills.Speechcraft != 0
+            || skills.HandToHand != 0;
 
         static void ValidateGenericRecords(string family, GenericRecordDef[] defs, HashSet<string> assetIndex, List<ValidationIssue> issues)
         {
@@ -2024,9 +2626,88 @@ namespace VVardenfell.Importer.Bake
         }
 
         static short ReadInt16(byte[] bytes, int offset) => BitConverter.ToInt16(bytes, offset);
+        static ushort ReadUInt16(byte[] bytes, int offset) => BitConverter.ToUInt16(bytes, offset);
         static int ReadInt32(byte[] bytes, int offset) => BitConverter.ToInt32(bytes, offset);
         static uint ReadUInt32(byte[] bytes, int offset) => BitConverter.ToUInt32(bytes, offset);
         static float ReadSingle(byte[] bytes, int offset) => BitConverter.ToSingle(bytes, offset);
+
+        static bool TryReadContainerItem(byte[] bytes, out ContainerItemDef item)
+        {
+            item = default;
+            if (bytes == null || bytes.Length < 5)
+                return false;
+
+            item = new ContainerItemDef
+            {
+                Count = ReadInt32(bytes, 0),
+                ItemId = ReadFixedString(bytes, 4, bytes.Length - 4),
+            };
+            return !string.IsNullOrWhiteSpace(item.ItemId);
+        }
+
+        static ActorAttributeDef ReadNpcAttributes(byte[] bytes, int offset)
+        {
+            return new ActorAttributeDef
+            {
+                Strength = bytes[offset],
+                Intelligence = bytes[offset + 1],
+                Willpower = bytes[offset + 2],
+                Agility = bytes[offset + 3],
+                Speed = bytes[offset + 4],
+                Endurance = bytes[offset + 5],
+                Personality = bytes[offset + 6],
+                Luck = bytes[offset + 7],
+            };
+        }
+
+        static ActorAttributeDef ReadCreatureAttributes(byte[] bytes, int offset)
+        {
+            return new ActorAttributeDef
+            {
+                Strength = ReadInt32(bytes, offset),
+                Intelligence = ReadInt32(bytes, offset + 4),
+                Willpower = ReadInt32(bytes, offset + 8),
+                Agility = ReadInt32(bytes, offset + 12),
+                Speed = ReadInt32(bytes, offset + 16),
+                Endurance = ReadInt32(bytes, offset + 20),
+                Personality = ReadInt32(bytes, offset + 24),
+                Luck = ReadInt32(bytes, offset + 28),
+            };
+        }
+
+        static ActorSkillDef ReadNpcSkills(byte[] bytes, int offset)
+        {
+            return new ActorSkillDef
+            {
+                Block = bytes[offset],
+                Armorer = bytes[offset + 1],
+                MediumArmor = bytes[offset + 2],
+                HeavyArmor = bytes[offset + 3],
+                BluntWeapon = bytes[offset + 4],
+                LongBlade = bytes[offset + 5],
+                Axe = bytes[offset + 6],
+                Spear = bytes[offset + 7],
+                Athletics = bytes[offset + 8],
+                Enchant = bytes[offset + 9],
+                Destruction = bytes[offset + 10],
+                Alteration = bytes[offset + 11],
+                Illusion = bytes[offset + 12],
+                Conjuration = bytes[offset + 13],
+                Mysticism = bytes[offset + 14],
+                Restoration = bytes[offset + 15],
+                Alchemy = bytes[offset + 16],
+                Unarmored = bytes[offset + 17],
+                Security = bytes[offset + 18],
+                Sneak = bytes[offset + 19],
+                Acrobatics = bytes[offset + 20],
+                LightArmor = bytes[offset + 21],
+                ShortBlade = bytes[offset + 22],
+                Marksman = bytes[offset + 23],
+                Mercantile = bytes[offset + 24],
+                Speechcraft = bytes[offset + 25],
+                HandToHand = bytes[offset + 26],
+            };
+        }
 
         static string ReadFixedString(byte[] bytes, int offset, int count)
         {

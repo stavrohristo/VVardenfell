@@ -28,36 +28,38 @@ namespace VVardenfell.Runtime.WorldRefs
 
     internal static class LogicalRefEntityFactory
     {
-        public static Entity Create(
+        public static Entity QueueCreate(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
             RuntimeContentDatabase contentDb,
             in LogicalRefEntityDescriptor descriptor)
         {
-            Entity logicalEntity = entityManager.CreateEntity();
-            entityManager.AddComponentData(logicalEntity, new LogicalRefTag());
-            entityManager.AddComponentData(logicalEntity, new PlacedRefIdentity { Value = descriptor.PlacedRefId });
+            Entity logicalEntity = ecb.CreateEntity();
+            ecb.SetName(logicalEntity, new FixedString64Bytes($"LogicalRef({descriptor.PlacedRefId:X8})"));
+            ecb.AddComponent(logicalEntity, new LogicalRefTag());
+            ecb.AddComponent(logicalEntity, new PlacedRefIdentity { Value = descriptor.PlacedRefId });
             if (descriptor.AddRuntimeSpawnIdentity)
             {
-                entityManager.AddComponentData(logicalEntity, new RuntimeSpawnedRefIdentity
+                ecb.AddComponent(logicalEntity, new RuntimeSpawnedRefIdentity
                 {
                     RuntimeRefId = descriptor.PlacedRefId,
                     PersistencePolicy = descriptor.RuntimeSpawnPersistencePolicy,
                 });
             }
 
-            entityManager.AddComponentData(logicalEntity, new LogicalRefContentRef { Value = descriptor.ContentReference });
-            entityManager.AddComponentData(logicalEntity, new LogicalRefLocation
+            ecb.AddComponent(logicalEntity, new LogicalRefContentRef { Value = descriptor.ContentReference });
+            ecb.AddComponent(logicalEntity, new LogicalRefLocation
             {
                 ExteriorCell = descriptor.ExteriorCell,
                 InteriorCellId = descriptor.InteriorCellId,
                 IsInterior = (byte)(descriptor.IsInterior ? 1 : 0),
             });
-            entityManager.AddBuffer<LogicalRefChild>(logicalEntity);
-            entityManager.AddComponentData(logicalEntity, LocalTransform.FromPositionRotationScale(
+            ecb.AddBuffer<LogicalRefChild>(logicalEntity);
+            ecb.AddComponent(logicalEntity, LocalTransform.FromPositionRotationScale(
                 descriptor.Position,
                 descriptor.Rotation,
                 descriptor.Scale));
-            entityManager.AddComponentData(logicalEntity, new LocalToWorld
+            ecb.AddComponent(logicalEntity, new LocalToWorld
             {
                 Value = float4x4.TRS(
                     descriptor.Position,
@@ -66,12 +68,13 @@ namespace VVardenfell.Runtime.WorldRefs
             });
 
             if (descriptor.IsInterior)
-                entityManager.AddComponent<InteriorCellMember>(logicalEntity);
+                ecb.AddComponent<InteriorCellMember>(logicalEntity);
             else
-                entityManager.AddComponentData(logicalEntity, new CellLink { Value = descriptor.ExteriorCell });
+                ecb.AddComponent(logicalEntity, new CellLink { Value = descriptor.ExteriorCell });
 
-            LogicalRefAuthoringUtility.TryAttach(
+            LogicalRefAuthoringUtility.QueueAttach(
                 entityManager,
+                ref ecb,
                 logicalEntity,
                 contentDb,
                 descriptor.ContentReference,
@@ -80,12 +83,41 @@ namespace VVardenfell.Runtime.WorldRefs
             return logicalEntity;
         }
 
-        public static bool EnsureInteractionProxyQueued(EntityManager entityManager, Entity logicalEntity)
+        public static bool QueueEnsureInteractionProxyQueued(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, bool assumeNewEntity = false)
         {
+            if (assumeNewEntity)
+            {
+                ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+                return true;
+            }
+
             if (entityManager.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity))
                 return false;
 
-            return InteractionActivationProxyBuildUtility.EnsureQueued(entityManager, logicalEntity);
+            if (!entityManager.Exists(logicalEntity)
+                || !entityManager.HasComponent<LogicalRefTag>(logicalEntity)
+                || !entityManager.HasComponent<PlacedRefIdentity>(logicalEntity))
+            {
+                return false;
+            }
+
+            if (InteractionActivationProxyBuildUtility.HasLiveProxy(entityManager, logicalEntity))
+                return false;
+
+            if (entityManager.HasComponent<InteractionActivationProxyState>(logicalEntity))
+            {
+                Entity existingProxy = entityManager.GetComponentData<InteractionActivationProxyState>(logicalEntity).ProxyEntity;
+                if (existingProxy != Entity.Null && entityManager.Exists(existingProxy))
+                    return false;
+
+                ecb.RemoveComponent<InteractionActivationProxyState>(logicalEntity);
+            }
+
+            if (!InteractionTargetResolver.TryResolveSupportedKind(entityManager, logicalEntity, out _))
+                return false;
+
+            ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+            return true;
         }
     }
 }

@@ -14,8 +14,9 @@ namespace VVardenfell.Runtime.WorldState
 {
     static class RuntimeSpawnFactory
     {
-        public static Entity Spawn(
+        public static bool QueueSpawn(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
             RuntimeContentDatabase contentDb,
             in WorldResources.RuntimeSpawnPrefabDescriptor descriptor,
             ContentReference contentReference,
@@ -33,14 +34,17 @@ namespace VVardenfell.Runtime.WorldState
         {
             if (WorldResources.ModelPrefabs == null
                 || (uint)descriptor.ModelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length)
-                return Entity.Null;
+                return false;
 
             if (!WorldBootstrap.EnsureModelPrefabBuilt(entityManager, WorldResources.Cache, descriptor.ModelPrefabIndex))
-                return Entity.Null;
+                return false;
 
-            Entity renderRoot = entityManager.Instantiate(WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex]);
-            ApplyRenderRootMetadata(
+            Entity renderPrefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
+            Entity renderRoot = ecb.Instantiate(renderPrefab);
+            QueueRenderRootMetadata(
                 entityManager,
+                ref ecb,
+                renderPrefab,
                 renderRoot,
                 descriptor,
                 runtimeRefId,
@@ -51,8 +55,9 @@ namespace VVardenfell.Runtime.WorldState
                 exteriorCell,
                 exteriorActive);
 
-            Entity logicalEntity = LogicalRefEntityFactory.Create(
+            Entity logicalEntity = LogicalRefEntityFactory.QueueCreate(
                 entityManager,
+                ref ecb,
                 contentDb,
                 new LogicalRefEntityDescriptor
                 {
@@ -68,12 +73,35 @@ namespace VVardenfell.Runtime.WorldState
                     RuntimeSpawnPersistencePolicy = persistencePolicy,
                 });
 
-            LogicalRefChildUtility.AppendLinkedEntityGroup(entityManager, logicalEntity, renderRoot);
-            LogicalRefEntityFactory.EnsureInteractionProxyQueued(entityManager, logicalEntity);
+            LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(entityManager, ref ecb, logicalEntity, assumeNewEntity: true);
+
+            return true;
+        }
+
+        public static Entity QueueMaterializeSpawn(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            uint runtimeRefId,
+            bool isInterior,
+            int2 exteriorCell,
+            bool exteriorActive,
+            ref LogicalRefLookup logicalRefLookup,
+            Entity interiorTransitionEntity)
+        {
+            Entity logicalEntity = FindLogicalRefByPlacedRef(entityManager, runtimeRefId);
+            Entity renderRoot = FindRuntimeSpawnRenderRoot(entityManager, runtimeRefId);
+            if (logicalEntity == Entity.Null)
+                return Entity.Null;
+
             LogicalRefLookupUtility.Replace(ref logicalRefLookup, runtimeRefId, logicalEntity);
+            if (renderRoot != Entity.Null)
+            {
+                LogicalRefChildUtility.QueueAppendLinkedEntityGroup(entityManager, ref ecb, logicalEntity, renderRoot);
+                QueueLinkedRenderMetadata(entityManager, ref ecb, renderRoot, isInterior, exteriorCell);
+            }
 
             if (!isInterior && !exteriorActive)
-                SetExteriorActiveState(entityManager, logicalEntity, false);
+                QueueExteriorActiveState(entityManager, ref ecb, logicalEntity, false);
 
             if (isInterior)
                 entityManager.GetBuffer<InteriorSpawnedEntity>(interiorTransitionEntity).Add(new InteriorSpawnedEntity { Value = logicalEntity });
@@ -81,8 +109,10 @@ namespace VVardenfell.Runtime.WorldState
             return logicalEntity;
         }
 
-        static void ApplyRenderRootMetadata(
+        static void QueueRenderRootMetadata(
             EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity renderPrefab,
             Entity renderRoot,
             in WorldResources.RuntimeSpawnPrefabDescriptor descriptor,
             uint runtimeRefId,
@@ -93,40 +123,51 @@ namespace VVardenfell.Runtime.WorldState
             int2 exteriorCell,
             bool exteriorActive)
         {
-            entityManager.SetComponentData(renderRoot, LocalTransform.FromPositionRotationScale(position, rotation, scale));
-            entityManager.SetComponentData(renderRoot, new LocalToWorld
+            ecb.SetComponent(renderRoot, LocalTransform.FromPositionRotationScale(position, rotation, scale));
+            ecb.SetComponent(renderRoot, new LocalToWorld
             {
                 Value = float4x4.TRS(position, rotation, new float3(scale)),
             });
 
-            entityManager.AddComponentData(renderRoot, new PlacedRefIdentity { Value = runtimeRefId });
+            ecb.AddComponent(renderRoot, new PlacedRefIdentity { Value = runtimeRefId });
+            ecb.AddComponent<RuntimeSpawnRenderRootTag>(renderRoot);
             if (isInterior)
             {
-                if (!entityManager.HasComponent<InteriorCellMember>(renderRoot))
-                    entityManager.AddComponent<InteriorCellMember>(renderRoot);
-                if (entityManager.HasComponent<CellLink>(renderRoot))
-                    entityManager.RemoveComponent<CellLink>(renderRoot);
+                if (!entityManager.HasComponent<InteriorCellMember>(renderPrefab))
+                    ecb.AddComponent<InteriorCellMember>(renderRoot);
+                if (entityManager.HasComponent<CellLink>(renderPrefab))
+                    ecb.RemoveComponent<CellLink>(renderRoot);
             }
             else
             {
-                if (entityManager.HasComponent<CellLink>(renderRoot))
-                    entityManager.SetComponentData(renderRoot, new CellLink { Value = exteriorCell });
+                if (entityManager.HasComponent<CellLink>(renderPrefab))
+                    ecb.SetComponent(renderRoot, new CellLink { Value = exteriorCell });
                 else
-                    entityManager.AddComponentData(renderRoot, new CellLink { Value = exteriorCell });
+                    ecb.AddComponent(renderRoot, new CellLink { Value = exteriorCell });
             }
 
             var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Unity.Physics.Collider>>();
             if ((uint)descriptor.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[descriptor.CollisionIndex].IsCreated)
             {
                 var colliderBlob = colliderBlobs[descriptor.CollisionIndex];
-                RuntimeColliderAttachmentUtility.AttachSource(
+                RuntimeColliderAttachmentUtility.QueueAttachInstantiatedSource(
                     entityManager,
+                    ref ecb,
+                    renderPrefab,
                     renderRoot,
                     colliderBlob,
                     RuntimeColliderKind.RuntimeSpawn,
                     active: isInterior || exteriorActive);
             }
+        }
 
+        static void QueueLinkedRenderMetadata(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity renderRoot,
+            bool isInterior,
+            int2 exteriorCell)
+        {
             if (!entityManager.HasBuffer<LinkedEntityGroup>(renderRoot))
                 return;
 
@@ -144,23 +185,23 @@ namespace VVardenfell.Runtime.WorldState
                 if (isInterior)
                 {
                     if (!entityManager.HasComponent<InteriorCellMember>(child))
-                        entityManager.AddComponent<InteriorCellMember>(child);
+                        ecb.AddComponent<InteriorCellMember>(child);
                     if (entityManager.HasComponent<CellLink>(child))
-                        entityManager.RemoveComponent<CellLink>(child);
+                        ecb.RemoveComponent<CellLink>(child);
                 }
                 else
                 {
                     if (entityManager.HasComponent<CellLink>(child))
-                        entityManager.SetComponentData(child, new CellLink { Value = exteriorCell });
+                        ecb.SetComponent(child, new CellLink { Value = exteriorCell });
                     else
-                        entityManager.AddComponentData(child, new CellLink { Value = exteriorCell });
+                        ecb.AddComponent(child, new CellLink { Value = exteriorCell });
                 }
             }
 
             linkedEntities.Dispose();
         }
 
-        public static void SetExteriorActiveState(EntityManager entityManager, Entity logicalEntity, bool active)
+        public static void QueueExteriorActiveState(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, bool active)
         {
             if (logicalEntity == Entity.Null || !entityManager.Exists(logicalEntity))
                 return;
@@ -182,12 +223,44 @@ namespace VVardenfell.Runtime.WorldState
                 if (entityManager.HasComponent<RuntimeColliderSource>(child))
                 {
                     if (active)
-                        RuntimeColliderAttachmentUtility.EnablePhysics(entityManager, child);
+                        RuntimeColliderAttachmentUtility.QueueEnablePhysics(entityManager, ref ecb, child);
                     else
-                        RuntimeColliderAttachmentUtility.DisablePhysics(entityManager, child);
+                        RuntimeColliderAttachmentUtility.QueueDisablePhysics(entityManager, ref ecb, child);
                 }
             }
 
+        }
+
+        static Entity FindLogicalRefByPlacedRef(EntityManager entityManager, uint placedRefId)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<LogicalRefTag>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (identities[i].Value == placedRefId)
+                    return entities[i];
+            }
+
+            return Entity.Null;
+        }
+
+        static Entity FindRuntimeSpawnRenderRoot(EntityManager entityManager, uint runtimeRefId)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<RuntimeSpawnRenderRootTag>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (identities[i].Value == runtimeRefId)
+                    return entities[i];
+            }
+
+            return Entity.Null;
         }
     }
 }

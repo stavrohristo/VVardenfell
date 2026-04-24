@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 
 namespace VVardenfell.Runtime.UI.Shell
@@ -13,8 +14,7 @@ namespace VVardenfell.Runtime.UI.Shell
     /// at the reference 300x600 portrait size:
     /// <list type="bullet">
     ///   <item>Effects strip at the very top - a thin MW_Box (23 tall) displaying the
-    ///     selected spell's effect summary. Vanilla MyGUI shows a row of small effect
-    ///     icons here; until icon sprites are wired we render the summary text.</item>
+    ///     active magic effects as 16px icons, matching OpenMW's SpellIcons widget.</item>
     ///   <item>Spell list filling the middle - a scrollable MW_Box with one row per known
     ///     spell/power/enchanted item. Each row: name left, cost right. Selected row
     ///     is tinted gold. Single-click selects (vanilla double-clicks cast).</item>
@@ -32,7 +32,6 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color BodyTextColor = new(0.94f, 0.85f, 0.68f);
         static readonly Color DimTextColor = new(0.68f, 0.64f, 0.56f);
         static readonly Color SubtleTextColor = new(0.76f, 0.73f, 0.66f);
-        static readonly Color SectionHeaderColor = new(0.96f, 0.82f, 0.44f);
         static readonly Color EffectsBoxCenterColor = new(0f, 0f, 0f, 0.72f);
         static readonly Color ListFrameCenterColor = new(0f, 0f, 0f, 0.72f);
         static readonly Color FilterFrameCenterColor = new(0f, 0f, 0f, 0.76f);
@@ -45,7 +44,6 @@ namespace VVardenfell.Runtime.UI.Shell
         // Pixel heights.
         const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
         const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
-        const float EffectsTextPixelHeight = RuntimeClassicUiFontSizes.Small;
         const float CostTextPixelHeight = RuntimeClassicUiFontSizes.Small;
 
         // Window geometry (matches openmw_spell_window.layout position "0 0 300 600").
@@ -78,6 +76,7 @@ namespace VVardenfell.Runtime.UI.Shell
         }
 
         readonly RuntimeUiTheme _theme;
+        readonly RuntimeInventoryIconService _iconService;
         readonly RectTransform _viewport;
         readonly MorrowindWindowView _window;
         readonly RuntimeWindowDragHandle _dragHandle;
@@ -85,8 +84,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Action<int> _onSelectionChanged;
         readonly Action<string> _onFilterChanged;
 
-        readonly GameObject _effectsTooltipTarget;
-        readonly BitmapTextGraphic _effectsSummaryText;
+        readonly RuntimeMagicEffectIconStripView _effectsStrip;
         readonly BitmapTextGraphic _emptyText;
         readonly RectTransform _listClient;
         readonly RectTransform _rowsRoot;
@@ -99,6 +97,7 @@ namespace VVardenfell.Runtime.UI.Shell
             RectTransform parent,
             RectTransform viewport,
             RuntimeUiTheme theme,
+            RuntimeInventoryIconService iconService,
             Action onRectChanged,
             Action<int> onSelectionChanged,
             Action<string> onFilterChanged,
@@ -106,6 +105,7 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             _theme = theme;
             _viewport = viewport;
+            _iconService = iconService;
             _onSelectionChanged = onSelectionChanged;
             _onFilterChanged = onFilterChanged;
 
@@ -134,7 +134,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeClassicUiMetrics.Ui(new Vector2(MinWindowWidth, MinWindowHeight)),
                 onRectChanged);
 
-            (_effectsTooltipTarget, _effectsSummaryText, _listClient, _rowsRoot, _emptyText, _filterInput, _deleteButton) = BuildClient();
+            (_effectsStrip, _listClient, _rowsRoot, _emptyText, _filterInput, _deleteButton) = BuildClient();
             _filterInput.InputField.onValueChanged.AddListener(OnFilterValueChanged);
         }
 
@@ -166,13 +166,7 @@ namespace VVardenfell.Runtime.UI.Shell
             if (!IsInteracting)
                 RuntimeWindowSurfaceUtility.ApplyNormalizedRect(_window.Root, _viewport, model.NormalizedRect);
 
-            // Effects strip: show the summary text (e.g. "Fire Damage 10-20, Frost Damage 5"
-            // or "No spell selected"). When we wire per-effect icons later, swap this for a
-            // horizontal icon row.
-            _effectsSummaryText.Text = string.IsNullOrWhiteSpace(model.EffectSummaryText)
-                ? "No spell selected"
-                : model.EffectSummaryText.Trim();
-            RuntimeUiPopupUtility.SetTooltip(_effectsTooltipTarget, BuildEffectsTooltip(model));
+            _effectsStrip.Sync(model.ActiveEffects, collapseRoot: false);
 
             SyncSpellRows(model.Entries ?? Array.Empty<SpellWindowEntryViewModel>());
 
@@ -198,7 +192,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         // ----- Build ------------------------------------------------------------
 
-        (GameObject effectsTooltipTarget, BitmapTextGraphic effects, RectTransform listClient, RectTransform rowsRoot, BitmapTextGraphic emptyText, RuntimeUiTextInputView filterInput, MorrowindButtonView deleteButton) BuildClient()
+        (RuntimeMagicEffectIconStripView effectsStrip, RectTransform listClient, RectTransform rowsRoot, BitmapTextGraphic emptyText, RuntimeUiTextInputView filterInput, MorrowindButtonView deleteButton) BuildClient()
         {
             float margin = RuntimeClassicUiMetrics.Ui(Margin);
             float effectsHeight = RuntimeClassicUiMetrics.Ui(EffectsStripHeight);
@@ -224,17 +218,14 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiFactory.Stretch(effectsFrame.Root);
             effectsFrame.Center.raycastTarget = true;
 
-            var effectsText = RuntimeUiFactory.CreateBitmapText(
-                "Summary",
+            var effectsStrip = new RuntimeMagicEffectIconStripView(
                 effectsFrame.Client,
-                _theme?.DefaultFont,
-                1f,
-                SubtleTextColor,
-                BitmapTextAlignment.Center);
-            effectsText.PixelHeight = RuntimeClassicUiMetrics.Ui(EffectsTextPixelHeight);
-            effectsText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
-            RuntimeUiFactory.Stretch(effectsText.rectTransform);
-            effectsText.raycastTarget = false;
+                _iconService,
+                RuntimeClassicUiMetrics.Ui(16f),
+                RuntimeClassicUiMetrics.Ui(0f),
+                RuntimeClassicUiMetrics.Ui(2f),
+                RuntimeClassicUiMetrics.Ui(2f),
+                rightAnchored: false);
 
             // Bottom row pinned to the bottom of the client.
             var bottomRoot = RuntimeUiFactory.CreateAnchorRect(
@@ -363,7 +354,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _ = margin; // Margin is implicit via anchored offsets above; kept for docs.
 
-            return (effectsFrame.Center.gameObject, effectsText, listFrame.Client, rowsRoot, emptyText, filterInput, deleteButton);
+            return (effectsStrip, listFrame.Client, rowsRoot, emptyText, filterInput, deleteButton);
         }
 
         // ----- Rows -------------------------------------------------------------
@@ -387,7 +378,10 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 var entry = entries[i];
                 row.EntryIndex = entry.SpellIndex;
-                RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, BuildSpellTooltip(entry));
+                if (entry.SpellTooltip != null)
+                    RuntimeUiPopupUtility.SetSpellTooltip(row.Root.gameObject, entry.SpellTooltip);
+                else
+                    RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, BuildSpellTooltip(entry));
                 row.Root.anchoredPosition = new Vector2(0f, -rowHeight * i);
                 row.Root.sizeDelta = new Vector2(0f, rowHeight);
                 row.Name.Text = string.IsNullOrWhiteSpace(entry.Name) ? "--" : entry.Name.Trim();
@@ -414,31 +408,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 lines.Add(entry.TypeText.Trim());
             if (!string.IsNullOrWhiteSpace(entry.CostText))
                 lines.Add($"Cost: {entry.CostText.Trim()}");
+            if (!string.IsNullOrWhiteSpace(entry.EffectTooltipText))
+                lines.Add(entry.EffectTooltipText.Trim());
             return string.Join("\n", lines);
-        }
-
-        static string BuildEffectsTooltip(SpellWindowViewModel model)
-        {
-            if (model == null)
-                return null;
-
-            var lines = new List<string>();
-            if (!string.IsNullOrWhiteSpace(model.EffectSummaryText))
-                lines.Add(model.EffectSummaryText.Trim());
-
-            var effects = model.Effects ?? Array.Empty<SpellWindowEffectRow>();
-            for (int i = 0; i < effects.Length; i++)
-            {
-                var effect = effects[i];
-                if (effect == null)
-                    continue;
-
-                string name = string.IsNullOrWhiteSpace(effect.Name) ? "Effect" : effect.Name.Trim();
-                string detail = string.IsNullOrWhiteSpace(effect.DetailText) ? string.Empty : effect.DetailText.Trim();
-                lines.Add(string.IsNullOrEmpty(detail) ? name : $"{name}: {detail}");
-            }
-
-            return lines.Count == 0 ? null : string.Join("\n", lines);
         }
 
         static string FormatCost(SpellWindowEntryViewModel entry)
@@ -539,6 +511,105 @@ namespace VVardenfell.Runtime.UI.Shell
                 return;
 
             _onFilterChanged?.Invoke(value);
+        }
+    }
+
+    sealed class RuntimeMagicEffectIconStripView
+    {
+        sealed class IconCell
+        {
+            public RectTransform Root;
+            public Image Image;
+        }
+
+        readonly RectTransform _root;
+        readonly RuntimeInventoryIconService _iconService;
+        readonly float _iconSize;
+        readonly float _spacing;
+        readonly float _paddingX;
+        readonly float _paddingY;
+        readonly bool _rightAnchored;
+        readonly List<IconCell> _cells = new();
+
+        public RuntimeMagicEffectIconStripView(
+            RectTransform parent,
+            RuntimeInventoryIconService iconService,
+            float iconSize,
+            float spacing,
+            float paddingX,
+            float paddingY,
+            bool rightAnchored)
+        {
+            _iconService = iconService;
+            _iconSize = Mathf.Max(1f, iconSize);
+            _spacing = Mathf.Max(0f, spacing);
+            _paddingX = Mathf.Max(0f, paddingX);
+            _paddingY = Mathf.Max(0f, paddingY);
+            _rightAnchored = rightAnchored;
+            _root = RuntimeUiFactory.CreateStretchRect("MagicEffectIconStrip", parent);
+        }
+
+        public void Sync(RuntimeMagicEffectIconViewModel[] effects, bool collapseRoot)
+        {
+            effects ??= Array.Empty<RuntimeMagicEffectIconViewModel>();
+            while (_cells.Count < effects.Length)
+                _cells.Add(CreateCell(_cells.Count));
+
+            float width = effects.Length == 0
+                ? 0f
+                : _paddingX * 2f + effects.Length * _iconSize + Mathf.Max(0, effects.Length - 1) * _spacing;
+            if (collapseRoot)
+                _root.sizeDelta = new Vector2(width, _root.sizeDelta.y);
+
+            for (int i = 0; i < _cells.Count; i++)
+            {
+                bool visible = i < effects.Length;
+                var cell = _cells[i];
+                cell.Root.gameObject.SetActive(visible);
+                if (!visible)
+                {
+                    RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, null);
+                    continue;
+                }
+
+                var effect = effects[i];
+                float x = _rightAnchored
+                    ? -_paddingX - _iconSize - i * (_iconSize + _spacing)
+                    : _paddingX + i * (_iconSize + _spacing);
+                cell.Root.anchorMin = _rightAnchored ? new Vector2(1f, 0.5f) : new Vector2(0f, 0.5f);
+                cell.Root.anchorMax = cell.Root.anchorMin;
+                cell.Root.pivot = _rightAnchored ? new Vector2(0f, 0.5f) : new Vector2(0f, 0.5f);
+                cell.Root.anchoredPosition = new Vector2(x, 0f);
+                cell.Root.sizeDelta = new Vector2(_iconSize, _iconSize);
+                cell.Image.sprite = _iconService?.GetMagicEffectSprite(effect.IconPath);
+                cell.Image.color = new Color(1f, 1f, 1f, Mathf.Clamp01(effect.Alpha <= 0f ? 1f : effect.Alpha));
+                cell.Image.preserveAspect = true;
+                RuntimeUiPopupUtility.SetMagicEffectTooltip(cell.Root.gameObject, effect.Tooltip);
+            }
+
+            if (collapseRoot)
+                _root.gameObject.SetActive(effects.Length > 0);
+        }
+
+        IconCell CreateCell(int index)
+        {
+            var root = RuntimeUiFactory.CreateAnchoredRect(
+                $"MagicEffectIcon_{index}",
+                _root,
+                new Vector2(0f, 0.5f),
+                new Vector2(0f, 0.5f),
+                new Vector2(_paddingX + index * (_iconSize + _spacing), 0f),
+                new Vector2(_iconSize, _iconSize));
+            root.pivot = new Vector2(0f, 0.5f);
+            var image = RuntimeUiFactory.CreateImage("Icon", root, Color.white);
+            image.type = Image.Type.Simple;
+            image.raycastTarget = true;
+            RuntimeUiFactory.Stretch(image.rectTransform);
+            return new IconCell
+            {
+                Root = root,
+                Image = image,
+            };
         }
     }
 }

@@ -32,30 +32,34 @@ namespace VVardenfell.Runtime.WorldState
         {
             var contentDb = RuntimeContentDatabase.Active;
             var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
-            ref var spawnState = ref SystemAPI.GetSingletonRW<RuntimeSpawnState>().ValueRW;
-            ref var spawnResult = ref SystemAPI.GetSingletonRW<RuntimeSpawnResult>().ValueRW;
+            var spawnState = SystemAPI.GetSingleton<RuntimeSpawnState>();
+            var spawnResult = SystemAPI.GetSingleton<RuntimeSpawnResult>();
             var requests = EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
             if (requests.Length == 0)
                 return;
 
+            var requestSnapshot = new RuntimeSpawnRequest[requests.Length];
+            for (int i = 0; i < requests.Length; i++)
+                requestSnapshot[i] = requests[i];
+            requests.Clear();
+
             Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
             var logicalLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
-            var spawnedRegistry = EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
             Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
             var interiorTransition = SystemAPI.GetSingleton<InteriorTransitionState>();
             var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
             var available = SystemAPI.GetSingleton<AvailableCells>();
             var config = SystemAPI.GetSingleton<StreamingConfig>();
 
-            for (int i = 0; i < requests.Length; i++)
+            for (int i = 0; i < requestSnapshot.Length; i++)
             {
-                var request = requests[i];
+                var request = requestSnapshot[i];
                 ProcessRequest(
+                    spawnEntity,
                     contentDb,
                     ref spawnState,
                     ref spawnResult,
                     ref logicalLookup,
-                    spawnedRegistry,
                     transitionEntity,
                     loaded,
                     available,
@@ -64,16 +68,17 @@ namespace VVardenfell.Runtime.WorldState
                     request);
             }
 
-            requests.Clear();
+            EntityManager.SetComponentData(spawnEntity, spawnState);
+            EntityManager.SetComponentData(spawnEntity, spawnResult);
             EntityManager.SetComponentData(lookupEntity, logicalLookup);
         }
 
         void ProcessRequest(
+            Entity spawnEntity,
             RuntimeContentDatabase contentDb,
             ref RuntimeSpawnState spawnState,
             ref RuntimeSpawnResult spawnResult,
             ref LogicalRefLookup logicalLookup,
-            DynamicBuffer<RuntimeSpawnedRef> spawnedRegistry,
             Entity transitionEntity,
             LoadedCellsMap loaded,
             AvailableCells available,
@@ -147,8 +152,10 @@ namespace VVardenfell.Runtime.WorldState
             if (request.IsInterior == 0 && exteriorActive)
                 loaded.Active.Add(request.ExteriorCell);
 
-            Entity logicalEntity = RuntimeSpawnFactory.Spawn(
+            var createEcb = new EntityCommandBuffer(Allocator.Temp);
+            bool queued = RuntimeSpawnFactory.QueueSpawn(
                 EntityManager,
+                ref createEcb,
                 contentDb,
                 descriptor,
                 request.Content,
@@ -163,13 +170,35 @@ namespace VVardenfell.Runtime.WorldState
                 ref logicalLookup,
                 transitionEntity,
                 request.PersistencePolicy);
+            createEcb.Playback(EntityManager);
+            createEcb.Dispose();
 
-            if (logicalEntity == Entity.Null)
+            if (!queued)
             {
                 CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.NotReady, "Runtime spawn failed while constructing the logical ref graph.");
                 return;
             }
 
+            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
+            Entity logicalEntity = RuntimeSpawnFactory.QueueMaterializeSpawn(
+                EntityManager,
+                ref materializeEcb,
+                runtimeRefId,
+                request.IsInterior != 0,
+                request.ExteriorCell,
+                exteriorActive,
+                ref logicalLookup,
+                transitionEntity);
+            materializeEcb.Playback(EntityManager);
+            materializeEcb.Dispose();
+
+            if (logicalEntity == Entity.Null)
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.NotReady, "Runtime spawn failed while materializing the logical ref graph.");
+                return;
+            }
+
+            var spawnedRegistry = EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
             spawnedRegistry.Add(new RuntimeSpawnedRef
             {
                 RuntimeRefId = runtimeRefId,

@@ -21,6 +21,9 @@ namespace VVardenfell.Runtime.UI.Shell
         public string WeaponLabel;
         public string SpellLabel;
         public string SneakLabel;
+        public string SelectedSpellIconPath;
+        public string SelectedSpellTooltip;
+        public RuntimeMagicEffectIconViewModel[] ActiveEffects = Array.Empty<RuntimeMagicEffectIconViewModel>();
         public LocalMapViewModel LocalMap;
         // Vanilla MW shows a yellow health bar above the player vitals while targeting
         // a hostile actor (openmw_hud.layout "EnemyHealth"). Hidden until the targeting
@@ -141,6 +144,7 @@ namespace VVardenfell.Runtime.UI.Shell
         public string EmptyStateText;
         public SpellWindowEntryViewModel[] Entries = Array.Empty<SpellWindowEntryViewModel>();
         public SpellWindowEffectRow[] Effects = Array.Empty<SpellWindowEffectRow>();
+        public RuntimeMagicEffectIconViewModel[] ActiveEffects = Array.Empty<RuntimeMagicEffectIconViewModel>();
     }
 
     public sealed class SpellWindowEntryViewModel
@@ -149,6 +153,8 @@ namespace VVardenfell.Runtime.UI.Shell
         public string Name;
         public string CostText;
         public string TypeText;
+        public string EffectTooltipText;
+        public RuntimeSpellTooltipViewModel SpellTooltip;
         public bool Selected;
     }
 
@@ -156,6 +162,40 @@ namespace VVardenfell.Runtime.UI.Shell
     {
         public string Name;
         public string DetailText;
+        public string IconPath;
+        public short EffectId;
+    }
+
+    public sealed class RuntimeSpellTooltipViewModel
+    {
+        public string Title;
+        public string SchoolText;
+        public RuntimeSpellTooltipEffectRow[] Effects = Array.Empty<RuntimeSpellTooltipEffectRow>();
+    }
+
+    public sealed class RuntimeSpellTooltipEffectRow
+    {
+        public short EffectId;
+        public string IconPath;
+        public string Text;
+    }
+
+    public sealed class RuntimeMagicEffectIconViewModel
+    {
+        public short EffectId;
+        public string IconPath;
+        public string DisplayName;
+        public string TooltipText;
+        public RuntimeMagicEffectTooltipViewModel Tooltip;
+        public float Alpha = 1f;
+        public string[] SourceLines = Array.Empty<string>();
+    }
+
+    public sealed class RuntimeMagicEffectTooltipViewModel
+    {
+        public string IconPath;
+        public string DisplayName;
+        public string[] DescriptionLines = Array.Empty<string>();
     }
 
     public sealed class MapWindowViewModel

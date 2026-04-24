@@ -16,6 +16,27 @@ namespace VVardenfell.Runtime.WorldState
     {
         static readonly float3 InteriorWorldOffset = float3.zero;
 
+        public struct RestoreAliveRefsProjection
+        {
+            public Entity StreamingEntity;
+            public Entity TransitionEntity;
+            public Entity RegistryEntity;
+            public RuntimeSpawnedRef[] Snapshot;
+            public RestoreAliveRefMaterialization[] Materializations;
+            public LogicalRefLookup LogicalLookup;
+            public AvailableCells Available;
+            public bool ChangedAvailable;
+        }
+
+        public struct RestoreAliveRefMaterialization
+        {
+            public int SnapshotIndex;
+            public uint RuntimeRefId;
+            public bool IsInterior;
+            public int2 ExteriorCell;
+            public bool ExteriorActive;
+        }
+
         public static void MarkUnloaded(EntityManager entityManager, uint runtimeRefId)
         {
             if (!RuntimeSpawnRegistryUtility.IsRuntimeRefId(runtimeRefId))
@@ -122,15 +143,20 @@ namespace VVardenfell.Runtime.WorldState
                 registry.Add(rebuilt[i]);
         }
 
-        public static void RestoreAliveRefsForCurrentWorld(World world, EntityManager entityManager, RuntimeContentDatabase contentDb)
+        public static bool TryQueueRestoreAliveRefsCreatePhase(
+            EntityManager entityManager,
+            RuntimeContentDatabase contentDb,
+            ref EntityCommandBuffer ecb,
+            out RestoreAliveRefsProjection projection)
         {
+            projection = default;
             if (contentDb == null || !TryGetRegistryEntity(entityManager, out Entity registryEntity))
-                return;
+                return false;
 
             Entity streamingEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LogicalRefLookup>(entityManager);
             Entity transitionEntity = WorldStateEntityQueryUtility.GetSingletonEntity<InteriorTransitionState>(entityManager);
             if (streamingEntity == Entity.Null || transitionEntity == Entity.Null)
-                return;
+                return false;
 
             var logicalLookup = entityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
             var available = entityManager.GetComponentData<AvailableCells>(streamingEntity);
@@ -143,6 +169,7 @@ namespace VVardenfell.Runtime.WorldState
                 snapshot[i] = registry[i];
 
             bool changedAvailable = false;
+            var materializations = new List<RestoreAliveRefMaterialization>();
             for (int i = 0; i < snapshot.Length; i++)
             {
                 var entry = snapshot[i];
@@ -179,8 +206,9 @@ namespace VVardenfell.Runtime.WorldState
                 }
 
                 bool exteriorActive = entry.IsInterior != 0 || IsExteriorCellActive(config, entry.ExteriorCell);
-                Entity logicalEntity = RuntimeSpawnFactory.Spawn(
+                bool queued = RuntimeSpawnFactory.QueueSpawn(
                     entityManager,
+                    ref ecb,
                     contentDb,
                     descriptor,
                     entry.Content,
@@ -195,19 +223,80 @@ namespace VVardenfell.Runtime.WorldState
                     ref logicalLookup,
                     transitionEntity,
                     entry.PersistencePolicy);
-                entry.LogicalEntity = logicalEntity;
-                snapshot[i] = entry;
+
+                if (!queued)
+                    continue;
+
+                materializations.Add(new RestoreAliveRefMaterialization
+                {
+                    SnapshotIndex = i,
+                    RuntimeRefId = entry.RuntimeRefId,
+                    IsInterior = entry.IsInterior != 0,
+                    ExteriorCell = entry.ExteriorCell,
+                    ExteriorActive = exteriorActive,
+                });
             }
 
-            if (changedAvailable)
-                entityManager.SetComponentData(streamingEntity, available);
+            projection = new RestoreAliveRefsProjection
+            {
+                StreamingEntity = streamingEntity,
+                TransitionEntity = transitionEntity,
+                RegistryEntity = registryEntity,
+                Snapshot = snapshot,
+                Materializations = materializations.ToArray(),
+                LogicalLookup = logicalLookup,
+                Available = available,
+                ChangedAvailable = changedAvailable,
+            };
+            return true;
+        }
 
-            entityManager.SetComponentData(streamingEntity, logicalLookup);
+        public static void QueueRestoreAliveRefsMaterializePhase(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            ref RestoreAliveRefsProjection projection)
+        {
+            if (projection.Materializations == null)
+                return;
 
-            registry = entityManager.GetBuffer<RuntimeSpawnedRef>(registryEntity);
+            for (int i = 0; i < projection.Materializations.Length; i++)
+            {
+                var materialization = projection.Materializations[i];
+                Entity logicalEntity = RuntimeSpawnFactory.QueueMaterializeSpawn(
+                    entityManager,
+                    ref ecb,
+                    materialization.RuntimeRefId,
+                    materialization.IsInterior,
+                    materialization.ExteriorCell,
+                    materialization.ExteriorActive,
+                    ref projection.LogicalLookup,
+                    projection.TransitionEntity);
+
+                if ((uint)materialization.SnapshotIndex >= (uint)projection.Snapshot.Length)
+                    continue;
+
+                var entry = projection.Snapshot[materialization.SnapshotIndex];
+                entry.LogicalEntity = logicalEntity;
+                projection.Snapshot[materialization.SnapshotIndex] = entry;
+            }
+        }
+
+        public static void ApplyRestoreAliveRefsProjection(
+            EntityManager entityManager,
+            in RestoreAliveRefsProjection projection)
+        {
+            if (projection.RegistryEntity == Entity.Null || projection.Snapshot == null)
+                return;
+
+            if (projection.ChangedAvailable)
+                entityManager.SetComponentData(projection.StreamingEntity, projection.Available);
+
+            entityManager.SetComponentData(projection.StreamingEntity, projection.LogicalLookup);
+
+            var registry = entityManager.GetBuffer<RuntimeSpawnedRef>(projection.RegistryEntity);
             registry.Clear();
-            for (int i = 0; i < snapshot.Length; i++)
-                registry.Add(snapshot[i]);
+            for (int i = 0; i < projection.Snapshot.Length; i++)
+                registry.Add(projection.Snapshot[i]);
         }
 
         public static bool TryRestoreWorldLocation(

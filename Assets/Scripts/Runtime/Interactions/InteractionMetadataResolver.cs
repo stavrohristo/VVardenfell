@@ -62,9 +62,14 @@ namespace VVardenfell.Runtime.Interactions
                 return "door";
 
             if (entityManager.HasComponent<DoorInteractable>(entity)
-                || (entityManager.HasComponent<DoorAuthoring>(entity) && DoorInteractableResolver.TryHydrate(entityManager, entity)))
+                || (entityManager.HasComponent<DoorAuthoring>(entity)
+                    && DoorInteractableResolver.TryResolve(entityManager, entity, out _)))
             {
-                var door = entityManager.GetComponentData<DoorInteractable>(entity);
+                var door = entityManager.HasComponent<DoorInteractable>(entity)
+                    ? entityManager.GetComponentData<DoorInteractable>(entity)
+                    : DoorInteractableResolver.TryResolve(entityManager, entity, out DoorInteractable resolvedDoor)
+                        ? resolvedDoor
+                        : default;
                 if (door.IsTeleport != 0 && door.DestinationCellId.Length > 0)
                     return ResolveInteriorDoorPromptName(door);
 

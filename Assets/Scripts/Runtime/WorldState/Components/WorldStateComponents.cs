@@ -42,6 +42,10 @@ namespace VVardenfell.Runtime.Components
         public byte PersistencePolicy;
     }
 
+    public struct RuntimeSpawnRenderRootTag : IComponentData
+    {
+    }
+
     public struct RuntimeSpawnRequest : IBufferElementData
     {
         public uint Sequence;

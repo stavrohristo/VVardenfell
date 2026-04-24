@@ -5,6 +5,7 @@ using VVardenfell.Core;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.WorldState;
@@ -111,20 +112,75 @@ namespace VVardenfell.Runtime.Streaming
         public static void PublishGameInitialization(EntityManager em)
         {
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
+            ResolveInitialPlayerData(
+                RuntimeContentDatabase.Active,
+                out var playerStats,
+                out var playerIdentity,
+                out var knownSpells,
+                out var initialInventory);
             var initEntity = em.CreateEntity();
             em.SetName(initEntity, "VVardenfell.GameInitialization");
             em.AddComponentData(initEntity, new GameInitializationSingleton
             {
                 PlayerSettings = ResolvePlayerMovementSettings(),
-                PlayerActorStats = MorrowindActorMovementStats.CreateDefaultPlayerSeed(),
-                PlayerIdentity = ActorIdentitySet.DefaultPlayer(),
+                PlayerActorStats = playerStats,
+                PlayerIdentity = playerIdentity,
                 PlayerPosition = WorldBootstrap.DefaultPlayerSpawnPosition(),
                 PlayerRotation = quaternion.identity,
                 PlayerPitchDegrees = 0f,
                 HasSerializedSavePayload = hasSerializedSavePayload,
                 SerializedSavePayloadStatus = new FixedString128Bytes(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });
-            em.AddBuffer<PlayerKnownSpell>(initEntity);
+            PopulateInitializationSpellbook(em.AddBuffer<PlayerKnownSpell>(initEntity), knownSpells);
+            PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
+            em.AddBuffer<ActorActiveMagicEffect>(initEntity);
+        }
+
+        static void ResolveInitialPlayerData(
+            RuntimeContentDatabase contentDb,
+            out ActorRuntimeStatSeed stats,
+            out ActorIdentitySet identity,
+            out PlayerKnownSpell[] knownSpells,
+            out PlayerInitialInventoryItem[] initialInventory)
+        {
+            if (MorrowindActorMovementStats.TryCreatePlayerSeedFromContent(
+                    contentDb,
+                    out stats,
+                    out identity,
+                    out knownSpells,
+                    out initialInventory))
+            {
+                return;
+            }
+
+            stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed();
+            identity = ActorIdentitySet.DefaultPlayer();
+            knownSpells = System.Array.Empty<PlayerKnownSpell>();
+            initialInventory = System.Array.Empty<PlayerInitialInventoryItem>();
+        }
+
+        static void PopulateInitializationSpellbook(DynamicBuffer<PlayerKnownSpell> buffer, PlayerKnownSpell[] knownSpells)
+        {
+            if (knownSpells == null)
+                return;
+
+            for (int i = 0; i < knownSpells.Length; i++)
+            {
+                if (knownSpells[i].Spell.IsValid)
+                    buffer.Add(knownSpells[i]);
+            }
+        }
+
+        static void PopulateInitializationInventory(DynamicBuffer<PlayerInitialInventoryItem> buffer, PlayerInitialInventoryItem[] inventory)
+        {
+            if (inventory == null)
+                return;
+
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                if (inventory[i].Count > 0 && inventory[i].Content.IsValid)
+                    buffer.Add(inventory[i]);
+            }
         }
 
         public static void DisposeUnpublishedState(

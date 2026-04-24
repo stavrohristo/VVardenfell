@@ -123,7 +123,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 "HudRoot",
                 short.MaxValue - 96,
                 RuntimeUiScaleBinding.ScaleKind.Hud);
-            _hudView = new RuntimeHudView(hudCanvas.Root, _theme);
+            _hudView = new RuntimeHudView(hudCanvas.Root, _theme, _iconService);
             _suiteRoot = RuntimeUiFactory.CreateStretchRect("SuiteRoot", _rootRect);
             _inventoryView = new InventoryWindowView(
                 _suiteRoot,
@@ -155,6 +155,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _suiteRoot,
                 _suiteRoot,
                 _theme,
+                _iconService,
                 RequestSpellWindowRectUpdate,
                 RequestSpellSelection,
                 RequestSpellFilterText,
@@ -192,7 +193,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
             BuildPauseMenu();
             BuildModal();
-            _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme);
+            _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme, _iconService);
             gameObject.SetActive(false);
         }
 

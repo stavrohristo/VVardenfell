@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 
 namespace VVardenfell.Runtime.UI.Shell
@@ -33,6 +34,7 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color SpellStatusFillColor = new(0.60f, 0.46f, 0.88f, 0.95f);
 
         readonly RuntimeUiTheme _theme;
+        readonly RuntimeInventoryIconService _iconService;
         readonly RectTransform _root;
         readonly RectTransform _bottomLeftCluster;
         readonly RectTransform _bottomRightCluster;
@@ -50,12 +52,17 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RectTransform _enemyHealthRow;
         readonly Image _weaponStatusFill;
         readonly Image _spellStatusFill;
+        readonly Image _spellIcon;
+        readonly RectTransform _spellSlotRoot;
         readonly RectTransform _sneakSlotRow;
+        readonly RectTransform _effectBoxRoot;
+        readonly RuntimeMagicEffectIconStripView _activeEffectStrip;
         LocalMapTileGridView _miniMapGrid;
 
-        public RuntimeHudView(RectTransform parent, RuntimeUiTheme theme)
+        public RuntimeHudView(RectTransform parent, RuntimeUiTheme theme, RuntimeInventoryIconService iconService = null)
         {
             _theme = theme;
+            _iconService = iconService;
             _root = RuntimeUiFactory.CreateStretchRect("HudRoot", parent);
             // Cluster corner offsets are also in HUD-canvas reference pixels —
             // halved from their legacy screen-pixel constants so they land at
@@ -87,8 +94,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 Vector2.zero);
 
             (_healthFill, _magickaFill, _fatigueFill, _enemyHealthFill, _enemyHealthRow) = BuildStatBars();
-            (_weaponSpellText, _weaponStatusFill, _spellStatusFill, _sneakSlotRow) = BuildQuickSlots();
-            (_cellNameText) = BuildMapCluster();
+            (_weaponSpellText, _weaponStatusFill, _spellStatusFill, _spellIcon, _spellSlotRoot, _sneakSlotRow) = BuildQuickSlots();
+            (_cellNameText, _effectBoxRoot, _activeEffectStrip) = BuildMapCluster();
             (_focusText, _notificationText) = BuildMessages();
 
             // Vanilla HUD crosshair - baked sprite from Textures/target.dds, sized to its
@@ -132,10 +139,16 @@ namespace VVardenfell.Runtime.UI.Shell
             SetBarFill(_fatigueFill, model.FatigueFillNormalized);
             SetBarFill(_weaponStatusFill, model.WeaponStatusNormalized);
             SetBarFill(_spellStatusFill, model.SpellStatusNormalized);
+            bool hasSpellIcon = !string.IsNullOrWhiteSpace(model.SelectedSpellIconPath);
+            _spellIcon.gameObject.SetActive(hasSpellIcon);
+            if (hasSpellIcon)
+                _spellIcon.sprite = _iconService?.GetMagicEffectSprite(model.SelectedSpellIconPath);
+            RuntimeUiPopupUtility.SetTooltip(_spellSlotRoot.gameObject, model.SelectedSpellTooltip);
             _enemyHealthRow.gameObject.SetActive(model.ShowEnemyHealth);
             if (model.ShowEnemyHealth)
                 SetBarFill(_enemyHealthFill, model.EnemyHealthFillNormalized);
             _sneakSlotRow.gameObject.SetActive(model.ShowSneakIndicator);
+            SyncActiveEffects(model.ActiveEffects);
             _miniMapGrid.Sync(model.LocalMap);
         }
 
@@ -198,7 +211,7 @@ namespace VVardenfell.Runtime.UI.Shell
         // Boxes use HUD_Box: thin MW_Box frame + BlackBG interior. The icon child in each
         // weapon/spell box is left empty here - the item/spell icon pipeline will drop an
         // Image in when equipment wiring lands (openmw's ItemWidget/SpellWidget).
-        (BitmapTextGraphic nameText, Image weaponStatus, Image spellStatus, RectTransform sneakSlotRow) BuildQuickSlots()
+        (BitmapTextGraphic nameText, Image weaponStatus, Image spellStatus, Image spellIcon, RectTransform spellSlotRoot, RectTransform sneakSlotRow) BuildQuickSlots()
         {
             var nameText = RuntimeUiFactory.CreateBitmapText(
                 "WeaponSpellName",
@@ -214,11 +227,11 @@ namespace VVardenfell.Runtime.UI.Shell
             nameText.rectTransform.sizeDelta = RuntimeClassicUiMetrics.HudLayout(new Vector2(270f, 24f));
             nameText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
 
-            Image weaponStatus = CreateHudEquipmentSlot("WeaponBox", new Vector2(82f, 13f), WeaponStatusFillColor);
-            Image spellStatus = CreateHudEquipmentSlot("SpellBox", new Vector2(122f, 13f), SpellStatusFillColor);
+            var weaponSlot = CreateHudEquipmentSlot("WeaponBox", new Vector2(82f, 13f), WeaponStatusFillColor);
+            var spellSlot = CreateHudEquipmentSlot("SpellBox", new Vector2(122f, 13f), SpellStatusFillColor);
             RectTransform sneakSlotRow = CreateHudSneakSlot("SneakBox", new Vector2(162f, 13f));
             sneakSlotRow.gameObject.SetActive(false); // vanilla default: hidden until sneaking
-            return (nameText, weaponStatus, spellStatus, sneakSlotRow);
+            return (nameText, weaponSlot.StatusFill, spellSlot.StatusFill, spellSlot.Icon, spellSlot.Root, sneakSlotRow);
         }
 
         /// <summary>
@@ -227,7 +240,7 @@ namespace VVardenfell.Runtime.UI.Shell
         /// (weapon condition / spell cast readiness). Icon cell stays empty until the
         /// equipped-item icon pipeline lands.
         /// </summary>
-        Image CreateHudEquipmentSlot(string name, Vector2 localPosition, Color statusTint)
+        (RectTransform Root, Image Icon, Image StatusFill) CreateHudEquipmentSlot(string name, Vector2 localPosition, Color statusTint)
         {
             var root = RuntimeUiFactory.CreateAnchoredRect(
                 name,
@@ -254,8 +267,17 @@ namespace VVardenfell.Runtime.UI.Shell
                 BarFrameCenterColor);
             RuntimeUiFactory.Stretch(boxFrame.Root);
 
-            // Intentionally no icon child here. When item/spell equipping lands, a child
-            // Image inside boxFrame.Client will carry the equipped item/spell icon sprite.
+            var icon = RuntimeUiFactory.CreateImage("Icon", boxFrame.Client, Color.white);
+            icon.type = Image.Type.Simple;
+            icon.preserveAspect = true;
+            icon.raycastTarget = false;
+            RuntimeUiFactory.SetInset(
+                icon.rectTransform,
+                RuntimeClassicUiMetrics.HudLayout(2f),
+                RuntimeClassicUiMetrics.HudLayout(2f),
+                -RuntimeClassicUiMetrics.HudLayout(2f),
+                -RuntimeClassicUiMetrics.HudLayout(2f));
+            icon.gameObject.SetActive(false);
 
             var statusRoot = RuntimeUiFactory.CreateAnchoredRect(
                 "StatusRoot",
@@ -282,7 +304,7 @@ namespace VVardenfell.Runtime.UI.Shell
             statusFill.rectTransform.pivot = new Vector2(0f, 0.5f);
             statusFill.rectTransform.anchoredPosition = Vector2.zero;
             statusFill.rectTransform.sizeDelta = Vector2.zero;
-            return statusFill;
+            return (root, icon, statusFill);
         }
 
         /// <summary>
@@ -323,7 +345,7 @@ namespace VVardenfell.Runtime.UI.Shell
             return root;
         }
 
-        BitmapTextGraphic BuildMapCluster()
+        (BitmapTextGraphic cellName, RectTransform effectBoxRoot, RuntimeMagicEffectIconStripView activeEffectStrip) BuildMapCluster()
         {
             var cellName = RuntimeUiFactory.CreateBitmapText(
                 "CellName",
@@ -342,27 +364,26 @@ namespace VVardenfell.Runtime.UI.Shell
             var effectBox = RuntimeUiFactory.CreateAnchoredRect(
                 "EffectBox",
                 _bottomRightCluster,
-                new Vector2(0f, 0f),
-                new Vector2(0f, 0f),
-                new Vector2(BottomRightClusterWidth - RuntimeClassicUiMetrics.HudLayout(89f), RuntimeClassicUiMetrics.HudLayout(12f)),
+                new Vector2(1f, 0f),
+                new Vector2(1f, 0f),
+                new Vector2(-RuntimeClassicUiMetrics.HudLayout(89f), RuntimeClassicUiMetrics.HudLayout(12f)),
                 RuntimeClassicUiMetrics.HudLayout(new Vector2(20f, 20f)));
-            effectBox.pivot = new Vector2(0f, 0f);
+            effectBox.pivot = new Vector2(1f, 0f);
             var effectFrame = RuntimeUiFactory.CreateBorderFrame(
                 "EffectFrame",
                 effectBox,
                 RuntimeUiFactory.ResolveThinFrame(_theme),
                 new Color(0f, 0f, 0f, 0.64f));
             RuntimeUiFactory.Stretch(effectFrame.Root);
-            var effectLabel = RuntimeUiFactory.CreateBitmapText(
-                "EffectLabel",
-                effectBox,
-                _theme.DefaultFont,
-                RuntimeClassicUiMetrics.HudText(0.38f),
-                new Color(0.94f, 0.88f, 0.76f),
-                BitmapTextAlignment.Center);
-            effectLabel.Text = "*";
-            RuntimeUiFactory.Stretch(effectLabel.rectTransform);
-            effectLabel.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
+            var activeEffectStrip = new RuntimeMagicEffectIconStripView(
+                effectFrame.Client,
+                _iconService,
+                RuntimeClassicUiMetrics.HudLayout(16f),
+                0f,
+                RuntimeClassicUiMetrics.HudLayout(2f),
+                RuntimeClassicUiMetrics.HudLayout(2f),
+                rightAnchored: true);
+            effectBox.gameObject.SetActive(false);
 
             var miniMapRoot = RuntimeUiFactory.CreateAnchoredRect(
                 "MiniMapBox",
@@ -392,7 +413,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 RuntimeClassicUiMetrics.HudLayout(new Vector2(32f, 32f)),
                 new Color(0.16f, 0.17f, 0.12f, 0.92f));
-            return cellName;
+            return (cellName, effectBox, activeEffectStrip);
         }
 
         (BitmapTextGraphic focusText, BitmapTextGraphic notificationText) BuildMessages()
@@ -460,6 +481,24 @@ namespace VVardenfell.Runtime.UI.Shell
             var parentRect = fill.transform.parent.GetComponent<RectTransform>();
             float width = Mathf.Max(0f, parentRect.rect.width * Mathf.Clamp01(normalized));
             fill.rectTransform.sizeDelta = new Vector2(width, 0f);
+        }
+
+        void SyncActiveEffects(RuntimeMagicEffectIconViewModel[] activeEffects)
+        {
+            activeEffects ??= System.Array.Empty<RuntimeMagicEffectIconViewModel>();
+            bool hasEffects = activeEffects.Length > 0;
+            _effectBoxRoot.gameObject.SetActive(hasEffects);
+            if (!hasEffects)
+            {
+                _activeEffectStrip.Sync(activeEffects, collapseRoot: false);
+                return;
+            }
+
+            float iconSize = RuntimeClassicUiMetrics.HudLayout(16f);
+            float padding = RuntimeClassicUiMetrics.HudLayout(2f);
+            float width = padding * 2f + activeEffects.Length * iconSize;
+            _effectBoxRoot.sizeDelta = new Vector2(width, RuntimeClassicUiMetrics.HudLayout(20f));
+            _activeEffectStrip.Sync(activeEffects, collapseRoot: false);
         }
     }
 }

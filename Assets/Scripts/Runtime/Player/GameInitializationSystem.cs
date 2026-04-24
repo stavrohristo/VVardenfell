@@ -53,15 +53,6 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class GameInitializationSystem : SystemBase
     {
-        const int MaxDefaultStarterSpells = 3;
-
-        static readonly string[] k_DefaultStarterSpellIds =
-        {
-            "fire bite",
-            "hearth heal",
-            "water walking",
-        };
-
         protected override void OnCreate()
         {
             RequireForUpdate<GameInitializationSingleton>();
@@ -92,6 +83,8 @@ namespace VVardenfell.Runtime.Player
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
             WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
+            if (hasNewGameRequest)
+                SeedInitialPlayerInventory(em, initEntity);
 
             if (hasLoadRequest)
             {
@@ -106,11 +99,12 @@ namespace VVardenfell.Runtime.Player
                     init.PlayerActorStats = payload.ActorStats;
                     init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
                     PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
+                    PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
                     WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
                     if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
                         Debug.LogWarning($"[VVardenfell][Save] load slot location restore failed; starting from default bootstrap state instead. {locationError}");
                     else
-                        RuntimeSpawnProjectionUtility.RestoreAliveRefsForCurrentWorld(World, em, RuntimeContentDatabase.Active);
+                        RestoreAliveRefsForCurrentWorld(em);
                 }
                 else
                 {
@@ -138,9 +132,6 @@ namespace VVardenfell.Runtime.Player
             var effectModifiers = init.PlayerActorStats.EffectModifiers;
             MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: true);
             var derivedStats = MorrowindActorMovementStats.BuildDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, 0f);
-            if (hasNewGameRequest)
-                SeedDefaultNewGameSpellbook(em, initEntity, RuntimeContentDatabase.Active);
-
             var player = em.CreateEntity();
             em.SetName(player, "VVardenfell.Player");
             em.AddComponentData(player, new PlayerTag());
@@ -173,6 +164,16 @@ namespace VVardenfell.Runtime.Player
                 {
                     if (initSpells[i].Spell.IsValid)
                         playerSpells.Add(initSpells[i]);
+                }
+            }
+            var activeEffects = em.AddBuffer<ActorActiveMagicEffect>(player);
+            if (em.HasBuffer<ActorActiveMagicEffect>(initEntity))
+            {
+                var initEffects = em.GetBuffer<ActorActiveMagicEffect>(initEntity);
+                for (int i = 0; i < initEffects.Length; i++)
+                {
+                    if (initEffects[i].Applied != 0)
+                        activeEffects.Add(initEffects[i]);
                 }
             }
             em.AddComponentData(player, new PlayerStanceColliders
@@ -238,6 +239,60 @@ namespace VVardenfell.Runtime.Player
             em.DestroyEntity(initEntity);
         }
 
+        void RestoreAliveRefsForCurrentWorld(EntityManager entityManager)
+        {
+            var createEcb = new EntityCommandBuffer(Allocator.Temp);
+            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
+                    entityManager,
+                    RuntimeContentDatabase.Active,
+                    ref createEcb,
+                    out var projection))
+            {
+                createEcb.Dispose();
+                return;
+            }
+
+            createEcb.Playback(entityManager);
+            createEcb.Dispose();
+
+            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
+            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
+                entityManager,
+                ref materializeEcb,
+                ref projection);
+            materializeEcb.Playback(entityManager);
+            materializeEcb.Dispose();
+            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(entityManager, projection);
+        }
+
+        static void SeedInitialPlayerInventory(EntityManager em, Entity initEntity)
+        {
+            if (!em.HasBuffer<PlayerInitialInventoryItem>(initEntity))
+                return;
+
+            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(em);
+            if (inventoryEntity == Entity.Null || !em.HasBuffer<PlayerInventoryItem>(inventoryEntity))
+                return;
+
+            var initialInventory = em.GetBuffer<PlayerInitialInventoryItem>(initEntity);
+            if (initialInventory.Length == 0)
+                return;
+
+            var playerInventory = em.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+            for (int i = 0; i < initialInventory.Length; i++)
+            {
+                var item = initialInventory[i];
+                if (item.Count <= 0 || !item.Content.IsValid)
+                    continue;
+
+                playerInventory.Add(new PlayerInventoryItem
+                {
+                    Content = item.Content,
+                    Count = item.Count,
+                });
+            }
+        }
+
         static void PopulateInitializationSpellbook(EntityManager em, Entity initEntity, PlayerKnownSpell[] knownSpells)
         {
             var buffer = em.HasBuffer<PlayerKnownSpell>(initEntity)
@@ -255,49 +310,21 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static void SeedDefaultNewGameSpellbook(EntityManager em, Entity initEntity, RuntimeContentDatabase contentDb)
+        static void PopulateInitializationActiveEffects(EntityManager em, Entity initEntity, ActorActiveMagicEffect[] activeEffects)
         {
-            var buffer = em.HasBuffer<PlayerKnownSpell>(initEntity)
-                ? em.GetBuffer<PlayerKnownSpell>(initEntity)
-                : em.AddBuffer<PlayerKnownSpell>(initEntity);
+            var buffer = em.HasBuffer<ActorActiveMagicEffect>(initEntity)
+                ? em.GetBuffer<ActorActiveMagicEffect>(initEntity)
+                : em.AddBuffer<ActorActiveMagicEffect>(initEntity);
 
-            if (buffer.Length > 0 || contentDb?.Data.Spells == null || contentDb.Data.Spells.Length == 0)
+            buffer.Clear();
+            if (activeEffects == null)
                 return;
 
-            for (int i = 0; i < k_DefaultStarterSpellIds.Length && buffer.Length < MaxDefaultStarterSpells; i++)
+            for (int i = 0; i < activeEffects.Length; i++)
             {
-                if (contentDb.TryGetSpellHandle(k_DefaultStarterSpellIds[i], out var handle) && handle.IsValid)
-                    AddKnownSpellIfMissing(buffer, handle);
+                if (activeEffects[i].Applied != 0)
+                    buffer.Add(activeEffects[i]);
             }
-
-            for (int i = 0; i < contentDb.Data.Spells.Length && buffer.Length < MaxDefaultStarterSpells; i++)
-            {
-                var spell = contentDb.Data.Spells[i];
-                if (spell.SpellType != 0 || spell.EffectCount <= 0)
-                    continue;
-
-                if (string.IsNullOrWhiteSpace(spell.Id) && string.IsNullOrWhiteSpace(spell.Name))
-                    continue;
-
-                AddKnownSpellIfMissing(buffer, SpellDefHandle.FromIndex(i));
-            }
-        }
-
-        static void AddKnownSpellIfMissing(DynamicBuffer<PlayerKnownSpell> buffer, SpellDefHandle handle)
-        {
-            if (!handle.IsValid)
-                return;
-
-            for (int i = 0; i < buffer.Length; i++)
-            {
-                if (buffer[i].Spell.Value == handle.Value)
-                    return;
-            }
-
-            buffer.Add(new PlayerKnownSpell
-            {
-                Spell = handle,
-            });
         }
 
         private static BlobAssetReference<Collider> CreatePlayerCapsule(float radius, float height)

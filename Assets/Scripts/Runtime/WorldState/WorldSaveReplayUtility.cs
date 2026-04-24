@@ -39,11 +39,12 @@ namespace VVardenfell.Runtime.WorldState
             init.PlayerActorStats = payload.ActorStats;
             init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
             PopulateInitializationSpellbook(entityManager, payload.KnownSpells);
+            PopulateInitializationActiveEffects(entityManager, payload.ActiveMagicEffects);
 
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RuntimeSpawnProjectionUtility.RestoreAliveRefsForCurrentWorld(world, entityManager, RuntimeContentDatabase.Active);
+            RestoreAliveRefsForCurrentWorld(entityManager);
             return true;
         }
 
@@ -85,7 +86,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RuntimeSpawnProjectionUtility.RestoreAliveRefsForCurrentWorld(world, entityManager, RuntimeContentDatabase.Active);
+            RestoreAliveRefsForCurrentWorld(entityManager);
             if (!HasExactlyOne<PlayerTag>(entityManager) || !HasExactlyOne<PlayerViewComponent>(entityManager))
             {
                 error = "Save replay produced an invalid player entity count.";
@@ -95,11 +96,38 @@ namespace VVardenfell.Runtime.WorldState
             return true;
         }
 
+        static void RestoreAliveRefsForCurrentWorld(EntityManager entityManager)
+        {
+            var createEcb = new EntityCommandBuffer(Allocator.Temp);
+            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
+                    entityManager,
+                    RuntimeContentDatabase.Active,
+                    ref createEcb,
+                    out var projection))
+            {
+                createEcb.Dispose();
+                return;
+            }
+
+            PlaybackAndDispose(entityManager, ref createEcb);
+
+            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
+            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
+                entityManager,
+                ref materializeEcb,
+                ref projection);
+            PlaybackAndDispose(entityManager, ref materializeEcb);
+            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(entityManager, projection);
+        }
+
         public static void ResetRuntimeForInitialization(World world, EntityManager entityManager, bool preserveShell)
         {
-            DestroySingletonEntities<PlayerViewComponent>(entityManager);
-            DestroySingletonEntities<PlayerTag>(entityManager);
-            ClearMapDiscovery(entityManager);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            QueueDestroySingletonEntities<PlayerViewComponent>(entityManager, ref ecb);
+            QueueDestroySingletonEntities<PlayerTag>(entityManager, ref ecb);
+            QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
+            PlaybackAndDispose(entityManager, ref ecb);
+            RefreshMapDiscoveryState(entityManager);
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
@@ -122,7 +150,7 @@ namespace VVardenfell.Runtime.WorldState
             }
         }
 
-        static void DestroySingletonEntities<T>(EntityManager entityManager)
+        static void QueueDestroySingletonEntities<T>(EntityManager entityManager, ref EntityCommandBuffer ecb)
             where T : unmanaged, IComponentData
         {
             using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
@@ -133,7 +161,7 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < entities.Length; i++)
             {
                 if (entityManager.Exists(entities[i]))
-                    entityManager.DestroyEntity(entities[i]);
+                    ecb.DestroyEntity(entities[i]);
             }
         }
 
@@ -178,6 +206,25 @@ namespace VVardenfell.Runtime.WorldState
                     }
                 }
             }
+            if (!entityManager.HasBuffer<ActorActiveMagicEffect>(playerEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorActiveMagicEffect>(playerEntity);
+                PlaybackAndDispose(entityManager, ref ecb);
+            }
+            if (entityManager.HasBuffer<ActorActiveMagicEffect>(playerEntity))
+            {
+                var activeEffects = entityManager.GetBuffer<ActorActiveMagicEffect>(playerEntity);
+                activeEffects.Clear();
+                if (payload.ActiveMagicEffects != null)
+                {
+                    for (int i = 0; i < payload.ActiveMagicEffects.Length; i++)
+                    {
+                        if (payload.ActiveMagicEffects[i].Applied != 0)
+                            activeEffects.Add(payload.ActiveMagicEffects[i]);
+                    }
+                }
+            }
 
             var character = entityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
             var eyeOffset = new float3(0f, character.StandingEyeHeight, 0f);
@@ -219,6 +266,12 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.KnownSpells == null)
             {
                 error = "Save payload is missing spellbook data.";
+                return false;
+            }
+
+            if (payload.ActiveMagicEffects == null)
+            {
+                error = "Save payload is missing active magic effect data.";
                 return false;
             }
 
@@ -341,10 +394,14 @@ namespace VVardenfell.Runtime.WorldState
             if (initEntity == Entity.Null)
                 return;
 
-            DynamicBuffer<PlayerKnownSpell> buffer = entityManager.HasBuffer<PlayerKnownSpell>(initEntity)
-                ? entityManager.GetBuffer<PlayerKnownSpell>(initEntity)
-                : entityManager.AddBuffer<PlayerKnownSpell>(initEntity);
+            if (!entityManager.HasBuffer<PlayerKnownSpell>(initEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<PlayerKnownSpell>(initEntity);
+                PlaybackAndDispose(entityManager, ref ecb);
+            }
 
+            DynamicBuffer<PlayerKnownSpell> buffer = entityManager.GetBuffer<PlayerKnownSpell>(initEntity);
             buffer.Clear();
             if (knownSpells == null)
                 return;
@@ -356,39 +413,69 @@ namespace VVardenfell.Runtime.WorldState
             }
         }
 
+        static void PopulateInitializationActiveEffects(EntityManager entityManager, ActorActiveMagicEffect[] activeEffects)
+        {
+            Entity initEntity = WorldStateEntityQueryUtility.GetSingletonEntity<GameInitializationSingleton>(entityManager);
+            if (initEntity == Entity.Null)
+                return;
+
+            if (!entityManager.HasBuffer<ActorActiveMagicEffect>(initEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorActiveMagicEffect>(initEntity);
+                PlaybackAndDispose(entityManager, ref ecb);
+            }
+
+            DynamicBuffer<ActorActiveMagicEffect> buffer = entityManager.GetBuffer<ActorActiveMagicEffect>(initEntity);
+            buffer.Clear();
+            if (activeEffects == null)
+                return;
+
+            for (int i = 0; i < activeEffects.Length; i++)
+            {
+                if (activeEffects[i].Applied != 0)
+                    buffer.Add(activeEffects[i]);
+            }
+        }
+
         public static void ApplyMapDiscoveryPayload(EntityManager entityManager, in WorldSavePayload payload)
         {
-            ClearMapDiscovery(entityManager);
-            RestoreMapDiscoveryPayload(entityManager, payload.ExteriorMapDiscovery);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            QueueClearMapDiscovery(entityManager, ref ecb, ensureState: false);
+            QueueRestoreMapDiscoveryPayload(entityManager, ref ecb, payload.ExteriorMapDiscovery);
+            PlaybackAndDispose(entityManager, ref ecb);
+            RefreshMapDiscoveryState(entityManager);
             GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
         }
 
-        static void ClearMapDiscovery(EntityManager entityManager)
+        static void QueueClearMapDiscovery(EntityManager entityManager, ref EntityCommandBuffer ecb, bool ensureState)
         {
             using (var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ExteriorMapDiscoveryTile>()))
             {
                 if (!query.IsEmptyIgnoreFilter)
-                    entityManager.DestroyEntity(query);
+                {
+                    using var entities = query.ToEntityArray(Allocator.Temp);
+                    for (int i = 0; i < entities.Length; i++)
+                        ecb.DestroyEntity(entities[i]);
+                }
             }
 
-            Entity stateEntity = EnsureMapDiscoveryState(entityManager);
-            var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
-            if (state.MaskResolution <= 0)
-                state.MaskResolution = 64;
-            if (state.RenderResolution <= 0)
-                state.RenderResolution = 256;
-            if (state.RevealRadiusFraction <= 0f)
-                state.RevealRadiusFraction = 0.17f;
-            state.Revision++;
-            entityManager.SetComponentData(stateEntity, state);
+            if (ensureState)
+                QueueEnsureMapDiscoveryState(entityManager, ref ecb);
             GlobalMapPresentationCache.ClearOverlay();
         }
 
-        static void RestoreMapDiscoveryPayload(EntityManager entityManager, LocalMapDiscoveryTilePayload[] tiles)
+        static void QueueRestoreMapDiscoveryPayload(EntityManager entityManager, ref EntityCommandBuffer ecb, LocalMapDiscoveryTilePayload[] tiles)
         {
-            Entity stateEntity = EnsureMapDiscoveryState(entityManager);
-            var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
-            int fallbackResolution = state.MaskResolution > 0 ? state.MaskResolution : 64;
+            Entity stateEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LocalMapDiscoveryState>(entityManager);
+            int fallbackResolution = 64;
+            if (stateEntity != Entity.Null)
+            {
+                var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
+                fallbackResolution = state.MaskResolution > 0 ? state.MaskResolution : 64;
+            }
+
+            QueueEnsureMapDiscoveryState(entityManager, ref ecb);
             if (tiles != null)
             {
                 for (int i = 0; i < tiles.Length; i++)
@@ -399,21 +486,30 @@ namespace VVardenfell.Runtime.WorldState
                     if (payload.Alpha == null || payload.Alpha.Length != expected)
                         continue;
 
-                    var entity = entityManager.CreateEntity();
-                    entityManager.SetName(entity, $"LocalMapDiscovery({payload.Cell.x},{payload.Cell.y})");
-                    entityManager.AddComponentData(entity, new ExteriorMapDiscoveryTile
+                    var entity = ecb.CreateEntity();
+                    ecb.SetName(entity, new FixedString64Bytes($"LocalMapDiscovery({payload.Cell.x},{payload.Cell.y})"));
+                    ecb.AddComponent(entity, new ExteriorMapDiscoveryTile
                     {
                         Cell = payload.Cell,
                         Revision = 1,
                         Dirty = 1,
                     });
-                    var buffer = entityManager.AddBuffer<ExteriorMapDiscoverySample>(entity);
+                    var buffer = ecb.AddBuffer<ExteriorMapDiscoverySample>(entity);
                     buffer.ResizeUninitialized(expected);
                     for (int s = 0; s < expected; s++)
                         buffer[s] = new ExteriorMapDiscoverySample { Alpha = payload.Alpha[s] };
                 }
             }
+        }
 
+        static void RefreshMapDiscoveryState(EntityManager entityManager)
+        {
+            Entity stateEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LocalMapDiscoveryState>(entityManager);
+            if (stateEntity == Entity.Null)
+                return;
+
+            var state = entityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
+            int fallbackResolution = state.MaskResolution > 0 ? state.MaskResolution : 64;
             if (state.MaskResolution <= 0)
                 state.MaskResolution = fallbackResolution;
             if (state.RenderResolution <= 0)
@@ -424,26 +520,28 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(stateEntity, state);
         }
 
-        static Entity EnsureMapDiscoveryState(EntityManager entityManager)
+        static void QueueEnsureMapDiscoveryState(EntityManager entityManager, ref EntityCommandBuffer ecb)
         {
             Entity stateEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LocalMapDiscoveryState>(entityManager);
             if (stateEntity != Entity.Null)
-                return stateEntity;
+                return;
 
-            stateEntity = entityManager.CreateEntity();
-            entityManager.SetName(stateEntity, "VVardenfell.LocalMapDiscovery");
-            entityManager.AddComponentData(stateEntity, new LocalMapDiscoveryState
+            stateEntity = ecb.CreateEntity();
+            ecb.SetName(stateEntity, new FixedString64Bytes("VVardenfell.LocalMapDiscovery"));
+            ecb.AddComponent(stateEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,
                 RenderResolution = 256,
                 RevealRadiusFraction = 0.17f,
             });
-            return stateEntity;
         }
 
         static void ClearRuntimeState(EntityManager entityManager, Entity journalEntity, Entity runtimeEntity, Entity spawnEntity)
         {
-            ClearMapDiscovery(entityManager);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
+            PlaybackAndDispose(entityManager, ref ecb);
+            RefreshMapDiscoveryState(entityManager);
             entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
             entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
@@ -467,7 +565,10 @@ namespace VVardenfell.Runtime.WorldState
             Entity runtimeEntity,
             Entity spawnEntity)
         {
-            RestoreMapDiscoveryPayload(entityManager, payload.ExteriorMapDiscovery);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            QueueRestoreMapDiscoveryPayload(entityManager, ref ecb, payload.ExteriorMapDiscovery);
+            PlaybackAndDispose(entityManager, ref ecb);
+            RefreshMapDiscoveryState(entityManager);
             GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
 
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
@@ -501,6 +602,12 @@ namespace VVardenfell.Runtime.WorldState
             spawnState.NextRuntimeRefId = math.max(payload.NextRuntimeRefId, maxRuntimeOrdinal);
             spawnState.NextRequestSequence = 0u;
             entityManager.SetComponentData(spawnEntity, spawnState);
+        }
+
+        static void PlaybackAndDispose(EntityManager entityManager, ref EntityCommandBuffer ecb)
+        {
+            ecb.Playback(entityManager);
+            ecb.Dispose();
         }
     }
 }

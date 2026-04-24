@@ -22,7 +22,7 @@ namespace VVardenfell.Runtime.Shell
             in SpellWindowState spellState)
         {
             string itemLabel = ResolveSelectedInventoryLabel(contentDb, inventoryState, inventory);
-            string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState);
+            string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState, out string spellIconPath, out string spellTooltip);
             return new RuntimeHudViewModel
             {
                 Visible = showHud,
@@ -44,6 +44,9 @@ namespace VVardenfell.Runtime.Shell
                 WeaponLabel = "W",
                 SpellLabel = "S",
                 SneakLabel = "Sneak",
+                SelectedSpellIconPath = spellIconPath,
+                SelectedSpellTooltip = spellTooltip,
+                ActiveEffects = BuildActiveEffectIcons(contentDb, playerStats),
                 ShowEnemyHealth = false,
                 EnemyHealthFillNormalized = 0f,
                 ShowSneakIndicator = false,
@@ -75,8 +78,15 @@ namespace VVardenfell.Runtime.Shell
             return metadata.DisplayName ?? string.Empty;
         }
 
-        string ResolveSelectedSpellLabel(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats, in SpellWindowState state)
+        string ResolveSelectedSpellLabel(
+            RuntimeContentDatabase contentDb,
+            in PlayerPresentationStats playerStats,
+            in SpellWindowState state,
+            out string iconPath,
+            out string tooltip)
         {
+            iconPath = string.Empty;
+            tooltip = null;
             if (!playerStats.HasPlayer
                 || contentDb == null
                 || !EntityManager.Exists(playerStats.PlayerEntity)
@@ -95,7 +105,19 @@ namespace VVardenfell.Runtime.Shell
                 return string.Empty;
 
             ref readonly var spell = ref contentDb.Get(handle);
-            return string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? string.Empty : spell.Name.Trim();
+            string label = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? string.Empty : spell.Name.Trim();
+            tooltip = label;
+            if (spell.EffectStartIndex >= 0 && spell.EffectCount > 0 && contentDb.Data.MagicEffectInstances != null)
+            {
+                int available = Math.Max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
+                if (available > 0)
+                {
+                    var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex];
+                    iconPath = ResolveMagicEffectIconPath(contentDb, effect.EffectId);
+                }
+            }
+
+            return label;
         }
 
         static string BuildWeaponSpellText(string itemLabel, string spellLabel)
