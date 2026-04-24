@@ -1,0 +1,237 @@
+using Unity.Collections;
+using Unity.Entities;
+using Unity.Mathematics;
+using UnityEngine;
+using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Systems;
+
+namespace VVardenfell.Runtime.WorldState
+{
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
+    public partial class RuntimeSpawnRequestSystem : SystemBase
+    {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimeSpawnState>();
+            RequireForUpdate<RuntimeSpawnResult>();
+            RequireForUpdate<RuntimeSpawnRequest>();
+            RequireForUpdate<RuntimeSpawnedRef>();
+            RequireForUpdate<WorldJournalEntry>();
+            RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<LoadedCellsMap>();
+            RequireForUpdate<AvailableCells>();
+            RequireForUpdate<StreamingConfig>();
+            RequireForUpdate<InteriorTransitionState>();
+            RequireForUpdate<InteriorSpawnedEntity>();
+        }
+
+        protected override void OnUpdate()
+        {
+            var contentDb = RuntimeContentDatabase.Active;
+            var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
+            ref var spawnState = ref SystemAPI.GetSingletonRW<RuntimeSpawnState>().ValueRW;
+            ref var spawnResult = ref SystemAPI.GetSingletonRW<RuntimeSpawnResult>().ValueRW;
+            var requests = EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
+            if (requests.Length == 0)
+                return;
+
+            Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
+            var logicalLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
+            var spawnedRegistry = EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
+            Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
+            var interiorTransition = SystemAPI.GetSingleton<InteriorTransitionState>();
+            var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
+            var available = SystemAPI.GetSingleton<AvailableCells>();
+            var config = SystemAPI.GetSingleton<StreamingConfig>();
+
+            for (int i = 0; i < requests.Length; i++)
+            {
+                var request = requests[i];
+                ProcessRequest(
+                    contentDb,
+                    ref spawnState,
+                    ref spawnResult,
+                    ref logicalLookup,
+                    spawnedRegistry,
+                    transitionEntity,
+                    loaded,
+                    available,
+                    config,
+                    interiorTransition,
+                    request);
+            }
+
+            requests.Clear();
+            EntityManager.SetComponentData(lookupEntity, logicalLookup);
+        }
+
+        void ProcessRequest(
+            RuntimeContentDatabase contentDb,
+            ref RuntimeSpawnState spawnState,
+            ref RuntimeSpawnResult spawnResult,
+            ref LogicalRefLookup logicalLookup,
+            DynamicBuffer<RuntimeSpawnedRef> spawnedRegistry,
+            Entity transitionEntity,
+            LoadedCellsMap loaded,
+            AvailableCells available,
+            StreamingConfig config,
+            InteriorTransitionState interiorTransition,
+            in RuntimeSpawnRequest request)
+        {
+            spawnResult = new RuntimeSpawnResult
+            {
+                Sequence = request.Sequence,
+                LogicalEntity = Entity.Null,
+            };
+
+            if (contentDb == null)
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.NotReady, "Runtime content database is not ready.");
+                return;
+            }
+
+            if (!contentDb.IsValid(request.Content))
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.InvalidContent, "Spawn content reference is invalid.");
+                return;
+            }
+
+            if (request.PersistencePolicy != (byte)RuntimeSpawnPersistencePolicy.CellOwnedSession)
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "Only cell-owned session runtime spawns are supported in this pass.");
+                return;
+            }
+
+            if (request.Content.Kind == ContentReferenceKind.Actor)
+            {
+                var actorHandle = new ActorDefHandle { Value = request.Content.HandleValue };
+                ref readonly var actor = ref contentDb.Get(actorHandle);
+                if (actor.Kind != ActorDefKind.Creature)
+                {
+                    CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "NPC runtime spawning is deferred until the actor body-composition milestone.");
+                    return;
+                }
+            }
+            else if (request.Content.Kind != ContentReferenceKind.Item && request.Content.Kind != ContentReferenceKind.Light)
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "This runtime spawn surface currently supports creatures, items, and lights only.");
+                return;
+            }
+
+            if (!WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out var descriptor))
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.MissingPrefab, "No spawnable model prefab is available for that content definition.");
+                return;
+            }
+
+            if (request.IsInterior != 0)
+            {
+                if (interiorTransition.InteriorActive == 0 || interiorTransition.ActiveInteriorCellId != request.InteriorCellId)
+                {
+                    CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.InvalidLocation, "Runtime interior spawns currently require the requested interior to be the active loaded interior.");
+                    return;
+                }
+            }
+            else
+            {
+                EnsureExteriorCapacity(ref available);
+                available.Set.Add(request.ExteriorCell);
+            }
+
+            spawnState.NextRuntimeRefId += 1u;
+            uint runtimeRefId = RuntimeSpawnRegistryUtility.ComposeRuntimeRefId(spawnState.NextRuntimeRefId);
+            bool exteriorActive = request.IsInterior != 0 || IsExteriorCellActiveNow(config, request.ExteriorCell);
+            if (request.IsInterior == 0 && exteriorActive)
+                loaded.Active.Add(request.ExteriorCell);
+
+            Entity logicalEntity = RuntimeSpawnFactory.Spawn(
+                EntityManager,
+                contentDb,
+                descriptor,
+                request.Content,
+                runtimeRefId,
+                request.Position,
+                request.Rotation,
+                math.max(0.0001f, request.Scale),
+                request.IsInterior != 0,
+                request.ExteriorCell,
+                request.InteriorCellId,
+                exteriorActive,
+                ref logicalLookup,
+                transitionEntity,
+                request.PersistencePolicy);
+
+            if (logicalEntity == Entity.Null)
+            {
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.NotReady, "Runtime spawn failed while constructing the logical ref graph.");
+                return;
+            }
+
+            spawnedRegistry.Add(new RuntimeSpawnedRef
+            {
+                RuntimeRefId = runtimeRefId,
+                Content = request.Content,
+                Position = request.Position,
+                Rotation = request.Rotation,
+                Scale = request.Scale,
+                ExteriorCell = request.ExteriorCell,
+                InteriorCellId = request.InteriorCellId,
+                LogicalEntity = logicalEntity,
+                IsInterior = request.IsInterior,
+                PersistencePolicy = request.PersistencePolicy,
+                Alive = 1,
+            });
+            WorldJournalUtility.AppendRuntimeSpawn(EntityManager, spawnedRegistry[spawnedRegistry.Length - 1]);
+
+            spawnResult.RuntimeRefId = runtimeRefId;
+            spawnResult.LogicalEntity = logicalEntity;
+            spawnResult.Status = (byte)RuntimeSpawnResultStatus.Success;
+            spawnResult.Message = new FixedString128Bytes($"Spawned runtime ref 0x{runtimeRefId:X8}.");
+
+            string label = request.Content.Kind.ToString().ToLowerInvariant();
+        }
+
+        static bool IsExteriorCellActiveNow(in StreamingConfig config, int2 exteriorCell)
+        {
+            if (config.ExteriorStreamingPaused)
+                return false;
+
+            int dx = math.abs(exteriorCell.x - config.CameraCell.x);
+            int dy = math.abs(exteriorCell.y - config.CameraCell.y);
+            return dx <= config.ViewRadius && dy <= config.ViewRadius;
+        }
+
+        static void EnsureExteriorCapacity(ref AvailableCells available)
+        {
+            if (!available.Set.IsCreated)
+                return;
+
+            int count = available.Set.Count;
+            if (count < available.Set.Capacity)
+                return;
+
+            available.Set.Capacity = math.max(available.Set.Capacity * 2, count + 1);
+        }
+
+        static void CompleteFailure(ref RuntimeSpawnResult result, RuntimeSpawnResultStatus status, string message)
+        {
+            result.Status = (byte)status;
+            result.Message = ToFixedString(message);
+            Debug.LogWarning($"[VVardenfell][Spawn] {message}");
+        }
+
+        static FixedString128Bytes ToFixedString(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return default;
+
+            if (value.Length > 127)
+                value = value.Substring(0, 127);
+
+            return new FixedString128Bytes(value);
+        }
+    }
+}

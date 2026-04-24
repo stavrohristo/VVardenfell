@@ -19,6 +19,26 @@ namespace VVardenfell.Runtime.UI.Framework
         public Image TopRight;
         public Image BottomLeft;
         public Image BottomRight;
+
+        /// <summary>
+        /// Toggle visibility of the 8 edge / corner images that make up the
+        /// MW_Box filigree frame, independently of the Center fill. Used by
+        /// the inventory grid so only equipped items render the gold
+        /// surround — matching vanilla MW's convention of bordering equipped
+        /// weapons / armor while unequipped inventory items sit borderless.
+        /// Center stays untouched so selection / hover tints still render.
+        /// </summary>
+        public void SetBorderVisible(bool visible)
+        {
+            if (Top != null) Top.enabled = visible;
+            if (Bottom != null) Bottom.enabled = visible;
+            if (Left != null) Left.enabled = visible;
+            if (Right != null) Right.enabled = visible;
+            if (TopLeft != null) TopLeft.enabled = visible;
+            if (TopRight != null) TopRight.enabled = visible;
+            if (BottomLeft != null) BottomLeft.enabled = visible;
+            if (BottomRight != null) BottomRight.enabled = visible;
+        }
     }
 
     public sealed class MorrowindWindowView

@@ -36,8 +36,8 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color ButtonCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
 
         // Pixel heights.
-        const float CaptionPixelHeight = 14f;
-        const float BodyTextPixelHeight = 13f;
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
 
         // Window geometry (matches openmw_map_window.layout position "0 0 300 300").
         const float DefaultWindowWidth = 300f;

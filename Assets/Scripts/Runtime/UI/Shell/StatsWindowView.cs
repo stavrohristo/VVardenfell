@@ -43,11 +43,12 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color MagickaFillColor = new(0.17f, 0.33f, 0.68f, 0.96f);
         static readonly Color FatigueFillColor = new(0.28f, 0.58f, 0.28f, 0.96f);
 
-        // Pixel heights for each text role - what you see is what the number says.
-        const float CaptionPixelHeight = 14f;
-        const float SectionHeaderPixelHeight = 14f;
-        const float BodyTextPixelHeight = 13f;
-        const float BarTextPixelHeight = 12f;
+        // Pixel heights — all sourced from the canonical OpenMW-faithful table
+        // so every window's text scales uniformly under the UI Scale slider.
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float SectionHeaderPixelHeight = RuntimeClassicUiFontSizes.Header;
+        const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float BarTextPixelHeight = RuntimeClassicUiFontSizes.BarOverlay;
 
         // Window geometry (reference pixels, matches openmw_stats_window.layout "0 0 500 342").
         const float DefaultWindowWidth = 500f;

@@ -45,12 +45,12 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color ButtonCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
         static readonly Color ConfirmBackdropColor = new(0f, 0f, 0f, 0.72f);
 
-        // Pixel heights.
-        const float CaptionPixelHeight = 14f;
-        const float BodyTextPixelHeight = 13f;
-        const float RowTitlePixelHeight = 13f;
-        const float RowMetaPixelHeight = 11f;
-        const float ButtonTextPixelHeight = 13f;
+        // Pixel heights — sourced from the OpenMW-faithful canonical table.
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float RowTitlePixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float RowMetaPixelHeight = RuntimeClassicUiFontSizes.Subtle;
+        const float ButtonTextPixelHeight = RuntimeClassicUiFontSizes.Body;
 
         // Dialog geometry (matches openmw_savegame_dialog.layout "0 0 600 400").
         const float DefaultWindowWidth = 600f;

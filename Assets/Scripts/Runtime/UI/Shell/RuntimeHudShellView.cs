@@ -57,8 +57,8 @@ namespace VVardenfell.Runtime.UI.Shell
         // border reserved for full windows (Stats, Inventory, etc.).
         const float ModalWidth = 380f;
         const float ModalHeight = 160f;
-        const float ModalTitlePixelHeight = 14f;
-        const float ModalBodyPixelHeight = 13f;
+        const float ModalTitlePixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float ModalBodyPixelHeight = RuntimeClassicUiFontSizes.Body;
 
         RuntimeUiTheme _theme;
         RuntimeInventoryIconService _iconService;

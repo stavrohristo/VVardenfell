@@ -43,10 +43,10 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color DeleteButtonCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
 
         // Pixel heights.
-        const float CaptionPixelHeight = 14f;
-        const float BodyTextPixelHeight = 13f;
-        const float EffectsTextPixelHeight = 12f;
-        const float CostTextPixelHeight = 12f;
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float EffectsTextPixelHeight = RuntimeClassicUiFontSizes.Small;
+        const float CostTextPixelHeight = RuntimeClassicUiFontSizes.Small;
 
         // Window geometry (matches openmw_spell_window.layout position "0 0 300 600").
         const float DefaultWindowWidth = 300f;

@@ -84,6 +84,15 @@ namespace VVardenfell.Runtime.Shell
                     valueText = metadata.Value.ToString();
             }
 
+            // Equipped gating hook. When the equipment system lands, swap this
+            // for a query against ActorEquipmentSlots (or similar) that asks
+            // "is PlayerInventoryItem[inventoryIndex] currently equipped in
+            // any slot?". The inventory grid reads this flag and renders the
+            // gold MW_Box filigree border only around equipped tiles,
+            // matching vanilla MW. Until equipment lands, every item
+            // reports false and the grid renders borderless.
+            bool equipped = ResolveEquippedState(entry, inventoryIndex);
+
             return new InventoryWindowEntryViewModel
             {
                 InventoryIndex = inventoryIndex,
@@ -94,9 +103,27 @@ namespace VVardenfell.Runtime.Shell
                 ValueText = valueText,
                 SecondaryLeftText = $"wt {weightText}",
                 SecondaryRightText = $"val {valueText}",
-                EquippedText = string.Empty,
+                EquippedText = equipped ? "Equipped" : string.Empty,
                 Selected = selected,
+                Equipped = equipped,
             };
+        }
+
+        /// <summary>
+        /// Placeholder stub for the inventory→equipment lookup. The equipment
+        /// system is not online yet; this always returns false so the
+        /// inventory renders borderless today. Replace the body with a real
+        /// slot query (weapon / cuirass / helmet / gauntlets / etc.) once
+        /// ActorEquipmentSlots (or whatever the eventual component is named)
+        /// exists. The caller is in BuildEntryViewModel which has access to
+        /// PlayerPresentationStats through the outer BuildInventoryModel
+        /// scope if slot lookup needs it.
+        /// </summary>
+        static bool ResolveEquippedState(PlayerInventoryItem entry, int inventoryIndex)
+        {
+            _ = entry;
+            _ = inventoryIndex;
+            return false;
         }
 
         static ContainerWindowViewModel BuildContainerModel(

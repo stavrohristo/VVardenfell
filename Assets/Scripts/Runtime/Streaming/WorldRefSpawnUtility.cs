@@ -13,6 +13,7 @@ using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.WorldRefs;
 using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Streaming
@@ -71,7 +72,7 @@ namespace VVardenfell.Runtime.Streaming
             if (contentDb == null || childEntities == null)
                 return 0;
 
-            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
+            Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
             int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
@@ -96,16 +97,17 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefCreate.Begin();
                     try
                     {
-                        logicalEntity = CreateLogicalRefEntity(
+                        logicalEntity = LogicalRefEntityFactory.Create(
                             em,
                             contentDb,
-                            contentReference,
-                            placedRefId,
-                            entry,
-                            coords[i],
-                            isInterior,
-                            interiorCellId,
-                            worldOffset);
+                            BuildLogicalRefDescriptor(
+                                contentReference,
+                                placedRefId,
+                                entry,
+                                coords[i],
+                                isInterior,
+                                interiorCellId,
+                                worldOffset));
                     }
                     finally
                     {
@@ -116,7 +118,7 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefLookup.Begin();
                     try
                     {
-                        TryAddLogicalLookup(ref logicalRefs, placedRefId, logicalEntity, isInterior);
+                        LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
                     }
                     finally
                     {
@@ -127,10 +129,9 @@ namespace VVardenfell.Runtime.Streaming
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
+                    LogicalRefChildUtility.AppendChildren(em, logicalEntity, childSnapshots[i]);
                     if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
-                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
+                        && LogicalRefEntityFactory.EnsureInteractionProxyQueued(em, logicalEntity))
                         proxyQueueCount++;
                 }
                 finally
@@ -163,7 +164,7 @@ namespace VVardenfell.Runtime.Streaming
             if (contentDb == null || refs == null || childEntities == null)
                 return 0;
 
-            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
+            Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
             int logicalRefCount = 0;
             for (int i = 0; i < refs.Length; i++)
@@ -188,16 +189,17 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefCreate.Begin();
                     try
                     {
-                        logicalEntity = CreateLogicalRefEntity(
+                        logicalEntity = LogicalRefEntityFactory.Create(
                             em,
                             contentDb,
-                            contentReference,
-                            placedRefId,
-                            entry,
-                            default,
-                            isInterior,
-                            interiorCellId,
-                            worldOffset);
+                            BuildLogicalRefDescriptor(
+                                contentReference,
+                                placedRefId,
+                                entry,
+                                default,
+                                isInterior,
+                                interiorCellId,
+                                worldOffset));
                     }
                     finally
                     {
@@ -208,7 +210,7 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefLookup.Begin();
                     try
                     {
-                        TryAddLogicalLookup(ref logicalRefs, placedRefId, logicalEntity, isInterior);
+                        LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
                     }
                     finally
                     {
@@ -220,10 +222,9 @@ namespace VVardenfell.Runtime.Streaming
                 k_LogicalRefLink.Begin();
                 try
                 {
-                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
+                    LogicalRefChildUtility.AppendChildren(em, logicalEntity, childSnapshots[i]);
                     if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
-                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
+                        && LogicalRefEntityFactory.EnsureInteractionProxyQueued(em, logicalEntity))
                         proxyQueueCount++;
                 }
                 finally
@@ -291,7 +292,7 @@ namespace VVardenfell.Runtime.Streaming
 
             prefabs = WorldResources.ModelPrefabs;
             var root = em.Instantiate(prefabs[entry.ModelPrefabIndex]);
-            Entity[] linkedEntities = SnapshotLinkedEntityGroup(em, root);
+            Entity[] linkedEntities = LogicalRefChildUtility.SnapshotLinkedEntityGroup(em, root);
             float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
             position += worldOffset;
             quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
@@ -418,9 +419,7 @@ namespace VVardenfell.Runtime.Streaming
             Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
         }
 
-        static Entity CreateLogicalRefEntity(
-            EntityManager em,
-            RuntimeContentDatabase contentDb,
+        static LogicalRefEntityDescriptor BuildLogicalRefDescriptor(
             ContentReference contentReference,
             uint placedRefId,
             RefEntry entry,
@@ -429,105 +428,8 @@ namespace VVardenfell.Runtime.Streaming
             FixedString128Bytes interiorCellId,
             float3 worldOffset)
         {
-            Entity logicalEntity = em.CreateEntity();
-            //cant do this for now, we're exceeding that max allowed entity names, they maybe can share a name? Probably not
-            //em.SetName(logicalEntity, $"LogicalRef({placedRefId:X8})");
-            em.AddComponentData(logicalEntity, new LogicalRefTag());
-            em.AddComponentData(logicalEntity, new PlacedRefIdentity { Value = placedRefId });
-            em.AddComponentData(logicalEntity, new LogicalRefContentRef { Value = contentReference });
-            em.AddComponentData(logicalEntity, new LogicalRefLocation
-            {
-                ExteriorCell = exteriorCell,
-                InteriorCellId = interiorCellId,
-                IsInterior = (byte)(isInterior ? 1 : 0),
-            });
-            em.AddBuffer<LogicalRefChild>(logicalEntity);
             float3 position = new float3(entry.PosX, entry.PosY, entry.PosZ) + worldOffset;
             quaternion rotation = new quaternion(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
-            em.AddComponentData(logicalEntity, LocalTransform.FromPositionRotationScale(
-                position,
-                rotation,
-                entry.Scale));
-            em.AddComponentData(logicalEntity, new LocalToWorld
-            {
-                Value = float4x4.TRS(
-                    position,
-                    rotation,
-                    new float3(entry.Scale))
-            });
-
-            if (isInterior)
-                em.AddComponent<InteriorCellMember>(logicalEntity);
-            else
-                em.AddComponentData(logicalEntity, new CellLink { Value = exteriorCell });
-
-            AttachLogicalAuthoring(em, logicalEntity, contentDb, contentReference, entry, exteriorCell, isInterior, interiorCellId);
-            return logicalEntity;
-        }
-
-        static Entity[][] SnapshotLogicalChildGroups(EntityManager em, Entity[] rootChildren)
-        {
-            var snapshots = new Entity[rootChildren.Length][];
-            for (int i = 0; i < rootChildren.Length; i++)
-            {
-                Entity rootChild = rootChildren[i];
-                if (rootChild == Entity.Null || !em.Exists(rootChild))
-                    continue;
-
-                snapshots[i] = SnapshotLinkedEntityGroup(em, rootChild) ?? new[] { rootChild };
-            }
-
-            return snapshots;
-        }
-
-        static Entity[] SnapshotLinkedEntityGroup(EntityManager em, Entity root)
-        {
-            if (root == Entity.Null || !em.Exists(root))
-                return null;
-
-            if (!em.HasBuffer<LinkedEntityGroup>(root))
-                return null;
-
-            var linked = em.GetBuffer<LinkedEntityGroup>(root);
-            var linkedEntities = new Entity[linked.Length];
-            for (int i = 0; i < linked.Length; i++)
-                linkedEntities[i] = linked[i].Value;
-
-            return linkedEntities;
-        }
-
-        static void AppendLogicalChildren(EntityManager em, Entity logicalEntity, Entity[] children)
-        {
-            if (children == null)
-                return;
-
-            for (int i = 0; i < children.Length; i++)
-                LinkLogicalChild(em, logicalEntity, children[i]);
-        }
-
-        static void LinkLogicalChild(EntityManager em, Entity logicalEntity, Entity child)
-        {
-            if (child == Entity.Null || !em.Exists(child))
-                return;
-
-            if (em.HasComponent<LogicalRefParent>(child))
-                em.SetComponentData(child, new LogicalRefParent { Value = logicalEntity });
-            else
-                em.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
-
-            em.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
-        }
-
-        static void AttachLogicalAuthoring(
-            EntityManager em,
-            Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
-            ContentReference contentReference,
-            RefEntry entry,
-            int2 exteriorCell,
-            bool isInterior,
-            FixedString128Bytes interiorCellId)
-        {
             bool attachDoor = false;
             DoorInteractable door = default;
             if (contentReference.Kind == ContentReferenceKind.Door)
@@ -537,7 +439,19 @@ namespace VVardenfell.Runtime.Streaming
                     : TryResolveInteriorDoorInteractable(entry.PlacedRefId, interiorCellId, out door);
             }
 
-            LogicalRefAuthoringUtility.TryAttach(em, logicalEntity, contentDb, contentReference, attachDoor, door);
+            return new LogicalRefEntityDescriptor
+            {
+                ContentReference = contentReference,
+                PlacedRefId = placedRefId,
+                Position = position,
+                Rotation = rotation,
+                Scale = entry.Scale,
+                IsInterior = isInterior,
+                ExteriorCell = exteriorCell,
+                InteriorCellId = interiorCellId,
+                AttachDoorInteractable = attachDoor,
+                DoorInteractable = door,
+            };
         }
 
         static bool TryGetContentReference(RefEntry entry, out ContentReference contentReference)
@@ -548,21 +462,6 @@ namespace VVardenfell.Runtime.Streaming
                 HandleValue = entry.ContentHandleValue,
             };
             return contentReference.IsValid;
-        }
-
-        static void TryAddLogicalLookup(ref LogicalRefLookup logicalRefs, uint placedRefId, Entity logicalEntity, bool isInterior)
-        {
-            if (!logicalRefs.Map.IsCreated || placedRefId == 0u)
-                return;
-
-            if (logicalRefs.Map.TryAdd(placedRefId, logicalEntity))
-                return;
-
-            if (logicalRefs.Map.TryGetValue(placedRefId, out var existing) && existing != logicalEntity)
-            {
-                Debug.LogWarning(
-                    $"[VVardenfell] duplicate logical-ref lookup for placed ref 0x{placedRefId:X8} while spawning {(isInterior ? "interior" : "exterior")} content.");
-            }
         }
 
         static bool TryResolveDoorInteractable(int2 coord, uint placedRefId, out DoorInteractable doorInteractable)

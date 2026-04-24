@@ -43,17 +43,35 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color ListFrameCenterColor = new(0f, 0f, 0f, 0.72f);
         static readonly Color CellFrameCenterColor = new(0f, 0f, 0f, 0.62f);
         static readonly Color CellFrameSelectedColor = new(0.42f, 0.32f, 0.15f, 0.92f);
+        // Vanilla MW cell artwork uses the same center color regardless of mouse
+        // state; hover feedback comes through a Unity Button ColorTint that
+        // multiplies the center RGB, brightening non-selected cells on hover
+        // and darkening them on press. Matches Morrowind's subtle
+        // "highlight-under-cursor" behavior in the inventory grid.
+        static readonly Color CellHoverTint = new(1.18f, 1.18f, 1.18f, 1f);
+        static readonly Color CellPressedTint = new(0.82f, 0.82f, 0.82f, 1f);
+        // Bright gold tint for the armor rating text, mirroring OpenMW's
+        // SandBrightText skin (fontcolour=header).
+        static readonly Color ArmorTextColor = new(0.98f, 0.88f, 0.52f);
+        // Drop-shadow color for stack-count + encumbrance overlays. OpenMW
+        // sets TextShadow="true" on the CountText / ProgressText skins; we
+        // mimic by parenting a second text graphic offset 1px right/down in
+        // this near-opaque black.
+        static readonly Color TextShadowColor = new(0f, 0f, 0f, 0.82f);
+        static readonly Color EmptyStateTextColor = new(0.68f, 0.64f, 0.58f);
         static readonly Color FilterFrameCenterColor = new(0f, 0f, 0f, 0.76f);
         static readonly Color TabCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
         static readonly Color TabSelectedCenterColor = new(0.38f, 0.28f, 0.14f, 0.96f);
         // Encumbrance bar tint - matches MW_Track_Blue (fontcolour=magic in OpenMW).
         static readonly Color EncumbranceFillColor = new(0.17f, 0.33f, 0.68f, 0.96f);
 
-        // Pixel heights for each text role.
-        const float CaptionPixelHeight = 14f;
-        const float BodyTextPixelHeight = 13f;
-        const float BarTextPixelHeight = 12f;
-        const float TabTextPixelHeight = 13f;
+        // Pixel heights — all sourced from the canonical OpenMW-faithful table
+        // in RuntimeClassicUiFontSizes so every text role in every window
+        // scales uniformly under the UI Scale slider.
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float BodyTextPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float BarTextPixelHeight = RuntimeClassicUiFontSizes.BarOverlay;
+        const float TabTextPixelHeight = RuntimeClassicUiFontSizes.Body;
 
         // Window geometry (matches openmw_inventory_window.layout position "0 0 600 300").
         const float DefaultWindowWidth = 600f;
@@ -122,6 +140,7 @@ namespace VVardenfell.Runtime.UI.Shell
             public Button Button;
             public Image Icon;
             public BitmapTextGraphic Count;
+            public BitmapTextGraphic CountShadow;
         }
 
         readonly RuntimeUiTheme _theme;
@@ -140,7 +159,9 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RectTransform _leftPane;
         readonly Image _encumbranceFill;
         readonly BitmapTextGraphic _encumbranceText;
+        readonly BitmapTextGraphic _encumbranceTextShadow;
         readonly BitmapTextGraphic _armorText;
+        readonly BitmapTextGraphic _armorTextShadow;
 
         // Right pane parts.
         readonly RectTransform _rightPane;
@@ -150,6 +171,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RectTransform _gridContent;
         readonly RuntimeUiTextInputView _searchInputView;
         readonly InputField _searchInputField;
+        readonly BitmapTextGraphic _emptyStateText;
 
         bool _suppressFieldEvents;
 
@@ -198,8 +220,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 onRectChanged);
 
             (_leftPane, _rightPane) = BuildPanes(_window.Client);
-            (_encumbranceFill, _encumbranceText, _armorText) = BuildLeftPane(_leftPane);
-            (_listClient, _gridContent, _searchInputView, _searchInputField) = BuildRightPane(_rightPane);
+            (_encumbranceFill, _encumbranceText, _encumbranceTextShadow, _armorText, _armorTextShadow) = BuildLeftPane(_leftPane);
+            (_listClient, _gridContent, _searchInputView, _searchInputField, _emptyStateText) = BuildRightPane(_rightPane);
             _searchInputField.onValueChanged.AddListener(OnFilterValueChanged);
         }
 
@@ -232,10 +254,34 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeWindowSurfaceUtility.ApplyNormalizedRect(_window.Root, _viewport, model.NormalizedRect);
 
             SyncEncumbrance(model.WeightLabel, model.WeightBarFillNormalized);
-            _armorText.Text = string.IsNullOrWhiteSpace(model.ArmorSummary) ? "Armor Rating 0" : model.ArmorSummary;
+            string armorTextValue = string.IsNullOrWhiteSpace(model.ArmorSummary) ? "Armor Rating 0" : model.ArmorSummary;
+            _armorText.Text = armorTextValue;
+            if (_armorTextShadow != null)
+                _armorTextShadow.Text = armorTextValue;
             SyncFilter(model.FilterText);
             SyncCategories(model.Category);
             SyncGrid(model.Entries);
+            SyncEmptyState(model.Entries, model.FilterText);
+        }
+
+        /// <summary>
+        /// Show a centered "No items." hint inside the list frame when the
+        /// grid is empty. When the player has a filter active the message
+        /// echoes it back so they can tell an empty inventory from an
+        /// overly-restrictive filter.
+        /// </summary>
+        void SyncEmptyState(InventoryWindowEntryViewModel[] entries, string filterText)
+        {
+            int count = entries?.Length ?? 0;
+            bool empty = count == 0;
+            _emptyStateText.gameObject.SetActive(empty);
+            if (!empty)
+                return;
+
+            string trimmed = filterText?.Trim();
+            _emptyStateText.Text = string.IsNullOrEmpty(trimmed)
+                ? "No items."
+                : $"No items match \"{trimmed}\".";
         }
 
         // ----- Pane split ------------------------------------------------------
@@ -268,7 +314,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         // ----- Left pane: encumbrance + avatar --------------------------------
 
-        (Image fill, BitmapTextGraphic barText, BitmapTextGraphic armorText) BuildLeftPane(RectTransform leftPane)
+        (Image fill, BitmapTextGraphic barText, BitmapTextGraphic barTextShadow, BitmapTextGraphic armorText, BitmapTextGraphic armorTextShadow) BuildLeftPane(RectTransform leftPane)
         {
             float pad = RuntimeClassicUiMetrics.Ui(PaneInnerPadding);
             float barHeight = RuntimeClassicUiMetrics.Ui(EncumbranceHeight);
@@ -303,17 +349,13 @@ namespace VVardenfell.Runtime.UI.Shell
             fill.rectTransform.anchoredPosition = Vector2.zero;
             fill.rectTransform.sizeDelta = Vector2.zero;
 
-            var barText = RuntimeUiFactory.CreateBitmapText(
-                "Value",
-                barFrame.Client,
-                _theme?.DefaultFont,
-                1f,
-                BarOverlayColor,
-                BitmapTextAlignment.Center);
-            barText.PixelHeight = RuntimeClassicUiMetrics.Ui(BarTextPixelHeight);
-            barText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
-            RuntimeUiFactory.Stretch(barText.rectTransform);
-            barText.raycastTarget = false;
+            // Encumbrance overlay text — two layers: a 1px-offset black shadow
+            // behind and the bright cream glyph in front. Mirrors OpenMW's
+            // ProgressText skin (TextShadow="true") so the value reads cleanly
+            // over both the dark left portion of the track and the bright
+            // blue fill.
+            var barTextShadow = BuildOverlayTextLayer(barFrame.Client, "ValueShadow", TextShadowColor, new Vector2(1f, -1f), BarTextPixelHeight);
+            var barText = BuildOverlayTextLayer(barFrame.Client, "Value", BarOverlayColor, Vector2.zero, BarTextPixelHeight);
 
             // Avatar MW_Box fills the rest of the left pane under the encumbrance bar.
             var avatarRoot = RuntimeUiFactory.CreateAnchorRect(
@@ -347,24 +389,46 @@ namespace VVardenfell.Runtime.UI.Shell
                 Vector2.zero,
                 new Vector2(0f, armorStrip));
 
-            var armorText = RuntimeUiFactory.CreateBitmapText(
-                "Text",
-                armorRoot,
+            // Armor rating: same two-layer shadow treatment as the encumbrance
+            // overlay, but tinted bright gold (SandBrightText in OpenMW /
+            // fontcolour=header) so it reads as an important readout rather
+            // than plain body copy.
+            var armorTextShadow = BuildOverlayTextLayer(armorRoot, "TextShadow", TextShadowColor, new Vector2(1f, -1f), BodyTextPixelHeight);
+            var armorText = BuildOverlayTextLayer(armorRoot, "Text", ArmorTextColor, Vector2.zero, BodyTextPixelHeight);
+
+            return (fill, barText, barTextShadow, armorText, armorTextShadow);
+        }
+
+        /// <summary>
+        /// Builds a stretched overlay text layer (encumbrance bar value,
+        /// armor rating). The caller typically makes two of these — a black
+        /// shadow offset by (1, -1) and a colored glyph at zero offset — so
+        /// the text reads legibly over variable backgrounds.
+        /// </summary>
+        BitmapTextGraphic BuildOverlayTextLayer(Transform parent, string name, Color color, Vector2 offsetPx, float pixelHeight)
+        {
+            var text = RuntimeUiFactory.CreateBitmapText(
+                name,
+                parent,
                 _theme?.DefaultFont,
                 1f,
-                BodyTextColor,
+                color,
                 BitmapTextAlignment.Center);
-            armorText.PixelHeight = RuntimeClassicUiMetrics.Ui(BodyTextPixelHeight);
-            armorText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
-            RuntimeUiFactory.Stretch(armorText.rectTransform);
-            armorText.raycastTarget = false;
-
-            return (fill, barText, armorText);
+            text.PixelHeight = RuntimeClassicUiMetrics.Ui(pixelHeight);
+            text.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
+            RuntimeUiFactory.Stretch(text.rectTransform);
+            // Nudge after Stretch so the offset doesn't get wiped by the
+            // anchor/offset reset inside Stretch.
+            text.rectTransform.anchoredPosition += new Vector2(
+                RuntimeClassicUiMetrics.Ui(offsetPx.x),
+                RuntimeClassicUiMetrics.Ui(offsetPx.y));
+            text.raycastTarget = false;
+            return text;
         }
 
         // ----- Right pane: categories + item grid -----------------------------
 
-        (RectTransform listClient, RectTransform gridContent, RuntimeUiTextInputView searchInput, InputField searchField) BuildRightPane(RectTransform rightPane)
+        (RectTransform listClient, RectTransform gridContent, RuntimeUiTextInputView searchInput, InputField searchField, BitmapTextGraphic emptyState) BuildRightPane(RectTransform rightPane)
         {
             float categoriesTop = RuntimeClassicUiMetrics.Ui(CategoriesTopOffset);
             float categoriesHeight = RuntimeClassicUiMetrics.Ui(CategoriesHeight);
@@ -439,7 +503,26 @@ namespace VVardenfell.Runtime.UI.Shell
             scrollRect.movementType = ScrollRect.MovementType.Clamped;
             scrollRect.scrollSensitivity = 24f;
 
-            return (listFrame.Client, gridContent, searchInput, searchInput.InputField);
+            // Empty-state text: centered inside the list frame, hidden by
+            // default. SyncGrid toggles it when the entries array is empty so
+            // the player sees a clear "nothing to show" signal instead of a
+            // blank box. The text reads "No items." or "No items match
+            // '<filter>'." depending on whether a filter is active.
+            var emptyState = RuntimeUiFactory.CreateBitmapText(
+                "EmptyState",
+                listFrame.Client,
+                _theme?.DefaultFont,
+                1f,
+                EmptyStateTextColor,
+                BitmapTextAlignment.Center);
+            emptyState.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Body);
+            emptyState.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
+            emptyState.Text = string.Empty;
+            emptyState.raycastTarget = false;
+            RuntimeUiFactory.Stretch(emptyState.rectTransform);
+            emptyState.gameObject.SetActive(false);
+
+            return (listFrame.Client, gridContent, searchInput, searchInput.InputField, emptyState);
         }
 
         /// <summary>
@@ -519,7 +602,10 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void SyncEncumbrance(string label, float fillNormalized)
         {
-            _encumbranceText.Text = string.IsNullOrWhiteSpace(label) ? "Encumbrance 0 / 0" : label;
+            string text = string.IsNullOrWhiteSpace(label) ? "Encumbrance 0 / 0" : label;
+            _encumbranceText.Text = text;
+            if (_encumbranceTextShadow != null)
+                _encumbranceTextShadow.Text = text;
             float parentWidth = _encumbranceFill.transform.parent is RectTransform prt ? prt.rect.width : 0f;
             float width = Mathf.Max(0f, parentWidth * Mathf.Clamp01(fillNormalized));
             _encumbranceFill.rectTransform.sizeDelta = new Vector2(width, 0f);
@@ -583,9 +669,18 @@ namespace VVardenfell.Runtime.UI.Shell
                 cell.Icon.preserveAspect = true;
                 bool hasStack = !string.IsNullOrWhiteSpace(entry.CountText) && entry.CountText != "1";
                 cell.Count.gameObject.SetActive(hasStack);
+                cell.CountShadow?.gameObject.SetActive(hasStack);
                 if (hasStack)
+                {
                     cell.Count.Text = entry.CountText;
+                    if (cell.CountShadow != null)
+                        cell.CountShadow.Text = entry.CountText;
+                }
                 cell.Frame.Center.color = entry.Selected ? CellFrameSelectedColor : CellFrameCenterColor;
+                // Only equipped items get the gold MW_Box filigree around
+                // the cell. Everything else renders as a borderless icon
+                // tile over the dark cell backdrop.
+                cell.Frame.SetBorderVisible(entry.Equipped);
 
                 int col = i % cols;
                 int row = i / cols;
@@ -625,11 +720,29 @@ namespace VVardenfell.Runtime.UI.Shell
                 CellFrameCenterColor);
             RuntimeUiFactory.Stretch(frame.Root);
             frame.Center.raycastTarget = true;
+            // Default state: no border — vanilla MW only shows the gold
+            // filigree around a cell when the item inside is equipped. SyncGrid
+            // re-enables it per-cell off the view model's Equipped flag.
+            frame.SetBorderVisible(false);
 
             var button = root.gameObject.AddComponent<Button>();
             button.targetGraphic = frame.Center;
-            button.transition = Selectable.Transition.None;
+            button.transition = Selectable.Transition.ColorTint;
             button.navigation = new Navigation { mode = Navigation.Mode.None };
+            // ColorTint multiplies the Image's RGB, so CellHoverTint = brighter,
+            // CellPressedTint = dimmer. Selection state is expressed by swapping
+            // Frame.Center.color in SyncGrid — ColorTint then multiplies against
+            // whichever base color is currently set (normal or selected).
+            button.colors = new ColorBlock
+            {
+                normalColor = Color.white,
+                highlightedColor = CellHoverTint,
+                pressedColor = CellPressedTint,
+                selectedColor = Color.white,
+                disabledColor = new Color(0.5f, 0.5f, 0.5f, 1f),
+                colorMultiplier = 1f,
+                fadeDuration = 0.08f,
+            };
 
             // Icon inset 2 px inside the frame so the gold thin border stays visible.
             var icon = RuntimeUiFactory.CreateImage("Icon", frame.Client, Color.white);
@@ -641,22 +754,13 @@ namespace VVardenfell.Runtime.UI.Shell
                 -RuntimeClassicUiMetrics.Ui(2f));
             icon.raycastTarget = false;
 
-            // Stack count overlay at the bottom-right. Hidden when the entry isn't stacked.
-            var count = RuntimeUiFactory.CreateBitmapText(
-                "Count",
-                frame.Client,
-                _theme?.DefaultFont,
-                1f,
-                BodyTextColor,
-                BitmapTextAlignment.Right);
-            count.PixelHeight = RuntimeClassicUiMetrics.Ui(11f);
-            count.VerticalAlignment = BitmapTextVerticalAlignment.Bottom;
-            count.rectTransform.anchorMin = new Vector2(1f, 0f);
-            count.rectTransform.anchorMax = new Vector2(1f, 0f);
-            count.rectTransform.pivot = new Vector2(1f, 0f);
-            count.rectTransform.anchoredPosition = new Vector2(-RuntimeClassicUiMetrics.Ui(3f), RuntimeClassicUiMetrics.Ui(2f));
-            count.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(34f, 13f));
-            count.raycastTarget = false;
+            // Stack count overlay at the bottom-right. Hidden when the entry
+            // isn't stacked. Rendered in two layers — a black shadow offset
+            // 1px right/down followed by the amber glyph — to match OpenMW's
+            // TextShadow="true" on the CountText skin. Legibility over light
+            // item icons (scrolls, gold coins) depends on the shadow.
+            var countShadow = BuildCountLayer(frame.Client, "CountShadow", TextShadowColor, new Vector2(-2f, 1f));
+            var count = BuildCountLayer(frame.Client, "Count", BodyTextColor, new Vector2(-3f, 2f));
 
             var cell = new CellView
             {
@@ -666,6 +770,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 Button = button,
                 Icon = icon,
                 Count = count,
+                CountShadow = countShadow,
             };
 
             // Click = select. Vanilla inventory: single click selects the item (details
@@ -673,6 +778,34 @@ namespace VVardenfell.Runtime.UI.Shell
             // callback only; equip-on-double-click can land with the tooltip pipeline.
             button.onClick.AddListener(() => _onSelectionChanged?.Invoke(cell.InventoryIndex));
             return cell;
+        }
+
+        /// <summary>
+        /// Builds one layer of the stack-count overlay (either the black
+        /// shadow or the visible amber glyph). Both layers share the same
+        /// anchor + sizeDelta so the text lines up pixel-for-pixel when the
+        /// shadow is offset by (1, -1) ref pixels behind the foreground.
+        /// </summary>
+        BitmapTextGraphic BuildCountLayer(Transform parent, string name, Color color, Vector2 anchoredOffsetPx)
+        {
+            var text = RuntimeUiFactory.CreateBitmapText(
+                name,
+                parent,
+                _theme?.DefaultFont,
+                1f,
+                color,
+                BitmapTextAlignment.Right);
+            text.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Count);
+            text.VerticalAlignment = BitmapTextVerticalAlignment.Bottom;
+            text.rectTransform.anchorMin = new Vector2(1f, 0f);
+            text.rectTransform.anchorMax = new Vector2(1f, 0f);
+            text.rectTransform.pivot = new Vector2(1f, 0f);
+            text.rectTransform.anchoredPosition = new Vector2(
+                RuntimeClassicUiMetrics.Ui(anchoredOffsetPx.x),
+                RuntimeClassicUiMetrics.Ui(anchoredOffsetPx.y));
+            text.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(34f, 13f));
+            text.raycastTarget = false;
+            return text;
         }
 
         void OnFilterValueChanged(string value)

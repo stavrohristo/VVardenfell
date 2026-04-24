@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.UI;
 using VVardenfell.Runtime.UI.Framework;
+using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.Bootstrap
 {
@@ -15,12 +16,15 @@ namespace VVardenfell.Runtime.Bootstrap
         const float ErrorHeight = 204f;
         const float DialogVisualScale = 1.5f;
 
-        // Text pixel heights - matches the rest of the UI's 13/14/12 px scale so the
-        // pre-bake chrome reads the same as the post-bake windows that follow.
-        const float CaptionPixelHeight = 14f;
-        const float BodyPixelHeight = 13f;
-        const float StagePixelHeight = 15f;
-        const float FooterPixelHeight = 11f;
+        // Text pixel heights — sourced from the canonical OpenMW-faithful
+        // table so the pre-bake chrome reads the same as the post-bake
+        // windows that follow. Stage text is one tier up (Header) for the
+        // "Loading cells…" announcement; footer is Subtle for the tiny
+        // version string.
+        const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
+        const float BodyPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float StagePixelHeight = RuntimeClassicUiFontSizes.Header;
+        const float FooterPixelHeight = RuntimeClassicUiFontSizes.Subtle;
 
         // Palette - shared with the post-bake Stats/Inventory/... windows so the
         // transition from pre-bake to menu doesn't recolor everything.

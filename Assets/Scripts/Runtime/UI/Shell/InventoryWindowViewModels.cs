@@ -43,6 +43,15 @@ namespace VVardenfell.Runtime.UI.Shell
         public string SecondaryRightText;
         public string EquippedText;
         public bool Selected;
+        /// <summary>
+        /// Drives the cell chrome in the inventory grid: only entries marked
+        /// Equipped render the gold MW_Box thin-frame border, matching vanilla
+        /// MW where the equipped weapon / armor / spell-slot items have a
+        /// visible outline around their tile while the rest sit borderless on
+        /// the parchment background. Always false for container entries —
+        /// containers have no notion of equipped state.
+        /// </summary>
+        public bool Equipped;
     }
 
     public sealed class InventoryWindowViewModel

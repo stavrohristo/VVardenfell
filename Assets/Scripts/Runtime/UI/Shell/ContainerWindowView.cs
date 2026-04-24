@@ -107,7 +107,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeClassicUiMetrics.Layout(20f),
                 RuntimeClassicUiMetrics.Layout(8f),
                 0.88f,
-                RuntimeClassicUiMetrics.Layout(14f),
+                RuntimeClassicUiMetrics.Layout(RuntimeClassicUiFontSizes.Caption),
                 new Color(0.94f, 0.82f, 0.53f));
             _window.Root.anchorMin = new Vector2(0f, 1f);
             _window.Root.anchorMax = new Vector2(0f, 1f);
@@ -356,7 +356,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 1f,
                 BodyTextColor,
                 BitmapTextAlignment.Right);
-            count.PixelHeight = RuntimeClassicUiMetrics.Layout(11f);
+            count.PixelHeight = RuntimeClassicUiMetrics.Layout(RuntimeClassicUiFontSizes.Count);
             count.VerticalAlignment = BitmapTextVerticalAlignment.Bottom;
             count.rectTransform.anchorMin = new Vector2(1f, 0f);
             count.rectTransform.anchorMax = new Vector2(1f, 0f);
