@@ -26,29 +26,6 @@ namespace VVardenfell.Runtime.Physics
 
     public struct RuntimePhysicsLifetimeState : IComponentData
     {
-        public int PlayerColliders;
-        public int TerrainColliders;
-        public int StaticCellColliders;
-        public int PlacedRefColliders;
-        public int ActivationProxyColliders;
-        public int RuntimeSpawnColliders;
-        public int InvalidColliderSources;
-        public int PendingTemporaryBlobDisposals;
-        public uint SampleSequence;
-    }
-
-    public static class RuntimePhysicsLifetimeDiagnostics
-    {
-        public static bool LogNextSample;
-
-        public static string Describe(in RuntimePhysicsLifetimeState state)
-        {
-            return $"physics lifetime: seq={state.SampleSequence}, player={state.PlayerColliders}, "
-                + $"placedRefs={state.PlacedRefColliders}, staticCells={state.StaticCellColliders}, "
-                + $"terrain={state.TerrainColliders}, proxies={state.ActivationProxyColliders}, "
-                + $"runtimeSpawns={state.RuntimeSpawnColliders}, invalidSources={state.InvalidColliderSources}, "
-                + $"pendingTempBlobDisposals={state.PendingTemporaryBlobDisposals}";
-        }
     }
 
     public static class RuntimeColliderBlobLifetime
@@ -130,103 +107,43 @@ namespace VVardenfell.Runtime.Physics
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup), OrderLast = true)]
-    public partial class RuntimePhysicsLifetimeDiagnosticsSystem : SystemBase
+    public partial class RuntimePhysicsLifetimeValidationSystem : SystemBase
     {
         int _lastInvalidSources = -1;
-        EntityQuery _stateQuery;
-        EntityQuery _pendingDisposalQuery;
-        EntityQuery _playerQuery;
         EntityQuery _sourceQuery;
 
         protected override void OnCreate()
         {
-            _stateQuery = GetEntityQuery(ComponentType.ReadWrite<RuntimePhysicsLifetimeState>());
-            _pendingDisposalQuery = GetEntityQuery(ComponentType.ReadOnly<DeferredRuntimeColliderBlobDisposal>());
-            _playerQuery = GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<PhysicsCollider>());
             _sourceQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeColliderSource>());
 
-            RequireForUpdate(_stateQuery);
+            RequireForUpdate<RuntimePhysicsLifetimeState>();
         }
 
         protected override void OnUpdate()
         {
-            var state = _stateQuery.GetSingletonRW<RuntimePhysicsLifetimeState>();
-            ref var value = ref state.ValueRW;
-            value.SampleSequence++;
-            value.PlayerColliders = _playerQuery.CalculateEntityCount();
-            CountRuntimeColliderSources(
-                out value.TerrainColliders,
-                out value.StaticCellColliders,
-                out value.PlacedRefColliders,
-                out value.ActivationProxyColliders,
-                out value.RuntimeSpawnColliders,
-                out value.InvalidColliderSources);
-            value.PendingTemporaryBlobDisposals = _pendingDisposalQuery.IsEmptyIgnoreFilter
-                ? 0
-                : _pendingDisposalQuery.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>(true).Length;
+            int invalidSources = CountInvalidRuntimeColliderSources();
+            bool invalidCountsChanged = _lastInvalidSources != invalidSources;
+            _lastInvalidSources = invalidSources;
 
-            if (RuntimePhysicsLifetimeDiagnostics.LogNextSample)
+            if (invalidCountsChanged && invalidSources > 0)
             {
-                RuntimePhysicsLifetimeDiagnostics.LogNextSample = false;
-            }
-
-            bool invalidCountsChanged = _lastInvalidSources != value.InvalidColliderSources;
-            _lastInvalidSources = value.InvalidColliderSources;
-
-            if (invalidCountsChanged && value.InvalidColliderSources > 0)
-            {
-                Debug.LogWarning($"[VVardenfell][Physics] invalid collider sources detected: {value.InvalidColliderSources}.");
+                Debug.LogWarning($"[VVardenfell][Physics] invalid collider sources detected: {invalidSources}.");
             }
         }
 
-        void CountRuntimeColliderSources(
-            out int terrain,
-            out int staticCells,
-            out int placedRefs,
-            out int activationProxies,
-            out int runtimeSpawns,
-            out int invalidSources)
+        int CountInvalidRuntimeColliderSources()
         {
-            terrain = 0;
-            staticCells = 0;
-            placedRefs = 0;
-            activationProxies = 0;
-            runtimeSpawns = 0;
-            invalidSources = 0;
-            using var entities = _sourceQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
+            int invalidSources = 0;
             using var sources = _sourceQuery.ToComponentDataArray<RuntimeColliderSource>(Unity.Collections.Allocator.Temp);
             for (int i = 0; i < sources.Length; i++)
             {
                 if (!sources[i].Value.IsCreated)
                 {
                     invalidSources++;
-                    continue;
-                }
-
-                if (!EntityManager.HasComponent<PhysicsCollider>(entities[i]))
-                    continue;
-
-                switch (sources[i].Kind)
-                {
-                    case RuntimeColliderKind.TerrainCell:
-                        terrain++;
-                        break;
-                    case RuntimeColliderKind.StaticCell:
-                        staticCells++;
-                        break;
-                    case RuntimeColliderKind.PlacedRef:
-                        placedRefs++;
-                        break;
-                    case RuntimeColliderKind.ActivationProxy:
-                        activationProxies++;
-                        break;
-                    case RuntimeColliderKind.RuntimeSpawn:
-                        runtimeSpawns++;
-                        break;
                 }
             }
+
+            return invalidSources;
         }
     }
 }

@@ -109,12 +109,16 @@ namespace VVardenfell.Runtime.UI.Shell
             _eventSystem = canvasView.EventSystem;
             _rootRect = canvasView.Root;
 
-            // Dedicated HUD canvas. Lower sortingOrder so menus draw on top when
-            // opened, and bound to HudScale so the Video tab's HUD Scale slider
-            // live-resizes gauges / crosshair / status bars.
-            var hudCanvas = RuntimeUiFactory.CreateChildCanvasRoot(
-                transform,
-                "HudCanvas",
+            // Dedicated HUD canvas at scene root. It must NOT be nested under
+            // the shell GameObject because Unity treats a Canvas inside
+            // another Canvas as a sub-canvas and silently ignores its own
+            // CanvasScaler — which would make the HUD Scale slider a no-op.
+            // CreateSiblingCanvasRoot wires a RuntimeCanvasLifetimeLink back
+            // to the shell GameObject so the HUD canvas still shares the
+            // shell's activation and destruction.
+            var hudCanvas = RuntimeUiFactory.CreateSiblingCanvasRoot(
+                gameObject,
+                "VVardenfell.HudCanvas",
                 "HudRoot",
                 short.MaxValue - 96,
                 RuntimeUiScaleBinding.ScaleKind.Hud);

@@ -1,7 +1,6 @@
 using Unity.Entities;
 using Unity.Physics.Systems;
 using Unity.Transforms;
-using UnityEngine;
 
 namespace VVardenfell.Runtime.Systems
 {
@@ -110,30 +109,5 @@ namespace VVardenfell.Runtime.Systems
     [UpdateInGroup(typeof(PresentationSystemGroup))]
     public partial class MorrowindPresentationSystemGroup : ComponentSystemGroup
     {
-    }
-
-    public static class MorrowindSystemGroupDiagnostics
-    {
-        public static bool LogScheduleOnBoot;
-
-        public static string DescribeSchedule()
-        {
-            return "Morrowind runtime schedule: initialization -> Morrowind input -> owned physics pre-build "
-                + "-> manual Unity physics build/sim/export -> owned physics query -> owned physics post-query mutation "
-                + "-> Morrowind pre-transform -> Unity transforms "
-                + "-> Morrowind post-transform (interaction, world mutation, streaming, environment, audio) "
-                + "-> Morrowind presentation.";
-        }
-    }
-
-    [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class MorrowindSystemGroupDiagnosticsSystem : SystemBase
-    {
-        protected override void OnUpdate()
-        {
-            if (MorrowindSystemGroupDiagnostics.LogScheduleOnBoot)
-
-            Enabled = false;
-        }
     }
 }

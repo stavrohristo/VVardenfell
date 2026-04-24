@@ -501,8 +501,6 @@ namespace VVardenfell.Runtime.Interactions
             {
                 ShowCrosshair = 1,
             });
-            EnsureComponent(runtimeEntity, new InteractionDiagnosticsState());
-            EnsureComponent(runtimeEntity, new InteractionDiagnosticsSnapshot());
             EnsureComponent(runtimeEntity, new DialogueReadinessState
             {
                 PendingTargetEntity = Entity.Null,

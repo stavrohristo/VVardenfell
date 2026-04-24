@@ -62,33 +62,37 @@ namespace VVardenfell.Runtime.UI.Framework
         }
 
         /// <summary>
-        /// Creates an additional Screen-Space-Overlay canvas as a child GameObject
-        /// under <paramref name="parent"/>. Used by the in-game shell to host the
-        /// HUD on its own canvas so it can scale by <c>HudScale</c> while the
-        /// menus on the primary canvas scale by <c>GlobalScale</c> independently.
+        /// Creates a second Screen-Space-Overlay canvas as a scene-root
+        /// GameObject (sibling to <paramref name="lifetime"/>, not nested under
+        /// it). Unity treats a Canvas nested inside another Canvas as a
+        /// sub-canvas and silently ignores its own <see cref="CanvasScaler"/>
+        /// — the child inherits the parent canvas's scale factor. To give the
+        /// HUD an independent scale knob via <c>HudScale</c> we need a true
+        /// root canvas. A <see cref="RuntimeCanvasLifetimeLink"/> companion
+        /// destroys the canvas GameObject alongside the owner so callers keep
+        /// a one-object lifecycle.
         /// </summary>
-        public static RuntimeUiCanvasView CreateChildCanvasRoot(
-            Transform parent,
+        public static RuntimeUiCanvasView CreateSiblingCanvasRoot(
+            GameObject lifetime,
             string canvasName,
             string rootName,
             int sortingOrder,
             RuntimeUiScaleBinding.ScaleKind scaleKind)
         {
             var go = new GameObject(canvasName, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster), typeof(RuntimeUiScaleBinding));
-            go.transform.SetParent(parent, false);
+            // Intentionally leave the transform at scene root — nested
+            // canvases share their root's scale factor, which would defeat
+            // this helper's whole purpose.
 
-            // Nested Screen-Space-Overlay canvases are treated as sub-canvases
-            // and do NOT auto-size their RectTransform to the screen the way
-            // root canvases do. Stretch it to match the parent rect explicitly
-            // so children anchored to corners land on screen corners rather
-            // than collapsing into the default 100Ã—100 centered rect.
-            var selfRect = (RectTransform)go.transform;
-            Stretch(selfRect);
+            if (lifetime != null)
+            {
+                var link = go.AddComponent<RuntimeCanvasLifetimeLink>();
+                link.Bind(lifetime);
+            }
 
             var canvas = go.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = sortingOrder;
-            canvas.overrideSorting = true;
 
             var scaler = go.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -111,6 +115,61 @@ namespace VVardenfell.Runtime.UI.Framework
                 Root = root,
                 EventSystem = eventSystem,
             };
+        }
+    }
+
+    /// <summary>
+    /// Binds a scene-root canvas to an owning GameObject. When the owner is
+    /// destroyed, this component destroys its own GameObject. When the owner
+    /// toggles between active and inactive in the scene hierarchy, this
+    /// component mirrors the state onto the local <see cref="Canvas.enabled"/>
+    /// flag — NOT <c>gameObject.SetActive</c>, because deactivating our own
+    /// GameObject would stop <c>LateUpdate</c> from running, trapping us in
+    /// the off state forever. Used by
+    /// <see cref="RuntimeUiFactory.CreateSiblingCanvasRoot"/> so a
+    /// scene-root HUD canvas still tracks its owning shell's lifecycle.
+    /// </summary>
+    public sealed class RuntimeCanvasLifetimeLink : MonoBehaviour
+    {
+        [SerializeField] GameObject _owner;
+        Canvas _canvas;
+        GraphicRaycaster _raycaster;
+        bool _lastOwnerActive = true;
+
+        public void Bind(GameObject owner)
+        {
+            _owner = owner;
+            _canvas = GetComponent<Canvas>();
+            _raycaster = GetComponent<GraphicRaycaster>();
+            if (_owner != null)
+            {
+                _lastOwnerActive = _owner.activeInHierarchy;
+                Apply(_lastOwnerActive);
+            }
+        }
+
+        void LateUpdate()
+        {
+            if (_owner == null)
+            {
+                UnityEngine.Object.Destroy(gameObject);
+                return;
+            }
+
+            bool ownerActive = _owner.activeInHierarchy;
+            if (ownerActive != _lastOwnerActive)
+            {
+                Apply(ownerActive);
+                _lastOwnerActive = ownerActive;
+            }
+        }
+
+        void Apply(bool active)
+        {
+            if (_canvas != null)
+                _canvas.enabled = active;
+            if (_raycaster != null)
+                _raycaster.enabled = active;
         }
     }
 }

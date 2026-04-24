@@ -243,8 +243,6 @@ namespace VVardenfell.Runtime.Streaming
             }
             progress?.Report("Initial visibility gate applied", 1, 1);
             progress?.CompleteStage();
-            if (UnityEngine.Debug.isDebugBuild)
-                WorldExteriorPhysicsUtility.LogActivePhysicsSummary(em, "bootstrap");
             yield return null;
 
             sw.Stop();

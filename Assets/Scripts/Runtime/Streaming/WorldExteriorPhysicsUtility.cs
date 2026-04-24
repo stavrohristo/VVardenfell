@@ -3,7 +3,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Profiling;
-using UnityEngine;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Streaming
@@ -45,9 +44,6 @@ namespace VVardenfell.Runtime.Streaming
             em.RemoveComponent<PhysicsCollider>(query);
             query.Dispose();
             queryBuilder.Dispose();
-
-            if (Debug.isDebugBuild)
-                LogActivePhysicsSummary(em, "hide-exterior");
         }
 
         internal static void SyncExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
@@ -72,45 +68,6 @@ namespace VVardenfell.Runtime.Streaming
             }
             query.Dispose();
             queryBuilder.Dispose();
-
-            if (Debug.isDebugBuild)
-                LogActivePhysicsSummary(em, "sync-exterior");
-        }
-
-        internal static void LogActivePhysicsSummary(EntityManager em, string contextLabel)
-        {
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<RuntimeColliderSource, PhysicsCollider>();
-            var query = em.CreateEntityQuery(queryBuilder);
-            int activeTerrain = 0;
-            int activeStatic = 0;
-            int activeRefs = 0;
-            int activeProxies = 0;
-            using (var sources = query.ToComponentDataArray<RuntimeColliderSource>(Allocator.Temp))
-            {
-                for (int i = 0; i < sources.Length; i++)
-                {
-                    switch (sources[i].Kind)
-                    {
-                        case RuntimeColliderKind.TerrainCell:
-                            activeTerrain++;
-                            break;
-                        case RuntimeColliderKind.StaticCell:
-                            activeStatic++;
-                            break;
-                        case RuntimeColliderKind.PlacedRef:
-                        case RuntimeColliderKind.RuntimeSpawn:
-                            activeRefs++;
-                            break;
-                        case RuntimeColliderKind.ActivationProxy:
-                            activeProxies++;
-                            break;
-                    }
-                }
-            }
-            query.Dispose();
-            queryBuilder.Dispose();
-
         }
     }
 }
