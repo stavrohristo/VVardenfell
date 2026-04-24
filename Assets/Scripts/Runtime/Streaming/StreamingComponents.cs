@@ -67,6 +67,22 @@ namespace VVardenfell.Runtime.Streaming
         public NativeList<int2> PendingEntityDestroy; // filled by schedule, drained by unload
     }
 
+    /// <summary>
+    /// Exterior cells whose collider state should be enabled during the next owned physics pre-build phase.
+    /// </summary>
+    public struct PendingCellPhysicsLoad : IComponentData
+    {
+        public NativeList<int2> Cells;
+    }
+
+    /// <summary>
+    /// Exterior cells whose collider state should be disabled during the next owned physics pre-build phase.
+    /// </summary>
+    public struct PendingCellPhysicsUnload : IComponentData
+    {
+        public NativeList<int2> Cells;
+    }
+
     /// <summary>Diagnostic breadcrumb on terrain entities. Not read by systems.</summary>
     public struct CellCoord : IComponentData
     {

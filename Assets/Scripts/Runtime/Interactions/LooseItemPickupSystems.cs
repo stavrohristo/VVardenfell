@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -27,7 +27,7 @@ namespace VVardenfell.Runtime.Interactions
 {
 
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
     public partial class LooseItemPickupSystem : SystemBase
     {
@@ -68,37 +68,36 @@ namespace VVardenfell.Runtime.Interactions
             request.TargetEntity = Entity.Null;
 
             if (!EntityManager.Exists(target)
-                || !EntityManager.HasComponent<ItemPickupAuthoring>(target)
-                || !EntityManager.HasComponent<PlacedRefIdentity>(target))
+                || !EntityManager.HasComponent<PlacedRefIdentity>(target)
+                || !LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, target, out ContentReference content, out _))
             {
-                Debug.LogWarning("[VVardenfell][Interaction] loose-item activation request resolved to a missing or non-item logical entity.");
+                Debug.LogWarning("[VVardenfell][Interaction] loose-item activation request resolved to a missing or non-carryable logical entity.");
                 ClearFocus();
                 return;
             }
 
-            var itemAuthoring = EntityManager.GetComponentData<ItemPickupAuthoring>(target);
             var pickedItems = SystemAPI.GetSingletonBuffer<PickedItemRecord>();
             bool isRuntimeSpawnedItem = RuntimeSpawnRegistryUtility.IsRuntimeRefId(targetPlacedRefId);
             if (!isRuntimeSpawnedItem && HasPickedItem(pickedItems, targetPlacedRefId))
             {
-                Debug.Log($"[VVardenfell][Interaction] ignored duplicate pickup for placedRef=0x{targetPlacedRefId:X8}.");
                 ClearFocus();
                 return;
             }
 
-            string itemName = ResolveItemName(RuntimeContentDatabase.Active, itemAuthoring.Definition);
-            ContentReference itemContent = ContainerLootUtility.ToContentReference(itemAuthoring.Definition);
+            string itemName = ResolveCarryableName(RuntimeContentDatabase.Active, content);
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
-            int stackCount = AddInventoryItem(inventory, itemAuthoring.Definition);
+            int stackCount = AddInventoryItem(inventory, content);
             if (!isRuntimeSpawnedItem)
             {
                 pickedItems.Add(new PickedItemRecord
                 {
                     PlacedRefId = targetPlacedRefId,
-                    Definition = itemAuthoring.Definition,
+                    Definition = content.Kind == ContentReferenceKind.Item
+                        ? new ItemDefHandle { Value = content.HandleValue }
+                        : default,
                 });
-                WorldJournalUtility.AppendLooseItemRemoved(EntityManager, targetPlacedRefId, itemContent);
+                WorldJournalUtility.AppendLooseItemRemoved(EntityManager, targetPlacedRefId, content);
             }
 
             TryQueueInteractionAudio(target, InteractionAudioKind.LooseItem, "item");
@@ -117,7 +116,6 @@ namespace VVardenfell.Runtime.Interactions
             activationResult.PendingNotification = 1;
             activationResult.NotificationText = ToFixedString($"Picked up {itemName}");
 
-            Debug.Log($"[VVardenfell][Interaction] picked up '{itemName}' from placedRef=0x{targetPlacedRefId:X8}; stack={stackCount}.");
         }
 
         static bool HasPickedItem(DynamicBuffer<PickedItemRecord> pickedItems, uint placedRefId)
@@ -131,9 +129,9 @@ namespace VVardenfell.Runtime.Interactions
             return false;
         }
 
-        static int AddInventoryItem(DynamicBuffer<PlayerInventoryItem> inventory, ItemDefHandle definition)
+        static int AddInventoryItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content)
         {
-            return ContainerLootUtility.AddInventoryStack(inventory, ContainerLootUtility.ToContentReference(definition), 1);
+            return ContainerLootUtility.AddInventoryStack(inventory, content, 1);
         }
 
         void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)
@@ -170,7 +168,6 @@ namespace VVardenfell.Runtime.Interactions
                 Kind = (byte)kind,
             });
 
-            Debug.Log($"[VVardenfell][Audio] queued {label} interaction one-shot: seq={sequence}, placedRef=0x{placedRefId:X8}, pos=({position.x:F2}, {position.y:F2}, {position.z:F2}).");
         }
 
         float3 ResolveAudioPosition(Entity target)
@@ -189,7 +186,6 @@ namespace VVardenfell.Runtime.Interactions
             if (placedRefId == 0u || !_loggedMissingInteractionSounds.Add(placedRefId))
                 return;
 
-            Debug.Log($"[VVardenfell][Audio] {label} 0x{placedRefId:X8} {reason}");
         }
 
         void ClearFocus()
@@ -206,17 +202,12 @@ namespace VVardenfell.Runtime.Interactions
             InteractionEntityDestroyUtility.DestroyLogicalRef(EntityManager, logicalEntity, ref logicalRefLookup);
         }
 
-        static string ResolveItemName(RuntimeContentDatabase contentDb, ItemDefHandle definition)
+        static string ResolveCarryableName(RuntimeContentDatabase contentDb, ContentReference content)
         {
-            if (contentDb == null || !definition.IsValid)
+            if (!InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, content, out var metadata))
                 return "item";
 
-            ref readonly var item = ref contentDb.Get(definition);
-            if (!string.IsNullOrWhiteSpace(item.Name))
-                return item.Name;
-            if (!string.IsNullOrWhiteSpace(item.Id))
-                return item.Id;
-            return "item";
+            return metadata.DisplayName;
         }
 
         static FixedString128Bytes ToFixedString(string value)
@@ -231,7 +222,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
     [UpdateAfter(typeof(LooseItemPickupSystem))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
@@ -264,10 +255,11 @@ namespace VVardenfell.Runtime.Interactions
             var entitiesToDestroy = new List<Entity>();
             foreach (var (placedRefId, entity) in SystemAPI
                          .Query<RefRO<PlacedRefIdentity>>()
-                         .WithAll<LogicalRefTag, ItemPickupAuthoring, InteriorCellMember>()
+                         .WithAll<LogicalRefTag, InteriorCellMember>()
                          .WithEntityAccess())
             {
-                if (pickedSet.Contains(placedRefId.ValueRO.Value))
+                if (pickedSet.Contains(placedRefId.ValueRO.Value)
+                    && LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, entity, out _))
                     entitiesToDestroy.Add(entity);
             }
 
@@ -282,7 +274,6 @@ namespace VVardenfell.Runtime.Interactions
                 DestroyLogicalRef(entitiesToDestroy[i], ref logicalRefLookup);
             EntityManager.SetComponentData(lookupEntity, logicalRefLookup);
 
-            Debug.Log($"[VVardenfell][Interaction] pruned {entitiesToDestroy.Count} previously picked loose items after interior spawn.");
         }
 
         void DestroyLogicalRef(Entity logicalEntity, ref LogicalRefLookup logicalRefLookup)

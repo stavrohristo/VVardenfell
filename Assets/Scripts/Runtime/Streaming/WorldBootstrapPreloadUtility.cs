@@ -1,0 +1,411 @@
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using UnityEngine;
+using VVardenfell.Core;
+using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Cache;
+
+namespace VVardenfell.Runtime.Streaming
+{
+    internal sealed class WorldBootstrapPreloadResult
+    {
+        public CellData[] ExteriorCells;
+        public WorldBootstrapPreloadFailureInfo[] ExteriorFailures;
+        public CellData[] InteriorCells;
+        public WorldBootstrapPreloadFailureInfo[] InteriorFailures;
+    }
+
+    internal enum WorldBootstrapPreloadFailureKind
+    {
+        MissingFile,
+        TruncatedData,
+        BlobVersionMismatch,
+        BlobPayloadMismatch,
+        CorruptData,
+        PipelineMismatch,
+        UnsupportedSpawnMode,
+        Other,
+    }
+
+    internal sealed class WorldBootstrapPreloadFailureInfo
+    {
+        public bool IsInterior;
+        public string CellLabel;
+        public string Path;
+        public WorldBootstrapPreloadFailureKind Kind;
+        public string Message;
+    }
+
+    internal static class WorldBootstrapPreloadUtility
+    {
+        public static WorldBootstrapPreloadResult PreloadCells(CacheLoader cache)
+        {
+            var cellGrid = cache.Manifest.CellGrid;
+            var loaded = new CellData[cellGrid.Length];
+            var failures = new WorldBootstrapPreloadFailureInfo[cellGrid.Length];
+            var interiorIds = cache.Manifest.InteriorCellIds ?? System.Array.Empty<string>();
+            var loadedInteriors = new CellData[interiorIds.Length];
+            var interiorFailures = new WorldBootstrapPreloadFailureInfo[interiorIds.Length];
+            var stateByKey = BuildCellStateLookup(cache.Manifest.CellStates);
+            var options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = System.Math.Min(8, System.Math.Max(1, System.Environment.ProcessorCount / 2)),
+            };
+
+            Parallel.For(0, cellGrid.Length, options, i =>
+            {
+                var g = cellGrid[i];
+                string path = CachePaths.CellFile(g.Item1, g.Item2);
+                if (!File.Exists(path))
+                {
+                    failures[i] = CreateMissingFileFailure(
+                        isInterior: false,
+                        cellLabel: $"({g.Item1},{g.Item2})",
+                        path: path);
+                    return;
+                }
+
+                try
+                {
+                    loaded[i] = CellFile.Read(path);
+                    failures[i] = ValidatePreloadedCell(
+                        loaded[i],
+                        ResolveCellState(stateByKey, false, g.Item1, g.Item2, null),
+                        false,
+                        $"({g.Item1},{g.Item2})",
+                        path);
+                    if (failures[i] != null)
+                    {
+                        loaded[i] = null;
+                        return;
+                    }
+                    TryAttachPlacementAudit(loaded[i], CachePaths.CellPlacementAuditFile(g.Item1, g.Item2));
+                }
+                catch (System.Exception ex)
+                {
+                    failures[i] = CreatePreloadFailure(
+                        isInterior: false,
+                        cellLabel: $"({g.Item1},{g.Item2})",
+                        path: path,
+                        ex: ex);
+                }
+            });
+
+            Parallel.For(0, interiorIds.Length, options, i =>
+            {
+                string cellId = interiorIds[i] ?? string.Empty;
+                string path = CachePaths.InteriorCellFile(cellId);
+                if (!File.Exists(path))
+                {
+                    interiorFailures[i] = CreateMissingFileFailure(
+                        isInterior: true,
+                        cellLabel: cellId,
+                        path: path);
+                    return;
+                }
+
+                try
+                {
+                    loadedInteriors[i] = CellFile.Read(path, isInterior: true, cellId: cellId);
+                    interiorFailures[i] = ValidatePreloadedCell(
+                        loadedInteriors[i],
+                        ResolveCellState(stateByKey, true, 0, 0, cellId),
+                        true,
+                        cellId,
+                        path);
+                    if (interiorFailures[i] != null)
+                    {
+                        loadedInteriors[i] = null;
+                        return;
+                    }
+                    TryAttachPlacementAudit(loadedInteriors[i], CachePaths.InteriorCellPlacementAuditFile(cellId));
+                }
+                catch (System.Exception ex)
+                {
+                    interiorFailures[i] = CreatePreloadFailure(
+                        isInterior: true,
+                        cellLabel: cellId,
+                        path: path,
+                        ex: ex);
+                }
+            });
+
+            return new WorldBootstrapPreloadResult
+            {
+                ExteriorCells = loaded,
+                ExteriorFailures = failures,
+                InteriorCells = loadedInteriors,
+                InteriorFailures = interiorFailures,
+            };
+        }
+
+        public static WorldBootstrapPreloadFailureInfo GetFirstPreloadFailure(WorldBootstrapPreloadResult result)
+        {
+            if (result?.ExteriorFailures != null)
+            {
+                for (int i = 0; i < result.ExteriorFailures.Length; i++)
+                {
+                    if (result.ExteriorFailures[i] != null)
+                        return result.ExteriorFailures[i];
+                }
+            }
+
+            if (result?.InteriorFailures != null)
+            {
+                for (int i = 0; i < result.InteriorFailures.Length; i++)
+                {
+                    if (result.InteriorFailures[i] != null)
+                        return result.InteriorFailures[i];
+                }
+            }
+
+            return null;
+        }
+
+        public static void LogPreloadFailureSummary(WorldBootstrapPreloadResult result, WorldBootstrapPreloadFailureInfo firstFailure)
+        {
+            int exteriorFailures = 0;
+            int interiorFailures = 0;
+            var countsByKind = new int[System.Enum.GetValues(typeof(WorldBootstrapPreloadFailureKind)).Length];
+
+            AccumulateFailures(result?.ExteriorFailures, ref exteriorFailures, countsByKind);
+            AccumulateFailures(result?.InteriorFailures, ref interiorFailures, countsByKind);
+
+            var sb = new StringBuilder(512);
+            sb.Append("[VVardenfell] preload failed during background cache reads. First failure: ")
+                .Append(firstFailure.IsInterior ? "interior '" : "cell ")
+                .Append(firstFailure.CellLabel)
+                .Append(firstFailure.IsInterior ? "'" : string.Empty)
+                .Append(" [")
+                .Append(firstFailure.Kind)
+                .Append("] ")
+                .Append(firstFailure.Path)
+                .AppendLine();
+            sb.Append("Summary: ")
+                .Append(exteriorFailures)
+                .Append(" exterior, ")
+                .Append(interiorFailures)
+                .Append(" interior failures.");
+
+            bool appendedBreakdown = false;
+            for (int i = 0; i < countsByKind.Length; i++)
+            {
+                if (countsByKind[i] == 0)
+                    continue;
+
+                if (!appendedBreakdown)
+                {
+                    sb.Append(" Breakdown:");
+                    appendedBreakdown = true;
+                }
+
+                sb.Append(' ')
+                    .Append((WorldBootstrapPreloadFailureKind)i)
+                    .Append('=')
+                    .Append(countsByKind[i]);
+            }
+
+            Debug.LogError(sb.ToString());
+        }
+
+        static Dictionary<string, BakeManifest.BakedCellState> BuildCellStateLookup(BakeManifest.BakedCellState[] states)
+        {
+            var lookup = new Dictionary<string, BakeManifest.BakedCellState>(System.StringComparer.OrdinalIgnoreCase);
+            if (states == null)
+                return lookup;
+
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i];
+                if (state == null)
+                    continue;
+
+                string key = state.IsInterior
+                    ? BuildInteriorCellStateKey(state.InteriorId)
+                    : BuildExteriorCellStateKey(state.GridX, state.GridY);
+                lookup[key] = state;
+            }
+
+            return lookup;
+        }
+
+        static BakeManifest.BakedCellState ResolveCellState(
+            Dictionary<string, BakeManifest.BakedCellState> stateByKey,
+            bool isInterior,
+            int gridX,
+            int gridY,
+            string interiorId)
+        {
+            if (stateByKey == null)
+                return null;
+
+            string key = isInterior
+                ? BuildInteriorCellStateKey(interiorId)
+                : BuildExteriorCellStateKey(gridX, gridY);
+            return stateByKey.TryGetValue(key, out var state) ? state : null;
+        }
+
+        static string BuildExteriorCellStateKey(int gridX, int gridY) => $"ext:{gridX},{gridY}";
+
+        static string BuildInteriorCellStateKey(string interiorId) => $"int:{(interiorId ?? string.Empty).Trim().ToLowerInvariant()}";
+
+        static WorldBootstrapPreloadFailureInfo ValidatePreloadedCell(
+            CellData cell,
+            BakeManifest.BakedCellState state,
+            bool isInterior,
+            string cellLabel,
+            string path)
+        {
+            if (state == null)
+            {
+                return CreateValidationFailure(
+                    isInterior,
+                    cellLabel,
+                    path,
+                    WorldBootstrapPreloadFailureKind.PipelineMismatch,
+                    "missing manifest cell state; rebuild the world cache");
+            }
+
+            if (state.PipelineVersion != CacheFormat.WorldBakePipelineVersion)
+            {
+                return CreateValidationFailure(
+                    isInterior,
+                    cellLabel,
+                    path,
+                    WorldBootstrapPreloadFailureKind.PipelineMismatch,
+                    $"manifest pipeline {state.PipelineVersion} does not match runtime pipeline {CacheFormat.WorldBakePipelineVersion}; rebuild the world cache");
+            }
+
+            var refs = cell?.Refs ?? System.Array.Empty<RefEntry>();
+            for (int i = 0; i < refs.Length; i++)
+            {
+                int raw = refs[i].SpawnModeRaw;
+                if (raw != (int)RefSpawnMode.RenderShard)
+                {
+                    string mode = System.Enum.IsDefined(typeof(RefSpawnMode), raw)
+                        ? ((RefSpawnMode)raw).ToString()
+                        : $"unknown({raw})";
+                    return CreateValidationFailure(
+                        isInterior,
+                        cellLabel,
+                        path,
+                        WorldBootstrapPreloadFailureKind.UnsupportedSpawnMode,
+                        $"ref {i} uses spawn mode {mode}; normal world cells must be baked as {RefSpawnMode.RenderShard}");
+                }
+            }
+
+            return null;
+        }
+
+        static void TryAttachPlacementAudit(CellData cell, string auditPath)
+        {
+            if (cell == null || string.IsNullOrEmpty(auditPath) || !File.Exists(auditPath))
+                return;
+
+            try
+            {
+                cell.PlacementAudit = RefPlacementAuditFile.Read(auditPath);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[VVardenfell] failed reading placement audit '{auditPath}': {ex.Message}");
+            }
+        }
+
+        static WorldBootstrapPreloadFailureInfo CreateMissingFileFailure(bool isInterior, string cellLabel, string path)
+        {
+            string target = isInterior ? $"interior '{cellLabel}'" : $"cell {cellLabel}";
+            return new WorldBootstrapPreloadFailureInfo
+            {
+                IsInterior = isInterior,
+                CellLabel = cellLabel,
+                Path = path,
+                Kind = WorldBootstrapPreloadFailureKind.MissingFile,
+                Message = $"[VVardenfell] missing baked {target} file at '{path}'",
+            };
+        }
+
+        static WorldBootstrapPreloadFailureInfo CreatePreloadFailure(bool isInterior, string cellLabel, string path, System.Exception ex)
+        {
+            var kind = ClassifyPreloadFailure(ex);
+            string target = isInterior ? $"interior '{cellLabel}'" : $"cell {cellLabel}";
+            return new WorldBootstrapPreloadFailureInfo
+            {
+                IsInterior = isInterior,
+                CellLabel = cellLabel,
+                Path = path,
+                Kind = kind,
+                Message = $"[VVardenfell] failed preloading {target} at '{path}': {ex.Message}",
+            };
+        }
+
+        static WorldBootstrapPreloadFailureInfo CreateValidationFailure(
+            bool isInterior,
+            string cellLabel,
+            string path,
+            WorldBootstrapPreloadFailureKind kind,
+            string detail)
+        {
+            string target = isInterior ? $"interior '{cellLabel}'" : $"cell {cellLabel}";
+            return new WorldBootstrapPreloadFailureInfo
+            {
+                IsInterior = isInterior,
+                CellLabel = cellLabel,
+                Path = path,
+                Kind = kind,
+                Message = $"[VVardenfell] invalid baked {target} at '{path}': {detail}",
+            };
+        }
+
+        static WorldBootstrapPreloadFailureKind ClassifyPreloadFailure(System.Exception ex)
+        {
+            string message = FlattenExceptionMessage(ex);
+            if (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+                return WorldBootstrapPreloadFailureKind.MissingFile;
+            if (message.IndexOf("version mismatch", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return WorldBootstrapPreloadFailureKind.BlobVersionMismatch;
+            if (message.IndexOf("deserialize", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("blob payload", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return WorldBootstrapPreloadFailureKind.BlobPayloadMismatch;
+            if (message.IndexOf("truncated", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("beyond the end of the stream", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return WorldBootstrapPreloadFailureKind.TruncatedData;
+            if (ex is InvalidDataException)
+                return WorldBootstrapPreloadFailureKind.CorruptData;
+            return WorldBootstrapPreloadFailureKind.Other;
+        }
+
+        static string FlattenExceptionMessage(System.Exception ex)
+        {
+            if (ex == null)
+                return string.Empty;
+
+            var sb = new StringBuilder(256);
+            for (var cursor = ex; cursor != null; cursor = cursor.InnerException)
+            {
+                if (sb.Length > 0)
+                    sb.Append(" | ");
+                sb.Append(cursor.Message);
+            }
+            return sb.ToString();
+        }
+
+        static void AccumulateFailures(WorldBootstrapPreloadFailureInfo[] failures, ref int total, int[] countsByKind)
+        {
+            if (failures == null)
+                return;
+
+            for (int i = 0; i < failures.Length; i++)
+            {
+                var failure = failures[i];
+                if (failure == null)
+                    continue;
+
+                total++;
+                countsByKind[(int)failure.Kind]++;
+            }
+        }
+    }
+}

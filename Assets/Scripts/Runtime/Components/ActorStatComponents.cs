@@ -1,0 +1,111 @@
+using Unity.Collections;
+using Unity.Entities;
+using VVardenfell.Core.Cache;
+
+namespace VVardenfell.Runtime.Components
+{
+    public struct ActorAttributeSet : IComponentData
+    {
+        public float Strength;
+        public float Intelligence;
+        public float Willpower;
+        public float Agility;
+        public float Speed;
+        public float Endurance;
+        public float Personality;
+        public float Luck;
+    }
+
+    public struct ActorSkillSet : IComponentData
+    {
+        public float Block;
+        public float Armorer;
+        public float MediumArmor;
+        public float HeavyArmor;
+        public float BluntWeapon;
+        public float LongBlade;
+        public float Axe;
+        public float Spear;
+        public float Athletics;
+        public float Enchant;
+        public float Destruction;
+        public float Alteration;
+        public float Illusion;
+        public float Conjuration;
+        public float Mysticism;
+        public float Restoration;
+        public float Alchemy;
+        public float Unarmored;
+        public float Security;
+        public float Sneak;
+        public float Acrobatics;
+        public float LightArmor;
+        public float ShortBlade;
+        public float Marksman;
+        public float Mercantile;
+        public float Speechcraft;
+        public float HandToHand;
+    }
+
+    public struct ActorVitalSet : IComponentData
+    {
+        public float CurrentFatigue;
+        public float ModifiedFatigueBase;
+    }
+
+    public struct ActorEffectStatModifiers : IComponentData
+    {
+        public float JumpMagnitude;
+        public float FeatherMagnitude;
+        public float BurdenMagnitude;
+    }
+
+    public struct ActorDerivedMovementStats : IComponentData
+    {
+        public float CarryCapacity;
+        public float Encumbrance;
+        public float NormalizedEncumbrance;
+        public float FatigueTerm;
+        public float WalkSpeed;
+        public float RunSpeed;
+        public float SneakWalkSpeed;
+        public float JumpSpeed;
+        public float JumpMoveFactor;
+    }
+
+    public struct ActorRuntimeStatSeed
+    {
+        public ActorAttributeSet Attributes;
+        public ActorSkillSet Skills;
+        public ActorVitalSet Vitals;
+        public ActorEffectStatModifiers EffectModifiers;
+    }
+
+    public struct ActorIdentitySet : IComponentData
+    {
+        public FixedString64Bytes CharacterName;
+        public int Level;
+        public FixedString64Bytes RaceName;
+        public FixedString64Bytes ClassName;
+        public FixedString64Bytes BirthSignName;
+        public int Reputation;
+
+        public static ActorIdentitySet DefaultPlayer()
+        {
+            return new ActorIdentitySet
+            {
+                CharacterName = new FixedString64Bytes("Player"),
+                Level = 1,
+                RaceName = default,
+                ClassName = default,
+                BirthSignName = default,
+                Reputation = 0,
+            };
+        }
+    }
+
+    public struct PlayerKnownSpell : IBufferElementData
+    {
+        public SpellDefHandle Spell;
+    }
+}

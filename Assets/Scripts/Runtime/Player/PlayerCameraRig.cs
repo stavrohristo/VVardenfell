@@ -11,7 +11,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Player
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(MorrowindFixedPrePhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
     public partial struct PlayerVariableLookSystem : ISystem
     {
         EntityQuery _playerQuery;
@@ -74,7 +74,7 @@ namespace VVardenfell.Runtime.Player
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerFixedStepMovementSystem))]
     [UpdateBefore(typeof(PlayerInteractionRaycastSystem))]
     public partial class PlayerPhysicsViewPoseSystem : SystemBase
@@ -93,7 +93,7 @@ namespace VVardenfell.Runtime.Player
 
             RequireForUpdate(_playerQuery);
             RequireForUpdate(_viewQuery);
-            RequireForUpdate<FixedTickSystem.Singleton>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
         protected override void OnUpdate()
@@ -106,7 +106,7 @@ namespace VVardenfell.Runtime.Player
 
             quaternion worldRotation = math.normalize(math.mul(playerTransform.Rotation, view.LocalViewRotation));
             float3 worldPosition = playerTransform.Position + math.rotate(playerTransform.Rotation, view.LocalEyeOffset);
-            uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick + 1u;
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().SnapshotTick;
 
             var poseRef = _viewQuery.GetSingletonRW<PlayerPhysicsViewPose>();
             poseRef.ValueRW = new PlayerPhysicsViewPose

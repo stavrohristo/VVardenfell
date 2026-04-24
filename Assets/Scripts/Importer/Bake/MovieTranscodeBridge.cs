@@ -92,9 +92,10 @@ namespace VVardenfell.Importer.Bake
             }
             catch (Exception ex) when ((record.Flags & UiMovieFlags.SourceAvailable) != 0)
             {
-                throw new InvalidOperationException(
-                    $"Movie slot '{slot}' ({record.ResolvedSourcePath}) failed: {ex.Message}",
-                    ex);
+                UnityEngine.Debug.LogWarning(
+                    $"[VVardenfell] skipping movie slot '{slot}' ({record.ResolvedSourcePath}): {ex.Message}");
+                ClearCachedClip(record);
+                return record;
             }
         }
 
@@ -140,10 +141,7 @@ namespace VVardenfell.Importer.Bake
                 }
 
                 if ((movie.Flags & UiMovieFlags.TranscodedAvailable) == 0)
-                {
-                    error = $"UI movie clip missing for slot '{movie.Slot}'.";
-                    return false;
-                }
+                    continue;
 
                 if (string.IsNullOrWhiteSpace(movie.CachedClipPath) || !File.Exists(movie.CachedClipPath))
                 {
@@ -262,6 +260,27 @@ namespace VVardenfell.Importer.Bake
             record.Flags |= UiMovieFlags.TranscodedAvailable;
             if (probe.HasAudio)
                 record.Flags |= UiMovieFlags.HasAudio;
+        }
+
+        static void ClearCachedClip(UiMovieRecord record)
+        {
+            record.CachedClipSize = 0;
+            record.CachedClipMtimeTicks = 0;
+            record.Width = 0;
+            record.Height = 0;
+            record.DurationMs = 0;
+            record.HasAudio = false;
+            record.Flags &= ~(UiMovieFlags.TranscodedAvailable | UiMovieFlags.HasAudio);
+
+            if (!string.IsNullOrWhiteSpace(record.CachedClipPath) && File.Exists(record.CachedClipPath))
+            {
+                try { File.Delete(record.CachedClipPath); }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[VVardenfell] failed deleting stale movie cache '{record.CachedClipPath}': {ex.Message}");
+                }
+            }
         }
 
         ClipProbeResult ProbeClip(string clipPath)

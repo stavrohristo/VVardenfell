@@ -1,0 +1,154 @@
+using System.Collections.Generic;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
+using UnityEngine;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
+
+namespace VVardenfell.Runtime.Inventory
+{
+    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    public partial class ContainerTransferSystem : SystemBase
+    {
+        readonly HashSet<uint> _loggedMissingInteractionSounds = new();
+
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<ContainerWindowState>();
+            RequireForUpdate<ContainerWindowRequest>();
+            RequireForUpdate<ContainerSessionItem>();
+            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate<WorldJournalEntry>();
+            RequireForUpdate<InteractionAudioRequestState>();
+            RequireForUpdate<InteractionAudioRequest>();
+        }
+
+        protected override void OnUpdate()
+        {
+            ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
+            ref var state = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
+            ref var request = ref SystemAPI.GetSingletonRW<ContainerWindowRequest>().ValueRW;
+
+            if (request.PendingClose != 0)
+            {
+                request.PendingClose = 0;
+                ContainerWindowRuntimeUtility.CloseContainer(ref shell, ref state);
+            }
+
+            if (shell.ContainerOpen == 0 || state.OpenPlacedRefId == 0u)
+            {
+                request.PendingTakeSelected = 0;
+                request.PendingTakeAll = 0;
+                return;
+            }
+
+            if (request.PendingTakeAll == 0 && request.PendingTakeSelected == 0)
+                return;
+
+            CompleteDependency();
+
+            uint placedRefId = state.OpenPlacedRefId;
+            var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
+            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            int transferredStacks = 0;
+
+            if (request.PendingTakeAll != 0)
+            {
+                for (int i = items.Length - 1; i >= 0; i--)
+                {
+                    var entry = items[i];
+                    if (entry.PlacedRefId != placedRefId || entry.Count <= 0)
+                        continue;
+
+                    WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
+                    ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.Count);
+                    items.RemoveAt(i);
+                    transferredStacks++;
+                }
+
+                request.PendingTakeAll = 0;
+                request.PendingTakeSelected = 0;
+            }
+            else if (request.PendingTakeSelected != 0)
+            {
+                int selectedIndex = request.PendingSelectionChange != 0 ? request.SelectedItemIndex : state.SelectedItemIndex;
+                if (selectedIndex >= 0 && selectedIndex < items.Length)
+                {
+                    var entry = items[selectedIndex];
+                    if (entry.PlacedRefId == placedRefId && entry.Count > 0)
+                    {
+                        WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
+                        ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.Count);
+                        items.RemoveAt(selectedIndex);
+                        transferredStacks = 1;
+                    }
+                }
+
+                request.PendingTakeSelected = 0;
+            }
+
+            if (transferredStacks > 0)
+            {
+                TryQueueInteractionAudio(state.OpenTargetEntity, InteractionAudioKind.Container, "container");
+            }
+        }
+
+        void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)
+        {
+            if (!EntityManager.Exists(target) || !EntityManager.HasComponent<PlacedRefIdentity>(target))
+                return;
+
+            uint placedRefId = EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+            if (!EntityManager.HasComponent<AudioEmitterAuthoring>(target))
+            {
+                WarnMissingInteractionSoundOnce(placedRefId, label, "has no AudioEmitterAuthoring component; skipping interaction one-shot.");
+                return;
+            }
+
+            var emitter = EntityManager.GetComponentData<AudioEmitterAuthoring>(target);
+            if (!emitter.PrimarySound.IsValid)
+            {
+                WarnMissingInteractionSoundOnce(placedRefId, label, "has no primary interaction sound; skipping interaction one-shot.");
+                return;
+            }
+
+            float3 position = ResolveAudioPosition(target);
+            ref var audioState = ref SystemAPI.GetSingletonRW<InteractionAudioRequestState>().ValueRW;
+            uint sequence = audioState.NextSequence + 1u;
+            audioState.NextSequence = sequence;
+
+            var requests = SystemAPI.GetSingletonBuffer<InteractionAudioRequest>();
+            requests.Add(new InteractionAudioRequest
+            {
+                Sequence = sequence,
+                Sound = emitter.PrimarySound,
+                Position = position,
+                SourcePlacedRefId = placedRefId,
+                Kind = (byte)kind,
+            });
+
+        }
+
+        float3 ResolveAudioPosition(Entity target)
+        {
+            if (EntityManager.HasComponent<LocalToWorld>(target))
+                return EntityManager.GetComponentData<LocalToWorld>(target).Value.c3.xyz;
+
+            if (EntityManager.HasComponent<LocalTransform>(target))
+                return EntityManager.GetComponentData<LocalTransform>(target).Position;
+
+            return float3.zero;
+        }
+
+        void WarnMissingInteractionSoundOnce(uint placedRefId, string label, string reason)
+        {
+            if (placedRefId == 0u || !_loggedMissingInteractionSounds.Add(placedRefId))
+                return;
+
+        }
+    }
+}

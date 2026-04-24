@@ -2,6 +2,8 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using VVardenfell.Core;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 
 namespace VVardenfell.Runtime.Movement
 {
@@ -30,8 +32,13 @@ namespace VVardenfell.Runtime.Movement
         const float MinMoveEpsilon = 1e-5f;
         const float MinInputEpsilonSq = 1e-4f;
         const float JumpDiagonalScale = 0.707f;
+        const float SupportSlopeReportingThreshold = 0.97f;
+        const float FlatGroundSnapToleranceScale = 0.5f;
+        const float ExtraStairHackStep = 10f;
+        const float ExtraStairHackStep2 = 20f;
 
         public static MorrowindActorMovementResult Solve(
+            EntityManager entityManager,
             in CollisionWorld world,
             in PhysicsCollider collider,
             in MorrowindMovementTuning tuning,
@@ -53,35 +60,11 @@ namespace VVardenfell.Runtime.Movement
             };
 
             bool wasGrounded = kinematic.Grounded;
-            float3 groundNormal = math.up();
-            float3 groundPosition = position;
-            Entity standingOn = Entity.Null;
-            bool shouldSampleGroundBeforeMove = kinematic.Inertia.y <= 0f;
-            bool groundedBeforeMove = shouldSampleGroundBeforeMove && ProbeGround(
-                world,
-                collider,
-                position,
-                tuning.MaxSlopeCosine,
-                tuning.StepSizeDown + tuning.GroundOffset * 2f,
-                tuning.GroundOffset,
-                out groundNormal,
-                out groundPosition,
-                out standingOn);
-
-            if (groundedBeforeMove)
-            {
-                kinematic.Grounded = true;
-                kinematic.OnSlope = groundNormal.y < tuning.MaxSlopeCosine;
-                kinematic.StandingOn = standingOn;
-                trace.GroundNormal = groundNormal;
-                trace.StandingOn = standingOn;
-            }
-            else
-            {
-                kinematic.Grounded = false;
-                kinematic.OnSlope = false;
-                kinematic.StandingOn = Entity.Null;
-            }
+            bool wasOnSlope = kinematic.OnSlope;
+            bool hadSolidGroundBeforeMove = wasGrounded && !wasOnSlope;
+            trace.PreviousSupportKind = (byte)ResolvePreviousSupportKind(previousTrace, kinematic, entityManager);
+            trace.SupportKind = (byte)MorrowindSupportKind.None;
+            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
 
             float2 planarInput = intent.LocalMove.xy;
             float inputLengthSq = math.lengthsq(planarInput);
@@ -110,7 +93,7 @@ namespace VVardenfell.Runtime.Movement
 
             bool jumpRequested = intent.LocalMove.z > 0f;
             trace.JumpRequested = ToByte(jumpRequested);
-            bool canJump = jumpRequested && kinematic.Grounded && !intent.SneakHeld;
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !intent.SneakHeld;
             if (canJump)
             {
                 trace.JumpAccepted = 1;
@@ -125,70 +108,293 @@ namespace VVardenfell.Runtime.Movement
                     kinematic.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
                 }
 
-                kinematic.Grounded = false;
-                kinematic.OnSlope = false;
-                kinematic.StandingOn = Entity.Null;
+                hadSolidGroundBeforeMove = false;
             }
 
             float airControlFactor = 1f;
-            if (!kinematic.Grounded)
+            if (!hadSolidGroundBeforeMove)
                 airControlFactor = stats.GetJumpMoveFactor();
 
             float3 velocity = desiredVelocity * airControlFactor;
-            if (!kinematic.Grounded || kinematic.OnSlope)
+            if (!hadSolidGroundBeforeMove)
                 velocity += kinematic.Inertia;
 
             if (math.lengthsq(velocity) > MinMoveEpsilon)
-                MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, kinematic.Grounded, ref trace);
+                MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref trace);
 
-            bool forceGroundProbe = trace.StepSucceeded != 0;
-            bool shouldProbeGroundAfterMove = forceGroundProbe || kinematic.Inertia.y <= 0f || kinematic.StuckFrames > 0;
-            bool groundedAfterMove = false;
-            float3 regroundNormal = math.up();
-            float3 regroundPosition = position;
-            Entity regroundStandingOn = Entity.Null;
-            if (shouldProbeGroundAfterMove)
-            {
-                groundedAfterMove = ProbeGround(
+            bool allowGroundedRecoveryFallback = wasGrounded && kinematic.StuckFrames > 0;
+            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f || kinematic.StuckFrames > 0;
+            var support = shouldResolveSupport
+                ? FindGroundSupport(
+                    entityManager,
                     world,
                     collider,
                     position,
-                    tuning.MaxSlopeCosine,
-                    2f * tuning.GroundOffset + (wasGrounded ? tuning.StepSizeDown : 0f),
-                    tuning.GroundOffset,
-                    out regroundNormal,
-                    out regroundPosition,
-                    out regroundStandingOn);
-            }
+                    tuning,
+                    wasGrounded,
+                    allowGroundedRecoveryFallback)
+                : GroundSupportResult.None(position);
 
-            if (groundedAfterMove)
-            {
-                kinematic.Grounded = true;
-                kinematic.OnSlope = regroundNormal.y < tuning.MaxSlopeCosine;
-                kinematic.StandingOn = regroundStandingOn;
-                trace.GroundNormal = regroundNormal;
-                trace.StandingOn = regroundStandingOn;
-                if (!kinematic.OnSlope)
-                {
-                    position = regroundPosition;
-                    trace.GroundProbeSnapped = 1;
-                    kinematic.Inertia = float3.zero;
-                }
-            }
-            else
-            {
-                kinematic.Grounded = false;
-                kinematic.OnSlope = false;
-                kinematic.StandingOn = Entity.Null;
-            }
+            ApplySupportResult(
+                world,
+                collider,
+                tuning,
+                ref position,
+                ref kinematic,
+                ref trace,
+                support,
+                hadSolidGroundBeforeMove);
 
-            if (!kinematic.Grounded || kinematic.OnSlope)
+            if (kinematic.Grounded && !kinematic.OnSlope)
+                velocity.y = 0f;
+
+            if (!(kinematic.Grounded && !kinematic.OnSlope))
                 kinematic.Inertia.y -= tuning.Gravity * dt;
 
             trace.FinalVelocity = velocity;
             trace.EndPosition = position;
             UpdateStuckState(ref kinematic, trace.StartPosition, trace.EndPosition, velocity, dt);
             return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
+        }
+
+        readonly struct GroundSupportResult
+        {
+            public readonly MorrowindSupportKind Kind;
+            public readonly float3 Normal;
+            public readonly float3 HitPosition;
+            public readonly float3 SupportedPosition;
+            public readonly Entity StandingOn;
+            public readonly float Fraction;
+            public readonly float ProbeDistance;
+            public readonly bool RejectedSteep;
+
+            GroundSupportResult(
+                MorrowindSupportKind kind,
+                float3 normal,
+                float3 hitPosition,
+                float3 supportedPosition,
+                Entity standingOn,
+                float fraction,
+                float probeDistance,
+                bool rejectedSteep)
+            {
+                Kind = kind;
+                Normal = normal;
+                HitPosition = hitPosition;
+                SupportedPosition = supportedPosition;
+                StandingOn = standingOn;
+                Fraction = fraction;
+                ProbeDistance = probeDistance;
+                RejectedSteep = rejectedSteep;
+            }
+
+            public static GroundSupportResult None(float3 position, bool rejectedSteep = false)
+                => new(MorrowindSupportKind.None, math.up(), position, position, Entity.Null, 1f, 0f, rejectedSteep);
+
+            public static GroundSupportResult Create(
+                MorrowindSupportKind kind,
+                float3 normal,
+                float3 hitPosition,
+                float3 supportedPosition,
+                Entity standingOn,
+                float fraction,
+                float probeDistance,
+                bool rejectedSteep = false)
+                => new(kind, normal, hitPosition, supportedPosition, standingOn, fraction, probeDistance, rejectedSteep);
+
+            public bool HasSolidSupport =>
+                Kind == MorrowindSupportKind.FlatGround
+                || Kind == MorrowindSupportKind.WalkableSlope
+                || Kind == MorrowindSupportKind.RecoveryFlat;
+        }
+
+        static MorrowindSupportKind ResolvePreviousSupportKind(
+            in MorrowindMovementFrameTrace previousTrace,
+            in MorrowindActorKinematicState kinematic,
+            EntityManager entityManager)
+        {
+            if (previousTrace.SupportKind != 0)
+                return (MorrowindSupportKind)previousTrace.SupportKind;
+
+            if (kinematic.WalkingOnWater)
+                return MorrowindSupportKind.WaterSurfaceCandidate;
+
+            if (!kinematic.Grounded)
+                return MorrowindSupportKind.None;
+
+            if (IsActorSupport(entityManager, kinematic.StandingOn))
+                return MorrowindSupportKind.ActorTop;
+
+            return MorrowindSupportKind.FlatGround;
+        }
+
+        static GroundSupportResult FindGroundSupport(
+            EntityManager entityManager,
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            float3 position,
+            in MorrowindMovementTuning tuning,
+            bool wasGrounded,
+            bool allowRecoveryFallback)
+        {
+            if (allowRecoveryFallback)
+            {
+                return GroundSupportResult.Create(
+                    MorrowindSupportKind.RecoveryFlat,
+                    math.up(),
+                    position,
+                    position,
+                    Entity.Null,
+                    0f,
+                    0f);
+            }
+
+            float dropDistance = 2f * tuning.GroundOffset + (wasGrounded ? tuning.StepSizeDown : 0f);
+            var castInput = new ColliderCastInput(
+                collider.Value,
+                position,
+                position - new float3(0f, dropDistance, 0f),
+                quaternion.identity);
+
+            if (!world.CastCollider(castInput, out ColliderCastHit hit))
+                return GroundSupportResult.None(position);
+
+            float3 hitPosition = position - new float3(0f, dropDistance * hit.Fraction, 0f);
+            float3 supportedPosition = hitPosition + new float3(0f, tuning.GroundOffset, 0f);
+            bool walkable = IsWalkableSlope(hit.SurfaceNormal, tuning.MaxSlopeCosine);
+            bool actorTop = IsActorSupport(entityManager, hit.Entity);
+
+            if (actorTop)
+            {
+                return walkable
+                    ? GroundSupportResult.Create(
+                        MorrowindSupportKind.ActorTop,
+                        hit.SurfaceNormal,
+                        hitPosition,
+                        supportedPosition,
+                        hit.Entity,
+                        hit.Fraction,
+                        dropDistance)
+                    : GroundSupportResult.None(position, rejectedSteep: true);
+            }
+
+            if (!walkable)
+                return GroundSupportResult.None(position, rejectedSteep: true);
+
+            MorrowindSupportKind kind = hit.SurfaceNormal.y >= SupportSlopeReportingThreshold
+                ? MorrowindSupportKind.FlatGround
+                : MorrowindSupportKind.WalkableSlope;
+
+            return GroundSupportResult.Create(
+                kind,
+                hit.SurfaceNormal,
+                hitPosition,
+                supportedPosition,
+                hit.Entity,
+                hit.Fraction,
+                dropDistance);
+        }
+
+        static void ApplySupportResult(
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            in MorrowindMovementTuning tuning,
+            ref float3 position,
+            ref MorrowindActorKinematicState kinematic,
+            ref MorrowindMovementFrameTrace trace,
+            in GroundSupportResult support,
+            bool hadSolidGroundBeforeMove)
+        {
+            trace.SupportKind = (byte)support.Kind;
+            trace.SupportRejectedSteep = ToByte(support.RejectedSteep);
+            trace.GroundNormal = support.Normal;
+            trace.StandingOn = support.StandingOn;
+            kinematic.WalkingOnWater = support.Kind == MorrowindSupportKind.WaterSurfaceCandidate;
+
+            if (support.Kind == MorrowindSupportKind.ActorTop)
+            {
+                if (support.SupportedPosition.y <= position.y)
+                    position.y = support.SupportedPosition.y;
+
+                kinematic.Grounded = false;
+                kinematic.OnSlope = false;
+                kinematic.StandingOn = support.StandingOn;
+                return;
+            }
+
+            if (support.Kind != MorrowindSupportKind.RecoveryFlat)
+            {
+                kinematic.StuckFrames = 0;
+                kinematic.LastStuckPosition = position;
+            }
+
+            if (!support.HasSolidSupport)
+            {
+                kinematic.Grounded = false;
+                kinematic.OnSlope = false;
+                kinematic.StandingOn = Entity.Null;
+                return;
+            }
+
+            kinematic.Grounded = true;
+            kinematic.OnSlope = false;
+            kinematic.StandingOn = support.StandingOn;
+
+            if (!hadSolidGroundBeforeMove && kinematic.Inertia.y <= 0f)
+                trace.LandingConsumedInertia = 1;
+
+            ApplyLandingSnap(world, collider, tuning, ref position, ref trace, support, hadSolidGroundBeforeMove);
+            kinematic.Inertia = float3.zero;
+        }
+
+        static void ApplyLandingSnap(
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            in MorrowindMovementTuning tuning,
+            ref float3 position,
+            ref MorrowindMovementFrameTrace trace,
+            in GroundSupportResult support,
+            bool hadSolidGroundBeforeMove)
+        {
+            float hitDistance = support.Fraction * support.ProbeDistance;
+            float flatGroundSnapTolerance = math.max(tuning.CollisionMargin, tuning.GroundOffset * FlatGroundSnapToleranceScale);
+            bool withinFlatGroundTolerance = hitDistance <= tuning.GroundOffset + flatGroundSnapTolerance;
+            bool routineSupportedSurface = hadSolidGroundBeforeMove
+                && (support.Kind == MorrowindSupportKind.FlatGround || support.Kind == MorrowindSupportKind.WalkableSlope);
+
+            if (support.Kind == MorrowindSupportKind.RecoveryFlat || hitDistance > tuning.GroundOffset)
+            {
+                if (routineSupportedSurface
+                    && withinFlatGroundTolerance)
+                {
+                    trace.GroundProbeSnapped = 0;
+                    trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
+                    return;
+                }
+
+                trace.GroundProbeSnapped = 1;
+                position = support.SupportedPosition;
+                trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.Offset;
+                return;
+            }
+
+            if (routineSupportedSurface)
+            {
+                trace.GroundProbeSnapped = 0;
+                trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
+                return;
+            }
+
+            float3 start = support.HitPosition;
+            float3 settleEnd = start + new float3(0f, 2f * tuning.GroundOffset, 0f);
+            var settleCast = new ColliderCastInput(collider.Value, start, settleEnd, quaternion.identity);
+            float3 settleHitPosition = settleEnd;
+            if (world.CastCollider(settleCast, out ColliderCastHit settleHit))
+                settleHitPosition = start + new float3(0f, 2f * tuning.GroundOffset * settleHit.Fraction, 0f);
+
+            trace.GroundProbeSnapped = 1;
+            position = (start + settleHitPosition) * 0.5f;
+            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.Settle;
         }
 
         static void MoveKinematic(
@@ -232,7 +438,7 @@ namespace VVardenfell.Runtime.Movement
                 {
                     trace.SteepSlopeRejected = 1;
                     trace.StepAttempted = 1;
-                    stepped = TryStep(world, collider, tuning, ref position, ref velocity, ref remainingTime, startedGrounded, iteration == 0);
+                    stepped = TryStep(world, collider, tuning, ref position, ref velocity, ref remainingTime, startedGrounded, iteration == 0, ref trace);
                 }
 
                 if (stepped)
@@ -247,7 +453,10 @@ namespace VVardenfell.Runtime.Movement
                 float3 planeNormal = hit.SurfaceNormal;
                 float3 originalPlaneNormal = planeNormal;
                 if (seenGround && !IsWalkableSlope(planeNormal, tuning.MaxSlopeCosine) && math.abs(planeNormal.y) > 0.0001f)
+                {
                     planeNormal = math.normalizesafe(new float3(planeNormal.x, 0f, planeNormal.z), planeNormal);
+                    trace.UsedGroundedWallNormalFlatten = 1;
+                }
 
                 float3 direction = math.normalizesafe(velocity);
                 position += move * hit.Fraction;
@@ -271,6 +480,7 @@ namespace VVardenfell.Runtime.Movement
                             constraint = math.normalize(constraint);
                             newVelocity = Project(velocity, constraint);
                             usedSeamLogic = true;
+                            trace.UsedSeamLogic = 1;
                         }
                     }
                 }
@@ -304,7 +514,8 @@ namespace VVardenfell.Runtime.Movement
             ref float3 velocity,
             ref float remainingTime,
             bool onGround,
-            bool firstIteration)
+            bool firstIteration,
+            ref MorrowindMovementFrameTrace trace)
         {
             if (math.lengthsq(new float2(velocity.x, velocity.z)) <= MinMoveEpsilon)
                 return false;
@@ -324,19 +535,25 @@ namespace VVardenfell.Runtime.Movement
             float moveDistance = math.length(horizontal);
             if (moveDistance <= MinMoveEpsilon)
                 return false;
-
             float3 direction = horizontal / moveDistance;
 
             for (int attempt = 1; attempt <= 3; attempt++)
             {
+                trace.StepAttempted = 1;
+                trace.StepAttemptIndex = (byte)attempt;
+
                 if (attempt > 1 && !firstIteration)
                     return false;
 
                 float attemptDistance = attempt == 1
                     ? moveDistance
-                    : (attempt == 2 ? 10f * WorldScale.MwUnitsToMeters : 20f * WorldScale.MwUnitsToMeters);
+                    : (attempt == 2
+                        ? ExtraStairHackStep * WorldScale.MwUnitsToMeters
+                        : ExtraStairHackStep2 * WorldScale.MwUnitsToMeters);
                 if (attempt == 3)
+                {
                     upDistance = math.min(upDistance, tuning.StepSizeUp);
+                }
 
                 float3 start = position + new float3(0f, upDistance, 0f);
                 float3 dest = start + direction * attemptDistance;
@@ -387,40 +604,14 @@ namespace VVardenfell.Runtime.Movement
             return false;
         }
 
-        static bool ProbeGround(
-            in CollisionWorld world,
-            in PhysicsCollider collider,
-            in float3 position,
-            float maxSlopeCosine,
-            float probeDistance,
-            float groundOffset,
-            out float3 groundNormal,
-            out float3 snappedPosition,
-            out Entity standingOn)
-        {
-            var castInput = new ColliderCastInput(
-                collider.Value,
-                position,
-                position - new float3(0f, probeDistance, 0f),
-                quaternion.identity);
-
-            if (probeDistance > 0f && world.CastCollider(castInput, out ColliderCastHit hit))
-            {
-                groundNormal = hit.SurfaceNormal;
-                snappedPosition = position - new float3(0f, probeDistance * hit.Fraction, 0f);
-                if (IsWalkableSlope(hit.SurfaceNormal, maxSlopeCosine))
-                    snappedPosition += new float3(0f, groundOffset, 0f);
-                standingOn = hit.Entity;
-                return true;
-            }
-
-            groundNormal = math.up();
-            snappedPosition = position;
-            standingOn = Entity.Null;
-            return false;
-        }
-
         static bool IsWalkableSlope(float3 normal, float maxSlopeCosine) => normal.y > maxSlopeCosine;
+
+        static bool IsActorSupport(EntityManager entityManager, Entity entity)
+        {
+            return entity != Entity.Null
+                && entityManager.Exists(entity)
+                && (entityManager.HasComponent<PlayerTag>(entity) || entityManager.HasComponent<PassiveActorPresence>(entity));
+        }
 
         static float3 Reject(float3 direction, float3 planeNormal)
         {

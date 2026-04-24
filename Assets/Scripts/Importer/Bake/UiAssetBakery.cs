@@ -64,6 +64,18 @@ namespace VVardenfell.Importer.Bake
             (UiBootstrapAssetKeys.ThickBorderTopRight, @"Textures\menu_thick_border_top_right_corner.dds"),
             (UiBootstrapAssetKeys.ThickBorderBottomLeft, @"Textures\menu_thick_border_bottom_left_corner.dds"),
             (UiBootstrapAssetKeys.ThickBorderBottomRight, @"Textures\menu_thick_border_bottom_right_corner.dds"),
+            (UiBootstrapAssetKeys.HeadBlockMiddle, @"Textures\menu_head_block_middle.dds"),
+            (UiBootstrapAssetKeys.HeadBlockTop, @"Textures\menu_head_block_top.dds"),
+            (UiBootstrapAssetKeys.HeadBlockBottom, @"Textures\menu_head_block_bottom.dds"),
+            (UiBootstrapAssetKeys.HeadBlockLeft, @"Textures\menu_head_block_left.dds"),
+            (UiBootstrapAssetKeys.HeadBlockRight, @"Textures\menu_head_block_right.dds"),
+            (UiBootstrapAssetKeys.HeadBlockTopLeft, @"Textures\menu_head_block_top_left_corner.dds"),
+            (UiBootstrapAssetKeys.HeadBlockTopRight, @"Textures\menu_head_block_top_right_corner.dds"),
+            (UiBootstrapAssetKeys.HeadBlockBottomLeft, @"Textures\menu_head_block_bottom_left_corner.dds"),
+            (UiBootstrapAssetKeys.HeadBlockBottomRight, @"Textures\menu_head_block_bottom_right_corner.dds"),
+            (UiBootstrapAssetKeys.HudCrosshair, @"Textures\target.dds"),
+            (UiBootstrapAssetKeys.HudCompass, @"Textures\compass.dds"),
+            (UiBootstrapAssetKeys.HudStealthSneakIcon, @"Icons\k\stealth_sneak.dds"),
         };
 
         public static void Bake(MorrowindConfig config, BsaArchive bsa, BakeProgress progress = null)

@@ -44,6 +44,29 @@ namespace VVardenfell.Core.Cache
         public const string ThickBorderBottomLeft = "bootstrap.frame.thick.bottomleft";
         public const string ThickBorderBottomRight = "bootstrap.frame.thick.bottomright";
 
+        // The decorative gold "caption block" at the top of every MW window. Nine-patch
+        // sourced from menu_head_block_*.dds. OpenMW assembles these into HB_ALL as the
+        // caption bar (see openmw_windows.skin.xml, "HB_ALL" and "MW_Caption" resources).
+        public const string HeadBlockMiddle = "bootstrap.headblock.middle";
+        public const string HeadBlockTop = "bootstrap.headblock.top";
+        public const string HeadBlockBottom = "bootstrap.headblock.bottom";
+        public const string HeadBlockLeft = "bootstrap.headblock.left";
+        public const string HeadBlockRight = "bootstrap.headblock.right";
+        public const string HeadBlockTopLeft = "bootstrap.headblock.topleft";
+        public const string HeadBlockTopRight = "bootstrap.headblock.topright";
+        public const string HeadBlockBottomLeft = "bootstrap.headblock.bottomleft";
+        public const string HeadBlockBottomRight = "bootstrap.headblock.bottomright";
+
+        // HUD overlays. target.dds is the crosshair sprite, compass.dds is the rotating
+        // minimap compass needle. Both live under Data Files/Textures/ in vanilla MW.
+        public const string HudCrosshair = "bootstrap.hud.crosshair";
+        public const string HudCompass = "bootstrap.hud.compass";
+
+        // HUD sneak indicator icon. Shown in the bottom-left quick-slot row while the
+        // player is sneaking (openmw_hud.layout "SneakBox" with ImageTexture
+        // icons\k\stealth_sneak.dds). Hidden otherwise.
+        public const string HudStealthSneakIcon = "bootstrap.hud.stealth.sneak";
+
         public static readonly string[] RequiredImageKeys =
         {
             MenuNewGameNormal,
@@ -84,6 +107,18 @@ namespace VVardenfell.Core.Cache
             ThickBorderTopRight,
             ThickBorderBottomLeft,
             ThickBorderBottomRight,
+            HeadBlockMiddle,
+            HeadBlockTop,
+            HeadBlockBottom,
+            HeadBlockLeft,
+            HeadBlockRight,
+            HeadBlockTopLeft,
+            HeadBlockTopRight,
+            HeadBlockBottomLeft,
+            HeadBlockBottomRight,
+            HudCrosshair,
+            HudCompass,
+            HudStealthSneakIcon,
         };
     }
 
@@ -170,7 +205,7 @@ namespace VVardenfell.Core.Cache
     public sealed class UiCacheManifest
     {
         const uint Magic = 0x49555656u; // 'VVUI'
-        const uint Version = 4;
+        const uint Version = 7;
 
         public const int MovieTranscodeProfileVersion = 4;
 

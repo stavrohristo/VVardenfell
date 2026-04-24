@@ -85,7 +85,6 @@ namespace VVardenfell.Runtime.Streaming
             sb.AppendLine(DescribeCurrentExterior(world));
             sb.AppendLine();
             sb.Append(DescribeActiveInterior(world));
-            Debug.Log(sb.ToString());
         }
 
         static void CompleteReadDependencies(EntityManager em)

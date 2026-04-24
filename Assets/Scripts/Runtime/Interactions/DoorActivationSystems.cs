@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -45,7 +45,6 @@ namespace VVardenfell.Runtime.Interactions
                 return false;
 
             entityManager.AddComponentData(logicalEntity, interactable);
-            Debug.Log($"[VVardenfell][Door] hydrated DoorInteractable for placedRef=0x{placedRefId:X8}.");
             return true;
         }
 
@@ -93,8 +92,7 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
-    [UpdateAfter(typeof(PlayerInteractionActivationSystem))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     public partial class TeleportDoorTransitionSystem : SystemBase
     {
         static readonly float3 InteriorWorldOffset = float3.zero;
@@ -175,7 +173,6 @@ namespace VVardenfell.Runtime.Interactions
             if (door.IsTeleport == 0)
             {
                 TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
-                Debug.Log("[VVardenfell][Streaming] non-teleport door activated; transition deferred for this slice.");
                 ClearFocus();
                 transition.TransitionInProgress = 0;
                 return;
@@ -197,10 +194,6 @@ namespace VVardenfell.Runtime.Interactions
 
             TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
 
-            Debug.Log(
-                goesToInterior
-                    ? $"[VVardenfell][Streaming] entering interior '{door.DestinationCellId}' via teleport door."
-                    : $"[VVardenfell][Streaming] exiting active interior to exterior destination ({door.DestinationPosition.x:F2}, {door.DestinationPosition.y:F2}, {door.DestinationPosition.z:F2}).");
 
             var streamingEntity = _streamingQuery.GetSingletonEntity();
             var configRef = EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
@@ -251,10 +244,6 @@ namespace VVardenfell.Runtime.Interactions
             ClearFocus();
             transition.TransitionInProgress = 0;
 
-            Debug.Log(
-                goesToInterior
-                    ? $"[VVardenfell][Streaming] interior transition complete: '{door.DestinationCellId}'."
-                    : $"[VVardenfell][Streaming] exterior transition complete: camera cell=({configRef.CameraCell.x},{configRef.CameraCell.y}).");
         }
 
         void MovePlayerToDestination(float3 destinationPosition, quaternion bodyYawRotation)
@@ -385,7 +374,6 @@ namespace VVardenfell.Runtime.Interactions
                 Kind = (byte)kind,
             });
 
-            Debug.Log($"[VVardenfell][Audio] queued {label} interaction one-shot: seq={sequence}, placedRef=0x{placedRefId:X8}, pos=({position.x:F2}, {position.y:F2}, {position.z:F2}).");
         }
 
         float3 ResolveAudioPosition(Entity target)
@@ -404,7 +392,6 @@ namespace VVardenfell.Runtime.Interactions
             if (placedRefId == 0u || !_loggedMissingInteractionSounds.Add(placedRefId))
                 return;
 
-            Debug.Log($"[VVardenfell][Audio] {label} 0x{placedRefId:X8} {reason}");
         }
 
         static quaternion ExtractYawRotation(quaternion sourceRotation)

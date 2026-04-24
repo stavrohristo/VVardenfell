@@ -345,7 +345,7 @@ namespace VVardenfell.Runtime.WorldState
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     public partial class RuntimeSpawnRequestSystem : SystemBase
     {
         protected override void OnCreate()
@@ -527,10 +527,6 @@ namespace VVardenfell.Runtime.WorldState
             spawnResult.Message = new FixedString128Bytes($"Spawned runtime ref 0x{runtimeRefId:X8}.");
 
             string label = request.Content.Kind.ToString().ToLowerInvariant();
-            Debug.Log(
-                request.IsInterior != 0
-                    ? $"[VVardenfell][Spawn] spawned {label} runtime ref 0x{runtimeRefId:X8} in interior '{request.InteriorCellId}'."
-                    : $"[VVardenfell][Spawn] spawned {label} runtime ref 0x{runtimeRefId:X8} in exterior cell ({request.ExteriorCell.x},{request.ExteriorCell.y}).");
         }
 
         static bool IsExteriorCellActiveNow(in StreamingConfig config, int2 exteriorCell)

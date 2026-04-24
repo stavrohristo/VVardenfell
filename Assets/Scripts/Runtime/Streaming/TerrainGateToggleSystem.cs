@@ -63,7 +63,6 @@ namespace VVardenfell.Runtime.Streaming
                 cfg.GateTerrainByRadius = !cfg.GateTerrainByRadius;
                 EntityManager.SetComponentData(singleton, cfg);
                 changed = true;
-                Debug.Log($"[VVardenfell] Terrain radius gating {(cfg.GateTerrainByRadius ? "enabled" : "disabled")} (F8)");
             }
 
             if (!changed && cfg.GateTerrainByRadius == _lastGateTerrainByRadius)

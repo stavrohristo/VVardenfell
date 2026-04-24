@@ -22,6 +22,29 @@ namespace VVardenfell.Runtime.Systems
 
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateBefore(typeof(PhysicsSystemGroup))]
+    public partial class MorrowindOwnedPhysicsSystemGroup : ComponentSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderFirst = true)]
+    public partial class MorrowindPhysicsPreBuildSystemGroup : ComponentSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup))]
+    [UpdateAfter(typeof(MorrowindPhysicsPreBuildSystemGroup))]
+    public partial class MorrowindPhysicsQuerySystemGroup : ComponentSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderLast = true)]
+    [UpdateAfter(typeof(MorrowindPhysicsQuerySystemGroup))]
+    public partial class MorrowindPhysicsPostQueryMutationSystemGroup : ComponentSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
+    [UpdateBefore(typeof(PhysicsSystemGroup))]
     public partial class MorrowindFixedPrePhysicsSystemGroup : ComponentSystemGroup
     {
     }
@@ -95,8 +118,9 @@ namespace VVardenfell.Runtime.Systems
 
         public static string DescribeSchedule()
         {
-            return "Morrowind runtime schedule: initialization -> Morrowind input -> fixed pre-physics "
-                + "-> Unity PhysicsSystemGroup -> fixed post-physics -> Morrowind pre-transform -> Unity transforms "
+            return "Morrowind runtime schedule: initialization -> Morrowind input -> owned physics pre-build "
+                + "-> manual Unity physics build/sim/export -> owned physics query -> owned physics post-query mutation "
+                + "-> Morrowind pre-transform -> Unity transforms "
                 + "-> Morrowind post-transform (interaction, world mutation, streaming, environment, audio) "
                 + "-> Morrowind presentation.";
         }
@@ -108,7 +132,6 @@ namespace VVardenfell.Runtime.Systems
         protected override void OnUpdate()
         {
             if (MorrowindSystemGroupDiagnostics.LogScheduleOnBoot)
-                Debug.Log($"[VVardenfell][Systems] {MorrowindSystemGroupDiagnostics.DescribeSchedule()}");
 
             Enabled = false;
         }

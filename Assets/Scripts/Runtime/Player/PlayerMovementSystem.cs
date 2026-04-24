@@ -2,14 +2,14 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Transforms;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
-    [UpdateBefore(typeof(FixedTickSystem))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     public partial class PlayerFixedStepMovementSystem : SystemBase
     {
         EntityQuery _playerQuery;
@@ -30,6 +30,11 @@ namespace VVardenfell.Runtime.Player
                     ComponentType.ReadWrite<PlayerCharacterState>(),
                     ComponentType.ReadWrite<MorrowindMovementIntent>(),
                     ComponentType.ReadWrite<MorrowindActorKinematicState>(),
+                    ComponentType.ReadWrite<ActorAttributeSet>(),
+                    ComponentType.ReadWrite<ActorSkillSet>(),
+                    ComponentType.ReadWrite<ActorVitalSet>(),
+                    ComponentType.ReadWrite<ActorEffectStatModifiers>(),
+                    ComponentType.ReadWrite<ActorDerivedMovementStats>(),
                     ComponentType.ReadWrite<MorrowindMovementTuning>(),
                     ComponentType.ReadWrite<MorrowindMovementFrameTrace>(),
                 }
@@ -62,6 +67,11 @@ namespace VVardenfell.Runtime.Player
             var legacyStateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
             var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
             var kinematicRef = _playerQuery.GetSingletonRW<MorrowindActorKinematicState>();
+            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
+            var skills = _playerQuery.GetSingleton<ActorSkillSet>();
+            var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
+            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
+            var derivedStats = _playerQuery.GetSingleton<ActorDerivedMovementStats>();
             var traceRef = _playerQuery.GetSingletonRW<MorrowindMovementFrameTrace>();
             var tuning = _playerQuery.GetSingleton<MorrowindMovementTuning>();
 
@@ -91,8 +101,15 @@ namespace VVardenfell.Runtime.Player
             PhysicsCollider playerCollider = colliderRef.ValueRO;
             bool previousGrounded = legacyState.Grounded;
 
-            var movementStats = MorrowindActorMovementStats.BuildTemporaryPlayer(RuntimeContentDatabase.Active);
+            var movementStats = MorrowindPlayerSpeedResolver.Build(
+                RuntimeContentDatabase.Active,
+                attributes,
+                skills,
+                vitals,
+                effectModifiers,
+                derivedStats);
             var result = MorrowindActorMovementSolver.Solve(
+                EntityManager,
                 physicsWorld.CollisionWorld,
                 playerCollider,
                 tuning,

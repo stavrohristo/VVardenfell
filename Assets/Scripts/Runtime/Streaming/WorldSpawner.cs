@@ -1,27 +1,19 @@
 using System.Collections;
 using System.Collections.Generic;
-using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Entities.Serialization;
-using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Profiling;
 using Unity.Rendering;
-using Unity.Transforms;
 using UnityEngine;
-using UnityEngine.Rendering;
-using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using Collider = Unity.Physics.Collider;
-using Material = UnityEngine.Material;
 using Stopwatch = System.Diagnostics.Stopwatch;
-using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Interactions;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -37,25 +29,12 @@ namespace VVardenfell.Runtime.Streaming
         const int RefGatherBatchSize = 512;
         const int RefSliceSize = 32768;
 
-        static readonly HashSet<string> s_UnsupportedSpawnModeWarnings = new();
-
         static readonly ProfilerMarker k_SpawnAll = new("VV.WorldSpawner.SpawnAll");
-        static readonly ProfilerMarker k_Terrain = new("VV.Spawn.TerrainCells");
         static readonly ProfilerMarker k_TerrainMesh = new("VV.Spawn.Terrain.MeshBuild");
         static readonly ProfilerMarker k_TerrainMat = new("VV.Spawn.Terrain.MaterialBuild");
         static readonly ProfilerMarker k_TerrainEntity = new("VV.Spawn.Terrain.EntityCreate");
         static readonly ProfilerMarker k_StatCellEntities = new("VV.Spawn.StatCellEntities");
         static readonly ProfilerMarker k_RefGather = new("VV.Spawn.Refs.Gather");
-        static readonly ProfilerMarker k_RefSort = new("VV.Spawn.Refs.Sort");
-        static readonly ProfilerMarker k_RefInstantiate = new("VV.Spawn.Refs.Instantiate");
-        static readonly ProfilerMarker k_RefBuildJob = new("VV.Spawn.Refs.BuildDataJob");
-        static readonly ProfilerMarker k_RefApplyJob = new("VV.Spawn.Refs.ApplyJob");
-        static readonly ProfilerMarker k_RefEcbPlayback = new("VV.Spawn.Refs.EcbPlayback");
-        static readonly ProfilerMarker k_PhysicsSync = new("VV.Spawn.PhysicsSync");
-        static readonly ProfilerMarker k_LogicalRefs = new("VV.Spawn.LogicalRefs");
-        static readonly ProfilerMarker k_LogicalRefCreate = new("VV.Spawn.LogicalRefs.Create");
-        static readonly ProfilerMarker k_LogicalRefLink = new("VV.Spawn.LogicalRefs.LinkChildren");
-        static readonly ProfilerMarker k_LogicalRefLookup = new("VV.Spawn.LogicalRefs.Lookup");
         static readonly ProfilerMarker k_BulkDisable = new("VV.Spawn.BulkDisableMMI");
 
         public static void SpawnAll(World world, CacheLoader cache, ref LoadedCellsMap loaded, ref LogicalRefLookup logicalRefs, bool gateTerrainByRadius)
@@ -86,76 +65,21 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (data.HasTerrain)
                 {
-                    var managed = new WorldResources.PerCellManaged();
-
                     k_TerrainMesh.Begin();
-                    try
-                    {
-                        managed.TerrainMesh = BuildTerrainMesh(data);
-                    }
-                    finally
-                    {
-                        k_TerrainMesh.End();
-                    }
-
                     k_TerrainMat.Begin();
-                    try
-                    {
-                        managed.TerrainMat = BuildTerrainMaterial(data);
-                        managed.SplatMap = (managed.TerrainMat != null && managed.TerrainMat != WorldResources.TerrainFallbackMat)
-                            ? managed.TerrainMat.GetTexture("_Splat") as Texture2D
-                            : null;
-                        managed.TerrainRma = new RenderMeshArray(
-                            new Material[] { managed.TerrainMat },
-                            new Mesh[] { managed.TerrainMesh });
-                    }
-                    finally
-                    {
-                        k_TerrainMat.End();
-                    }
-
                     k_TerrainEntity.Begin();
                     try
                     {
-                        terrainEntity = em.CreateEntity();
-                        em.SetName(terrainEntity, $"Terrain({coord.x},{coord.y})");
-                        RenderMeshUtility.AddComponents(
-                            terrainEntity, em, WorldResources.Desc, managed.TerrainRma,
-                            MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-
-                        float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                        float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                        em.AddComponentData(terrainEntity, LocalTransform.FromPositionRotationScale(
-                            new float3(ox, 0, oz), quaternion.identity, 1f));
-
-                        float cellHalf = LandRecordSize.CellUnitsMw * 0.5f * WorldScale.MwUnitsToMeters;
-                        em.SetComponentData(terrainEntity, new RenderBounds
-                        {
-                            Value = new AABB
-                            {
-                                Center = new float3(cellHalf, 0f, cellHalf),
-                                Extents = new float3(cellHalf, 1000f, cellHalf),
-                            }
-                        });
-
-                        em.AddComponentData(terrainEntity, new CellCoord { Value = coord });
-                        em.AddComponentData(terrainEntity, new CellLink { Value = coord });
-                        em.AddComponent<Unity.Transforms.Static>(terrainEntity);
-                        if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
-                            RuntimeColliderAttachmentUtility.AttachSource(
-                                em,
-                                terrainEntity,
-                                terrBlob,
-                                RuntimeColliderKind.TerrainCell,
-                                active: false);
+                        var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active: false);
+                        terrainEntity = terrainResult.Entity;
+                        terrainBuilt += terrainResult.BuiltTerrain;
                     }
                     finally
                     {
                         k_TerrainEntity.End();
+                        k_TerrainMat.End();
+                        k_TerrainMesh.End();
                     }
-
-                    WorldResources.LoadedManaged[coord] = managed;
-                    terrainBuilt++;
                 }
 
                 loaded.Map[coord] = terrainEntity;
@@ -177,7 +101,6 @@ namespace VVardenfell.Runtime.Streaming
 
             progress?.BeginStage("Spawn static colliders", "Creating static collider entities", staticColliderEntries.Length);
             int staticCellsSpawned = 0;
-            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             for (int i = 0; i < staticColliderEntries.Length; i++)
             {
                 var coord = staticColliderEntries[i].Key;
@@ -187,24 +110,8 @@ namespace VVardenfell.Runtime.Streaming
                     k_StatCellEntities.Begin();
                     try
                     {
-                        var e = em.CreateEntity();
-                        em.SetName(e, $"CellStatic({coord.x},{coord.y})");
-                        em.AddComponentData(e, LocalTransform.FromPositionRotationScale(
-                            new float3(coord.x * cellMeters, 0f, coord.y * cellMeters),
-                            quaternion.identity, 1f));
-                        em.AddComponentData(e, new LocalToWorld
-                        {
-                            Value = float4x4.Translate(new float3(coord.x * cellMeters, 0f, coord.y * cellMeters))
-                        });
-                        em.AddComponent<Unity.Transforms.Static>(e);
-                        em.AddComponentData(e, new CellLink { Value = coord });
-                        RuntimeColliderAttachmentUtility.AttachSource(
-                            em,
-                            e,
-                            blob,
-                            RuntimeColliderKind.StaticCell,
-                            active: false);
-                        staticCellsSpawned++;
+                        if (WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, blob, active: false) != Entity.Null)
+                            staticCellsSpawned++;
                     }
                     finally
                     {
@@ -277,7 +184,7 @@ namespace VVardenfell.Runtime.Streaming
                 var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
                 for (int i = 0; i < totalRefs; i++)
                 {
-                    spawnedRefEntities[i] = SpawnExteriorRef(em, refArr[i], coordArr[i], shardCatalog);
+                    spawnedRefEntities[i] = WorldRefSpawnUtility.SpawnExteriorRef(em, refArr[i], coordArr[i], shardCatalog);
                     int completed = i + 1;
                     if (completed == totalRefs || (completed % RefGatherBatchSize) == 0)
                     {
@@ -290,7 +197,7 @@ namespace VVardenfell.Runtime.Streaming
                 yield return null;
 
                 progress?.BeginStage("Spawn logical refs", "Creating logical placed refs", totalRefs);
-                BuildLogicalRefs(
+                WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
                     cache.ContentDatabase,
                     refArr,
@@ -337,75 +244,15 @@ namespace VVardenfell.Runtime.Streaming
             progress?.Report("Initial visibility gate applied", 1, 1);
             progress?.CompleteStage();
             if (UnityEngine.Debug.isDebugBuild)
-                LogActivePhysicsSummary(em, "bootstrap");
+                WorldExteriorPhysicsUtility.LogActivePhysicsSummary(em, "bootstrap");
             yield return null;
 
             sw.Stop();
-            Debug.Log($"[VVardenfell] eager-spawn: {loaded.Map.Count} cells ({terrainBuilt} w/ terrain, {staticCellsSpawned} w/ STAT collision), {totalRefs} refs - terrain {terrainMs}ms, static {staticMs - terrainMs}ms, total {sw.ElapsedMilliseconds}ms");
         }
 
         public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
         {
-            if (cell == null)
-                return;
-
-            var em = world.EntityManager;
-            var cellSw = Stopwatch.StartNew();
-            var spawnedEntities = new System.Collections.Generic.List<Entity>(cell.Refs?.Length + (cell.HasStaticCollider ? 1 : 0) ?? 1);
-            var interiorChildEntities = cell.Refs != null ? new Entity[cell.Refs.Length] : System.Array.Empty<Entity>();
-
-            if (cell.HasStaticCollider)
-            {
-                var staticEntity = em.CreateEntity();
-                em.SetName(staticEntity, $"InteriorStatic({cell.CellId})");
-                em.AddComponentData(staticEntity, LocalTransform.FromPositionRotationScale(worldOffset, quaternion.identity, 1f));
-                em.AddComponentData(staticEntity, new LocalToWorld
-                {
-                    Value = float4x4.Translate(worldOffset)
-                });
-                em.AddComponent<InteriorCellMember>(staticEntity);
-                em.AddComponent<Unity.Transforms.Static>(staticEntity);
-                RuntimeColliderAttachmentUtility.AttachSource(
-                    em,
-                    staticEntity,
-                    cell.StaticColliderBlob,
-                    RuntimeColliderKind.StaticCell,
-                    active: true);
-                spawnedEntities.Add(staticEntity);
-            }
-
-            if (cell.Refs != null)
-            {
-                for (int i = 0; i < cell.Refs.Length; i++)
-                {
-                    var entry = cell.Refs[i];
-                    interiorChildEntities[i] = SpawnInteriorRef(em, entry, worldOffset, new FixedString128Bytes(cell.CellId ?? string.Empty), spawnedEntities);
-                }
-            }
-
-            int logicalRefCount = 0;
-            int proxyQueueCount = 0;
-            if (cell.Refs != null && cell.Refs.Length > 0)
-            {
-                logicalRefCount = BuildLogicalRefs(
-                    em,
-                    WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
-                    cell.Refs,
-                    interiorChildEntities,
-                    true,
-                    new FixedString128Bytes(cell.CellId ?? string.Empty),
-                    worldOffset,
-                    ref logicalRefs,
-                    spawnedEntities,
-                    out proxyQueueCount);
-            }
-
-            var spawnedBuffer = em.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
-            for (int i = 0; i < spawnedEntities.Count; i++)
-                spawnedBuffer.Add(new InteriorSpawnedEntity { Value = spawnedEntities[i] });
-
-            cellSw.Stop();
-            Debug.Log($"[VVardenfell] spawn interior '{cell.CellId ?? string.Empty}': refs={cell.Refs?.Length ?? 0}, logical={logicalRefCount}, proxiesQueued={proxyQueueCount}, terrainColliders=0, staticColliders={(cell.HasStaticCollider ? 1 : 0)}, ms={cellSw.ElapsedMilliseconds}");
+            WorldInteriorSpawnUtility.SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
         }
 
         public static bool SpawnExteriorCell(
@@ -422,93 +269,18 @@ namespace VVardenfell.Runtime.Streaming
 
             var em = world.EntityManager;
             Entity terrainEntity = Entity.Null;
-            var cellSw = Stopwatch.StartNew();
-            int terrainColliderCount = 0;
-            int staticColliderCount = 0;
-            int logicalRefCount = 0;
-            int proxyQueueCount = 0;
 
             if (data.HasTerrain)
             {
-                var managed = new WorldResources.PerCellManaged();
-                managed.TerrainMesh = BuildTerrainMesh(data);
-                managed.TerrainMat = BuildTerrainMaterial(data);
-                managed.SplatMap = (managed.TerrainMat != null && managed.TerrainMat != WorldResources.TerrainFallbackMat)
-                    ? managed.TerrainMat.GetTexture("_Splat") as Texture2D
-                    : null;
-                managed.TerrainRma = new RenderMeshArray(
-                    new Material[] { managed.TerrainMat },
-                    new Mesh[] { managed.TerrainMesh });
-
-                terrainEntity = em.CreateEntity();
-                em.SetName(terrainEntity, $"Terrain({coord.x},{coord.y})");
-                RenderMeshUtility.AddComponents(
-                    terrainEntity,
-                    em,
-                    WorldResources.Desc,
-                    managed.TerrainRma,
-                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-
-                float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                em.AddComponentData(terrainEntity, LocalTransform.FromPositionRotationScale(
-                    new float3(ox, 0, oz),
-                    quaternion.identity,
-                    1f));
-
-                float cellHalf = LandRecordSize.CellUnitsMw * 0.5f * WorldScale.MwUnitsToMeters;
-                em.SetComponentData(terrainEntity, new RenderBounds
-                {
-                    Value = new AABB
-                    {
-                        Center = new float3(cellHalf, 0f, cellHalf),
-                        Extents = new float3(cellHalf, 1000f, cellHalf),
-                    }
-                });
-
-                em.AddComponentData(terrainEntity, new CellCoord { Value = coord });
-                em.AddComponentData(terrainEntity, new CellLink { Value = coord });
-                em.AddComponent<Unity.Transforms.Static>(terrainEntity);
-                if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
-                {
-                    RuntimeColliderAttachmentUtility.AttachSource(
-                        em,
-                        terrainEntity,
-                        terrBlob,
-                        RuntimeColliderKind.TerrainCell,
-                        active);
-                    terrainColliderCount = 1;
-                }
+                var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active);
+                terrainEntity = terrainResult.Entity;
 
                 if (!active && gateTerrainByRadius)
                     em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, false);
-
-                WorldResources.LoadedManaged[coord] = managed;
             }
 
             if (WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
-            {
-                var staticEntity = em.CreateEntity();
-                em.SetName(staticEntity, $"CellStatic({coord.x},{coord.y})");
-                float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                em.AddComponentData(staticEntity, LocalTransform.FromPositionRotationScale(
-                    new float3(coord.x * cellMeters, 0f, coord.y * cellMeters),
-                    quaternion.identity,
-                    1f));
-                em.AddComponentData(staticEntity, new LocalToWorld
-                {
-                    Value = float4x4.Translate(new float3(coord.x * cellMeters, 0f, coord.y * cellMeters))
-                });
-                staticColliderCount = 1;
-                em.AddComponent<Unity.Transforms.Static>(staticEntity);
-                em.AddComponentData(staticEntity, new CellLink { Value = coord });
-                RuntimeColliderAttachmentUtility.AttachSource(
-                    em,
-                    staticEntity,
-                    staticBlob,
-                    RuntimeColliderKind.StaticCell,
-                    active);
-            }
+                WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, staticBlob, active);
 
             var refs = data.Refs;
             if (refs != null && refs.Length > 0)
@@ -516,13 +288,13 @@ namespace VVardenfell.Runtime.Streaming
                 var spawnedRefEntities = new Entity[refs.Length];
                 var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
                 for (int i = 0; i < refs.Length; i++)
-                    spawnedRefEntities[i] = SpawnExteriorRef(em, refs[i], coord, shardCatalog);
+                    spawnedRefEntities[i] = WorldRefSpawnUtility.SpawnExteriorRef(em, refs[i], coord, shardCatalog);
 
                 var refArray = new NativeArray<RefEntry>(refs.Length, Allocator.Temp);
                 for (int i = 0; i < refs.Length; i++)
                     refArray[i] = refs[i];
                 var coordArray = BuildCoordArray(coord, refs.Length);
-                logicalRefCount = BuildLogicalRefs(
+                WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
                     WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
                     refArray,
@@ -533,7 +305,7 @@ namespace VVardenfell.Runtime.Streaming
                     float3.zero,
                     ref logicalRefs,
                     null,
-                    out proxyQueueCount);
+                    out _);
                 coordArray.Dispose();
                 refArray.Dispose();
 
@@ -546,8 +318,6 @@ namespace VVardenfell.Runtime.Streaming
             if (active && loaded.Active.IsCreated)
                 loaded.Active.Add(coord);
 
-            cellSw.Stop();
-            Debug.Log($"[VVardenfell] spawn cell ({coord.x},{coord.y}): refs={data.Refs?.Length ?? 0}, logical={logicalRefCount}, proxiesQueued={proxyQueueCount}, terrainColliders={terrainColliderCount}, staticColliders={staticColliderCount}, ms={cellSw.ElapsedMilliseconds}");
             return true;
         }
 
@@ -561,58 +331,12 @@ namespace VVardenfell.Runtime.Streaming
 
         public static void SetExteriorCellActiveState(EntityManager em, int2 coord, bool active, bool gateTerrainByRadius)
         {
-            var targetQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            if (!gateTerrainByRadius)
-                targetQueryBuilder = targetQueryBuilder.WithNone<CellCoord>();
-
-            var targetQuery = em.CreateEntityQuery(targetQueryBuilder);
-            using (var entities = targetQuery.ToEntityArray(Allocator.Temp))
-            using (var links = targetQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
-            {
-                for (int i = 0; i < entities.Length; i++)
-                {
-                    if (links[i].Value.Equals(coord))
-                        em.SetComponentEnabled<MaterialMeshInfo>(entities[i], active);
-                }
-            }
-            targetQuery.Dispose();
-            targetQueryBuilder.Dispose();
-
-            var physicsQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RuntimeColliderSource>();
-            var physicsQuery = em.CreateEntityQuery(physicsQueryBuilder);
-            using (var entities = physicsQuery.ToEntityArray(Allocator.Temp))
-            using (var links = physicsQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
-            {
-                for (int i = 0; i < entities.Length; i++)
-                {
-                    if (!links[i].Value.Equals(coord))
-                        continue;
-
-                    if (active)
-                        RuntimeColliderAttachmentUtility.EnablePhysics(em, entities[i]);
-                    else
-                        RuntimeColliderAttachmentUtility.DisablePhysics(em, entities[i]);
-                }
-            }
-            physicsQuery.Dispose();
-            physicsQueryBuilder.Dispose();
+            WorldExteriorVisibilityUtility.SetExteriorCellActiveState(em, coord, active, gateTerrainByRadius);
         }
 
         public static void HideExteriorVisibility(World world, ref LoadedCellsMap loaded)
         {
-            var em = world.EntityManager;
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            var query = em.CreateEntityQuery(queryBuilder);
-            em.SetComponentEnabled<MaterialMeshInfo>(query, false);
-            query.Dispose();
-            queryBuilder.Dispose();
-            DisableExteriorPhysics(em);
-            loaded.Active.Clear();
+            WorldExteriorVisibilityUtility.HideExteriorVisibility(world, ref loaded);
         }
 
         public static void SyncExteriorVisibility(
@@ -621,976 +345,8 @@ namespace VVardenfell.Runtime.Streaming
             in AvailableCells available,
             ref LoadedCellsMap loaded)
         {
-            var em = world.EntityManager;
-            int r = config.ViewRadius;
-            var desired = new NativeHashSet<int2>((2 * r + 1) * (2 * r + 1), Allocator.Temp);
-            for (int dy = -r; dy <= r; dy++)
-            {
-                for (int dx = -r; dx <= r; dx++)
-                {
-                    var coord = new int2(config.CameraCell.x + dx, config.CameraCell.y + dy);
-                    if (available.Set.Contains(coord))
-                        desired.Add(coord);
-                }
-            }
-
-            Entity streamingEntity = TryGetStreamingEntity(em);
-            bool spawnedMissingCells = false;
-            if (streamingEntity != Entity.Null && em.HasComponent<LogicalRefLookup>(streamingEntity))
-            {
-                var logicalRefs = em.GetComponentData<LogicalRefLookup>(streamingEntity);
-                var desiredEnumeratorForSpawn = desired.GetEnumerator();
-                while (desiredEnumeratorForSpawn.MoveNext())
-                {
-                    var coord = desiredEnumeratorForSpawn.Current;
-                    if (loaded.Map.ContainsKey(coord))
-                        continue;
-
-                    if (!WorldResources.Cells.TryGetValue(coord, out var cellData) || cellData == null)
-                        continue;
-
-                    SpawnExteriorCell(
-                        world,
-                        coord,
-                        cellData,
-                        ref loaded,
-                        ref logicalRefs,
-                        active: true,
-                        gateTerrainByRadius: config.GateTerrainByRadius);
-                    spawnedMissingCells = true;
-                }
-
-                if (spawnedMissingCells)
-                    em.SetComponentData(streamingEntity, logicalRefs);
-            }
-
-            var refsQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            if (!config.GateTerrainByRadius)
-                refsQueryBuilder = refsQueryBuilder.WithNone<CellCoord>();
-
-            var refsQuery = em.CreateEntityQuery(refsQueryBuilder);
-            using var refEntities = refsQuery.ToEntityArray(Allocator.Temp);
-            using var refLinks = refsQuery.ToComponentDataArray<CellLink>(Allocator.Temp);
-            for (int i = 0; i < refEntities.Length; i++)
-                em.SetComponentEnabled<MaterialMeshInfo>(refEntities[i], desired.Contains(refLinks[i].Value));
-
-            refsQuery.Dispose();
-            refsQueryBuilder.Dispose();
-
-            if (!config.GateTerrainByRadius)
-            {
-                var terrainQuery = new EntityQueryBuilder(Allocator.Temp)
-                    .WithAll<CellCoord>()
-                    .WithPresent<MaterialMeshInfo>();
-                var builtTerrainQuery = em.CreateEntityQuery(terrainQuery);
-                em.SetComponentEnabled<MaterialMeshInfo>(builtTerrainQuery, true);
-                builtTerrainQuery.Dispose();
-                terrainQuery.Dispose();
-            }
-
-            SyncExteriorPhysics(em, desired);
-            loaded.Active.Clear();
-            var desiredEnumerator = desired.GetEnumerator();
-            while (desiredEnumerator.MoveNext())
-                loaded.Active.Add(desiredEnumerator.Current);
-            desired.Dispose();
+            WorldExteriorVisibilityUtility.SyncExteriorVisibility(world, config, available, ref loaded);
         }
 
-        private static Entity TryGetStreamingEntity(EntityManager em)
-        {
-            using var query = em.CreateEntityQuery(
-                ComponentType.ReadOnly<StreamingConfig>(),
-                ComponentType.ReadOnly<LoadedCellsMap>(),
-                ComponentType.ReadOnly<LogicalRefLookup>());
-            return query.CalculateEntityCount() > 0 ? query.GetSingletonEntity() : Entity.Null;
-        }
-
-        private static void ApplyRefGameplayMetadata(
-            EntityManager em,
-            NativeArray<RefEntry> refs,
-            NativeArray<Entity> entities)
-        {
-            var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();
-            for (int i = 0; i < entities.Length; i++)
-            {
-                Entity entity = entities[i];
-                RefEntry entry = refs[i];
-                if (entry.PlacedRefId != 0u && !em.HasComponent<PlacedRefIdentity>(entity))
-                {
-                    em.AddComponentData(entity, new PlacedRefIdentity
-                    {
-                        Value = entry.PlacedRefId
-                    });
-                }
-
-                if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length)
-                {
-                    var colliderBlob = colliderBlobs[entry.CollisionIndex];
-                    if (colliderBlob.IsCreated && !em.HasComponent<RuntimeColliderSource>(entity))
-                        RuntimeColliderAttachmentUtility.AttachSource(
-                            em,
-                            entity,
-                            colliderBlob,
-                            RuntimeColliderKind.PlacedRef,
-                            active: false);
-                }
-            }
-        }
-
-        private static void DisableExteriorPhysics(EntityManager em)
-        {
-            using var _ = k_PhysicsSync.Auto();
-
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
-            var query = em.CreateEntityQuery(queryBuilder);
-            em.RemoveComponent<PhysicsCollider>(query);
-            query.Dispose();
-            queryBuilder.Dispose();
-
-            if (UnityEngine.Debug.isDebugBuild)
-                LogActivePhysicsSummary(em, "hide-exterior");
-        }
-
-        private static void SyncExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
-        {
-            using var _ = k_PhysicsSync.Auto();
-
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RuntimeColliderSource>();
-            var query = em.CreateEntityQuery(queryBuilder);
-            using (var entities = query.ToEntityArray(Allocator.Temp))
-            using (var links = query.ToComponentDataArray<CellLink>(Allocator.Temp))
-            {
-                for (int i = 0; i < entities.Length; i++)
-                {
-                    bool shouldBeActive = desired.Contains(links[i].Value);
-                    bool isActive = em.HasComponent<PhysicsCollider>(entities[i]);
-                    if (shouldBeActive && !isActive)
-                        RuntimeColliderAttachmentUtility.EnablePhysics(em, entities[i]);
-                    else if (!shouldBeActive && isActive)
-                        RuntimeColliderAttachmentUtility.DisablePhysics(em, entities[i]);
-                }
-            }
-            query.Dispose();
-            queryBuilder.Dispose();
-
-            if (UnityEngine.Debug.isDebugBuild)
-                LogActivePhysicsSummary(em, "sync-exterior");
-        }
-
-        private static void LogActivePhysicsSummary(EntityManager em, string contextLabel)
-        {
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<RuntimeColliderSource, PhysicsCollider>();
-            var query = em.CreateEntityQuery(queryBuilder);
-            int activeTerrain = 0;
-            int activeStatic = 0;
-            int activeRefs = 0;
-            int activeProxies = 0;
-            using (var sources = query.ToComponentDataArray<RuntimeColliderSource>(Allocator.Temp))
-            {
-                for (int i = 0; i < sources.Length; i++)
-                {
-                    switch (sources[i].Kind)
-                    {
-                        case RuntimeColliderKind.TerrainCell:
-                            activeTerrain++;
-                            break;
-                        case RuntimeColliderKind.StaticCell:
-                            activeStatic++;
-                            break;
-                        case RuntimeColliderKind.PlacedRef:
-                        case RuntimeColliderKind.RuntimeSpawn:
-                            activeRefs++;
-                            break;
-                        case RuntimeColliderKind.ActivationProxy:
-                            activeProxies++;
-                            break;
-                    }
-                }
-            }
-            query.Dispose();
-            queryBuilder.Dispose();
-
-            Debug.Log($"[VVardenfell][Physics] {contextLabel}: terrain={activeTerrain}, static={activeStatic}, refs={activeRefs}, proxies={activeProxies}");
-        }
-
-        private static Entity SpawnExteriorRef(EntityManager em, RefEntry entry, int2 coord, RenderShardRecord[] shardCatalog)
-        {
-            WarnUnsupportedSpawnMode(entry, $"exterior ({coord.x},{coord.y})");
-            return (RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab
-                ? SpawnModelPrefabRef(em, entry, false, coord, default, float3.zero)
-                : SpawnRenderShardRef(em, entry, false, coord, default, float3.zero, shardCatalog);
-        }
-
-        private static Entity SpawnInteriorRef(EntityManager em, RefEntry entry, float3 worldOffset, FixedString128Bytes interiorCellId, List<Entity> spawnedEntities)
-        {
-            WarnUnsupportedSpawnMode(entry, $"interior '{interiorCellId}'");
-            Entity root;
-            if ((RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab)
-            {
-                root = SpawnModelPrefabRef(em, entry, true, default, interiorCellId, worldOffset, spawnedEntities);
-            }
-            else
-            {
-                root = SpawnRenderShardRef(em, entry, true, default, interiorCellId, worldOffset, WorldResources.Cache?.RenderShardCatalog?.Records);
-                AppendSpawnedEntities(em, root, spawnedEntities);
-            }
-
-            return root;
-        }
-
-        private static Entity SpawnRenderShardRef(
-            EntityManager em,
-            RefEntry entry,
-            bool isInterior,
-            int2 exteriorCell,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            RenderShardRecord[] shardCatalog)
-        {
-            var prefabs = WorldResources.RefPrefabs;
-            if (prefabs == null || (uint)entry.RenderShardIndex >= (uint)prefabs.Length)
-                return Entity.Null;
-
-            var entity = em.Instantiate(prefabs[entry.RenderShardIndex]);
-            float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
-            position += worldOffset;
-            quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
-
-            em.SetComponentData(entity, LocalTransform.FromPositionRotationScale(position, rotation, entry.Scale));
-            em.SetComponentData(entity, new LocalToWorld
-            {
-                Value = float4x4.TRS(position, rotation, new float3(entry.Scale))
-            });
-            em.SetComponentData(entity, MaterialMeshInfo.FromRenderMeshArrayIndices(entry.LocalMaterialIndex, entry.LocalMeshIndex));
-
-            int textureSlice = entry.SliceIndex < 0 ? WorldResources.FallbackBucketSlice.y : WorldResources.TexBucketInfo[entry.SliceIndex].y;
-            em.SetComponentData(entity, new TextureSlice { Value = textureSlice });
-
-            int globalMeshIndex = TryResolveGlobalMeshIndex(shardCatalog, entry.RenderShardIndex, entry.LocalMeshIndex);
-            var aabb = (uint)globalMeshIndex < (uint)WorldResources.MeshBounds.Length
-                ? WorldResources.MeshBounds[globalMeshIndex]
-                : new AABB { Center = float3.zero, Extents = new float3(1f) };
-            em.SetComponentData(entity, new RenderBounds { Value = aabb });
-
-            ApplyRefRootMetadata(em, entity, entry, isInterior, exteriorCell, interiorCellId);
-            return entity;
-        }
-
-        private static Entity SpawnModelPrefabRef(
-            EntityManager em,
-            RefEntry entry,
-            bool isInterior,
-            int2 exteriorCell,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            List<Entity> spawnedEntities = null)
-        {
-            var prefabs = WorldResources.ModelPrefabs;
-            if (prefabs == null || (uint)entry.ModelPrefabIndex >= (uint)prefabs.Length)
-                return Entity.Null;
-
-            if (!WorldBootstrap.EnsureModelPrefabBuilt(em, WorldResources.Cache, entry.ModelPrefabIndex))
-                return Entity.Null;
-
-            prefabs = WorldResources.ModelPrefabs;
-            var root = em.Instantiate(prefabs[entry.ModelPrefabIndex]);
-            Entity[] linkedEntities = SnapshotLinkedEntityGroup(em, root);
-            float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
-            position += worldOffset;
-            quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
-
-            em.SetComponentData(root, LocalTransform.FromPositionRotationScale(position, rotation, entry.Scale));
-            em.SetComponentData(root, new LocalToWorld
-            {
-                Value = float4x4.TRS(position, rotation, new float3(entry.Scale))
-            });
-
-            ApplyRefRootMetadata(em, root, entry, isInterior, exteriorCell, interiorCellId);
-
-            if (linkedEntities != null)
-            {
-                for (int i = 0; i < linkedEntities.Length; i++)
-                {
-                    Entity linkedEntity = linkedEntities[i];
-                    if (linkedEntity == root || !em.Exists(linkedEntity))
-                        continue;
-
-                    if (isInterior)
-                    {
-                        if (!em.HasComponent<InteriorCellMember>(linkedEntity))
-                            em.AddComponent<InteriorCellMember>(linkedEntity);
-                    }
-                    else
-                    {
-                        if (em.HasComponent<CellLink>(linkedEntity))
-                            em.SetComponentData(linkedEntity, new CellLink { Value = exteriorCell });
-                        else
-                            em.AddComponentData(linkedEntity, new CellLink { Value = exteriorCell });
-                    }
-                }
-            }
-
-            AppendSpawnedEntities(root, spawnedEntities, linkedEntities);
-            return root;
-        }
-
-        private static void ApplyRefRootMetadata(
-            EntityManager em,
-            Entity entity,
-            RefEntry entry,
-            bool isInterior,
-            int2 exteriorCell,
-            FixedString128Bytes interiorCellId)
-        {
-            if (entry.PlacedRefId != 0u)
-            {
-                if (em.HasComponent<PlacedRefIdentity>(entity))
-                    em.SetComponentData(entity, new PlacedRefIdentity { Value = entry.PlacedRefId });
-                else
-                    em.AddComponentData(entity, new PlacedRefIdentity { Value = entry.PlacedRefId });
-            }
-
-            if (isInterior)
-            {
-                if (!em.HasComponent<InteriorCellMember>(entity))
-                    em.AddComponent<InteriorCellMember>(entity);
-                if (em.HasComponent<CellLink>(entity))
-                    em.RemoveComponent<CellLink>(entity);
-            }
-            else
-            {
-                if (em.HasComponent<CellLink>(entity))
-                    em.SetComponentData(entity, new CellLink { Value = exteriorCell });
-                else
-                    em.AddComponentData(entity, new CellLink { Value = exteriorCell });
-            }
-
-            var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();
-            if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[entry.CollisionIndex].IsCreated)
-            {
-                var colliderBlob = colliderBlobs[entry.CollisionIndex];
-                RuntimeColliderAttachmentUtility.AttachSource(
-                    em,
-                    entity,
-                    colliderBlob,
-                    RuntimeColliderKind.PlacedRef,
-                    active: true);
-            }
-        }
-
-        private static void AppendSpawnedEntities(EntityManager em, Entity root, List<Entity> spawnedEntities)
-        {
-            if (root == Entity.Null || spawnedEntities == null)
-                return;
-
-            if (em.Exists(root))
-                spawnedEntities.Add(root);
-        }
-
-        private static void AppendSpawnedEntities(Entity root, List<Entity> spawnedEntities, Entity[] linkedEntities)
-        {
-            if (root == Entity.Null || spawnedEntities == null)
-                return;
-
-            if (linkedEntities == null)
-            {
-                spawnedEntities.Add(root);
-                return;
-            }
-
-            for (int i = 0; i < linkedEntities.Length; i++)
-            {
-                Entity linkedEntity = linkedEntities[i];
-                if (linkedEntity != Entity.Null)
-                    spawnedEntities.Add(linkedEntity);
-            }
-        }
-
-        private static int BuildLogicalRefs(
-            EntityManager em,
-            RuntimeContentDatabase contentDb,
-            NativeArray<RefEntry> refs,
-            NativeArray<int2> coords,
-            Entity[] childEntities,
-            bool isInterior,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            ref LogicalRefLookup logicalRefs,
-            RuntimeLoadProgress progress,
-            out int proxyQueueCount)
-        {
-            using var _ = k_LogicalRefs.Auto();
-            proxyQueueCount = 0;
-            if (contentDb == null || childEntities == null)
-                return 0;
-
-            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
-            var logicalByPlacedRef = new Dictionary<uint, Entity>();
-            int logicalRefCount = 0;
-            for (int i = 0; i < refs.Length; i++)
-            {
-                if (i >= childEntities.Length)
-                    break;
-
-                Entity child = childEntities[i];
-                if (child == Entity.Null || !em.Exists(child))
-                    continue;
-
-                RefEntry entry = refs[i];
-                if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
-                    continue;
-
-                uint placedRefId = entry.PlacedRefId;
-                if (placedRefId == 0u)
-                    continue;
-
-                if (!logicalByPlacedRef.TryGetValue(placedRefId, out Entity logicalEntity))
-                {
-                    k_LogicalRefCreate.Begin();
-                    try
-                    {
-                        logicalEntity = CreateLogicalRefEntity(
-                            em,
-                            contentDb,
-                            contentReference,
-                            placedRefId,
-                            entry,
-                            coords[i],
-                            isInterior,
-                            interiorCellId,
-                            worldOffset);
-                    }
-                    finally
-                    {
-                        k_LogicalRefCreate.End();
-                    }
-                    logicalByPlacedRef.Add(placedRefId, logicalEntity);
-                    logicalRefCount++;
-                    k_LogicalRefLookup.Begin();
-                    try
-                    {
-                        TryAddLogicalLookup(ref logicalRefs, placedRefId, logicalEntity, isInterior);
-                    }
-                    finally
-                    {
-                        k_LogicalRefLookup.End();
-                    }
-                }
-
-                k_LogicalRefLink.Begin();
-                try
-                {
-                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
-                    if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
-                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
-                        proxyQueueCount++;
-                }
-                finally
-                {
-                    k_LogicalRefLink.End();
-                }
-
-                if (((i + 1) % RefGatherBatchSize) == 0)
-                    progress?.Report($"Creating logical placed refs {i + 1}/{refs.Length}", i + 1, refs.Length);
-            }
-
-            progress?.Report($"Creating logical placed refs {refs.Length}/{refs.Length}", refs.Length, refs.Length);
-            return logicalRefCount;
-        }
-
-        private static int BuildLogicalRefs(
-            EntityManager em,
-            RuntimeContentDatabase contentDb,
-            RefEntry[] refs,
-            Entity[] childEntities,
-            bool isInterior,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            ref LogicalRefLookup logicalRefs,
-            List<Entity> spawnedEntities,
-            out int proxyQueueCount)
-        {
-            using var _ = k_LogicalRefs.Auto();
-            proxyQueueCount = 0;
-            if (contentDb == null || refs == null || childEntities == null)
-                return 0;
-
-            Entity[][] childSnapshots = SnapshotLogicalChildGroups(em, childEntities);
-            var logicalByPlacedRef = new Dictionary<uint, Entity>();
-            int logicalRefCount = 0;
-            for (int i = 0; i < refs.Length; i++)
-            {
-                if (i >= childEntities.Length)
-                    break;
-
-                Entity child = childEntities[i];
-                if (child == Entity.Null || !em.Exists(child))
-                    continue;
-
-                RefEntry entry = refs[i];
-                if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
-                    continue;
-
-                uint placedRefId = entry.PlacedRefId;
-                if (placedRefId == 0u)
-                    continue;
-
-                if (!logicalByPlacedRef.TryGetValue(placedRefId, out Entity logicalEntity))
-                {
-                    k_LogicalRefCreate.Begin();
-                    try
-                    {
-                        logicalEntity = CreateLogicalRefEntity(
-                            em,
-                            contentDb,
-                            contentReference,
-                            placedRefId,
-                            entry,
-                            default,
-                            isInterior,
-                            interiorCellId,
-                            worldOffset);
-                    }
-                    finally
-                    {
-                        k_LogicalRefCreate.End();
-                    }
-                    logicalByPlacedRef.Add(placedRefId, logicalEntity);
-                    logicalRefCount++;
-                    k_LogicalRefLookup.Begin();
-                    try
-                    {
-                        TryAddLogicalLookup(ref logicalRefs, placedRefId, logicalEntity, isInterior);
-                    }
-                    finally
-                    {
-                        k_LogicalRefLookup.End();
-                    }
-                    spawnedEntities?.Add(logicalEntity);
-                }
-
-                k_LogicalRefLink.Begin();
-                try
-                {
-                    AppendLogicalChildren(em, logicalEntity, childSnapshots[i]);
-                    if (logicalByPlacedRef[placedRefId] == logicalEntity
-                        && !em.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
-                        && InteractionActivationProxyBuildUtility.EnsureQueued(em, logicalEntity))
-                        proxyQueueCount++;
-                }
-                finally
-                {
-                    k_LogicalRefLink.End();
-                }
-            }
-
-            return logicalRefCount;
-        }
-
-        private static void WarnUnsupportedSpawnMode(RefEntry entry, string cellLabel)
-        {
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
-                return;
-
-            string key = $"{cellLabel}:{entry.PlacedRefId}:{entry.SpawnModeRaw}";
-            if (!s_UnsupportedSpawnModeWarnings.Add(key))
-                return;
-
-            string mode = System.Enum.IsDefined(typeof(RefSpawnMode), entry.SpawnModeRaw)
-                ? ((RefSpawnMode)entry.SpawnModeRaw).ToString()
-                : $"unknown({entry.SpawnModeRaw})";
-            Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
-        }
-
-        private static Entity CreateLogicalRefEntity(
-            EntityManager em,
-            RuntimeContentDatabase contentDb,
-            ContentReference contentReference,
-            uint placedRefId,
-            RefEntry entry,
-            int2 exteriorCell,
-            bool isInterior,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset)
-        {
-            Entity logicalEntity = em.CreateEntity();
-            //cant do this for now, we're exceeding that max allowed entity names, they maybe can share a name? Probably not
-            //em.SetName(logicalEntity, $"LogicalRef({placedRefId:X8})");
-            em.AddComponentData(logicalEntity, new LogicalRefTag());
-            em.AddComponentData(logicalEntity, new PlacedRefIdentity { Value = placedRefId });
-            em.AddComponentData(logicalEntity, new LogicalRefContentRef { Value = contentReference });
-            em.AddComponentData(logicalEntity, new LogicalRefLocation
-            {
-                ExteriorCell = exteriorCell,
-                InteriorCellId = interiorCellId,
-                IsInterior = (byte)(isInterior ? 1 : 0),
-            });
-            em.AddBuffer<LogicalRefChild>(logicalEntity);
-            float3 position = new float3(entry.PosX, entry.PosY, entry.PosZ) + worldOffset;
-            quaternion rotation = new quaternion(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
-            em.AddComponentData(logicalEntity, LocalTransform.FromPositionRotationScale(
-                position,
-                rotation,
-                entry.Scale));
-            em.AddComponentData(logicalEntity, new LocalToWorld
-            {
-                Value = float4x4.TRS(
-                    position,
-                    rotation,
-                    new float3(entry.Scale))
-            });
-
-            if (isInterior)
-                em.AddComponent<InteriorCellMember>(logicalEntity);
-            else
-                em.AddComponentData(logicalEntity, new CellLink { Value = exteriorCell });
-
-            AttachLogicalAuthoring(em, logicalEntity, contentDb, contentReference, entry, exteriorCell, isInterior, interiorCellId);
-            return logicalEntity;
-        }
-
-        private static Entity[][] SnapshotLogicalChildGroups(EntityManager em, Entity[] rootChildren)
-        {
-            var snapshots = new Entity[rootChildren.Length][];
-            for (int i = 0; i < rootChildren.Length; i++)
-            {
-                Entity rootChild = rootChildren[i];
-                if (rootChild == Entity.Null || !em.Exists(rootChild))
-                    continue;
-
-                snapshots[i] = SnapshotLinkedEntityGroup(em, rootChild) ?? new[] { rootChild };
-            }
-
-            return snapshots;
-        }
-
-        private static Entity[] SnapshotLinkedEntityGroup(EntityManager em, Entity root)
-        {
-            if (root == Entity.Null || !em.Exists(root))
-                return null;
-
-            if (!em.HasBuffer<LinkedEntityGroup>(root))
-                return null;
-
-            var linked = em.GetBuffer<LinkedEntityGroup>(root);
-            var linkedEntities = new Entity[linked.Length];
-            for (int i = 0; i < linked.Length; i++)
-                linkedEntities[i] = linked[i].Value;
-
-            return linkedEntities;
-        }
-
-        private static void AppendLogicalChildren(EntityManager em, Entity logicalEntity, Entity[] children)
-        {
-            if (children == null)
-                return;
-
-            for (int i = 0; i < children.Length; i++)
-                LinkLogicalChild(em, logicalEntity, children[i]);
-        }
-
-        private static void LinkLogicalChild(EntityManager em, Entity logicalEntity, Entity child)
-        {
-            if (child == Entity.Null || !em.Exists(child))
-                return;
-
-            if (em.HasComponent<LogicalRefParent>(child))
-                em.SetComponentData(child, new LogicalRefParent { Value = logicalEntity });
-            else
-                em.AddComponentData(child, new LogicalRefParent { Value = logicalEntity });
-
-            em.GetBuffer<LogicalRefChild>(logicalEntity).Add(new LogicalRefChild { Value = child });
-        }
-
-        private static void AttachLogicalAuthoring(
-            EntityManager em,
-            Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
-            ContentReference contentReference,
-            RefEntry entry,
-            int2 exteriorCell,
-            bool isInterior,
-            FixedString128Bytes interiorCellId)
-        {
-            bool attachDoor = false;
-            DoorInteractable door = default;
-            if (contentReference.Kind == ContentReferenceKind.Door)
-            {
-                attachDoor = !isInterior
-                    ? TryResolveDoorInteractable(exteriorCell, entry.PlacedRefId, out door)
-                    : TryResolveInteriorDoorInteractable(entry.PlacedRefId, interiorCellId, out door);
-            }
-
-            LogicalRefAuthoringUtility.TryAttach(em, logicalEntity, contentDb, contentReference, attachDoor, door);
-        }
-
-        private static bool TryGetContentReference(RefEntry entry, out ContentReference contentReference)
-        {
-            contentReference = new ContentReference
-            {
-                Kind = (ContentReferenceKind)entry.ContentKind,
-                HandleValue = entry.ContentHandleValue,
-            };
-            return contentReference.IsValid;
-        }
-
-        private static void TryAddLogicalLookup(ref LogicalRefLookup logicalRefs, uint placedRefId, Entity logicalEntity, bool isInterior)
-        {
-            if (!logicalRefs.Map.IsCreated || placedRefId == 0u)
-                return;
-
-            if (logicalRefs.Map.TryAdd(placedRefId, logicalEntity))
-                return;
-
-            if (logicalRefs.Map.TryGetValue(placedRefId, out var existing) && existing != logicalEntity)
-            {
-                Debug.LogWarning(
-                    $"[VVardenfell] duplicate logical-ref lookup for placed ref 0x{placedRefId:X8} while spawning {(isInterior ? "interior" : "exterior")} content.");
-            }
-        }
-
-        private static bool TryResolveDoorInteractable(int2 coord, uint placedRefId, out DoorInteractable doorInteractable)
-        {
-            doorInteractable = default;
-            if (placedRefId == 0u)
-                return false;
-            if (!WorldResources.Cells.TryGetValue(coord, out var cell) || cell == null)
-                return false;
-            return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
-        }
-
-        private static bool TryResolveInteriorDoorInteractable(uint placedRefId, FixedString128Bytes interiorCellId, out DoorInteractable doorInteractable)
-        {
-            doorInteractable = default;
-            if (placedRefId == 0u)
-                return false;
-            if (!WorldResources.InteriorCells.TryGetValue(interiorCellId.ToString(), out var cell) || cell == null)
-                return false;
-            return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
-        }
-
-        private static bool TryResolveDoorInteractable(CellData cell, uint placedRefId, out DoorInteractable doorInteractable)
-        {
-            doorInteractable = default;
-            if (cell?.Refs == null || cell.Doors == null)
-                return false;
-
-            for (int i = 0; i < cell.Refs.Length; i++)
-            {
-                var entry = cell.Refs[i];
-                if (entry.PlacedRefId != placedRefId || entry.DoorMetaIndex < 0 || entry.DoorMetaIndex >= cell.Doors.Length)
-                    continue;
-
-                doorInteractable = BuildDoorInteractable(cell.Doors[entry.DoorMetaIndex]);
-                return true;
-            }
-
-            return false;
-        }
-
-        private static DoorInteractable BuildDoorInteractable(in DoorRefEntry door)
-        {
-            return new DoorInteractable
-            {
-                IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
-                DestinationCellId = new FixedString128Bytes(door.DestinationCellId ?? string.Empty),
-                DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
-                DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
-            };
-        }
-
-        private static int TryResolveGlobalMeshIndex(RenderShardRecord[] shardCatalog, int renderShardIndex, int localMeshIndex)
-        {
-            if (shardCatalog == null || (uint)renderShardIndex >= (uint)shardCatalog.Length)
-                return -1;
-
-            var globalMeshIndices = shardCatalog[renderShardIndex]?.GlobalMeshIndices;
-            return globalMeshIndices != null && (uint)localMeshIndex < (uint)globalMeshIndices.Length
-                ? globalMeshIndices[localMeshIndex]
-                : -1;
-        }
-
-        private struct PairedRef
-        {
-            public RefEntry Ref;
-            public int2 Coord;
-        }
-
-        private struct RefSpawnData
-        {
-            public LocalTransform Transform;
-            public MaterialMeshInfo MaterialMeshInfo;
-            public TextureSlice TextureSlice;
-            public CellLink CellLink;
-            public RenderBounds RenderBounds;
-        }
-
-        [BurstCompile]
-        private struct BuildRefSpawnDataJob : IJobParallelFor
-        {
-            [ReadOnly] public NativeArray<RefEntry> Refs;
-            [ReadOnly] public NativeArray<int2> Coords;
-            [ReadOnly] public NativeArray<int2> TexBucketInfo;
-            [ReadOnly] public NativeArray<int2> ShardMeshRanges;
-            [ReadOnly] public NativeArray<int> ShardGlobalMeshIndices;
-            [ReadOnly] public NativeArray<AABB> MeshBounds;
-            [ReadOnly] public int2 FallbackBucketSlice;
-            [ReadOnly] public int MeshCount;
-
-            [WriteOnly] public NativeArray<RefSpawnData> Output;
-
-            public void Execute(int index)
-            {
-                var r = Refs[index];
-                int2 bucketSlice = r.SliceIndex < 0 ? FallbackBucketSlice : TexBucketInfo[r.SliceIndex];
-                int globalMeshIndex = -1;
-                if ((uint)r.RenderShardIndex < (uint)ShardMeshRanges.Length)
-                {
-                    int2 range = ShardMeshRanges[r.RenderShardIndex];
-                    if ((uint)r.LocalMeshIndex < (uint)range.y)
-                        globalMeshIndex = ShardGlobalMeshIndices[range.x + r.LocalMeshIndex];
-                }
-                var aabb = (uint)globalMeshIndex < (uint)MeshCount
-                    ? MeshBounds[globalMeshIndex]
-                    : new AABB { Center = float3.zero, Extents = new float3(1f) };
-
-                Output[index] = new RefSpawnData
-                {
-                    Transform = LocalTransform.FromPositionRotationScale(
-                        new float3(r.PosX, r.PosY, r.PosZ),
-                        new quaternion(r.RotX, r.RotY, r.RotZ, r.RotW),
-                        r.Scale),
-                    MaterialMeshInfo = MaterialMeshInfo.FromRenderMeshArrayIndices(r.LocalMaterialIndex, r.LocalMeshIndex),
-                    TextureSlice = new TextureSlice { Value = bucketSlice.y },
-                    CellLink = new CellLink { Value = Coords[index] },
-                    RenderBounds = new RenderBounds { Value = aabb },
-                };
-            }
-        }
-
-        [BurstCompile]
-        private struct ApplyRefSpawnDataJob : IJobParallelFor
-        {
-            [ReadOnly] public NativeArray<Entity> Entities;
-            [ReadOnly] public NativeArray<RefSpawnData> SpawnData;
-            public EntityCommandBuffer.ParallelWriter CommandBuf;
-
-            public void Execute(int index)
-            {
-                var entity = Entities[index];
-                var data = SpawnData[index];
-                CommandBuf.SetComponent(index, entity, data.Transform);
-                CommandBuf.SetComponent(index, entity, data.MaterialMeshInfo);
-                CommandBuf.SetComponent(index, entity, data.TextureSlice);
-                CommandBuf.SetComponent(index, entity, data.CellLink);
-                CommandBuf.SetComponent(index, entity, data.RenderBounds);
-            }
-        }
-
-        private struct PairedBucketComparer : IComparer<PairedRef>
-        {
-            [ReadOnly] public NativeArray<int2> TexBucketInfo;
-            public int FallbackBucket;
-
-            public int Compare(PairedRef a, PairedRef b)
-            {
-                int ba = a.Ref.RenderShardIndex;
-                int bb = b.Ref.RenderShardIndex;
-                if (ba != bb)
-                    return ba.CompareTo(bb);
-                long ka = ((long)a.Ref.LocalMaterialIndex << 32) | (uint)a.Ref.LocalMeshIndex;
-                long kb = ((long)b.Ref.LocalMaterialIndex << 32) | (uint)b.Ref.LocalMeshIndex;
-                return ka.CompareTo(kb);
-            }
-        }
-
-        private static Material BuildTerrainMaterial(CellData data)
-        {
-            if (WorldResources.TerrainShader == null
-                || WorldResources.TerrainTemplate == null
-                || WorldResources.Cache?.TerrainLayers == null
-                || WorldResources.Cache.TerrainLayers.Array == null
-                || data.LayerGrid == null)
-            {
-                return WorldResources.TerrainFallbackMat;
-            }
-
-            var mat = new Material(WorldResources.TerrainTemplate)
-            {
-                name = $"VV:Terrain({data.GridX},{data.GridY})",
-            };
-            mat.SetTexture("_LayerArray", WorldResources.Cache.TerrainLayers.Array);
-
-            var splat = new Texture2D(16, 16, TextureFormat.R16, mipChain: false, linear: true)
-            {
-                name = $"VV:Splat({data.GridX},{data.GridY})",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp,
-            };
-            splat.SetPixelData(data.LayerGrid, 0);
-            splat.Apply(updateMipmaps: false, makeNoLongerReadable: true);
-            mat.SetTexture("_Splat", splat);
-            return mat;
-        }
-
-        private static Mesh BuildTerrainMesh(CellData data)
-        {
-            const int N = 65;
-            float spacingMw = LandRecordSize.CellUnitsMw / (float)(N - 1);
-            float spacingU = spacingMw * WorldScale.MwUnitsToMeters;
-
-            var verts = new Vector3[N * N];
-            var uvs = new Vector2[N * N];
-            var normals = new Vector3[N * N];
-            for (int y = 0; y < N; y++)
-            {
-                for (int x = 0; x < N; x++)
-                {
-                    int i = y * N + x;
-                    verts[i] = new Vector3(x * spacingU, data.Heights[i], y * spacingU);
-                    uvs[i] = new Vector2(x / (float)(N - 1), y / (float)(N - 1));
-                    if (data.Normals != null)
-                    {
-                        float nx = data.Normals[i * 3 + 0] / 127f;
-                        float ny = data.Normals[i * 3 + 1] / 127f;
-                        float nz = data.Normals[i * 3 + 2] / 127f;
-                        normals[i] = new Vector3(nx, nz, ny).normalized;
-                    }
-                }
-            }
-
-            var tris = new int[(N - 1) * (N - 1) * 6];
-            int t = 0;
-            for (int y = 0; y < N - 1; y++)
-            {
-                for (int x = 0; x < N - 1; x++)
-                {
-                    int v00 = y * N + x;
-                    int v10 = y * N + x + 1;
-                    int v01 = (y + 1) * N + x;
-                    int v11 = (y + 1) * N + x + 1;
-                    tris[t++] = v00; tris[t++] = v01; tris[t++] = v10;
-                    tris[t++] = v10; tris[t++] = v01; tris[t++] = v11;
-                }
-            }
-
-            var mesh = new Mesh { name = $"Terrain({data.GridX},{data.GridY})" };
-            mesh.indexFormat = IndexFormat.UInt16;
-            mesh.SetVertices(verts);
-            mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(tris, 0);
-            if (data.Normals != null)
-                mesh.SetNormals(normals);
-            else
-                mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            return mesh;
-        }
     }
 }

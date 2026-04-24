@@ -204,7 +204,6 @@ namespace VVardenfell.Runtime.Streaming
                 sb.AppendLine();
             }
 
-            Debug.Log(sb.ToString());
         }
 
         static RefPlacementAuditEntry? FindAudit(CellData cell, uint placedRefId)

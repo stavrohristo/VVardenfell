@@ -14,6 +14,15 @@ namespace VVardenfell.Runtime.Audio
 {
     public sealed class RuntimeAudioService : IDisposable
     {
+        /// <summary>
+        /// Most recently constructed service instance. Exposed so shell-level code
+        /// (e.g. the Options window) can push volume scalars without threading a
+        /// reference through the ECS system hierarchy. <c>null</c> until the
+        /// <see cref="AudioPresentationSystem"/> first ticks, and again after
+        /// <see cref="Dispose"/>.
+        /// </summary>
+        public static RuntimeAudioService Active { get; private set; }
+
         const float DefaultFadeSpeed = 2.4f;
         const int RegionEventSourceCount = 4;
         const int InteractionEventSourceCount = 8;
@@ -25,22 +34,43 @@ namespace VVardenfell.Runtime.Audio
         static readonly ProfilerMarker k_QueueInteractionEvent = new("VV.Audio.QueueInteractionEvent");
         static readonly ProfilerMarker k_PlayInteractionEvent = new("VV.Audio.PlayInteractionEvent");
 
+        enum ChannelBus
+        {
+            Music,
+            Effects,
+        }
+
         sealed class ChannelState
         {
             public readonly string Name;
             public readonly AudioSource Source;
+            public readonly ChannelBus Bus;
 
             public string ActivePath;
             public string PendingPath;
             public bool PendingLoop;
+
+            /// <summary>
+            /// Desired volume driven by tuning state + per-sound volume lookup, before
+            /// the player-facing Master/Music/Effects scalars. Stored separately from
+            /// <see cref="TargetVolume"/> so we can reapply scalars when the Options
+            /// sliders move without losing the tuning intent.
+            /// </summary>
+            public float BaselineVolume;
+
+            /// <summary>
+            /// Baseline × master × bus scalar — what the fader chases each Tick.
+            /// </summary>
             public float TargetVolume;
+
             public UnityWebRequest Request;
             public UnityWebRequestAsyncOperation Operation;
 
-            public ChannelState(string name, AudioSource source)
+            public ChannelState(string name, AudioSource source, ChannelBus bus)
             {
                 Name = name;
                 Source = source;
+                Bus = bus;
             }
         }
 
@@ -75,10 +105,68 @@ namespace VVardenfell.Runtime.Audio
         bool _regionAmbientEnabled = true;
         string _installPath;
 
+        // Player-facing scalars driven by the Options window. Master multiplies
+        // everything; Music applies only to the music channel; Effects applies to
+        // ambient + interaction (the "sound effects" bus in vanilla MW). All
+        // clamped to [0, 1] on write.
+        float _masterScalar = 1f;
+        float _musicScalar = 1f;
+        float _effectsScalar = 1f;
+
         public bool IsMusicPlaying => _music?.Source != null && _music.Source.isPlaying;
         public bool HasPendingMusicTrack =>
             _music != null
             && (_music.Operation != null || (_music.Source != null && _music.Source.clip == null && !string.IsNullOrWhiteSpace(_music.PendingPath)));
+
+        public float MasterVolume => _masterScalar;
+        public float MusicVolume => _musicScalar;
+        public float EffectsVolume => _effectsScalar;
+
+        public void SetMasterVolume(float value)
+        {
+            float clamped = Mathf.Clamp01(value);
+            if (Mathf.Approximately(_masterScalar, clamped))
+                return;
+            _masterScalar = clamped;
+            ApplyScalars();
+        }
+
+        public void SetMusicVolume(float value)
+        {
+            float clamped = Mathf.Clamp01(value);
+            if (Mathf.Approximately(_musicScalar, clamped))
+                return;
+            _musicScalar = clamped;
+            ApplyScalars();
+        }
+
+        public void SetEffectsVolume(float value)
+        {
+            float clamped = Mathf.Clamp01(value);
+            if (Mathf.Approximately(_effectsScalar, clamped))
+                return;
+            _effectsScalar = clamped;
+            ApplyScalars();
+        }
+
+        /// <summary>
+        /// Recomputes each looping channel's target volume from its stored baseline
+        /// × the current master/bus scalars. Call after any scalar changes; one-shot
+        /// players (region + interaction) pick the scalars up at play time via
+        /// <see cref="ComputeBusMultiplier"/>.
+        /// </summary>
+        void ApplyScalars()
+        {
+            _music.TargetVolume = Mathf.Clamp01(_music.BaselineVolume * ComputeBusMultiplier(_music.Bus));
+            _interiorAmbient.TargetVolume = Mathf.Clamp01(_interiorAmbient.BaselineVolume * ComputeBusMultiplier(_interiorAmbient.Bus));
+        }
+
+        float ComputeBusMultiplier(ChannelBus bus) => bus switch
+        {
+            ChannelBus.Music => _masterScalar * _musicScalar,
+            ChannelBus.Effects => _masterScalar * _effectsScalar,
+            _ => _masterScalar,
+        };
 
         public RuntimeAudioService()
         {
@@ -98,8 +186,8 @@ namespace VVardenfell.Runtime.Audio
             interiorAmbientSource.ignoreListenerPause = true;
             interiorAmbientSource.rolloffMode = AudioRolloffMode.Logarithmic;
 
-            _music = new ChannelState("music", musicSource);
-            _interiorAmbient = new ChannelState("interior-ambient", interiorAmbientSource);
+            _music = new ChannelState("music", musicSource, ChannelBus.Music);
+            _interiorAmbient = new ChannelState("interior-ambient", interiorAmbientSource, ChannelBus.Effects);
 
             _regionEventSources = new AudioSource[RegionEventSourceCount];
             for (int i = 0; i < _regionEventSources.Length; i++)
@@ -125,10 +213,23 @@ namespace VVardenfell.Runtime.Audio
             }
 
             RefreshInstallPath();
+            Active = this;
+
+            // Pick up persisted audio scalars immediately so baseline music and
+            // ambience honor the player's saved Options values from the very first
+            // tick, not only after Options is opened mid-session.
+            if (ConfigStorage.TryLoad(out var cfg) && cfg != null)
+            {
+                _masterScalar = Mathf.Clamp01(cfg.MasterVolume);
+                _musicScalar = Mathf.Clamp01(cfg.MusicVolume);
+                _effectsScalar = Mathf.Clamp01(cfg.EffectsVolume);
+            }
         }
 
         public void Dispose()
         {
+            if (Active == this)
+                Active = null;
             DisposeChannel(_music);
             DisposeChannel(_interiorAmbient);
             DisposePendingEvents();
@@ -306,7 +407,10 @@ namespace VVardenfell.Runtime.Audio
         void SyncChannel(ChannelState channel, string path, bool loop, float targetVolume)
         {
             channel.PendingLoop = loop;
-            channel.TargetVolume = Mathf.Clamp01(targetVolume);
+            // Record the tuning-intended volume as the baseline so the Options
+            // scalars can be reapplied later without re-doing the tuning lookup.
+            channel.BaselineVolume = Mathf.Clamp01(targetVolume);
+            channel.TargetVolume = Mathf.Clamp01(channel.BaselineVolume * ComputeBusMultiplier(channel.Bus));
 
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -491,7 +595,10 @@ namespace VVardenfell.Runtime.Audio
             _nextRegionEventSource = (_nextRegionEventSource + 1) % _regionEventSources.Length;
 
             var source = _regionEventSources[sourceIndex];
-            source.volume = Mathf.Clamp01(volume);
+            // Region events route through the Effects bus (master × effects scalar)
+            // so the Options sliders apply to one-shots the same way they apply to
+            // the looping ambient channel.
+            source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
             source.pitch = 1f;
             source.PlayOneShot(clip, 1f);
         }
@@ -569,7 +676,8 @@ namespace VVardenfell.Runtime.Audio
             source.transform.position = position;
             source.minDistance = Mathf.Max(0f, minDistance);
             source.maxDistance = Mathf.Max(source.minDistance, maxDistance);
-            source.volume = Mathf.Clamp01(volume);
+            // Interaction SFX also route through the Effects bus.
+            source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
             source.pitch = 1f;
             source.PlayOneShot(clip, 1f);
         }

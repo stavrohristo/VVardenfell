@@ -117,7 +117,7 @@ namespace VVardenfell.Runtime.Player
     }
 
     [BurstCompile]
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup), OrderLast = true)]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
     public partial struct FixedTickSystem : ISystem
     {
         public struct Singleton : IComponentData

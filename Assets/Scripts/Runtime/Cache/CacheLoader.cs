@@ -100,7 +100,6 @@ namespace VVardenfell.Runtime.Cache
             manifestSw.Stop();
             progress?.Report("Manifest ready", 1, 1);
             progress?.CompleteStage();
-            Debug.Log($"[VVardenfell] cache manifest + metadata in {manifestSw.ElapsedMilliseconds}ms");
             yield return null;
 
             progress?.BeginStage("Gameplay content", "Loading gameplay content database", 1);
@@ -120,7 +119,6 @@ namespace VVardenfell.Runtime.Cache
                 1,
                 1);
             progress?.CompleteStage();
-            Debug.Log($"[VVardenfell] gameplay content loaded in {gameplaySw.ElapsedMilliseconds}ms");
             yield return null;
 
             progress?.BeginStage("Mesh deserialization", "Reading meshes", 0);
@@ -154,10 +152,8 @@ namespace VVardenfell.Runtime.Cache
                 yield return null;
             }
             terrainSw.Stop();
-            Debug.Log($"[VVardenfell] cache terrain layers in {terrainSw.ElapsedMilliseconds}ms");
 
             totalSw.Stop();
-            Debug.Log($"[VVardenfell] cache hydrated in {totalSw.ElapsedMilliseconds}ms");
         }
 
         private IEnumerator ReadMeshesIncremental(RuntimeLoadProgress progress)
@@ -202,7 +198,6 @@ namespace VVardenfell.Runtime.Cache
 
             sw.Stop();
             progress?.CompleteStage("Meshes ready");
-            Debug.Log($"[VVardenfell] cache meshes in {sw.ElapsedMilliseconds}ms");
         }
 
         private IEnumerator LoadTexturesIncremental(RuntimeLoadProgress progress)
@@ -234,7 +229,6 @@ namespace VVardenfell.Runtime.Cache
 
             sw.Stop();
             progress?.CompleteStage("Textures ready");
-            Debug.Log($"[VVardenfell] cache textures in {sw.ElapsedMilliseconds}ms");
         }
 
         private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)
@@ -453,7 +447,6 @@ namespace VVardenfell.Runtime.Cache
 
                     Debug.LogWarning($"[VVardenfell] remapped {remappedShardCount} render shard(s) ({missingBuckets}) to fallback bucket due to missing bucket keys.");
                 }
-                Debug.Log($"[VVardenfell] refs: {records.Length} shards, {rts.Length} dim buckets x {matRecords.Length} blend variants = {materials.Length} materials");
                 success = true;
             }
             finally
@@ -488,7 +481,6 @@ namespace VVardenfell.Runtime.Cache
             }
 
             sw.Stop();
-            Debug.Log($"[VVardenfell] cache ref shards in {sw.ElapsedMilliseconds}ms");
         }
 
         private static string MaterialNameForFlags(uint flags, int index)

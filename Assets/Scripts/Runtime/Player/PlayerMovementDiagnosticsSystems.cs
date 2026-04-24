@@ -4,16 +4,15 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
-using UnityEngine.InputSystem;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerFixedStepMovementSystem))]
-    [UpdateBefore(typeof(FixedTickSystem))]
     public partial class MorrowindMovementDiagnosticsSystem : SystemBase
     {
         EntityQuery _playerQuery;
@@ -26,12 +25,17 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<MorrowindMovementIntent>(),
                 ComponentType.ReadOnly<MorrowindActorKinematicState>(),
+                ComponentType.ReadOnly<ActorAttributeSet>(),
+                ComponentType.ReadOnly<ActorSkillSet>(),
+                ComponentType.ReadOnly<ActorVitalSet>(),
+                ComponentType.ReadOnly<ActorEffectStatModifiers>(),
+                ComponentType.ReadOnly<ActorDerivedMovementStats>(),
                 ComponentType.ReadOnly<MorrowindMovementFrameTrace>());
 
             RequireForUpdate(_playerQuery);
             RequireForUpdate<MorrowindMovementDiagnosticsState>();
             RequireForUpdate<MorrowindMovementDiagnosticsSnapshot>();
-            RequireForUpdate<FixedTickSystem.Singleton>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
         protected override void OnUpdate()
@@ -43,8 +47,14 @@ namespace VVardenfell.Runtime.Player
             var transform = _playerQuery.GetSingleton<LocalTransform>();
             var intent = _playerQuery.GetSingleton<MorrowindMovementIntent>();
             var kinematic = _playerQuery.GetSingleton<MorrowindActorKinematicState>();
+            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
+            var skills = _playerQuery.GetSingleton<ActorSkillSet>();
+            var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
+            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
+            var derived = _playerQuery.GetSingleton<ActorDerivedMovementStats>();
             var trace = _playerQuery.GetSingleton<MorrowindMovementFrameTrace>();
-            uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick + 1u;
+            var frameState = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>();
+            uint fixedTick = frameState.SnapshotTick;
 
             ref var state = ref SystemAPI.GetSingletonRW<MorrowindMovementDiagnosticsState>().ValueRW;
             state.SnapshotSequence++;
@@ -83,15 +93,45 @@ namespace VVardenfell.Runtime.Player
                 GroundNormal = trace.GroundNormal,
                 SweepIterations = trace.SweepIterations,
                 SlideCount = trace.SlideCount,
+                PreviousSupportKind = trace.PreviousSupportKind,
+                SupportKind = trace.SupportKind,
+                SupportSnapMode = trace.SupportSnapMode,
+                SupportRejectedSteep = trace.SupportRejectedSteep,
+                LandingConsumedInertia = trace.LandingConsumedInertia,
                 GroundProbeSnapped = trace.GroundProbeSnapped,
                 StepAttempted = trace.StepAttempted,
+                StepAttemptIndex = trace.StepAttemptIndex,
                 StepSucceeded = trace.StepSucceeded,
                 SteepSlopeRejected = trace.SteepSlopeRejected,
+                UsedSeamLogic = trace.UsedSeamLogic,
+                UsedGroundedWallNormalFlatten = trace.UsedGroundedWallNormalFlatten,
                 JumpRequested = trace.JumpRequested,
                 JumpAccepted = trace.JumpAccepted,
                 LastBlocker = trace.LastBlocker,
                 LastBlockerNormal = trace.LastBlockerNormal,
                 LastBlockerFraction = trace.LastBlockerFraction,
+                Strength = attributes.Strength,
+                Willpower = attributes.Willpower,
+                Agility = attributes.Agility,
+                Endurance = attributes.Endurance,
+                SpeedAttribute = attributes.Speed,
+                Athletics = skills.Athletics,
+                Acrobatics = skills.Acrobatics,
+                CurrentFatigue = vitals.CurrentFatigue,
+                ModifiedFatigueBase = vitals.ModifiedFatigueBase,
+                JumpMagnitude = effectModifiers.JumpMagnitude,
+                FeatherMagnitude = effectModifiers.FeatherMagnitude,
+                BurdenMagnitude = effectModifiers.BurdenMagnitude,
+                CarryCapacity = derived.CarryCapacity,
+                Encumbrance = derived.Encumbrance,
+                NormalizedEncumbrance = derived.NormalizedEncumbrance,
+                FatigueTerm = derived.FatigueTerm,
+                WalkSpeed = derived.WalkSpeed * VVardenfell.Core.WorldScale.MwUnitsToMeters,
+                RunSpeed = derived.RunSpeed * VVardenfell.Core.WorldScale.MwUnitsToMeters,
+                SneakWalkSpeed = derived.SneakWalkSpeed * VVardenfell.Core.WorldScale.MwUnitsToMeters,
+                JumpSpeed = MorrowindPlayerSpeedResolver.Build(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, derived)
+                    .GetJumpSpeed(intent.RunHeld && !intent.SneakHeld),
+                JumpMoveFactor = derived.JumpMoveFactor,
                 StatusText = BuildStatusText(kinematic, trace),
             };
         }
@@ -116,10 +156,21 @@ namespace VVardenfell.Runtime.Player
                 return ToFixed128("stuck");
             if (trace.JumpAccepted != 0)
                 return ToFixed128("jump");
+
+            switch ((MorrowindSupportKind)trace.SupportKind)
+            {
+                case MorrowindSupportKind.ActorTop:
+                    return ToFixed128("actor-top");
+                case MorrowindSupportKind.WalkableSlope:
+                    return ToFixed128("walkable-slope");
+                case MorrowindSupportKind.WaterSurfaceCandidate:
+                    return ToFixed128("water-surface");
+                case MorrowindSupportKind.RecoveryFlat:
+                    return ToFixed128("recovery");
+            }
+
             if (!kinematic.Grounded)
-                return ToFixed128("airborne");
-            if (kinematic.OnSlope)
-                return ToFixed128("slope");
+                return trace.SupportRejectedSteep != 0 ? ToFixed128("steep-slope") : ToFixed128("airborne");
             if (trace.StepSucceeded != 0)
                 return ToFixed128("step");
             return ToFixed128("grounded");
@@ -137,34 +188,51 @@ namespace VVardenfell.Runtime.Player
         static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup), OrderLast = true)]
-    [UpdateAfter(typeof(MorrowindMovementDiagnosticsSystem))]
-    [UpdateBefore(typeof(FixedTickSystem))]
-    public partial class MorrowindMovementDiagnosticsHotkeySystem : SystemBase
+    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
+    public partial class MorrowindMovementDiagnosticsConsoleLogSystem : SystemBase
     {
-        protected override void OnUpdate()
+        uint _lastSnapshotSequence;
+        byte _lastGrounded;
+        byte _lastSneakHeld;
+        byte _lastRunHeld;
+        byte _lastSupportKind;
+        FixedString128Bytes _lastStatusText;
+        bool _initialized;
+
+        protected override void OnCreate()
         {
-            if (WasHotkeyPressed())
-            {
-                Debug.Log("[VVardenfell][MovementDiagnostics] F10 pressed; dumping OpenMW-style movement state.");
-                Debug.Log(MorrowindMovementDebug.DescribeLatest());
-            }
+            RequireForUpdate<MorrowindMovementDiagnosticsSnapshot>();
         }
 
-        static bool WasHotkeyPressed()
+        protected override void OnUpdate()
         {
-            var keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.f10Key.wasPressedThisFrame)
-                return true;
+            var snapshot = SystemAPI.GetSingleton<MorrowindMovementDiagnosticsSnapshot>();
+            if (snapshot.SnapshotSequence == _lastSnapshotSequence)
+                return;
 
-            try
-            {
-                return Input.GetKeyDown(KeyCode.F10);
-            }
-            catch (System.InvalidOperationException)
-            {
-                return false;
-            }
+            bool shouldLog = !_initialized
+                || snapshot.Grounded != _lastGrounded
+                || snapshot.SneakHeld != _lastSneakHeld
+                || snapshot.RunHeld != _lastRunHeld
+                || snapshot.SupportKind != _lastSupportKind
+                || !snapshot.StatusText.Equals(_lastStatusText)
+                || snapshot.JumpAccepted != 0
+                || snapshot.StepAttempted != 0
+                || snapshot.StepSucceeded != 0
+                || snapshot.UsedSeamLogic != 0
+                || snapshot.UsedGroundedWallNormalFlatten != 0;
+
+            _lastSnapshotSequence = snapshot.SnapshotSequence;
+            _lastGrounded = snapshot.Grounded;
+            _lastSneakHeld = snapshot.SneakHeld;
+            _lastRunHeld = snapshot.RunHeld;
+            _lastSupportKind = snapshot.SupportKind;
+            _lastStatusText = snapshot.StatusText;
+            _initialized = true;
+
+            if (!shouldLog)
+                return;
+
         }
     }
 
@@ -243,6 +311,12 @@ namespace VVardenfell.Runtime.Player
             builder.Append(snapshot.Grounded != 0 ? "yes" : "no");
             builder.Append(" slope=");
             builder.Append(snapshot.OnSlope != 0 ? "yes" : "no");
+            builder.Append(" prevSupport=");
+            builder.Append(DescribeSupportKind(snapshot.PreviousSupportKind));
+            builder.Append(" support=");
+            builder.Append(DescribeSupportKind(snapshot.SupportKind));
+            builder.Append(" snapMode=");
+            builder.Append(DescribeSupportSnapMode(snapshot.SupportSnapMode));
             builder.Append(" normal=");
             AppendVector(builder, snapshot.GroundNormal);
             builder.Append(" standingOn=");
@@ -257,12 +331,25 @@ namespace VVardenfell.Runtime.Player
             builder.Append(snapshot.SlideCount);
             builder.Append(" snap=");
             builder.Append(snapshot.GroundProbeSnapped != 0 ? "yes" : "no");
+            builder.Append(" supportSteepReject=");
+            builder.Append(snapshot.SupportRejectedSteep != 0 ? "yes" : "no");
+            builder.Append(" landingConsumed=");
+            builder.Append(snapshot.LandingConsumedInertia != 0 ? "yes" : "no");
             builder.Append(" step=");
             builder.Append(snapshot.StepAttempted != 0
                 ? (snapshot.StepSucceeded != 0 ? "succeeded" : "failed")
                 : "none");
+            if (snapshot.StepAttempted != 0)
+            {
+                builder.Append("#");
+                builder.Append(snapshot.StepAttemptIndex);
+            }
             builder.Append(" steepReject=");
             builder.Append(snapshot.SteepSlopeRejected != 0 ? "yes" : "no");
+            builder.Append(" seam=");
+            builder.Append(snapshot.UsedSeamLogic != 0 ? "yes" : "no");
+            builder.Append(" wallFlatten=");
+            builder.Append(snapshot.UsedGroundedWallNormalFlatten != 0 ? "yes" : "no");
             builder.Append(" jump=");
             builder.Append(snapshot.JumpRequested != 0
                 ? (snapshot.JumpAccepted != 0 ? "accepted" : "rejected")
@@ -277,9 +364,74 @@ namespace VVardenfell.Runtime.Player
             builder.Append(snapshot.LastBlockerFraction.ToString("F3"));
             builder.AppendLine();
 
-            builder.Append("  ");
-            builder.Append(MorrowindPlayerSpeedResolver.DescribeDefaults(RuntimeContentDatabase.Active));
+            builder.Append("  stats str=");
+            builder.Append(snapshot.Strength.ToString("F0"));
+            builder.Append(" wil=");
+            builder.Append(snapshot.Willpower.ToString("F0"));
+            builder.Append(" agi=");
+            builder.Append(snapshot.Agility.ToString("F0"));
+            builder.Append(" end=");
+            builder.Append(snapshot.Endurance.ToString("F0"));
+            builder.Append(" spd=");
+            builder.Append(snapshot.SpeedAttribute.ToString("F0"));
+            builder.Append(" ath=");
+            builder.Append(snapshot.Athletics.ToString("F0"));
+            builder.Append(" acro=");
+            builder.Append(snapshot.Acrobatics.ToString("F0"));
+            builder.Append(" fatigue=");
+            builder.Append(snapshot.CurrentFatigue.ToString("F1"));
+            builder.Append("/");
+            builder.Append(snapshot.ModifiedFatigueBase.ToString("F1"));
+            builder.Append(" fatigueTerm=");
+            builder.Append(snapshot.FatigueTerm.ToString("F2"));
+            builder.AppendLine();
+
+            builder.Append("  derived enc=");
+            builder.Append(snapshot.Encumbrance.ToString("F1"));
+            builder.Append("/");
+            builder.Append(snapshot.CarryCapacity.ToString("F1"));
+            builder.Append(" normEnc=");
+            builder.Append(snapshot.NormalizedEncumbrance.ToString("F2"));
+            builder.Append(" walk=");
+            builder.Append(snapshot.WalkSpeed.ToString("F2"));
+            builder.Append(" run=");
+            builder.Append(snapshot.RunSpeed.ToString("F2"));
+            builder.Append(" sneak=");
+            builder.Append(snapshot.SneakWalkSpeed.ToString("F2"));
+            builder.Append(" jump=");
+            builder.Append(snapshot.JumpSpeed.ToString("F2"));
+            builder.Append(" jumpMove=");
+            builder.Append(snapshot.JumpMoveFactor.ToString("F2"));
             return builder.ToString();
+        }
+
+        public static void LogLatest()
+        {
+        }
+
+        static string DescribeSupportKind(byte raw)
+        {
+            return ((MorrowindSupportKind)raw) switch
+            {
+                MorrowindSupportKind.None => "none",
+                MorrowindSupportKind.FlatGround => "flat",
+                MorrowindSupportKind.WalkableSlope => "walkable-slope",
+                MorrowindSupportKind.ActorTop => "actor-top",
+                MorrowindSupportKind.WaterSurfaceCandidate => "water",
+                MorrowindSupportKind.RecoveryFlat => "recovery",
+                _ => $"unknown({raw})",
+            };
+        }
+
+        static string DescribeSupportSnapMode(byte raw)
+        {
+            return ((MorrowindSupportSnapMode)raw) switch
+            {
+                MorrowindSupportSnapMode.None => "none",
+                MorrowindSupportSnapMode.Offset => "offset",
+                MorrowindSupportSnapMode.Settle => "settle",
+                _ => $"unknown({raw})",
+            };
         }
 
         static void AppendVector(StringBuilder builder, float3 value)

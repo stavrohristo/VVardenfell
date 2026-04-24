@@ -2,7 +2,6 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Physics;
 using Unity.Profiling;
 using Unity.Rendering;
 using VVardenfell.Runtime.Components;
@@ -24,19 +23,13 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _singletonQuery;
         EntityQuery _refsOnlyQuery;  // excludes terrain (no CellCoord)
         EntityQuery _allQuery;       // refs + terrain
-        EntityQuery _physicsLoadQuery;
-        EntityTypeHandle _entityHandle;
         ComponentTypeHandle<CellLink> _cellLinkHandle;
         ComponentTypeHandle<MaterialMeshInfo> _mmiHandle;
-        ComponentTypeHandle<RuntimeColliderSource> _colliderSourceHandle;
-
-        static readonly ProfilerMarker k_PhysicsLoad = new("VV.Streaming.PhysicsLoad");
-        static readonly ProfilerMarker k_ActivateCollider = new("VV.Streaming.PhysicsLoad.ActivateCollider");
 
         public void OnCreate(ref SystemState state)
         {
             _singletonQuery = SystemAPI.QueryBuilder()
-                .WithAll<StreamingConfig, LoadQueue, LoadedCellsMap, LogicalRefLookup>()
+                .WithAll<StreamingConfig, LoadQueue, LoadedCellsMap, LogicalRefLookup, PendingCellPhysicsLoad>()
                 .Build();
             state.RequireForUpdate(_singletonQuery);
 
@@ -59,15 +52,8 @@ namespace VVardenfell.Runtime.Streaming
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
                 .Build();
-            _physicsLoadQuery = SystemAPI.QueryBuilder()
-                .WithAll<CellLink, RuntimeColliderSource>()
-                .WithNone<PhysicsCollider>()
-                .Build();
-
-            _entityHandle = state.GetEntityTypeHandle();
             _cellLinkHandle = state.GetComponentTypeHandle<CellLink>(isReadOnly: true);
-            _mmiHandle      = state.GetComponentTypeHandle<MaterialMeshInfo>(isReadOnly: false);
-            _colliderSourceHandle = state.GetComponentTypeHandle<RuntimeColliderSource>(isReadOnly: true);
+            _mmiHandle = state.GetComponentTypeHandle<MaterialMeshInfo>(isReadOnly: false);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -75,84 +61,66 @@ namespace VVardenfell.Runtime.Streaming
             var queue = _singletonQuery.GetSingleton<LoadQueue>();
             if (queue.Queue.Count == 0) return;
 
-            var cfg    = _singletonQuery.GetSingleton<StreamingConfig>();
+            var cfg = _singletonQuery.GetSingleton<StreamingConfig>();
             var loaded = _singletonQuery.GetSingleton<LoadedCellsMap>();
             var logicalRefs = _singletonQuery.GetSingleton<LogicalRefLookup>();
+            var pendingPhysicsLoad = _singletonQuery.GetSingleton<PendingCellPhysicsLoad>();
 
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
-            _entityHandle.Update(ref state);
-            _colliderSourceHandle.Update(ref state);
-
 
             var targetQuery = cfg.GateTerrainByRadius ? _allQuery : _refsOnlyQuery;
-            var ecb = new EntityCommandBuffer(Allocator.TempJob);
-            bool physicsChanged = false;
-
-            try
+            int budget = cfg.MaxLoadsPerFrame;
+            bool spawnedCellThisFrame = false;
+            while (budget-- > 0 && queue.Queue.TryDequeue(out var coord))
             {
-                int budget = cfg.MaxLoadsPerFrame;
-                bool spawnedCellThisFrame = false;
-                while (budget-- > 0 && queue.Queue.TryDequeue(out var coord))
+                if (loaded.Active.Contains(coord))
+                    continue;
+
+                if (!loaded.Map.ContainsKey(coord))
                 {
-                    if (loaded.Active.Contains(coord))
-                        continue;
-
-                    if (!loaded.Map.ContainsKey(coord))
+                    if (WorldResources.Cells.TryGetValue(coord, out var cellData) && cellData != null)
                     {
-                        if (WorldResources.Cells.TryGetValue(coord, out var cellData) && cellData != null)
-                        {
-                            WorldSpawner.SpawnExteriorCell(
-                                World.DefaultGameObjectInjectionWorld,
-                                coord,
-                                cellData,
-                                ref loaded,
-                                ref logicalRefs,
-                                active: true,
-                                gateTerrainByRadius: cfg.GateTerrainByRadius);
-                            physicsChanged = true;
-                            spawnedCellThisFrame = true;
-                        }
-
-                        if (spawnedCellThisFrame)
-                            break;
-
-                        continue;
+                        WorldSpawner.SpawnExteriorCell(
+                            World.DefaultGameObjectInjectionWorld,
+                            coord,
+                            cellData,
+                            ref loaded,
+                            ref logicalRefs,
+                            active: true,
+                            gateTerrainByRadius: cfg.GateTerrainByRadius);
+                        QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
+                        spawnedCellThisFrame = true;
                     }
 
-                    new ToggleCellMmiJob
-                    {
-                        Target     = coord,
-                        Enable     = true,
-                        LinkHandle = _cellLinkHandle,
-                        MmiHandle  = _mmiHandle,
-                    }.Run(targetQuery);
+                    if (spawnedCellThisFrame)
+                        break;
 
-                    using (k_PhysicsLoad.Auto())
-                    {
-                        using (k_ActivateCollider.Auto())
-                        {
-                            new ActivatePhysicsJob
-                            {
-                                Target = coord,
-                                EntityHandle = _entityHandle,
-                                LinkHandle = _cellLinkHandle,
-                                SourceHandle = _colliderSourceHandle,
-                                CommandBuf = ecb.AsParallelWriter(),
-                            }.Run(_physicsLoadQuery);
-                        }
-                    }
-
-                    physicsChanged = true;
-                    loaded.Active.Add(coord);
+                    continue;
                 }
+
+                new ToggleCellMmiJob
+                {
+                    Target = coord,
+                    Enable = true,
+                    LinkHandle = _cellLinkHandle,
+                    MmiHandle = _mmiHandle,
+                }.Run(targetQuery);
+
+                QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
+                loaded.Active.Add(coord);
             }
-            finally
+        }
+
+        static void QueuePhysicsCell(ref NativeList<int2> pendingCells, int2 coord)
+        {
+            for (int i = 0; i < pendingCells.Length; i++)
             {
-                if (physicsChanged)
-                    ecb.Playback(state.EntityManager);
-                ecb.Dispose();
+                if (pendingCells[i].Equals(coord))
+                    return;
             }
+
+            pendingCells.Add(coord);
         }
 
         /// <summary>
@@ -180,36 +148,6 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        [BurstCompile]
-        internal struct ActivatePhysicsJob : IJobChunk
-        {
-            public int2 Target;
-            [ReadOnly] public EntityTypeHandle EntityHandle;
-            [ReadOnly] public ComponentTypeHandle<CellLink> LinkHandle;
-            [ReadOnly] public ComponentTypeHandle<RuntimeColliderSource> SourceHandle;
-            public EntityCommandBuffer.ParallelWriter CommandBuf;
-
-            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
-            {
-                var entities = chunk.GetNativeArray(EntityHandle);
-                var links = chunk.GetNativeArray(ref LinkHandle);
-                var sources = chunk.GetNativeArray(ref SourceHandle);
-                int n = chunk.Count;
-                for (int i = 0; i < n; i++)
-                {
-                    if (!links[i].Value.Equals(Target))
-                        continue;
-
-                    if (!sources[i].Value.IsCreated)
-                        continue;
-
-                    CommandBuf.AddComponent(unfilteredChunkIndex, entities[i], new PhysicsCollider
-                    {
-                        Value = sources[i].Value
-                    });
-                }
-            }
-        }
     }
 
 }

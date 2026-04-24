@@ -1,36 +1,51 @@
+using Unity.Collections;
 using Unity.Entities;
-using UnityEngine;
-using UnityEngine.InputSystem;
+using Unity.Mathematics;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Streaming
 {
-    [UpdateInGroup(typeof(CellStreamingSystemGroup), OrderLast = true)]
-    [UpdateAfter(typeof(TerrainGateToggleSystem))]
-    public partial class CollisionEvidenceHotkeySystem : SystemBase
+    public static class CollisionEvidenceDebug
     {
-        protected override void OnUpdate()
+        public static void LogCurrentComparison(World world = null)
         {
-            if (WasHotkeyPressed())
-            {
-                Debug.Log("[VVardenfell][CollisionEvidence] F9 pressed; dumping exterior/interior collision comparison.");
-                ExteriorInteriorCollisionDebug.LogCurrentComparison(World);
-            }
+            ExteriorInteriorCollisionDebug.LogCurrentComparison(world);
+        }
+    }
+
+    [UpdateInGroup(typeof(CellStreamingSystemGroup), OrderLast = true)]
+    public partial class CollisionEvidenceConsoleLogSystem : SystemBase
+    {
+        int2 _lastCameraCell;
+        byte _lastInteriorActive;
+        FixedString128Bytes _lastInteriorCellId;
+        bool _initialized;
+
+        protected override void OnCreate()
+        {
+            RequireForUpdate<StreamingConfig>();
+            RequireForUpdate<InteriorTransitionState>();
         }
 
-        static bool WasHotkeyPressed()
+        protected override void OnUpdate()
         {
-            var keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.f9Key.wasPressedThisFrame)
-                return true;
+            var streaming = SystemAPI.GetSingleton<StreamingConfig>();
+            var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
 
-            try
-            {
-                return Input.GetKeyDown(KeyCode.F9);
-            }
-            catch (System.InvalidOperationException)
-            {
-                return false;
-            }
+            bool shouldLog = !_initialized
+                || !streaming.CameraCell.Equals(_lastCameraCell)
+                || transition.InteriorActive != _lastInteriorActive
+                || !transition.ActiveInteriorCellId.Equals(_lastInteriorCellId);
+
+            _lastCameraCell = streaming.CameraCell;
+            _lastInteriorActive = transition.InteriorActive;
+            _lastInteriorCellId = transition.ActiveInteriorCellId;
+            _initialized = true;
+
+            if (!shouldLog)
+                return;
+
+            CollisionEvidenceDebug.LogCurrentComparison(World);
         }
     }
 }

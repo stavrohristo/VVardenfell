@@ -30,8 +30,8 @@ namespace VVardenfell.Runtime.Interactions
             var request = SystemAPI.GetSingleton<InteractionActivationRequest>();
             var result = SystemAPI.GetSingleton<InteractionActivationResult>();
             var presentation = SystemAPI.GetSingleton<InteractionPresentationState>();
-            uint fixedTick = SystemAPI.HasSingleton<FixedTickSystem.Singleton>()
-                ? SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick
+            uint fixedTick = SystemAPI.HasSingleton<MorrowindPhysicsFrameState>()
+                ? SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().SnapshotTick
                 : 0u;
 
             ref var state = ref SystemAPI.GetSingletonRW<InteractionDiagnosticsState>().ValueRW;

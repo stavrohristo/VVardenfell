@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.IO;
 using Unity.Mathematics;
@@ -7,7 +8,8 @@ using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bake;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Player;
-using VVardenfell.Runtime.UI;
+using VVardenfell.Runtime.UI.Assets;
+using VVardenfell.Runtime.UI.Framework;
 using Stopwatch = System.Diagnostics.Stopwatch;
 using VVardenfell.Runtime.Streaming;
 
@@ -19,7 +21,6 @@ namespace VVardenfell.Runtime.Bootstrap
     /// Baking -> one-time conversion from BSA/ESM to the DOTS cache.
     /// Loading -> staged cache hydration + world install, hidden behind presentation.
     /// Ready -> world is loaded and waits behind the visual main menu until dismissed.
-    /// Uses IMGUI to stay tiny and decoupled from URP/UI Toolkit.
     /// </summary>
     public class BootstrapController : MonoBehaviour
     {
@@ -136,6 +137,7 @@ namespace VVardenfell.Runtime.Bootstrap
         private readonly RuntimeLoadProgress _loadProgress = new RuntimeLoadProgress();
         private Coroutine _loadCoroutine;
         private BootstrapPresentationView _presentation;
+        private BootstrapFallbackView _fallbackView;
         private bool _presentationReady;
         private bool _loadStartRequested;
 
@@ -145,6 +147,18 @@ namespace VVardenfell.Runtime.Bootstrap
                 return Active._playerMovement.Build();
 
             return new PlayerMovementSettings().Build();
+        }
+
+        public static bool TryShowRuntimeMainMenu(out string error)
+        {
+            error = null;
+            if (Active == null)
+            {
+                error = "Bootstrap controller is not available.";
+                return false;
+            }
+
+            return Active.ShowRuntimeMainMenu(out error);
         }
 
         private void Awake()
@@ -171,9 +185,11 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private void Start()
         {
+            EnsureFallbackView();
             if (ConfigStorage.TryLoad(out var c) && c.IsValid(out _))
             {
                 _config = c;
+                ApplyPersistedSettings(c);
                 BeginCacheFlow();
             }
             else
@@ -181,6 +197,50 @@ namespace VVardenfell.Runtime.Bootstrap
                 _stage = Stage.PickPath;
                 _path = GuessDefaultInstallPath();
             }
+
+            RefreshFallbackView();
+        }
+
+        /// <summary>
+        /// Apply persisted player settings from config to the matching runtime
+        /// knobs before any UI is built or the first intro frame is rendered.
+        /// Audio scalars are picked up inside <c>RuntimeAudioService</c>'s ctor
+        /// (it reads config directly) so we don't touch them here; the rest of
+        /// the settings need to be pushed here so e.g. an earlier-saved UI scale
+        /// applies to the intro captions, not only after the main menu opens.
+        /// </summary>
+        static void ApplyPersistedSettings(MorrowindConfig config)
+        {
+            if (config == null)
+                return;
+
+            RuntimeUiScaleSettings.GlobalScale = config.UiScale;
+            RuntimeUiScaleSettings.HudScale = config.HudScale;
+            VVardenfell.Runtime.UI.Shell.HudUserPreferences.ShowCrosshair = config.ShowCrosshair;
+            VVardenfell.Runtime.UI.Shell.HudUserPreferences.ShowSubtitles = config.ShowSubtitles;
+
+            Screen.brightness = config.Gamma;
+            QualitySettings.vSyncCount = Mathf.Clamp(config.VSync, 0, 2);
+            Screen.fullScreenMode = config.WindowMode switch
+            {
+                1 => FullScreenMode.ExclusiveFullScreen,
+                2 => FullScreenMode.FullScreenWindow,
+                _ => FullScreenMode.Windowed,
+            };
+
+            if (config.ResolutionWidth > 0 && config.ResolutionHeight > 0)
+            {
+                int refresh = config.RefreshRate > 0 ? config.RefreshRate : Screen.currentResolution.refreshRate;
+                Screen.SetResolution(
+                    config.ResolutionWidth,
+                    config.ResolutionHeight,
+                    Screen.fullScreenMode,
+                    refresh);
+            }
+
+            // FOV can't apply yet â€” Camera.main doesn't exist until the world
+            // scene loads. RuntimeHudShellView reapplies this when the HUD comes
+            // up, and the Options window itself writes FOV live when moved.
         }
 
         private void BeginCacheFlow()
@@ -269,6 +329,8 @@ namespace VVardenfell.Runtime.Bootstrap
                 DestroyPresentation();
                 enabled = false;
             }
+
+            RefreshFallbackView();
         }
 
         private void BeginLoading()
@@ -356,7 +418,6 @@ namespace VVardenfell.Runtime.Bootstrap
             sw.Stop();
             _loadProgress.Complete();
             _presentation?.NotifyBootstrapComplete();
-            Debug.Log($"[VVardenfell] bootstrap completed in {sw.ElapsedMilliseconds}ms");
             _loadCoroutine = null;
             _loadStartRequested = false;
             _stage = Stage.Ready;
@@ -380,114 +441,6 @@ namespace VVardenfell.Runtime.Bootstrap
             return "";
         }
 
-        private void OnGUI()
-        {
-            switch (_stage)
-            {
-                case Stage.PickPath: DrawPicker(); break;
-                case Stage.Baking: DrawProgress(); break;
-                case Stage.Loading:
-                    if (!_presentationReady) DrawLoadProgress();
-                    break;
-                case Stage.Failed: DrawFailed(); break;
-            }
-        }
-
-        private void DrawPicker()
-        {
-            const int w = 640, h = 220;
-            var rect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            GUI.Box(rect, "VVardenfell - Locate Morrowind Installation");
-
-            GUILayout.BeginArea(new Rect(rect.x + 16, rect.y + 32, rect.width - 32, rect.height - 48));
-            GUILayout.Label("Path to your Morrowind installation folder\n(the one containing 'Data Files'):");
-            _path = GUILayout.TextField(_path ?? "", GUILayout.Height(22));
-
-#if UNITY_EDITOR
-            if (GUILayout.Button("Browse...", GUILayout.Width(100)))
-            {
-                var picked = UnityEditor.EditorUtility.OpenFolderPanel("Select Morrowind folder", _path, "");
-                if (!string.IsNullOrEmpty(picked))
-                    _path = picked;
-            }
-#endif
-
-            GUILayout.Space(8);
-            if (GUILayout.Button("Continue", GUILayout.Height(28)))
-            {
-                var cfg = new MorrowindConfig { InstallPath = _path?.Trim() };
-                if (cfg.IsValid(out var err))
-                {
-                    ConfigStorage.Save(cfg);
-                    _config = cfg;
-                    _pathError = null;
-                    BeginCacheFlow();
-                }
-                else
-                {
-                    SetPathError(err);
-                }
-            }
-
-            if (!string.IsNullOrEmpty(_pathError))
-            {
-                var style = new GUIStyle(GUI.skin.label) { normal = { textColor = Color.red }, wordWrap = true };
-                GUILayout.Label(_pathError, style);
-            }
-            GUILayout.EndArea();
-        }
-
-        private void DrawProgress()
-        {
-            const int w = 640, h = 180;
-            var rect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            GUI.Box(rect, "VVardenfell - Baking cache");
-
-            GUILayout.BeginArea(new Rect(rect.x + 16, rect.y + 32, rect.width - 32, rect.height - 48));
-            GUILayout.Label($"Stage: {_progress.Stage}");
-            GUILayout.Label($"{_progress.Label}   {_progress.Current}/{_progress.Total}");
-
-            var barOuter = GUILayoutUtility.GetRect(w - 32, 18);
-            GUI.Box(barOuter, GUIContent.none);
-            float f = _progress.Fraction;
-            var barInner = new Rect(barOuter.x, barOuter.y, barOuter.width * f, barOuter.height);
-            GUI.Box(barInner, GUIContent.none);
-
-            GUILayout.Label("First boot only - subsequent boots load the cache directly.",
-                new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 11 });
-            GUILayout.EndArea();
-        }
-
-        private void DrawLoadProgress()
-        {
-            const int w = 640, h = 180;
-            var rect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            GUI.Box(rect, "VVardenfell - Loading world");
-
-            GUILayout.BeginArea(new Rect(rect.x + 16, rect.y + 32, rect.width - 32, rect.height - 48));
-            GUILayout.Label($"Stage: {_loadProgress.Stage}");
-            GUILayout.Label($"{_loadProgress.Label}   {_loadProgress.Current}/{_loadProgress.Total}");
-
-            var barOuter = GUILayoutUtility.GetRect(w - 32, 18);
-            GUI.Box(barOuter, GUIContent.none);
-            float f = _loadProgress.Fraction;
-            var barInner = new Rect(barOuter.x, barOuter.y, barOuter.width * f, barOuter.height);
-            GUI.Box(barInner, GUIContent.none);
-
-            GUILayout.Label($"Elapsed: {_loadProgress.StageElapsedMs} ms",
-                new GUIStyle(GUI.skin.label) { fontSize = 11 });
-            GUILayout.EndArea();
-        }
-
-        private void DrawFailed()
-        {
-            const int w = 640, h = 180;
-            var rect = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            GUI.Box(rect, "VVardenfell - Error");
-            var style = new GUIStyle(GUI.skin.label) { normal = { textColor = Color.red }, wordWrap = true };
-            GUI.Label(new Rect(rect.x + 16, rect.y + 32, rect.width - 32, rect.height - 48), _fatalError, style);
-        }
-
         private bool EnsurePresentation()
         {
             if (_presentation != null)
@@ -495,17 +448,51 @@ namespace VVardenfell.Runtime.Bootstrap
 
             try
             {
-                var uiAssets = new UiAssetLoader().Load();
+                var theme = RuntimeUiTheme.FromAssets(new UiAssetLoader().Load());
                 var go = new GameObject("VVardenfell.Presentation");
                 DontDestroyOnLoad(go);
                 _presentation = go.AddComponent<BootstrapPresentationView>();
-                _presentation.Initialize(uiAssets, _loadProgress, _config.InstallPath, OnPresentationLoadingPhaseReady);
+                _presentation.Initialize(theme, _loadProgress, _config.InstallPath, OnPresentationLoadingPhaseReady);
                 _presentationReady = true;
                 return true;
             }
             catch (System.Exception ex)
             {
                 SetFatalError($"Failed to load presentation UI: {ex.Message}");
+                _stage = Stage.Failed;
+                _presentationReady = false;
+                return false;
+            }
+        }
+
+        private bool ShowRuntimeMainMenu(out string error)
+        {
+            error = null;
+            enabled = true;
+            _stage = Stage.Ready;
+            _loadStartRequested = false;
+            if (_loadCoroutine != null)
+            {
+                StopCoroutine(_loadCoroutine);
+                _loadCoroutine = null;
+            }
+
+            DestroyPresentation();
+            try
+            {
+                var theme = RuntimeUiTheme.FromAssets(new UiAssetLoader().Load());
+                var go = new GameObject("VVardenfell.Presentation");
+                DontDestroyOnLoad(go);
+                _presentation = go.AddComponent<BootstrapPresentationView>();
+                _presentation.InitializeMenuOverlay(theme, _loadProgress, _config.InstallPath);
+                _presentation.NotifyBootstrapComplete();
+                _presentationReady = true;
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                error = $"Failed to show main menu: {ex.Message}";
+                SetFatalError(error);
                 _stage = Stage.Failed;
                 _presentationReady = false;
                 return false;
@@ -519,6 +506,105 @@ namespace VVardenfell.Runtime.Bootstrap
             _presentation = null;
             _presentationReady = false;
         }
+
+        private void EnsureFallbackView()
+        {
+            if (_fallbackView != null)
+                return;
+
+            var go = new GameObject("VVardenfell.BootstrapFallback");
+            DontDestroyOnLoad(go);
+            _fallbackView = go.AddComponent<BootstrapFallbackView>();
+            _fallbackView.Initialize(OnFallbackPathChanged, ContinueFromFallbackPicker, GetBrowseCallback());
+        }
+
+        private void RefreshFallbackView()
+        {
+            EnsureFallbackView();
+
+            switch (_stage)
+            {
+                case Stage.PickPath:
+                    _fallbackView.ShowPathPicker(_path, _pathError);
+                    break;
+                case Stage.Baking:
+                    _fallbackView.ShowProgress(
+                        "Optimizing",
+                        _progress.Stage,
+                        _progress.Label,
+                        _progress.Current,
+                        _progress.Total,
+                        _progress.Fraction,
+                        "You can leave this window open while the setup finishes.");
+                    break;
+                case Stage.Loading:
+                    if (!_presentationReady)
+                    {
+                        _fallbackView.ShowProgress(
+                            "VVardenfell - Loading World",
+                            _loadProgress.Stage,
+                            _loadProgress.Label,
+                            _loadProgress.Current,
+                            _loadProgress.Total,
+                            _loadProgress.Fraction,
+                            $"Elapsed: {_loadProgress.StageElapsedMs} ms");
+                    }
+                    else
+                    {
+                        _fallbackView.Hide();
+                    }
+                    break;
+                case Stage.Failed:
+                    _fallbackView.ShowError("VVardenfell - Error", _fatalError);
+                    break;
+                default:
+                    _fallbackView.Hide();
+                    break;
+            }
+        }
+
+        private void OnFallbackPathChanged(string value)
+        {
+            _path = value ?? string.Empty;
+            _pathError = null;
+        }
+
+        private void ContinueFromFallbackPicker()
+        {
+            var cfg = new MorrowindConfig { InstallPath = _path?.Trim() };
+            if (cfg.IsValid(out var err))
+            {
+                ConfigStorage.Save(cfg);
+                _config = cfg;
+                _pathError = null;
+                BeginCacheFlow();
+            }
+            else
+            {
+                SetPathError(err);
+            }
+        }
+
+        private Action GetBrowseCallback()
+        {
+#if UNITY_EDITOR
+            return BrowseForInstallPath;
+#else
+            return null;
+#endif
+        }
+
+#if UNITY_EDITOR
+        private void BrowseForInstallPath()
+        {
+            var picked = UnityEditor.EditorUtility.OpenFolderPanel("Select Morrowind folder", _path, "");
+            if (!string.IsNullOrEmpty(picked))
+            {
+                _path = picked;
+                _pathError = null;
+            }
+        }
+#endif
 
         private void SetPathError(string error)
         {
@@ -547,6 +633,9 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private void OnDestroy()
         {
+            if (_fallbackView != null)
+                Destroy(_fallbackView.gameObject);
+
             if (Active == this)
                 Active = null;
         }

@@ -98,7 +98,7 @@ namespace VVardenfell.Runtime.Physics
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup), OrderLast = true)]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
     public partial class RuntimeColliderBlobDisposalSystem : SystemBase
     {
         EntityQuery _query;
@@ -170,7 +170,6 @@ namespace VVardenfell.Runtime.Physics
             if (RuntimePhysicsLifetimeDiagnostics.LogNextSample)
             {
                 RuntimePhysicsLifetimeDiagnostics.LogNextSample = false;
-                Debug.Log($"[VVardenfell][Physics] {RuntimePhysicsLifetimeDiagnostics.Describe(value)}");
             }
 
             bool invalidCountsChanged = _lastInvalidSources != value.InvalidColliderSources;

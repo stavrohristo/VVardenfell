@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(LooseItemPickupSystem))]
     public partial class NpcInteractionDeferredSystem : SystemBase
     {
@@ -61,7 +61,6 @@ namespace VVardenfell.Runtime.Interactions
                 : default;
             dialogue.LastActivationSequence = sequence;
 
-            Debug.Log($"[VVardenfell][Interaction] npc dialogue deferred for this slice: '{displayName}' placedRef=0x{placedRefId:X8}, seq={sequence}.");
 
             ClearFocus();
 
@@ -83,7 +82,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
     public partial class ActivatorInteractionDeferredSystem : SystemBase
     {
@@ -126,7 +125,6 @@ namespace VVardenfell.Runtime.Interactions
 
             string displayName = InteractionMetadataResolver.ResolveDisplayName(RuntimeContentDatabase.Active, EntityManager, target, InteractableKind.Activator)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Activator);
-            Debug.Log($"[VVardenfell][Interaction] activator activation deferred for this slice: '{displayName}' placedRef=0x{placedRefId:X8}.");
 
             ClearFocus();
 
@@ -148,7 +146,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
     [UpdateAfter(typeof(ActivatorInteractionDeferredSystem))]

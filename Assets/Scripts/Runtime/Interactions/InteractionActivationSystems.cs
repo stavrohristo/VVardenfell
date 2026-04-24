@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -150,7 +150,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPrePhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
     public partial class InteractionActivationProxySystem : SystemBase
     {
         protected override void OnCreate()
@@ -263,7 +263,7 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionActivationSystem : SystemBase
     {
@@ -309,7 +309,6 @@ namespace VVardenfell.Runtime.Interactions
             var focus = _focusQuery.GetSingleton<PlayerInteractionFocus>();
             if (focus.HasTarget == 0 || !EntityManager.Exists(focus.TargetEntity))
             {
-                Debug.Log("[VVardenfell][Interaction] interact pressed but no supported target is focused within range.");
                 return;
             }
 
@@ -332,8 +331,6 @@ namespace VVardenfell.Runtime.Interactions
                 TargetPlacedRefId = resolved.PlacedRefId,
             };
 
-            Debug.Log(
-                $"[VVardenfell][Interaction] queued activation: seq={sequence}, kind={resolved.Kind}, placedRef=0x{resolved.PlacedRefId:X8}, entity={resolved.TargetEntity}.");
         }
     }
 }

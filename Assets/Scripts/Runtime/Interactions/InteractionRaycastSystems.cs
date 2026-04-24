@@ -181,7 +181,7 @@ namespace VVardenfell.Runtime.Interactions
                 return true;
             }
 
-            if (entityManager.HasComponent<ItemPickupAuthoring>(logicalEntity))
+            if (LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, entityManager, logicalEntity, out _))
             {
                 kind = InteractableKind.LooseItem;
                 return true;
@@ -297,7 +297,7 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionRaycastSystem : SystemBase
     {
@@ -323,7 +323,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindFixedPostPhysicsSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionRaycastSystem))]
     public partial class InteractionTargetResolutionSystem : SystemBase
     {

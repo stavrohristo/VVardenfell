@@ -8,6 +8,7 @@ using Collider = Unity.Physics.Collider;
 using CapsuleCollider = Unity.Physics.CapsuleCollider;
 
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
@@ -26,9 +27,16 @@ namespace VVardenfell.Runtime.Player
     {
     }
 
+    public struct LoadGameInitializationSingleton : IComponentData
+    {
+        public FixedString128Bytes SlotId;
+    }
+
     public struct GameInitializationSingleton : IComponentData
     {
         public PlayerCharacterComponent PlayerSettings;
+        public ActorRuntimeStatSeed PlayerActorStats;
+        public ActorIdentitySet PlayerIdentity;
         public float3 PlayerPosition;
         public quaternion PlayerRotation;
         public float PlayerPitchDegrees;
@@ -66,14 +74,39 @@ namespace VVardenfell.Runtime.Player
         {
             bool hasNewGameRequest = SystemAPI.HasSingleton<NewGameInitializationSingleton>();
             bool hasContinueRequest = SystemAPI.HasSingleton<ContinueGameInitializationSingleton>();
-            if (!hasNewGameRequest && !hasContinueRequest)
+            bool hasLoadRequest = SystemAPI.HasSingleton<LoadGameInitializationSingleton>();
+            if (!hasNewGameRequest && !hasContinueRequest && !hasLoadRequest)
                 return;
 
             var initEntity = SystemAPI.GetSingletonEntity<GameInitializationSingleton>();
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
+            WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
 
-            if (hasContinueRequest)
+            if (hasLoadRequest)
+            {
+                var loadRequest = SystemAPI.GetSingleton<LoadGameInitializationSingleton>();
+                string slotId = loadRequest.SlotId.ToString();
+                string loadError = null;
+                if (!string.IsNullOrWhiteSpace(slotId) && WorldSaveStorage.TryLoadSlot(slotId, out var payload, out loadError))
+                {
+                    init.PlayerPosition = payload.PlayerPosition;
+                    init.PlayerRotation = payload.PlayerRotation;
+                    init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
+                    init.PlayerActorStats = payload.ActorStats;
+                    init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+                    PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
+                    if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
+                        Debug.LogWarning($"[VVardenfell][Save] load slot location restore failed; starting from default bootstrap state instead. {locationError}");
+                    else
+                        RuntimeSpawnProjectionUtility.RestoreAliveRefsForCurrentWorld(World, em, RuntimeContentDatabase.Active);
+                }
+                else
+                {
+                    Debug.LogWarning($"[VVardenfell][Save] load slot requested, but payload was unavailable. {loadError}");
+                }
+            }
+            else if (hasContinueRequest)
             {
                 if (init.HasSerializedSavePayload)
                 {
@@ -88,6 +121,12 @@ namespace VVardenfell.Runtime.Player
 
             var standingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.StandingHeight);
             var crouchingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.CrouchingHeight);
+            var attributes = init.PlayerActorStats.Attributes;
+            var skills = init.PlayerActorStats.Skills;
+            var vitals = init.PlayerActorStats.Vitals;
+            var effectModifiers = init.PlayerActorStats.EffectModifiers;
+            vitals.ModifiedFatigueBase = MorrowindActorMovementStats.ComputeModifiedFatigueBase(attributes);
+            var derivedStats = MorrowindActorMovementStats.BuildDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, 0f);
 
             var player = em.CreateEntity();
             em.SetName(player, "VVardenfell.Player");
@@ -106,7 +145,23 @@ namespace VVardenfell.Runtime.Player
                 Grounded = true,
             });
             em.AddComponentData(player, MorrowindMovementTuning.OpenMwDefaults());
+            em.AddComponentData(player, attributes);
+            em.AddComponentData(player, skills);
+            em.AddComponentData(player, vitals);
+            em.AddComponentData(player, effectModifiers);
+            em.AddComponentData(player, derivedStats);
+            em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, new MorrowindMovementFrameTrace());
+            var playerSpells = em.AddBuffer<PlayerKnownSpell>(player);
+            if (em.HasBuffer<PlayerKnownSpell>(initEntity))
+            {
+                var initSpells = em.GetBuffer<PlayerKnownSpell>(initEntity);
+                for (int i = 0; i < initSpells.Length; i++)
+                {
+                    if (initSpells[i].Spell.IsValid)
+                        playerSpells.Add(initSpells[i]);
+                }
+            }
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
@@ -165,7 +220,26 @@ namespace VVardenfell.Runtime.Player
                 em.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
             if (hasContinueRequest)
                 em.DestroyEntity(SystemAPI.GetSingletonEntity<ContinueGameInitializationSingleton>());
+            if (hasLoadRequest)
+                em.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
             em.DestroyEntity(initEntity);
+        }
+
+        static void PopulateInitializationSpellbook(EntityManager em, Entity initEntity, PlayerKnownSpell[] knownSpells)
+        {
+            var buffer = em.HasBuffer<PlayerKnownSpell>(initEntity)
+                ? em.GetBuffer<PlayerKnownSpell>(initEntity)
+                : em.AddBuffer<PlayerKnownSpell>(initEntity);
+
+            buffer.Clear();
+            if (knownSpells == null)
+                return;
+
+            for (int i = 0; i < knownSpells.Length; i++)
+            {
+                if (knownSpells[i].Spell.IsValid)
+                    buffer.Add(knownSpells[i]);
+            }
         }
 
         private static BlobAssetReference<Collider> CreatePlayerCapsule(float radius, float height)
