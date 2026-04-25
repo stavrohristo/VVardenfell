@@ -117,6 +117,7 @@ namespace VVardenfell.Importer.Bake
         private sealed class ModelSource
         {
             public readonly string ModelPath;
+            public readonly NifFile Nif;
             public readonly NifMeshBuilder.RawBuiltMesh[] Meshes;
             public readonly CollisionPayload Collision;
             public readonly CollisionPayload AutoVisualStaticCollision;
@@ -125,6 +126,7 @@ namespace VVardenfell.Importer.Bake
 
             public ModelSource(
                 string modelPath,
+                NifFile nif,
                 NifMeshBuilder.RawBuiltMesh[] meshes,
                 CollisionPayload collision,
                 CollisionPayload autoVisualStaticCollision,
@@ -132,12 +134,45 @@ namespace VVardenfell.Importer.Bake
                 ModelPrefabSource prefab)
             {
                 ModelPath = modelPath;
+                Nif = nif;
                 Meshes = meshes;
                 Collision = collision;
                 AutoVisualStaticCollision = autoVisualStaticCollision;
                 CollisionSource = collisionSource;
                 Prefab = prefab;
             }
+        }
+
+        private enum ActorSkinPartReferenceType : byte
+        {
+            Head = 0,
+            Hair = 1,
+            Neck = 2,
+            Cuirass = 3,
+            Groin = 4,
+            Skirt = 5,
+            RightHand = 6,
+            LeftHand = 7,
+            RightWrist = 8,
+            LeftWrist = 9,
+            Shield = 10,
+            RightForearm = 11,
+            LeftForearm = 12,
+            RightUpperarm = 13,
+            LeftUpperarm = 14,
+            RightFoot = 15,
+            LeftFoot = 16,
+            RightAnkle = 17,
+            LeftAnkle = 18,
+            RightKnee = 19,
+            LeftKnee = 20,
+            RightLeg = 21,
+            LeftLeg = 22,
+            RightPauldron = 23,
+            LeftPauldron = 24,
+            Weapon = 25,
+            Tail = 26,
+            Count = 27,
         }
 
         private readonly struct StagedPlacedRefData
@@ -631,6 +666,7 @@ namespace VVardenfell.Importer.Bake
             var bakeryRenderShards = new RenderShardBakery();
             bakeryRenderShards.TryLoadExisting(CachePaths.RenderShards);
             var bakeryModelPrefabs = new ModelPrefabBakery();
+            var bakeryActorAnimations = new ActorAnimationBakery();
             var modelCache = new ConcurrentDictionary<string, Lazy<ModelSource>>(StringComparer.OrdinalIgnoreCase);
 
             progress.Current = 1;
@@ -755,7 +791,7 @@ namespace VVardenfell.Importer.Bake
             }
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
-            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions);
+            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
@@ -766,7 +802,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 12;
+            progress.Total = 13;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -799,8 +835,14 @@ namespace VVardenfell.Importer.Bake
             if (bakeryModelPrefabs.Modified || !File.Exists(CachePaths.ModelPrefabs))
                 ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
 
-            progress.Label = "textures.bin";
+            progress.Label = "actor_animations.bin";
             progress.Current = 5;
+            yield return null;
+            if (bakeryActorAnimations.Modified || !File.Exists(CachePaths.ActorAnimations))
+                ActorAnimationFile.Write(CachePaths.ActorAnimations, bakeryActorAnimations.BuildCatalog());
+
+            progress.Label = "textures.bin";
+            progress.Current = 6;
             yield return null;
             if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
             {
@@ -809,13 +851,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 6;
+            progress.Current = 7;
             yield return null;
             if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers);
 
             progress.Label = "collisions.bin";
-            progress.Current = 7;
+            progress.Current = 8;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -824,28 +866,28 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 8;
+            progress.Current = 9;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 9;
+            progress.Current = 10;
             yield return null;
             WriteMeshCacheReport(stagedCells, bakeryMeshes);
 
             progress.Label = "world_collision_validation.txt";
-            progress.Current = 10;
+            progress.Current = 11;
             yield return null;
             WriteWorldCollisionValidationReport(stagedCells);
 
             progress.Label = "ui.bin";
-            progress.Current = 11;
+            progress.Current = 12;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 12;
+            progress.Current = 13;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
@@ -873,7 +915,7 @@ namespace VVardenfell.Importer.Bake
                 if (stagedCells[i].NeedsWrite)
                     dirtyCount++;
             }
-            progress.Label = $"{dirtyCount}/{stagedCells.Length} cells rebuilt, {bakeryMeshes.Count} meshes, {bakeryMaterials.Count} mats, {bakeryTextures.Count} textures, {bakeryLayers.Count} terrain layers, {bakeryCollisions.Count} collisions";
+            progress.Label = $"{dirtyCount}/{stagedCells.Length} cells rebuilt, {bakeryMeshes.Count} meshes, {bakeryMaterials.Count} mats, {bakeryTextures.Count} textures, {bakeryLayers.Count} terrain layers, {bakeryCollisions.Count} collisions, {bakeryActorAnimations.SkeletonCount} actor skeletons, {bakeryActorAnimations.ClipCount} actor clips";
             progress.Done = true;
         }
 
@@ -1017,6 +1059,21 @@ namespace VVardenfell.Importer.Bake
                     DuplicatePlacedRefCount = duplicateCount,
                     Flags = auditFlags,
                 });
+
+                if (contentReference.Kind == ContentReferenceKind.Actor
+                    && (model == null || model.Meshes.Length == 0))
+                {
+                    staged.CollisionNoColliderCount++;
+                    staged.PlacedRefs.Add(new StagedPlacedRefData(
+                        string.Empty,
+                        reference.FormId,
+                        -1,
+                        contentReference,
+                        pos,
+                        rot,
+                        reference.Scale));
+                    continue;
+                }
 
                 if (model == null || model.Meshes.Length == 0)
                 {
@@ -1205,7 +1262,7 @@ namespace VVardenfell.Importer.Bake
             if (string.IsNullOrEmpty(modelPath))
                 return null;
 
-            string nifPath = "meshes\\" + modelPath;
+            string nifPath = NormalizeModelPath(modelPath);
             var lazy = modelCache.GetOrAdd(
                 nifPath,
                 path => new Lazy<ModelSource>(() =>
@@ -1224,9 +1281,6 @@ namespace VVardenfell.Importer.Bake
                     }
 
                     var built = NifMeshBuilder.BuildRaw(nif);
-                    if (built.Count == 0)
-                        return null;
-
                     var prefab = NifModelPrefabBuilder.Build(nif);
                     var collisionResult = NifCollisionExtractor.Extract(nif);
                     CollisionPayload authoredCollision = collisionResult.Source == CollisionExtractionSource.AuthoredRootCollision
@@ -1235,10 +1289,24 @@ namespace VVardenfell.Importer.Bake
                     CollisionPayload autoVisualStaticCollision = collisionResult.Source == CollisionExtractionSource.AutoVisualStatic
                         ? collisionResult.Payload
                         : default;
-                    return new ModelSource(path, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
+                    return new ModelSource(path, nif, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
                 }, LazyThreadSafetyMode.ExecutionAndPublication));
 
             return lazy.Value;
+        }
+
+        static string NormalizeModelPath(string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return string.Empty;
+
+            string trimmed = modelPath.Trim().Replace('/', '\\');
+            while (trimmed.Contains("\\\\"))
+                trimmed = trimmed.Replace("\\\\", "\\");
+
+            return trimmed.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)
+                ? trimmed
+                : "meshes\\" + trimmed;
         }
 
         private static void SeedRuntimeSpawnableModels(
@@ -1266,6 +1334,33 @@ namespace VVardenfell.Importer.Bake
             var lights = gameplayContent.Lights ?? Array.Empty<LightDef>();
             for (int i = 0; i < lights.Length; i++)
                 EnsureModelSource(lights[i].Model, sharedBsa, bsaByName, modelCache);
+
+            SeedDefaultNpcAnimationModels(sharedBsa, bsaByName, modelCache);
+
+            var bodyParts = gameplayContent.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
+            for (int i = 0; i < bodyParts.Length; i++)
+                EnsureModelSource(bodyParts[i].Model, sharedBsa, bsaByName, modelCache);
+        }
+
+        static void SeedDefaultNpcAnimationModels(
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache)
+        {
+            string[] models =
+            {
+                "meshes\\base_anim.nif",
+                "meshes\\base_anim_female.nif",
+                "meshes\\base_animkna.nif",
+                "meshes\\xbase_anim.nif",
+                "meshes\\xbase_anim_female.nif",
+                "meshes\\base_anim_female.1st.nif",
+                "meshes\\base_animkna.1st.nif",
+                "meshes\\xbase_anim.1st.nif",
+            };
+
+            for (int i = 0; i < models.Length; i++)
+                EnsureModelSource(models[i], sharedBsa, bsaByName, modelCache);
         }
 
         private static IEnumerator PrepareDirtyCellsIncremental(
@@ -1360,13 +1455,18 @@ namespace VVardenfell.Importer.Bake
             ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
             BakeProgress progress,
             ModelPrefabBakery modelPrefabs,
+            ActorAnimationBakery actorAnimations,
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures,
-            CollisionBakery collisions)
+            CollisionBakery collisions,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            GameplayContentData gameplayContent)
         {
             var keys = new List<string>(modelCache.Keys);
             keys.Sort(StringComparer.OrdinalIgnoreCase);
+            var actorBodyPartModels = BuildActorBodyPartModelSet(gameplayContent);
 
             progress.Stage = "Model Prefabs";
             progress.Total = Math.Max(1, keys.Count);
@@ -1377,6 +1477,8 @@ namespace VVardenfell.Importer.Bake
             if (keys.Count == 0)
                 yield break;
 
+            var skinReferenceSkeletons = BuildActorBodyPartSkinReferenceSkeletonMap(gameplayContent, bsaByName);
+            var extractedReferenceSkeletons = new Dictionary<string, ActorSkeletonDef>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < keys.Count; i++)
             {
                 if (modelCache.TryGetValue(keys[i], out var lazy))
@@ -1384,13 +1486,67 @@ namespace VVardenfell.Importer.Bake
                     var source = lazy.Value;
                     if (source?.Prefab != null)
                     {
+                        string normalizedModelPath = NormalizeModelPath(source.ModelPath);
+                        bool forceActorModel = actorBodyPartModels.Contains(normalizedModelPath);
+                        ActorAnimationBakery.Assignment actorAnimation = default;
+                        bool actorAnimationAssigned = false;
+                        if (forceActorModel
+                            && skinReferenceSkeletons.TryGetValue(normalizedModelPath, out var skinReferenceSkeletonPaths)
+                            && skinReferenceSkeletonPaths.Count > 0)
+                        {
+                            var sortedReferenceSkeletonPaths = new List<string>(skinReferenceSkeletonPaths);
+                            sortedReferenceSkeletonPaths.Sort(StringComparer.OrdinalIgnoreCase);
+                            for (int referenceIndex = 0; referenceIndex < sortedReferenceSkeletonPaths.Count; referenceIndex++)
+                            {
+                                string skinReferenceSkeletonPath = sortedReferenceSkeletonPaths[referenceIndex];
+                                ActorSkeletonDef skinReferenceSkeleton = GetOrExtractActorSkeleton(
+                                    skinReferenceSkeletonPath,
+                                    sharedBsa,
+                                    bsaByName,
+                                    modelCache,
+                                    extractedReferenceSkeletons);
+
+                                var referenceAssignment = actorAnimations.GetOrAddModel(
+                                    source.ModelPath,
+                                    source.Nif,
+                                    source.Prefab,
+                                    meshes,
+                                    materials,
+                                    textures,
+                                    sharedBsa,
+                                    bsaByName,
+                                    forceActorModel,
+                                    skinReferenceSkeleton,
+                                    skinReferenceSkeletonPath);
+
+                                if (!actorAnimationAssigned || !actorAnimation.HasValue)
+                                    actorAnimation = referenceAssignment;
+                                actorAnimationAssigned = true;
+                            }
+                        }
+                        else
+                        {
+                            actorAnimation = actorAnimations.GetOrAddModel(
+                                source.ModelPath,
+                                source.Nif,
+                                source.Prefab,
+                                meshes,
+                                materials,
+                                textures,
+                                sharedBsa,
+                                bsaByName,
+                                forceActorModel);
+                            actorAnimationAssigned = true;
+                        }
+
                         modelPrefabs.GetOrAdd(
                             source.ModelPath,
                             source.Prefab,
                             meshes,
                             materials,
                             textures,
-                            collisions);
+                            collisions,
+                            actorAnimation);
                     }
                 }
 
@@ -1399,6 +1555,329 @@ namespace VVardenfell.Importer.Bake
                 if (((i + 1) & 31) == 0 || i + 1 == keys.Count)
                     yield return null;
             }
+        }
+
+        static HashSet<string> BuildActorBodyPartModelSet(GameplayContentData gameplayContent)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var bodyParts = gameplayContent?.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                string model = NormalizeModelPath(bodyParts[i].Model);
+                if (!string.IsNullOrEmpty(model))
+                    result.Add(model);
+            }
+            return result;
+        }
+
+        static Dictionary<string, HashSet<string>> BuildActorBodyPartSkinReferenceSkeletonMap(
+            GameplayContentData gameplayContent,
+            Dictionary<string, BsaEntry> bsaByName)
+        {
+            var result = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var races = BuildRaceLookup(gameplayContent);
+            var bodyParts = gameplayContent?.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
+
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                var part = bodyParts[i];
+                if (part.Type != ActorBodyPartMeshType.Skin)
+                    continue;
+                if (part.FirstPerson != 0)
+                    continue;
+
+                string targetSkeleton = ResolveNpcSkeletonModel(
+                    part.FirstPerson != 0,
+                    part.Female != 0,
+                    IsBeastRace(part.RaceId, races),
+                    bsaByName);
+                AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
+            }
+
+            var bodyPartsById = BuildBodyPartLookup(bodyParts);
+            var actors = gameplayContent?.Actors ?? Array.Empty<ActorDef>();
+            for (int i = 0; i < actors.Length; i++)
+            {
+                var actor = actors[i];
+                if (actor.Kind != ActorDefKind.Npc)
+                    continue;
+
+                bool female = (actor.Flags & 0x1u) != 0;
+                bool beast = IsBeastRace(actor.RaceId, races);
+                const bool firstPerson = false;
+                string targetSkeleton = ResolveNpcSkeletonModel(firstPerson, female, beast, bsaByName);
+                if (string.IsNullOrEmpty(targetSkeleton))
+                    continue;
+
+                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HeadId, targetSkeleton);
+                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HairId, targetSkeleton);
+
+                for (int partReference = (int)ActorSkinPartReferenceType.Neck;
+                     partReference < (int)ActorSkinPartReferenceType.Count;
+                     partReference++)
+                {
+                    var reference = (ActorSkinPartReferenceType)partReference;
+                    if (!IsBaseSkinPartReference(reference))
+                        continue;
+
+                    if (TryResolveNpcRaceBodyPart(
+                            bodyParts,
+                            actor.RaceId,
+                            reference,
+                            female,
+                            firstPerson,
+                            out var part))
+                    {
+                        AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        static ActorSkeletonDef GetOrExtractActorSkeleton(
+            string modelPath,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            Dictionary<string, ActorSkeletonDef> skeletonCache)
+        {
+            string normalized = NormalizeModelPath(modelPath);
+            if (string.IsNullOrEmpty(normalized))
+                return null;
+
+            if (skeletonCache.TryGetValue(normalized, out var cached))
+                return cached;
+
+            var source = EnsureModelSource(normalized, sharedBsa, bsaByName, modelCache);
+            var skeleton = source?.Nif != null
+                ? NifActorAnimationExtractor.ExtractSkeleton(source.Nif)
+                : null;
+            skeletonCache[normalized] = skeleton;
+            return skeleton;
+        }
+
+        static Dictionary<string, RaceDef> BuildRaceLookup(GameplayContentData gameplayContent)
+        {
+            var result = new Dictionary<string, RaceDef>(StringComparer.OrdinalIgnoreCase);
+            var races = gameplayContent?.Races ?? Array.Empty<RaceDef>();
+            for (int i = 0; i < races.Length; i++)
+            {
+                string id = races[i].Id;
+                if (!string.IsNullOrWhiteSpace(id) && !result.ContainsKey(id))
+                    result[id] = races[i];
+            }
+
+            return result;
+        }
+
+        static Dictionary<string, ActorBodyPartDef> BuildBodyPartLookup(ActorBodyPartDef[] bodyParts)
+        {
+            var result = new Dictionary<string, ActorBodyPartDef>(StringComparer.OrdinalIgnoreCase);
+            bodyParts ??= Array.Empty<ActorBodyPartDef>();
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                string id = ContentId.NormalizeId(bodyParts[i].Id);
+                if (!string.IsNullOrEmpty(id) && !result.ContainsKey(id))
+                    result[id] = bodyParts[i];
+            }
+
+            return result;
+        }
+
+        static bool IsBeastRace(string raceId, Dictionary<string, RaceDef> races)
+            => !string.IsNullOrWhiteSpace(raceId)
+               && races != null
+               && races.TryGetValue(raceId, out var race)
+               && (race.Flags & 0x02) != 0;
+
+        static void AddExplicitActorBodyPartTarget(
+            Dictionary<string, HashSet<string>> targets,
+            Dictionary<string, ActorBodyPartDef> bodyPartsById,
+            string bodyPartId,
+            string targetSkeleton)
+        {
+            if (string.IsNullOrWhiteSpace(bodyPartId)
+                || bodyPartsById == null
+                || !bodyPartsById.TryGetValue(ContentId.NormalizeId(bodyPartId), out var part)
+                || part.Type != ActorBodyPartMeshType.Skin)
+            {
+                return;
+            }
+
+            AddSkinReferenceTarget(targets, part.Model, targetSkeleton, part.Id);
+        }
+
+        static void AddSkinReferenceTarget(
+            Dictionary<string, HashSet<string>> targets,
+            string bodyPartModel,
+            string targetSkeleton,
+            string contextId)
+        {
+            string model = NormalizeModelPath(bodyPartModel);
+            if (string.IsNullOrEmpty(model))
+                throw new InvalidOperationException($"Actor skin body part '{contextId}' has no model path.");
+            if (string.IsNullOrEmpty(targetSkeleton))
+                throw new InvalidOperationException($"Actor skin body part '{contextId}' has no target skeleton for model '{model}'.");
+
+            targetSkeleton = NormalizeModelPath(targetSkeleton);
+            if (!targets.TryGetValue(model, out var references))
+            {
+                references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                targets[model] = references;
+            }
+
+            references.Add(targetSkeleton);
+        }
+
+        static string ResolveNpcSkeletonModel(
+            bool firstPerson,
+            bool female,
+            bool beast,
+            Dictionary<string, BsaEntry> bsaByName)
+        {
+            foreach (string candidate in EnumerateNpcSkeletonCandidates(firstPerson, female, beast))
+            {
+                string normalized = NormalizeModelPath(candidate);
+                if (bsaByName == null || bsaByName.ContainsKey(normalized))
+                    return normalized;
+            }
+
+            throw new InvalidOperationException(
+                $"No NPC skeleton model found for firstPerson={firstPerson}, female={female}, beast={beast}.");
+        }
+
+        static IEnumerable<string> EnumerateNpcSkeletonCandidates(bool firstPerson, bool female, bool beast)
+        {
+            if (firstPerson)
+            {
+                if (beast)
+                    yield return "meshes\\base_animkna.1st.nif";
+                if (female)
+                    yield return "meshes\\base_anim_female.1st.nif";
+                yield return "meshes\\xbase_anim.1st.nif";
+            }
+            else
+            {
+                if (beast)
+                    yield return "meshes\\base_animkna.nif";
+                if (female)
+                    yield return "meshes\\base_anim_female.nif";
+                yield return "meshes\\base_anim.nif";
+                yield return "meshes\\xbase_anim.nif";
+            }
+        }
+
+        static bool TryResolveNpcRaceBodyPart(
+            ActorBodyPartDef[] bodyParts,
+            string raceId,
+            ActorSkinPartReferenceType partReference,
+            bool female,
+            bool firstPerson,
+            out ActorBodyPartDef result)
+        {
+            result = default;
+            bodyParts ??= Array.Empty<ActorBodyPartDef>();
+
+            ActorBodyPartMeshPart meshPart = GetMeshPart(partReference);
+            bool isHand = meshPart == ActorBodyPartMeshPart.Hand
+                          || meshPart == ActorBodyPartMeshPart.Wrist
+                          || meshPart == ActorBodyPartMeshPart.Forearm
+                          || meshPart == ActorBodyPartMeshPart.Upperarm;
+            bool hasFallback = false;
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                var part = bodyParts[i];
+                if (part.Type != ActorBodyPartMeshType.Skin
+                    || part.Vampire != 0
+                    || part.NotPlayable != 0
+                    || part.Part != meshPart
+                    || !string.Equals(part.RaceId, raceId ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool partFirstPerson = part.FirstPerson != 0;
+                bool partFemale = part.Female != 0;
+                if (firstPerson && isHand && !partFirstPerson)
+                {
+                    if (!hasFallback || partFemale == female || female)
+                    {
+                        result = part;
+                        hasFallback = true;
+                    }
+                    continue;
+                }
+
+                if (partFirstPerson != firstPerson)
+                    continue;
+
+                if (female && !partFemale)
+                {
+                    if (!hasFallback)
+                    {
+                        result = part;
+                        hasFallback = true;
+                    }
+                    continue;
+                }
+
+                if (female != partFemale)
+                    continue;
+
+                result = part;
+                return true;
+            }
+
+            return hasFallback;
+        }
+
+        static bool IsBaseSkinPartReference(ActorSkinPartReferenceType type)
+        {
+            return type is ActorSkinPartReferenceType.Neck
+                or ActorSkinPartReferenceType.Cuirass
+                or ActorSkinPartReferenceType.Groin
+                or ActorSkinPartReferenceType.RightHand
+                or ActorSkinPartReferenceType.LeftHand
+                or ActorSkinPartReferenceType.RightWrist
+                or ActorSkinPartReferenceType.LeftWrist
+                or ActorSkinPartReferenceType.RightForearm
+                or ActorSkinPartReferenceType.LeftForearm
+                or ActorSkinPartReferenceType.RightUpperarm
+                or ActorSkinPartReferenceType.LeftUpperarm
+                or ActorSkinPartReferenceType.RightFoot
+                or ActorSkinPartReferenceType.LeftFoot
+                or ActorSkinPartReferenceType.RightAnkle
+                or ActorSkinPartReferenceType.LeftAnkle
+                or ActorSkinPartReferenceType.RightKnee
+                or ActorSkinPartReferenceType.LeftKnee
+                or ActorSkinPartReferenceType.RightLeg
+                or ActorSkinPartReferenceType.LeftLeg
+                or ActorSkinPartReferenceType.Tail;
+        }
+
+        static ActorBodyPartMeshPart GetMeshPart(ActorSkinPartReferenceType type)
+        {
+            return type switch
+            {
+                ActorSkinPartReferenceType.Head => ActorBodyPartMeshPart.Head,
+                ActorSkinPartReferenceType.Hair => ActorBodyPartMeshPart.Hair,
+                ActorSkinPartReferenceType.Neck => ActorBodyPartMeshPart.Neck,
+                ActorSkinPartReferenceType.Cuirass => ActorBodyPartMeshPart.Chest,
+                ActorSkinPartReferenceType.Groin or ActorSkinPartReferenceType.Skirt => ActorBodyPartMeshPart.Groin,
+                ActorSkinPartReferenceType.RightHand or ActorSkinPartReferenceType.LeftHand => ActorBodyPartMeshPart.Hand,
+                ActorSkinPartReferenceType.RightWrist or ActorSkinPartReferenceType.LeftWrist => ActorBodyPartMeshPart.Wrist,
+                ActorSkinPartReferenceType.RightForearm or ActorSkinPartReferenceType.LeftForearm => ActorBodyPartMeshPart.Forearm,
+                ActorSkinPartReferenceType.RightUpperarm or ActorSkinPartReferenceType.LeftUpperarm => ActorBodyPartMeshPart.Upperarm,
+                ActorSkinPartReferenceType.RightFoot or ActorSkinPartReferenceType.LeftFoot => ActorBodyPartMeshPart.Foot,
+                ActorSkinPartReferenceType.RightAnkle or ActorSkinPartReferenceType.LeftAnkle => ActorBodyPartMeshPart.Ankle,
+                ActorSkinPartReferenceType.RightKnee or ActorSkinPartReferenceType.LeftKnee => ActorBodyPartMeshPart.Knee,
+                ActorSkinPartReferenceType.RightLeg or ActorSkinPartReferenceType.LeftLeg => ActorBodyPartMeshPart.Upperleg,
+                ActorSkinPartReferenceType.RightPauldron or ActorSkinPartReferenceType.LeftPauldron => ActorBodyPartMeshPart.Clavicle,
+                ActorSkinPartReferenceType.Tail => ActorBodyPartMeshPart.Tail,
+                _ => ActorBodyPartMeshPart.Chest,
+            };
         }
 
         private static void PrepareDirtyCell(StagedCellData staged, Dictionary<int, string> ltexMap)
@@ -1617,6 +2096,9 @@ namespace VVardenfell.Importer.Bake
                                         if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
                                             continue;
                                         int globalMeshIndex = baked.LocalMeshIndex;
+                                        if (globalMeshIndex < 0)
+                                            continue;
+
                                         int textureIndex = baked.SliceIndex;
                                         int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
                                             ? bucketKeysByTextureIndex[textureIndex]
@@ -1728,6 +2210,9 @@ namespace VVardenfell.Importer.Bake
                                         if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
                                             continue;
                                         int globalMeshIndex = baked.LocalMeshIndex;
+                                        if (globalMeshIndex < 0)
+                                            continue;
+
                                         int textureIndex = baked.SliceIndex;
                                         int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
                                             ? bucketKeysByTextureIndex[textureIndex]
@@ -1879,6 +2364,26 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < placedCount; i++)
             {
                 var placed = staged.PlacedRefs[i];
+                if (placed.ContentReference.Kind == ContentReferenceKind.Actor
+                    && string.IsNullOrEmpty(placed.ModelPath))
+                {
+                    result.Add(new CellBakery.BakedRef(
+                        RefSpawnMode.RenderShard,
+                        -1,
+                        -1,
+                        -1,
+                        -1,
+                        -1,
+                        placed.PlacedRefId,
+                        placed.DoorMetaIndex,
+                        placed.ContentReference.HandleValue,
+                        (int)placed.ContentReference.Kind,
+                        placed.Position,
+                        placed.Rotation,
+                        placed.Scale));
+                    continue;
+                }
+
                 if (!modelPrefabs.TryGetAssignment(placed.ModelPath, out var assignment))
                     continue;
 

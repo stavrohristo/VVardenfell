@@ -12,6 +12,7 @@ namespace VVardenfell.Runtime.Components
         ActivationProxy = 4,
         RuntimeSpawn = 5,
         Player = 6,
+        Actor = 7,
     }
 
     public struct RuntimeColliderSource : IComponentData

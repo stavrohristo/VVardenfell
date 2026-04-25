@@ -53,6 +53,11 @@ namespace VVardenfell.Core.Cache
         public string ModelPath;
         public int RootNodeIndex;
         public int CollisionIndex;
+        public int ActorSkeletonIndex = -1;
+        public int FirstActorSkinMeshIndex = -1;
+        public int ActorSkinMeshCount;
+        public int FirstActorClipIndex = -1;
+        public int ActorClipCount;
         public ModelPrefabNodeDef[] Nodes = Array.Empty<ModelPrefabNodeDef>();
         public int[] ChildIndices = Array.Empty<int>();
     }
@@ -65,7 +70,7 @@ namespace VVardenfell.Core.Cache
     public static class ModelPrefabFile
     {
         const uint Magic = 0x50464D44u; // 'DMFP'
-        const uint Version = 1u;
+        const uint Version = 3u;
 
         public static bool TryRead(string path, out ModelPrefabCatalogData data)
         {
@@ -147,6 +152,11 @@ namespace VVardenfell.Core.Cache
                 ModelPath = r.ReadString(),
                 RootNodeIndex = r.ReadInt32(),
                 CollisionIndex = r.ReadInt32(),
+                ActorSkeletonIndex = r.ReadInt32(),
+                FirstActorSkinMeshIndex = r.ReadInt32(),
+                ActorSkinMeshCount = r.ReadInt32(),
+                FirstActorClipIndex = r.ReadInt32(),
+                ActorClipCount = r.ReadInt32(),
                 Nodes = nodes,
                 ChildIndices = childIndices,
             };
@@ -198,6 +208,11 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.ModelPath ?? string.Empty);
             w.Write(value?.RootNodeIndex ?? -1);
             w.Write(value?.CollisionIndex ?? -1);
+            w.Write(value?.ActorSkeletonIndex ?? -1);
+            w.Write(value?.FirstActorSkinMeshIndex ?? -1);
+            w.Write(value?.ActorSkinMeshCount ?? 0);
+            w.Write(value?.FirstActorClipIndex ?? -1);
+            w.Write(value?.ActorClipCount ?? 0);
         }
 
         static void WriteNode(BinaryWriter w, ModelPrefabNodeDef value)

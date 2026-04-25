@@ -9,6 +9,8 @@ using UnityEngine.Rendering;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Pathfinding;
+using VVardenfell.Runtime.Rendering;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
 
@@ -68,6 +70,8 @@ namespace VVardenfell.Runtime.Streaming
         public static RuntimeSpawnPrefabDescriptor[] SpawnableCreaturePrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableItemPrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableLightPrefabs;
+        public static PathGridNavigationWorld PathGridNavigation;
+        public static ActorProceduralRenderResources ActorProceduralRenderer;
 
         /// <summary>
         /// Per-mesh local AABB, indexed by MeshIndex. Built once at bootstrap from
@@ -129,6 +133,7 @@ namespace VVardenfell.Runtime.Streaming
         /// skips any ref whose blob is unset.
         /// </summary>
         public static BlobAssetReference<Collider>[] ColliderBlobs;
+        public static BlobAssetReference<Collider> ActorCapsuleCollider;
 
         /// <summary>Per-cell combined STAT collider (null for wilderness cells).</summary>
         public static readonly Dictionary<int2, BlobAssetReference<Collider>> StaticCellColliders = new();
@@ -227,6 +232,11 @@ namespace VVardenfell.Runtime.Streaming
                     if (ColliderBlobs[i].IsCreated) ColliderBlobs[i].Dispose();
                 ColliderBlobs = null;
             }
+            if (ActorCapsuleCollider.IsCreated)
+            {
+                ActorCapsuleCollider.Dispose();
+                ActorCapsuleCollider = default;
+            }
             if (MeshBounds.IsCreated) MeshBounds.Dispose();
             if (RefShardMeshRanges.IsCreated) RefShardMeshRanges.Dispose();
             if (RefShardGlobalMeshIndices.IsCreated) RefShardGlobalMeshIndices.Dispose();
@@ -240,6 +250,8 @@ namespace VVardenfell.Runtime.Streaming
                 RefBaseArrays = null;
             }
             if (TexBucketInfo.IsCreated) TexBucketInfo.Dispose();
+            ActorProceduralRenderer?.Dispose();
+            ActorProceduralRenderer = null;
             FallbackBucketSlice = default;
             BlendVariantCount = 0;
             // TerrainFallbackMat / TerrainTemplate are registry-owned assets in editor —
@@ -256,6 +268,8 @@ namespace VVardenfell.Runtime.Streaming
             SpawnableLightPrefabs = null;
             Desc = default;
             RuntimeContentDatabase.Clear();
+            if (PathGridNavigation.IsCreated)
+                PathGridNavigation.Dispose();
         }
 
         private static void DisposeCellResidentBlobs(CellData data)

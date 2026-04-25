@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Unity.Profiling;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bsa;
@@ -58,15 +59,24 @@ namespace VVardenfell.Importer.Bake
 
         static readonly uint AnamTag = EsmFourCC.Make('A', 'N', 'A', 'M');
         static readonly uint AidtTag = EsmFourCC.Make('A', 'I', 'D', 'T');
+        static readonly uint AiWanderTag = EsmFourCC.Make('A', 'I', '_', 'W');
+        static readonly uint AiTravelTag = EsmFourCC.Make('A', 'I', '_', 'T');
+        static readonly uint AiEscortTag = EsmFourCC.Make('A', 'I', '_', 'E');
+        static readonly uint AiFollowTag = EsmFourCC.Make('A', 'I', '_', 'F');
+        static readonly uint AiActivateTag = EsmFourCC.Make('A', 'I', '_', 'A');
         static readonly uint AvfxTag = EsmFourCC.Make('A', 'V', 'F', 'X');
         static readonly uint BnamTag = EsmFourCC.Make('B', 'N', 'A', 'M');
         static readonly uint BsndTag = EsmFourCC.Make('B', 'S', 'N', 'D');
         static readonly uint BvfxTag = EsmFourCC.Make('B', 'V', 'F', 'X');
+        static readonly uint BydtTag = EsmFourCC.Make('B', 'Y', 'D', 'T');
         static readonly uint CnamTag = EsmFourCC.Make('C', 'N', 'A', 'M');
         static readonly uint CldtTag = EsmFourCC.Make('C', 'L', 'D', 'T');
+        static readonly uint CndtTag = EsmFourCC.Make('C', 'N', 'D', 'T');
         static readonly uint CsndTag = EsmFourCC.Make('C', 'S', 'N', 'D');
         static readonly uint CvfxTag = EsmFourCC.Make('C', 'V', 'F', 'X');
         static readonly uint DescTag = EsmFourCC.Make('D', 'E', 'S', 'C');
+        static readonly uint DnamTag = EsmFourCC.Make('D', 'N', 'A', 'M');
+        static readonly uint DodtTag = EsmFourCC.Make('D', 'O', 'D', 'T');
         static readonly uint EndtTag = EsmFourCC.Make('E', 'N', 'D', 'T');
         static readonly uint EnamTag = EsmFourCC.Make('E', 'N', 'A', 'M');
         static readonly uint FadtTag = EsmFourCC.Make('F', 'A', 'D', 'T');
@@ -86,6 +96,8 @@ namespace VVardenfell.Importer.Bake
         static readonly uint PnamTag = EsmFourCC.Make('P', 'N', 'A', 'M');
         static readonly uint NpcoTag = EsmFourCC.Make('N', 'P', 'C', 'O');
         static readonly uint NpcsTag = EsmFourCC.Make('N', 'P', 'C', 'S');
+        static readonly uint PgrcTag = EsmFourCC.Make('P', 'G', 'R', 'C');
+        static readonly uint PgrpTag = EsmFourCC.Make('P', 'G', 'R', 'P');
         static readonly uint PtexTag = EsmFourCC.Make('P', 'T', 'E', 'X');
         static readonly uint QstfTag = EsmFourCC.Make('Q', 'S', 'T', 'F');
         static readonly uint QstnTag = EsmFourCC.Make('Q', 'S', 'T', 'N');
@@ -119,6 +131,8 @@ namespace VVardenfell.Importer.Bake
         static readonly ProfilerMarker k_Bake = new("VV.Bake.GameplayContent");
         static readonly ProfilerMarker k_ParseSource = new("VV.Bake.GameplayContent.ParseSource");
         static readonly ProfilerMarker k_Validation = new("VV.Bake.GameplayContent.Validation");
+        const int ExteriorBorderCandidateDistanceMw = 512;
+        const int ExteriorBorderVerticalDistanceMw = 384;
 
         sealed class DialogueAccumulator
         {
@@ -144,6 +158,81 @@ namespace VVardenfell.Importer.Bake
             public ActorDef Def;
             public readonly List<ActorSpellDef> Spells = new();
             public readonly List<ContainerItemDef> InventoryItems = new();
+            public readonly List<ActorAiPackageDef> AiPackages = new();
+            public readonly List<ActorTravelDestinationDef> TravelDestinations = new();
+        }
+
+        sealed class PathGridAccumulator
+        {
+            public PathGridDef Def;
+            public readonly List<PathGridPointDef> Points = new();
+            public readonly List<int> RawConnectionTargets = new();
+        }
+
+        readonly struct NavigationEdgeDraft
+        {
+            public NavigationEdgeDraft(int fromNodeIndex, int toNodeIndex, float cost, PathGridNavigationEdgeKind kind)
+            {
+                FromNodeIndex = fromNodeIndex;
+                ToNodeIndex = toNodeIndex;
+                Cost = cost;
+                Kind = kind;
+            }
+
+            public readonly int FromNodeIndex;
+            public readonly int ToNodeIndex;
+            public readonly float Cost;
+            public readonly PathGridNavigationEdgeKind Kind;
+        }
+
+        sealed class NavigationUnionFind
+        {
+            readonly int[] _parent;
+            readonly byte[] _rank;
+
+            public NavigationUnionFind(int count)
+            {
+                _parent = new int[Math.Max(0, count)];
+                _rank = new byte[_parent.Length];
+                for (int i = 0; i < _parent.Length; i++)
+                    _parent[i] = i;
+            }
+
+            public int Find(int value)
+            {
+                int parent = _parent[value];
+                if (parent == value)
+                    return value;
+
+                int root = Find(parent);
+                _parent[value] = root;
+                return root;
+            }
+
+            public void Union(int a, int b)
+            {
+                if ((uint)a >= (uint)_parent.Length || (uint)b >= (uint)_parent.Length)
+                    return;
+
+                int rootA = Find(a);
+                int rootB = Find(b);
+                if (rootA == rootB)
+                    return;
+
+                if (_rank[rootA] < _rank[rootB])
+                {
+                    _parent[rootA] = rootB;
+                }
+                else if (_rank[rootA] > _rank[rootB])
+                {
+                    _parent[rootB] = rootA;
+                }
+                else
+                {
+                    _parent[rootB] = rootA;
+                    _rank[rootA]++;
+                }
+            }
         }
 
         sealed class State
@@ -176,7 +265,8 @@ namespace VVardenfell.Importer.Bake
             public readonly Dictionary<string, GenericRecordDef> LandTextures = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> Statics = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, GenericRecordDef> BodyParts = new(StringComparer.OrdinalIgnoreCase);
-            public readonly Dictionary<string, GenericRecordDef> PathGrids = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ActorBodyPartDef> ActorBodyParts = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, PathGridAccumulator> PathGrids = new(StringComparer.OrdinalIgnoreCase);
         }
 
         sealed class ValidationIssue
@@ -297,10 +387,10 @@ namespace VVardenfell.Importer.Bake
                         ParseGenericRecord(esm, rec.Tag, state.LandTextures);
                         break;
                     case var tag when tag == BodyTag:
-                        ParseGenericRecord(esm, rec.Tag, state.BodyParts);
+                        ParseBodyPartRecord(esm, state.BodyParts, state.ActorBodyParts);
                         break;
                     case var tag when tag == PgrdTag:
-                        ParseGenericRecord(esm, rec.Tag, state.PathGrids);
+                        ParsePathGridRecord(esm, state.PathGrids);
                         break;
                     case var tag when tag == DoorTag:
                         ParseBaseDefRecord(esm, rec.Tag, state.Doors, isDoor: true);
@@ -564,6 +654,203 @@ namespace VVardenfell.Importer.Bake
 
             def.ContentId = ContentId.FromTagAndId(recordTag, def.Id);
             target[def.Id] = def;
+        }
+
+        static void ParsePathGridRecord(EsmReader esm, Dictionary<string, PathGridAccumulator> target)
+        {
+            var def = new PathGridDef
+            {
+                RecordTag = PgrdTag,
+                FirstPointIndex = -1,
+                FirstConnectionIndex = -1,
+            };
+            var points = new List<PathGridPointDef>();
+            var rawConnectionTargets = new List<int>();
+            bool deleted = false;
+            bool hasData = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        def.CellId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.DATA:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 12)
+                        {
+                            def.GridX = ReadInt32(bytes, 0);
+                            def.GridY = ReadInt32(bytes, 4);
+                            def.Granularity = ReadInt16(bytes, 8);
+                            def.DeclaredPointCount = ReadUInt16(bytes, 10);
+                            hasData = true;
+                        }
+                        break;
+                    }
+                    case var tag when tag == PgrpTag:
+                        ReadPathGridPoints(esm.ReadSubrecordBytes(), points);
+                        break;
+                    case var tag when tag == PgrcTag:
+                        ReadPathGridConnections(esm.ReadSubrecordBytes(), rawConnectionTargets);
+                        break;
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (!hasData && string.IsNullOrWhiteSpace(def.CellId))
+                return;
+
+            def.Id = BuildPathGridId(def.CellId, def.GridX, def.GridY);
+            def.IsExterior = string.IsNullOrWhiteSpace(def.CellId) ? (byte)1 : (byte)0;
+
+            if (deleted)
+            {
+                target.Remove(def.Id);
+                return;
+            }
+
+            def.ContentId = ContentId.FromTagAndId(PgrdTag, def.Id);
+            var accumulator = new PathGridAccumulator
+            {
+                Def = def,
+            };
+            accumulator.Points.AddRange(points);
+            accumulator.RawConnectionTargets.AddRange(rawConnectionTargets);
+            target[def.Id] = accumulator;
+        }
+
+        static void ReadPathGridPoints(byte[] bytes, List<PathGridPointDef> points)
+        {
+            if (bytes == null || bytes.Length < 16)
+                return;
+
+            int count = bytes.Length / 16;
+            for (int i = 0; i < count; i++)
+            {
+                int offset = i * 16;
+                int sourceX = ReadInt32(bytes, offset);
+                int sourceY = ReadInt32(bytes, offset + 4);
+                int sourceZ = ReadInt32(bytes, offset + 8);
+                points.Add(new PathGridPointDef
+                {
+                    SourceX = sourceX,
+                    SourceY = sourceY,
+                    SourceZ = sourceZ,
+                    UnityX = sourceX * WorldScale.MwUnitsToMeters,
+                    UnityY = sourceZ * WorldScale.MwUnitsToMeters,
+                    UnityZ = sourceY * WorldScale.MwUnitsToMeters,
+                    Autogenerated = bytes[offset + 12],
+                    SourceConnectionCount = bytes[offset + 13],
+                    FirstConnectionIndex = -1,
+                });
+            }
+        }
+
+        static void ReadPathGridConnections(byte[] bytes, List<int> rawConnectionTargets)
+        {
+            if (bytes == null || bytes.Length < 4)
+                return;
+
+            int count = bytes.Length / 4;
+            for (int i = 0; i < count; i++)
+                rawConnectionTargets.Add(ReadInt32(bytes, i * 4));
+        }
+
+        static string BuildPathGridId(string cellId, int gridX, int gridY)
+        {
+            if (!string.IsNullOrWhiteSpace(cellId))
+                return ContentId.NormalizeId(cellId);
+
+            return $"exterior:{gridX},{gridY}";
+        }
+
+        static void ParseBodyPartRecord(
+            EsmReader esm,
+            Dictionary<string, GenericRecordDef> genericTarget,
+            Dictionary<string, ActorBodyPartDef> typedTarget)
+        {
+            var generic = new GenericRecordDef { RecordTag = BodyTag };
+            var typed = new ActorBodyPartDef();
+            bool hasBydt = false;
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                    {
+                        string id = esm.ReadSubrecordString();
+                        generic.Id = id;
+                        typed.Id = id;
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.MODL:
+                    {
+                        string model = esm.ReadSubrecordString();
+                        generic.Model = model;
+                        typed.Model = model;
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.FNAM:
+                    {
+                        string race = esm.ReadSubrecordString();
+                        generic.Name = race;
+                        typed.RaceId = race;
+                        break;
+                    }
+                    case var tag when tag == BydtTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                        {
+                            typed.Part = (ActorBodyPartMeshPart)bytes[0];
+                            typed.Vampire = bytes[1];
+                            typed.Female = (byte)((bytes[2] & 0x01) != 0 ? 1 : 0);
+                            typed.NotPlayable = (byte)((bytes[2] & 0x02) != 0 ? 1 : 0);
+                            typed.Type = (ActorBodyPartMeshType)bytes[3];
+                            generic.Int0 = bytes[0];
+                            generic.Int1 = bytes[3];
+                            generic.Flags = bytes[2];
+                            generic.Int2 = bytes[1];
+                            hasBydt = true;
+                        }
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(typed.Id))
+                return;
+
+            if (deleted)
+            {
+                genericTarget.Remove(typed.Id);
+                typedTarget.Remove(typed.Id);
+                return;
+            }
+
+            generic.ContentId = ContentId.FromTagAndId(BodyTag, typed.Id);
+            typed.ContentId = generic.ContentId;
+            typed.FirstPerson = (byte)(typed.Id.EndsWith("1st", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
+            genericTarget[typed.Id] = generic;
+            if (hasBydt)
+                typedTarget[typed.Id] = typed;
         }
 
         static void ParseClassRecord(EsmReader esm, Dictionary<string, ClassDef> target)
@@ -1038,12 +1325,16 @@ namespace VVardenfell.Importer.Bake
                 Scale = 1f,
                 FirstSpellIndex = -1,
                 FirstInventoryIndex = -1,
+                FirstAiPackageIndex = -1,
+                FirstTravelDestinationIndex = -1,
                 AiData = kind == ActorDefKind.Npc
                     ? new ActorAiDataDef { Hello = 30, Fight = 30, Flee = 30 }
                     : new ActorAiDataDef { Fight = 90, Flee = 20 },
             };
             var spells = new List<ActorSpellDef>();
             var inventoryItems = new List<ContainerItemDef>();
+            var aiPackages = new List<ActorAiPackageDef>();
+            var travelDestinations = new List<ActorTravelDestinationDef>();
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -1190,6 +1481,69 @@ namespace VVardenfell.Importer.Bake
                         }
                         break;
                     }
+                    case var tag when tag == AiWanderTag:
+                    {
+                        if (TryReadAiWanderPackage(esm.ReadSubrecordBytes(), out var package))
+                            aiPackages.Add(package);
+                        break;
+                    }
+                    case var tag when tag == AiTravelTag:
+                    {
+                        if (TryReadAiTravelPackage(esm.ReadSubrecordBytes(), out var package))
+                            aiPackages.Add(package);
+                        break;
+                    }
+                    case var tag when tag == AiEscortTag:
+                    {
+                        if (TryReadAiTargetPackage(esm.ReadSubrecordBytes(), ActorAiPackageType.Escort, out var package))
+                            aiPackages.Add(package);
+                        break;
+                    }
+                    case var tag when tag == AiFollowTag:
+                    {
+                        if (TryReadAiTargetPackage(esm.ReadSubrecordBytes(), ActorAiPackageType.Follow, out var package))
+                            aiPackages.Add(package);
+                        break;
+                    }
+                    case var tag when tag == AiActivateTag:
+                    {
+                        if (TryReadAiActivatePackage(esm.ReadSubrecordBytes(), out var package))
+                            aiPackages.Add(package);
+                        break;
+                    }
+                    case var tag when tag == CndtTag:
+                    {
+                        string cellName = esm.ReadSubrecordString();
+                        if (aiPackages.Count > 0)
+                        {
+                            int index = aiPackages.Count - 1;
+                            var package = aiPackages[index];
+                            if (package.Type == ActorAiPackageType.Escort || package.Type == ActorAiPackageType.Follow)
+                            {
+                                package.CellName = cellName;
+                                aiPackages[index] = package;
+                            }
+                        }
+                        break;
+                    }
+                    case var tag when tag == DodtTag:
+                    {
+                        if (TryReadTravelDestination(esm.ReadSubrecordBytes(), out var destination))
+                            travelDestinations.Add(destination);
+                        break;
+                    }
+                    case var tag when tag == DnamTag:
+                    {
+                        string cellName = esm.ReadSubrecordString();
+                        if (travelDestinations.Count > 0)
+                        {
+                            int index = travelDestinations.Count - 1;
+                            var destination = travelDestinations[index];
+                            destination.CellName = cellName;
+                            travelDestinations[index] = destination;
+                        }
+                        break;
+                    }
                     case var tag when tag == XsclTag:
                         if (sub.Size >= 4)
                             def.Scale = ReadSingle(esm.ReadSubrecordBytes(), 0);
@@ -1222,6 +1576,8 @@ namespace VVardenfell.Importer.Bake
             };
             accumulator.Spells.AddRange(spells);
             accumulator.InventoryItems.AddRange(inventoryItems);
+            accumulator.AiPackages.AddRange(aiPackages);
+            accumulator.TravelDestinations.AddRange(travelDestinations);
             target[def.Id] = accumulator;
         }
 
@@ -1430,8 +1786,6 @@ namespace VVardenfell.Importer.Bake
                 dialogue.Infos.Add(info);
             }
         }
-
-        static readonly uint DnamTag = EsmFourCC.Make('D', 'N', 'A', 'M');
 
         static void ParseSpellRecord(EsmReader esm, Dictionary<string, SpellDef> target)
         {
@@ -1762,10 +2116,26 @@ namespace VVardenfell.Importer.Bake
                 LandTextures = OrderByNormalizedId(state.LandTextures).ToArray(),
                 Statics = OrderByNormalizedId(state.Statics).ToArray(),
                 BodyParts = OrderByNormalizedId(state.BodyParts).ToArray(),
-                PathGrids = OrderByNormalizedId(state.PathGrids).ToArray(),
+                ActorBodyParts = OrderByNormalizedId(state.ActorBodyParts).ToArray(),
             };
 
-            BuildActorArrays(state.Actors, out data.Actors, out data.ActorSpells, out data.ActorInventoryItems);
+            BuildActorArrays(
+                state.Actors,
+                out data.Actors,
+                out data.ActorSpells,
+                out data.ActorInventoryItems,
+                out data.ActorAiPackages,
+                out data.ActorTravelDestinations);
+            BuildPathGridArrays(state.PathGrids, out data.PathGrids, out data.PathGridPoints, out data.PathGridConnections);
+            BuildPathGridNavigationArrays(
+                ref data.PathGrids,
+                data.PathGridPoints,
+                data.PathGridConnections,
+                out data.PathGridNavigationNodes,
+                out data.PathGridNavigationEdges,
+                out data.PathGridNavigationPortals,
+                out data.PathGridNavigationAbstractEdges,
+                out data.PathGridNavigationNeighbors);
             BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
             BuildContainerContentArrays(data.Containers, state.ContainerItems, out data.ContainerContentRanges, out data.ContainerItems);
             BuildItemLeveledListArrays(state.ItemLeveledLists, out data.ItemLeveledLists, out data.ItemLeveledListEntries);
@@ -1787,16 +2157,647 @@ namespace VVardenfell.Importer.Bake
                 .ToArray();
         }
 
+        static void BuildPathGridArrays(
+            Dictionary<string, PathGridAccumulator> map,
+            out PathGridDef[] pathGrids,
+            out PathGridPointDef[] points,
+            out PathGridConnectionDef[] connections)
+        {
+            var ordered = map.OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal).ToArray();
+            pathGrids = new PathGridDef[ordered.Length];
+            var flatPoints = new List<PathGridPointDef>(ordered.Sum(pair => pair.Value.Points.Count));
+            var flatConnections = new List<PathGridConnectionDef>(ordered.Sum(pair => pair.Value.RawConnectionTargets.Count));
+
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                var accumulator = ordered[i].Value;
+                var def = accumulator.Def;
+                def.FirstPointIndex = accumulator.Points.Count > 0 ? flatPoints.Count : -1;
+                def.PointCount = accumulator.Points.Count;
+                def.FirstConnectionIndex = accumulator.RawConnectionTargets.Count > 0 ? flatConnections.Count : -1;
+
+                int rawConnectionIndex = 0;
+                for (int pointIndex = 0; pointIndex < accumulator.Points.Count; pointIndex++)
+                {
+                    var point = accumulator.Points[pointIndex];
+                    int available = Math.Max(0, accumulator.RawConnectionTargets.Count - rawConnectionIndex);
+                    int connectionCount = Math.Min(point.SourceConnectionCount, available);
+                    point.FirstConnectionIndex = connectionCount > 0 ? flatConnections.Count : -1;
+                    point.ConnectionCount = connectionCount;
+
+                    for (int j = 0; j < connectionCount; j++)
+                    {
+                        flatConnections.Add(new PathGridConnectionDef
+                        {
+                            FromPointIndex = pointIndex,
+                            ToPointIndex = accumulator.RawConnectionTargets[rawConnectionIndex],
+                        });
+                        rawConnectionIndex++;
+                    }
+
+                    flatPoints.Add(point);
+                }
+
+                int unusedConnections = Math.Max(0, accumulator.RawConnectionTargets.Count - rawConnectionIndex);
+                for (int j = 0; j < unusedConnections; j++)
+                {
+                    flatConnections.Add(new PathGridConnectionDef
+                    {
+                        FromPointIndex = -1,
+                        ToPointIndex = accumulator.RawConnectionTargets[rawConnectionIndex + j],
+                    });
+                }
+
+                def.ConnectionCount = accumulator.RawConnectionTargets.Count;
+                pathGrids[i] = def;
+            }
+
+            points = flatPoints.ToArray();
+            connections = flatConnections.ToArray();
+        }
+
+        static void BuildPathGridNavigationArrays(
+            ref PathGridDef[] pathGrids,
+            PathGridPointDef[] points,
+            PathGridConnectionDef[] connections,
+            out PathGridNavigationNodeDef[] navigationNodes,
+            out PathGridNavigationEdgeDef[] navigationEdges,
+            out PathGridNavigationPortalDef[] navigationPortals,
+            out PathGridNavigationAbstractEdgeDef[] navigationAbstractEdges,
+            out PathGridNavigationNeighborDef[] navigationNeighbors)
+        {
+            pathGrids ??= Array.Empty<PathGridDef>();
+            points ??= Array.Empty<PathGridPointDef>();
+            connections ??= Array.Empty<PathGridConnectionDef>();
+
+            var nodeList = new List<PathGridNavigationNodeDef>(points.Length);
+            for (int pathGridIndex = 0; pathGridIndex < pathGrids.Length; pathGridIndex++)
+            {
+                var pathGrid = pathGrids[pathGridIndex];
+                pathGrid.FirstNavigationNodeIndex = pathGrid.PointCount > 0 ? nodeList.Count : -1;
+                pathGrid.NavigationNodeCount = pathGrid.PointCount;
+                pathGrid.FirstNavigationEdgeIndex = -1;
+                pathGrid.NavigationEdgeCount = 0;
+                pathGrid.FirstNavigationPortalIndex = -1;
+                pathGrid.NavigationPortalCount = 0;
+                pathGrid.FirstNavigationAbstractEdgeIndex = -1;
+                pathGrid.NavigationAbstractEdgeCount = 0;
+                pathGrid.FirstNavigationNeighborIndex = -1;
+                pathGrid.NavigationNeighborCount = 0;
+                pathGrid.NavigationComponentId = -1;
+
+                for (int pointOffset = 0; pointOffset < pathGrid.PointCount; pointOffset++)
+                {
+                    int pointIndex = pathGrid.FirstPointIndex + pointOffset;
+                    if ((uint)pointIndex >= (uint)points.Length)
+                        continue;
+
+                    var point = points[pointIndex];
+                    nodeList.Add(new PathGridNavigationNodeDef
+                    {
+                        PathGridIndex = pathGridIndex,
+                        PointIndex = pointOffset,
+                        SourceX = point.SourceX,
+                        SourceY = point.SourceY,
+                        SourceZ = point.SourceZ,
+                        UnityX = point.UnityX,
+                        UnityY = point.UnityY,
+                        UnityZ = point.UnityZ,
+                        FirstEdgeIndex = -1,
+                        ComponentId = -1,
+                    });
+                }
+
+                pathGrids[pathGridIndex] = pathGrid;
+            }
+
+            var outgoing = new List<NavigationEdgeDraft>[nodeList.Count];
+            for (int i = 0; i < outgoing.Length; i++)
+                outgoing[i] = new List<NavigationEdgeDraft>();
+
+            var edgeKeys = new HashSet<long>();
+            for (int pathGridIndex = 0; pathGridIndex < pathGrids.Length; pathGridIndex++)
+            {
+                var pathGrid = pathGrids[pathGridIndex];
+                if (pathGrid.FirstNavigationNodeIndex < 0)
+                    continue;
+
+                for (int connectionOffset = 0; connectionOffset < pathGrid.ConnectionCount; connectionOffset++)
+                {
+                    int connectionIndex = pathGrid.FirstConnectionIndex + connectionOffset;
+                    if ((uint)connectionIndex >= (uint)connections.Length)
+                        continue;
+
+                    var connection = connections[connectionIndex];
+                    if ((uint)connection.FromPointIndex >= (uint)pathGrid.NavigationNodeCount ||
+                        (uint)connection.ToPointIndex >= (uint)pathGrid.NavigationNodeCount)
+                    {
+                        continue;
+                    }
+
+                    int fromNode = pathGrid.FirstNavigationNodeIndex + connection.FromPointIndex;
+                    int toNode = pathGrid.FirstNavigationNodeIndex + connection.ToPointIndex;
+                    AddNavigationEdge(outgoing, edgeKeys, nodeList, fromNode, toNode, PathGridNavigationEdgeKind.Authored);
+                }
+            }
+
+            InferExteriorBorderNavigationEdges(pathGrids, nodeList, outgoing, edgeKeys);
+
+            var union = new NavigationUnionFind(nodeList.Count);
+            for (int fromNode = 0; fromNode < outgoing.Length; fromNode++)
+            {
+                for (int edgeIndex = 0; edgeIndex < outgoing[fromNode].Count; edgeIndex++)
+                    union.Union(fromNode, outgoing[fromNode][edgeIndex].ToNodeIndex);
+            }
+
+            AssignNavigationComponents(ref pathGrids, nodeList, union);
+            navigationEdges = FlattenNavigationEdges(ref pathGrids, nodeList, outgoing);
+            BuildNavigationPortalsAndAbstractEdges(
+                ref pathGrids,
+                nodeList,
+                outgoing,
+                out navigationPortals,
+                out navigationAbstractEdges,
+                out navigationNeighbors);
+            navigationNodes = nodeList.ToArray();
+        }
+
+        static void InferExteriorBorderNavigationEdges(
+            PathGridDef[] pathGrids,
+            List<PathGridNavigationNodeDef> nodes,
+            List<NavigationEdgeDraft>[] outgoing,
+            HashSet<long> edgeKeys)
+        {
+            var exteriorByCoord = new Dictionary<long, int>();
+            for (int i = 0; i < pathGrids.Length; i++)
+            {
+                if (pathGrids[i].IsExterior != 0)
+                    exteriorByCoord[PackExteriorPathGridKey(pathGrids[i].GridX, pathGrids[i].GridY)] = i;
+            }
+
+            for (int pathGridIndex = 0; pathGridIndex < pathGrids.Length; pathGridIndex++)
+            {
+                var pathGrid = pathGrids[pathGridIndex];
+                if (pathGrid.IsExterior == 0 || pathGrid.NavigationNodeCount <= 0)
+                    continue;
+
+                TryInferExteriorBorderNavigationEdges(pathGrids, nodes, outgoing, edgeKeys, exteriorByCoord, pathGridIndex, 1, 0);
+                TryInferExteriorBorderNavigationEdges(pathGrids, nodes, outgoing, edgeKeys, exteriorByCoord, pathGridIndex, 0, 1);
+            }
+        }
+
+        static void TryInferExteriorBorderNavigationEdges(
+            PathGridDef[] pathGrids,
+            List<PathGridNavigationNodeDef> nodes,
+            List<NavigationEdgeDraft>[] outgoing,
+            HashSet<long> edgeKeys,
+            Dictionary<long, int> exteriorByCoord,
+            int pathGridIndex,
+            int deltaX,
+            int deltaY)
+        {
+            var a = pathGrids[pathGridIndex];
+            if (!exteriorByCoord.TryGetValue(PackExteriorPathGridKey(a.GridX + deltaX, a.GridY + deltaY), out int neighborIndex))
+                return;
+
+            var b = pathGrids[neighborIndex];
+            if (b.NavigationNodeCount <= 0)
+                return;
+
+            int borderX = deltaX != 0 ? Math.Max(a.GridX, b.GridX) * LandRecordSize.CellUnitsMw : 0;
+            int borderY = deltaY != 0 ? Math.Max(a.GridY, b.GridY) * LandRecordSize.CellUnitsMw : 0;
+
+            for (int aOffset = 0; aOffset < a.NavigationNodeCount; aOffset++)
+            {
+                int aNodeIndex = a.FirstNavigationNodeIndex + aOffset;
+                var aNode = nodes[aNodeIndex];
+                if (!IsNearExteriorBorder(aNode, borderX, borderY, deltaX, deltaY))
+                    continue;
+
+                for (int bOffset = 0; bOffset < b.NavigationNodeCount; bOffset++)
+                {
+                    int bNodeIndex = b.FirstNavigationNodeIndex + bOffset;
+                    var bNode = nodes[bNodeIndex];
+                    if (!IsNearExteriorBorder(bNode, borderX, borderY, deltaX, deltaY))
+                        continue;
+
+                    int dx = aNode.SourceX - bNode.SourceX;
+                    int dy = aNode.SourceY - bNode.SourceY;
+                    int dz = aNode.SourceZ - bNode.SourceZ;
+                    if (Math.Abs(dz) > ExteriorBorderVerticalDistanceMw)
+                        continue;
+
+                    long planarDistanceSq = (long)dx * dx + (long)dy * dy;
+                    if (planarDistanceSq > (long)ExteriorBorderCandidateDistanceMw * ExteriorBorderCandidateDistanceMw)
+                        continue;
+
+                    AddNavigationEdge(outgoing, edgeKeys, nodes, aNodeIndex, bNodeIndex, PathGridNavigationEdgeKind.ExteriorBorder);
+                    AddNavigationEdge(outgoing, edgeKeys, nodes, bNodeIndex, aNodeIndex, PathGridNavigationEdgeKind.ExteriorBorder);
+
+                    aNode.IsPortal = 1;
+                    bNode.IsPortal = 1;
+                    nodes[aNodeIndex] = aNode;
+                    nodes[bNodeIndex] = bNode;
+                }
+            }
+        }
+
+        static bool IsNearExteriorBorder(PathGridNavigationNodeDef node, int borderX, int borderY, int deltaX, int deltaY)
+        {
+            if (deltaX != 0)
+                return Math.Abs(node.SourceX - borderX) <= ExteriorBorderCandidateDistanceMw;
+            if (deltaY != 0)
+                return Math.Abs(node.SourceY - borderY) <= ExteriorBorderCandidateDistanceMw;
+            return false;
+        }
+
+        static void AddNavigationEdge(
+            List<NavigationEdgeDraft>[] outgoing,
+            HashSet<long> edgeKeys,
+            List<PathGridNavigationNodeDef> nodes,
+            int fromNode,
+            int toNode,
+            PathGridNavigationEdgeKind kind)
+        {
+            if ((uint)fromNode >= (uint)outgoing.Length || (uint)toNode >= (uint)outgoing.Length)
+                return;
+
+            long key = PackNavigationEdgeKey(fromNode, toNode);
+            if (!edgeKeys.Add(key))
+                return;
+
+            outgoing[fromNode].Add(new NavigationEdgeDraft(fromNode, toNode, NavigationDistance(nodes[fromNode], nodes[toNode]), kind));
+        }
+
+        static float NavigationDistance(PathGridNavigationNodeDef a, PathGridNavigationNodeDef b)
+        {
+            float dx = a.UnityX - b.UnityX;
+            float dy = a.UnityY - b.UnityY;
+            float dz = a.UnityZ - b.UnityZ;
+            return (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        static long PackNavigationEdgeKey(int fromNode, int toNode)
+            => ((long)fromNode << 32) ^ (uint)toNode;
+
+        static long PackExteriorPathGridKey(int gridX, int gridY)
+            => ((long)gridX << 32) ^ (uint)gridY;
+
+        static void AssignNavigationComponents(
+            ref PathGridDef[] pathGrids,
+            List<PathGridNavigationNodeDef> nodes,
+            NavigationUnionFind union)
+        {
+            var componentByRoot = new Dictionary<int, int>();
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                int root = union.Find(i);
+                if (!componentByRoot.TryGetValue(root, out int componentId))
+                {
+                    componentId = componentByRoot.Count;
+                    componentByRoot[root] = componentId;
+                }
+
+                var node = nodes[i];
+                node.ComponentId = componentId;
+                nodes[i] = node;
+            }
+
+            for (int i = 0; i < pathGrids.Length; i++)
+            {
+                var pathGrid = pathGrids[i];
+                if (pathGrid.FirstNavigationNodeIndex >= 0 && pathGrid.NavigationNodeCount > 0)
+                    pathGrid.NavigationComponentId = nodes[pathGrid.FirstNavigationNodeIndex].ComponentId;
+                pathGrids[i] = pathGrid;
+            }
+        }
+
+        static PathGridNavigationEdgeDef[] FlattenNavigationEdges(
+            ref PathGridDef[] pathGrids,
+            List<PathGridNavigationNodeDef> nodes,
+            List<NavigationEdgeDraft>[] outgoing)
+        {
+            var flat = new List<PathGridNavigationEdgeDef>(outgoing.Sum(list => list.Count));
+            for (int nodeIndex = 0; nodeIndex < nodes.Count; nodeIndex++)
+            {
+                var node = nodes[nodeIndex];
+                node.FirstEdgeIndex = outgoing[nodeIndex].Count > 0 ? flat.Count : -1;
+                node.EdgeCount = outgoing[nodeIndex].Count;
+                nodes[nodeIndex] = node;
+
+                var pathGrid = pathGrids[node.PathGridIndex];
+                if (outgoing[nodeIndex].Count > 0)
+                {
+                    if (pathGrid.FirstNavigationEdgeIndex < 0)
+                        pathGrid.FirstNavigationEdgeIndex = flat.Count;
+                    pathGrid.NavigationEdgeCount += outgoing[nodeIndex].Count;
+                }
+
+                for (int i = 0; i < outgoing[nodeIndex].Count; i++)
+                {
+                    var edge = outgoing[nodeIndex][i];
+                    flat.Add(new PathGridNavigationEdgeDef
+                    {
+                        FromNodeIndex = edge.FromNodeIndex,
+                        ToNodeIndex = edge.ToNodeIndex,
+                        Cost = edge.Cost,
+                        Kind = edge.Kind,
+                    });
+                }
+
+                pathGrids[node.PathGridIndex] = pathGrid;
+            }
+
+            return flat.ToArray();
+        }
+
+        static void BuildNavigationPortalsAndAbstractEdges(
+            ref PathGridDef[] pathGrids,
+            List<PathGridNavigationNodeDef> nodes,
+            List<NavigationEdgeDraft>[] outgoing,
+            out PathGridNavigationPortalDef[] portals,
+            out PathGridNavigationAbstractEdgeDef[] abstractEdges,
+            out PathGridNavigationNeighborDef[] neighbors)
+        {
+            var portalList = new List<PathGridNavigationPortalDef>();
+            var portalByNode = new Dictionary<int, int>();
+            for (int pathGridIndex = 0; pathGridIndex < pathGrids.Length; pathGridIndex++)
+            {
+                var pathGrid = pathGrids[pathGridIndex];
+                pathGrid.FirstNavigationPortalIndex = -1;
+                pathGrid.NavigationPortalCount = 0;
+
+                for (int localNode = 0; localNode < pathGrid.NavigationNodeCount; localNode++)
+                {
+                    int nodeIndex = pathGrid.FirstNavigationNodeIndex + localNode;
+                    if ((uint)nodeIndex >= (uint)nodes.Count || nodes[nodeIndex].IsPortal == 0)
+                        continue;
+
+                    if (pathGrid.FirstNavigationPortalIndex < 0)
+                        pathGrid.FirstNavigationPortalIndex = portalList.Count;
+
+                    int portalIndex = portalList.Count;
+                    portalByNode[nodeIndex] = portalIndex;
+                    portalList.Add(new PathGridNavigationPortalDef
+                    {
+                        PathGridIndex = pathGridIndex,
+                        NodeIndex = nodeIndex,
+                        PointIndex = nodes[nodeIndex].PointIndex,
+                        FirstAbstractEdgeIndex = -1,
+                        ComponentId = nodes[nodeIndex].ComponentId,
+                    });
+                    pathGrid.NavigationPortalCount++;
+                }
+
+                pathGrids[pathGridIndex] = pathGrid;
+            }
+
+            var outgoingAbstract = new List<PathGridNavigationAbstractEdgeDef>[portalList.Count];
+            for (int i = 0; i < outgoingAbstract.Length; i++)
+                outgoingAbstract[i] = new List<PathGridNavigationAbstractEdgeDef>();
+            var abstractKeys = new HashSet<long>();
+
+            for (int nodeIndex = 0; nodeIndex < outgoing.Length; nodeIndex++)
+            {
+                for (int edgeIndex = 0; edgeIndex < outgoing[nodeIndex].Count; edgeIndex++)
+                {
+                    var edge = outgoing[nodeIndex][edgeIndex];
+                    if (edge.Kind != PathGridNavigationEdgeKind.ExteriorBorder)
+                        continue;
+                    if (!portalByNode.TryGetValue(edge.FromNodeIndex, out int fromPortal) ||
+                        !portalByNode.TryGetValue(edge.ToNodeIndex, out int toPortal))
+                    {
+                        continue;
+                    }
+
+                    AddAbstractEdge(outgoingAbstract, abstractKeys, fromPortal, toPortal, edge.Cost, PathGridNavigationEdgeKind.ExteriorBorder);
+                }
+            }
+
+            for (int pathGridIndex = 0; pathGridIndex < pathGrids.Length; pathGridIndex++)
+            {
+                var pathGrid = pathGrids[pathGridIndex];
+                if (pathGrid.NavigationPortalCount <= 1)
+                    continue;
+
+                int firstPortal = pathGrid.FirstNavigationPortalIndex;
+                int endPortal = firstPortal + pathGrid.NavigationPortalCount;
+                for (int fromPortal = firstPortal; fromPortal < endPortal; fromPortal++)
+                {
+                    for (int toPortal = firstPortal; toPortal < endPortal; toPortal++)
+                    {
+                        if (fromPortal == toPortal)
+                            continue;
+
+                        float cost = FindAuthoredPathCost(
+                            pathGridIndex,
+                            portalList[fromPortal].NodeIndex,
+                            portalList[toPortal].NodeIndex,
+                            nodes,
+                            outgoing);
+                        if (!float.IsPositiveInfinity(cost))
+                            AddAbstractEdge(outgoingAbstract, abstractKeys, fromPortal, toPortal, cost, PathGridNavigationEdgeKind.IntraPathGrid);
+                    }
+                }
+            }
+
+            var flatAbstract = new List<PathGridNavigationAbstractEdgeDef>(outgoingAbstract.Sum(list => list.Count));
+            for (int portalIndex = 0; portalIndex < portalList.Count; portalIndex++)
+            {
+                var portal = portalList[portalIndex];
+                portal.FirstAbstractEdgeIndex = outgoingAbstract[portalIndex].Count > 0 ? flatAbstract.Count : -1;
+                portal.AbstractEdgeCount = outgoingAbstract[portalIndex].Count;
+                portalList[portalIndex] = portal;
+
+                var pathGrid = pathGrids[portal.PathGridIndex];
+                if (outgoingAbstract[portalIndex].Count > 0)
+                {
+                    if (pathGrid.FirstNavigationAbstractEdgeIndex < 0)
+                        pathGrid.FirstNavigationAbstractEdgeIndex = flatAbstract.Count;
+                    pathGrid.NavigationAbstractEdgeCount += outgoingAbstract[portalIndex].Count;
+                }
+
+                flatAbstract.AddRange(outgoingAbstract[portalIndex]);
+                pathGrids[portal.PathGridIndex] = pathGrid;
+            }
+
+            abstractEdges = flatAbstract.ToArray();
+            portals = portalList.ToArray();
+            neighbors = BuildNavigationNeighbors(ref pathGrids, portals, abstractEdges);
+        }
+
+        static void AddAbstractEdge(
+            List<PathGridNavigationAbstractEdgeDef>[] outgoing,
+            HashSet<long> keys,
+            int fromPortal,
+            int toPortal,
+            float cost,
+            PathGridNavigationEdgeKind kind)
+        {
+            if ((uint)fromPortal >= (uint)outgoing.Length || (uint)toPortal >= (uint)outgoing.Length)
+                return;
+
+            long key = PackNavigationEdgeKey(fromPortal, toPortal);
+            if (!keys.Add(key))
+                return;
+
+            outgoing[fromPortal].Add(new PathGridNavigationAbstractEdgeDef
+            {
+                FromPortalIndex = fromPortal,
+                ToPortalIndex = toPortal,
+                Cost = cost,
+                Kind = kind,
+            });
+        }
+
+        static float FindAuthoredPathCost(
+            int pathGridIndex,
+            int startNode,
+            int goalNode,
+            List<PathGridNavigationNodeDef> nodes,
+            List<NavigationEdgeDraft>[] outgoing)
+        {
+            if (startNode == goalNode)
+                return 0f;
+
+            var dist = new float[nodes.Count];
+            var closed = new bool[nodes.Count];
+            var open = new List<int>();
+            for (int i = 0; i < dist.Length; i++)
+                dist[i] = float.PositiveInfinity;
+
+            dist[startNode] = 0f;
+            open.Add(startNode);
+            while (open.Count > 0)
+            {
+                int bestOpenIndex = 0;
+                float bestCost = dist[open[0]];
+                for (int i = 1; i < open.Count; i++)
+                {
+                    float cost = dist[open[i]];
+                    if (cost < bestCost)
+                    {
+                        bestCost = cost;
+                        bestOpenIndex = i;
+                    }
+                }
+
+                int current = open[bestOpenIndex];
+                open.RemoveAt(bestOpenIndex);
+                if (closed[current])
+                    continue;
+
+                if (current == goalNode)
+                    return dist[current];
+
+                closed[current] = true;
+                for (int edgeIndex = 0; edgeIndex < outgoing[current].Count; edgeIndex++)
+                {
+                    var edge = outgoing[current][edgeIndex];
+                    if (edge.Kind != PathGridNavigationEdgeKind.Authored)
+                        continue;
+
+                    int toNode = edge.ToNodeIndex;
+                    if ((uint)toNode >= (uint)nodes.Count ||
+                        nodes[toNode].PathGridIndex != pathGridIndex ||
+                        closed[toNode])
+                    {
+                        continue;
+                    }
+
+                    float tentative = dist[current] + edge.Cost;
+                    if (tentative >= dist[toNode])
+                        continue;
+
+                    dist[toNode] = tentative;
+                    open.Add(toNode);
+                }
+            }
+
+            return float.PositiveInfinity;
+        }
+
+        static PathGridNavigationNeighborDef[] BuildNavigationNeighbors(
+            ref PathGridDef[] pathGrids,
+            PathGridNavigationPortalDef[] portals,
+            PathGridNavigationAbstractEdgeDef[] abstractEdges)
+        {
+            var map = new Dictionary<long, PathGridNavigationNeighborDef>();
+            for (int i = 0; i < abstractEdges.Length; i++)
+            {
+                var edge = abstractEdges[i];
+                if (edge.Kind != PathGridNavigationEdgeKind.ExteriorBorder)
+                    continue;
+                if ((uint)edge.FromPortalIndex >= (uint)portals.Length ||
+                    (uint)edge.ToPortalIndex >= (uint)portals.Length)
+                {
+                    continue;
+                }
+
+                int fromPathGrid = portals[edge.FromPortalIndex].PathGridIndex;
+                int toPathGrid = portals[edge.ToPortalIndex].PathGridIndex;
+                long key = PackNavigationEdgeKey(fromPathGrid, toPathGrid);
+                if (map.TryGetValue(key, out var neighbor))
+                {
+                    neighbor.BorderEdgeCount++;
+                    neighbor.MinCost = Math.Min(neighbor.MinCost, edge.Cost);
+                    map[key] = neighbor;
+                }
+                else
+                {
+                    map[key] = new PathGridNavigationNeighborDef
+                    {
+                        PathGridIndex = fromPathGrid,
+                        NeighborPathGridIndex = toPathGrid,
+                        BorderEdgeCount = 1,
+                        MinCost = edge.Cost,
+                    };
+                }
+            }
+
+            var result = map.Values
+                .OrderBy(value => value.PathGridIndex)
+                .ThenBy(value => value.NeighborPathGridIndex)
+                .ToArray();
+
+            int cursor = 0;
+            for (int i = 0; i < pathGrids.Length; i++)
+            {
+                var pathGrid = pathGrids[i];
+                pathGrid.FirstNavigationNeighborIndex = -1;
+                pathGrid.NavigationNeighborCount = 0;
+                while (cursor < result.Length && result[cursor].PathGridIndex < i)
+                    cursor++;
+                int start = cursor;
+                while (cursor < result.Length && result[cursor].PathGridIndex == i)
+                    cursor++;
+                int count = cursor - start;
+                if (count > 0)
+                {
+                    pathGrid.FirstNavigationNeighborIndex = start;
+                    pathGrid.NavigationNeighborCount = count;
+                }
+
+                pathGrids[i] = pathGrid;
+            }
+
+            return result;
+        }
+
         static void BuildActorArrays(
             Dictionary<string, ActorAccumulator> map,
             out ActorDef[] actors,
             out ActorSpellDef[] spells,
-            out ContainerItemDef[] inventoryItems)
+            out ContainerItemDef[] inventoryItems,
+            out ActorAiPackageDef[] aiPackages,
+            out ActorTravelDestinationDef[] travelDestinations)
         {
             var ordered = map.OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal).ToArray();
             actors = new ActorDef[ordered.Length];
             var flatSpells = new List<ActorSpellDef>(ordered.Sum(pair => pair.Value.Spells.Count));
             var flatItems = new List<ContainerItemDef>(ordered.Sum(pair => pair.Value.InventoryItems.Count));
+            var flatAiPackages = new List<ActorAiPackageDef>(ordered.Sum(pair => pair.Value.AiPackages.Count));
+            var flatTravelDestinations = new List<ActorTravelDestinationDef>(ordered.Sum(pair => pair.Value.TravelDestinations.Count));
 
             for (int i = 0; i < ordered.Length; i++)
             {
@@ -1806,13 +2807,21 @@ namespace VVardenfell.Importer.Bake
                 def.SpellCount = accumulator.Spells.Count;
                 def.FirstInventoryIndex = accumulator.InventoryItems.Count > 0 ? flatItems.Count : -1;
                 def.InventoryCount = accumulator.InventoryItems.Count;
+                def.FirstAiPackageIndex = accumulator.AiPackages.Count > 0 ? flatAiPackages.Count : -1;
+                def.AiPackageCount = accumulator.AiPackages.Count;
+                def.FirstTravelDestinationIndex = accumulator.TravelDestinations.Count > 0 ? flatTravelDestinations.Count : -1;
+                def.TravelDestinationCount = accumulator.TravelDestinations.Count;
                 actors[i] = def;
                 flatSpells.AddRange(accumulator.Spells);
                 flatItems.AddRange(accumulator.InventoryItems);
+                flatAiPackages.AddRange(accumulator.AiPackages);
+                flatTravelDestinations.AddRange(accumulator.TravelDestinations);
             }
 
             spells = flatSpells.ToArray();
             inventoryItems = flatItems.ToArray();
+            aiPackages = flatAiPackages.ToArray();
+            travelDestinations = flatTravelDestinations.ToArray();
         }
 
         static void BuildDialogueArrays(
@@ -2101,8 +3110,13 @@ namespace VVardenfell.Importer.Bake
             manifest.SoundGeneratorCount = data.SoundGenerators.Length;
             manifest.LandTextureCount = data.LandTextures.Length;
             manifest.StaticCount = data.Statics.Length;
-            manifest.BodyPartCount = data.BodyParts.Length;
+            manifest.BodyPartCount = data.ActorBodyParts?.Length > 0 ? data.ActorBodyParts.Length : data.BodyParts.Length;
             manifest.PathGridCount = data.PathGrids.Length;
+            manifest.PathGridNavigationNodeCount = data.PathGridNavigationNodes.Length;
+            manifest.PathGridNavigationEdgeCount = data.PathGridNavigationEdges.Length;
+            manifest.PathGridNavigationPortalCount = data.PathGridNavigationPortals.Length;
+            manifest.PathGridNavigationAbstractEdgeCount = data.PathGridNavigationAbstractEdges.Length;
+            manifest.PathGridNavigationNeighborCount = data.PathGridNavigationNeighbors.Length;
         }
 
         static void WriteValidationReport(string installPath, GameplayContentData data)
@@ -2119,8 +3133,11 @@ namespace VVardenfell.Importer.Bake
             ValidateBaseDefs("Item", data.Items, soundIds, assetIndex, issues);
             ValidateLights(data.Lights, soundIds, assetIndex, issues);
             ValidateActors(data, spellIds, placeableIds, assetIndex, issues);
+            ValidatePathGrids(data.PathGrids, data.PathGridPoints, data.PathGridConnections, issues);
+            ValidatePathGridNavigation(data, issues);
             ValidateGenericRecords("Static", data.Statics, assetIndex, issues);
             ValidateGenericRecords("BodyPart", data.BodyParts, assetIndex, issues);
+            ValidateActorBodyParts(data.ActorBodyParts, assetIndex, issues);
             ValidateSounds(data.Sounds, assetIndex, issues);
             ValidateDialogue(data.Dialogues, data.DialogueInfos, issues);
             ValidateMagicEffects(data.MagicEffects, soundIds, assetIndex, issues);
@@ -2133,6 +3150,7 @@ namespace VVardenfell.Importer.Bake
             writer.WriteLine($"Generated: {DateTime.UtcNow:O}");
             WriteRecordCounts(writer, data);
             WriteActorStatCoverage(writer, data);
+            WritePathGridCoverage(writer, data);
             writer.WriteLine($"AmbientSettings.MinSeconds={data.AmbientSettings.MinSecondsBetweenEnvironmentalSounds:0.###}, AmbientSettings.MaxSeconds={data.AmbientSettings.MaxSecondsBetweenEnvironmentalSounds:0.###}");
             writer.WriteLine();
 
@@ -2166,8 +3184,8 @@ namespace VVardenfell.Importer.Bake
             writer.WriteLine($"  MGEF={data.MagicEffects.Length}, SCPT={data.Scripts.Length}, SSCR={data.StartScripts.Length}, REGN={data.Regions.Length}, SOUN={data.Sounds.Length}, SNDG={data.SoundGenerators.Length}, LTEX={data.LandTextures.Length}");
             writer.WriteLine($"  STAT={data.Statics.Length}, ACTI={data.Activators.Length}, DOOR={data.Doors.Length}, CONT={data.Containers.Length}, LIGH={data.Lights.Length}");
             writer.WriteLine($"  LOCK={CountBaseByTag(data.Items, LockTag)}, PROB={CountBaseByTag(data.Items, ProbTag)}, REPA={CountBaseByTag(data.Items, RepaTag)}, MISC={CountBaseByTag(data.Items, MiscTag)}, WEAP={CountBaseByTag(data.Items, WeapTag)}, ARMO={CountBaseByTag(data.Items, ArmoTag)}, CLOT={CountBaseByTag(data.Items, ClotTag)}, BOOK={CountBaseByTag(data.Items, BookTag)}, ALCH={CountBaseByTag(data.Items, AlchTag)}, APPA={CountBaseByTag(data.Items, AppaTag)}, INGR={CountBaseByTag(data.Items, IngrTag)}");
-            writer.WriteLine($"  BODY={data.BodyParts.Length}, NPC_={CountActorsByKind(data.Actors, ActorDefKind.Npc)}, CREA={CountActorsByKind(data.Actors, ActorDefKind.Creature)}, NPCS actor spells={data.ActorSpells.Length}, NPCO actor items={data.ActorInventoryItems.Length}, LEVI={data.ItemLeveledLists.Length}, LEVI entries={data.ItemLeveledListEntries.Length}, LEVC={data.CreatureLeveledLists.Length}, LEVC entries={data.CreatureLeveledListEntries.Length}");
-            writer.WriteLine($"  SPEL={data.Spells.Length}, ENCH={data.Enchantments.Length}, DIAL={data.Dialogues.Length}, INFO={data.DialogueInfos.Length}, PGRD={data.PathGrids.Length}");
+            writer.WriteLine($"  BODY={data.BodyParts.Length}, typed BODY={data.ActorBodyParts.Length}, NPC_={CountActorsByKind(data.Actors, ActorDefKind.Npc)}, CREA={CountActorsByKind(data.Actors, ActorDefKind.Creature)}, NPCS actor spells={data.ActorSpells.Length}, NPCO actor items={data.ActorInventoryItems.Length}, AI packages={data.ActorAiPackages.Length}, transport destinations={data.ActorTravelDestinations.Length}, LEVI={data.ItemLeveledLists.Length}, LEVI entries={data.ItemLeveledListEntries.Length}, LEVC={data.CreatureLeveledLists.Length}, LEVC entries={data.CreatureLeveledListEntries.Length}");
+            writer.WriteLine($"  SPEL={data.Spells.Length}, ENCH={data.Enchantments.Length}, DIAL={data.Dialogues.Length}, INFO={data.DialogueInfos.Length}, PGRD={data.PathGrids.Length}, PGRD points={data.PathGridPoints.Length}, PGRD connections={data.PathGridConnections.Length}, HPG nodes={data.PathGridNavigationNodes.Length}, HPG edges={data.PathGridNavigationEdges.Length}, HPG portals={data.PathGridNavigationPortals.Length}, HPG abstract edges={data.PathGridNavigationAbstractEdges.Length}, HPG neighbors={data.PathGridNavigationNeighbors.Length}");
         }
 
         static int CountBaseByTag(BaseDef[] defs, uint tag)
@@ -2198,9 +3216,13 @@ namespace VVardenfell.Importer.Bake
             int npcAuto = 0;
             int npcWithSpells = 0;
             int npcWithInventory = 0;
+            int npcWithAiPackages = 0;
+            int npcWithTravelDestinations = 0;
             int creaturesWithVitals = 0;
             int creaturesWithSpells = 0;
             int creaturesWithInventory = 0;
+            int creaturesWithAiPackages = 0;
+            int creaturesWithTravelDestinations = 0;
 
             for (int i = 0; i < data.Actors.Length; i++)
             {
@@ -2215,6 +3237,10 @@ namespace VVardenfell.Importer.Bake
                         npcWithSpells++;
                     if (actor.InventoryCount > 0)
                         npcWithInventory++;
+                    if (actor.AiPackageCount > 0)
+                        npcWithAiPackages++;
+                    if (actor.TravelDestinationCount > 0)
+                        npcWithTravelDestinations++;
                 }
                 else
                 {
@@ -2224,10 +3250,64 @@ namespace VVardenfell.Importer.Bake
                         creaturesWithSpells++;
                     if (actor.InventoryCount > 0)
                         creaturesWithInventory++;
+                    if (actor.AiPackageCount > 0)
+                        creaturesWithAiPackages++;
+                    if (actor.TravelDestinationCount > 0)
+                        creaturesWithTravelDestinations++;
                 }
             }
 
-            writer.WriteLine($"Actor stat coverage: NPC manual={npcManual}, NPC autocalc={npcAuto}, NPC with spells={npcWithSpells}, NPC with inventory={npcWithInventory}, CREA with vitals={creaturesWithVitals}, CREA with spells={creaturesWithSpells}, CREA with inventory={creaturesWithInventory}");
+            writer.WriteLine($"Actor stat coverage: NPC manual={npcManual}, NPC autocalc={npcAuto}, NPC with spells={npcWithSpells}, NPC with inventory={npcWithInventory}, NPC with AI packages={npcWithAiPackages}, NPC with travel destinations={npcWithTravelDestinations}, CREA with vitals={creaturesWithVitals}, CREA with spells={creaturesWithSpells}, CREA with inventory={creaturesWithInventory}, CREA with AI packages={creaturesWithAiPackages}, CREA with travel destinations={creaturesWithTravelDestinations}");
+        }
+
+        static void WritePathGridCoverage(StreamWriter writer, GameplayContentData data)
+        {
+            int interiorCount = 0;
+            int exteriorCount = 0;
+            int authoredEdges = 0;
+            int exteriorBorderEdges = 0;
+            int intraAbstractEdges = 0;
+            int exteriorAbstractEdges = 0;
+            int isolatedExteriorPathGrids = 0;
+            var components = new HashSet<int>();
+            for (int i = 0; i < data.PathGrids.Length; i++)
+            {
+                if (data.PathGrids[i].IsExterior != 0)
+                {
+                    exteriorCount++;
+                    if (data.PathGrids[i].NavigationNeighborCount <= 0)
+                        isolatedExteriorPathGrids++;
+                }
+                else
+                {
+                    interiorCount++;
+                }
+            }
+
+            for (int i = 0; i < data.PathGridNavigationNodes.Length; i++)
+            {
+                if (data.PathGridNavigationNodes[i].ComponentId >= 0)
+                    components.Add(data.PathGridNavigationNodes[i].ComponentId);
+            }
+
+            for (int i = 0; i < data.PathGridNavigationEdges.Length; i++)
+            {
+                if (data.PathGridNavigationEdges[i].Kind == PathGridNavigationEdgeKind.ExteriorBorder)
+                    exteriorBorderEdges++;
+                else if (data.PathGridNavigationEdges[i].Kind == PathGridNavigationEdgeKind.Authored)
+                    authoredEdges++;
+            }
+
+            for (int i = 0; i < data.PathGridNavigationAbstractEdges.Length; i++)
+            {
+                if (data.PathGridNavigationAbstractEdges[i].Kind == PathGridNavigationEdgeKind.ExteriorBorder)
+                    exteriorAbstractEdges++;
+                else if (data.PathGridNavigationAbstractEdges[i].Kind == PathGridNavigationEdgeKind.IntraPathGrid)
+                    intraAbstractEdges++;
+            }
+
+            writer.WriteLine($"Pathgrid coverage: interior={interiorCount}, exterior={exteriorCount}, points={data.PathGridPoints.Length}, connections={data.PathGridConnections.Length}");
+            writer.WriteLine($"Pathgrid HPG coverage: nodes={data.PathGridNavigationNodes.Length}, fine edges={data.PathGridNavigationEdges.Length}, authored edges={authoredEdges}, inferred exterior border edges={exteriorBorderEdges}, portals={data.PathGridNavigationPortals.Length}, abstract edges={data.PathGridNavigationAbstractEdges.Length}, abstract intra={intraAbstractEdges}, abstract exterior={exteriorAbstractEdges}, components={components.Count}, neighbors={data.PathGridNavigationNeighbors.Length}, isolated exterior pathgrids={isolatedExteriorPathGrids}");
         }
 
         static HashSet<string> BuildAssetIndex(string installPath)
@@ -2292,6 +3372,290 @@ namespace VVardenfell.Importer.Bake
                 ValidateActorStats(family, def, issues);
                 ValidateActorSpellRange(family, def, data.ActorSpells, spellIds, issues);
                 ValidateActorInventoryRange(family, def, data.ActorInventoryItems, placeableIds, issues);
+                ValidateActorAiPackageRange(family, def, data.ActorAiPackages, issues);
+                ValidateActorTravelDestinationRange(family, def, data.ActorTravelDestinations, issues);
+            }
+        }
+
+        static void ValidatePathGrids(
+            PathGridDef[] pathGrids,
+            PathGridPointDef[] points,
+            PathGridConnectionDef[] connections,
+            List<ValidationIssue> issues)
+        {
+            pathGrids ??= Array.Empty<PathGridDef>();
+            points ??= Array.Empty<PathGridPointDef>();
+            connections ??= Array.Empty<PathGridConnectionDef>();
+
+            for (int i = 0; i < pathGrids.Length; i++)
+            {
+                var pathGrid = pathGrids[i];
+                if (pathGrid.PointCount != pathGrid.DeclaredPointCount)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = false,
+                        Message = $"Pathgrid '{pathGrid.Id}' declared {pathGrid.DeclaredPointCount} point(s) but parsed {pathGrid.PointCount}.",
+                    });
+                }
+
+                if (pathGrid.PointCount > 0
+                    && (pathGrid.FirstPointIndex < 0 || pathGrid.FirstPointIndex + pathGrid.PointCount > points.Length))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"Pathgrid '{pathGrid.Id}' has an out-of-range point window ({pathGrid.FirstPointIndex}, {pathGrid.PointCount}).",
+                    });
+                    continue;
+                }
+
+                if (pathGrid.ConnectionCount > 0
+                    && (pathGrid.FirstConnectionIndex < 0 || pathGrid.FirstConnectionIndex + pathGrid.ConnectionCount > connections.Length))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"Pathgrid '{pathGrid.Id}' has an out-of-range connection window ({pathGrid.FirstConnectionIndex}, {pathGrid.ConnectionCount}).",
+                    });
+                }
+
+                int expectedConnections = 0;
+                for (int pointOffset = 0; pointOffset < pathGrid.PointCount; pointOffset++)
+                {
+                    int pointIndex = pathGrid.FirstPointIndex + pointOffset;
+                    var point = points[pointIndex];
+                    expectedConnections += point.SourceConnectionCount;
+
+                    if (IsInvalidFloat(point.UnityX) || IsInvalidFloat(point.UnityY) || IsInvalidFloat(point.UnityZ))
+                    {
+                        issues.Add(new ValidationIssue
+                        {
+                            IsError = true,
+                            Message = $"Pathgrid '{pathGrid.Id}' point {pointOffset} has invalid Unity coordinates.",
+                        });
+                    }
+
+                    if (point.ConnectionCount != point.SourceConnectionCount)
+                    {
+                        issues.Add(new ValidationIssue
+                        {
+                            IsError = true,
+                            Message = $"Pathgrid '{pathGrid.Id}' point {pointOffset} declared {point.SourceConnectionCount} connection(s) but parsed {point.ConnectionCount}.",
+                        });
+                    }
+
+                    if (point.ConnectionCount > 0
+                        && (point.FirstConnectionIndex < 0 || point.FirstConnectionIndex + point.ConnectionCount > connections.Length))
+                    {
+                        issues.Add(new ValidationIssue
+                        {
+                            IsError = true,
+                            Message = $"Pathgrid '{pathGrid.Id}' point {pointOffset} has an out-of-range connection window ({point.FirstConnectionIndex}, {point.ConnectionCount}).",
+                        });
+                        continue;
+                    }
+
+                    ValidateExteriorPathGridPoint(pathGrid, point, pointOffset, issues);
+                }
+
+                if (expectedConnections != pathGrid.ConnectionCount)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"Pathgrid '{pathGrid.Id}' expected {expectedConnections} connection target(s) from point counts but parsed {pathGrid.ConnectionCount}.",
+                    });
+                }
+
+                for (int connectionOffset = 0; connectionOffset < pathGrid.ConnectionCount; connectionOffset++)
+                {
+                    int connectionIndex = pathGrid.FirstConnectionIndex + connectionOffset;
+                    if (connectionIndex < 0 || connectionIndex >= connections.Length)
+                        continue;
+
+                    var connection = connections[connectionIndex];
+                    if (connection.FromPointIndex < 0 || connection.FromPointIndex >= pathGrid.PointCount)
+                    {
+                        issues.Add(new ValidationIssue
+                        {
+                            IsError = true,
+                            Message = $"Pathgrid '{pathGrid.Id}' connection {connectionOffset} has invalid source point index {connection.FromPointIndex}.",
+                        });
+                    }
+
+                    if (connection.ToPointIndex < 0 || connection.ToPointIndex >= pathGrid.PointCount)
+                    {
+                        issues.Add(new ValidationIssue
+                        {
+                            IsError = true,
+                            Message = $"Pathgrid '{pathGrid.Id}' connection {connectionOffset} targets out-of-range point index {connection.ToPointIndex}.",
+                        });
+                    }
+                }
+            }
+        }
+
+        static void ValidatePathGridNavigation(GameplayContentData data, List<ValidationIssue> issues)
+        {
+            var pathGrids = data.PathGrids ?? Array.Empty<PathGridDef>();
+            var nodes = data.PathGridNavigationNodes ?? Array.Empty<PathGridNavigationNodeDef>();
+            var edges = data.PathGridNavigationEdges ?? Array.Empty<PathGridNavigationEdgeDef>();
+            var portals = data.PathGridNavigationPortals ?? Array.Empty<PathGridNavigationPortalDef>();
+            var abstractEdges = data.PathGridNavigationAbstractEdges ?? Array.Empty<PathGridNavigationAbstractEdgeDef>();
+            var neighbors = data.PathGridNavigationNeighbors ?? Array.Empty<PathGridNavigationNeighborDef>();
+            var fineEdgeKeys = new HashSet<long>();
+            var abstractEdgeKeys = new HashSet<long>();
+
+            for (int i = 0; i < pathGrids.Length; i++)
+            {
+                var pathGrid = pathGrids[i];
+                ValidateNavigationWindow($"Pathgrid '{pathGrid.Id}' node", pathGrid.FirstNavigationNodeIndex, pathGrid.NavigationNodeCount, nodes.Length, issues);
+                ValidateNavigationWindow($"Pathgrid '{pathGrid.Id}' fine edge", pathGrid.FirstNavigationEdgeIndex, pathGrid.NavigationEdgeCount, edges.Length, issues);
+                ValidateNavigationWindow($"Pathgrid '{pathGrid.Id}' portal", pathGrid.FirstNavigationPortalIndex, pathGrid.NavigationPortalCount, portals.Length, issues);
+                ValidateNavigationWindow($"Pathgrid '{pathGrid.Id}' abstract edge", pathGrid.FirstNavigationAbstractEdgeIndex, pathGrid.NavigationAbstractEdgeCount, abstractEdges.Length, issues);
+                ValidateNavigationWindow($"Pathgrid '{pathGrid.Id}' neighbor", pathGrid.FirstNavigationNeighborIndex, pathGrid.NavigationNeighborCount, neighbors.Length, issues);
+            }
+
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                var node = nodes[i];
+                if ((uint)node.PathGridIndex >= (uint)pathGrids.Length)
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG node {i} has invalid pathgrid index {node.PathGridIndex}." });
+                    continue;
+                }
+
+                if (node.PointIndex < 0 || node.PointIndex >= pathGrids[node.PathGridIndex].PointCount)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG node {i} has invalid point index {node.PointIndex} for pathgrid '{pathGrids[node.PathGridIndex].Id}'." });
+                if (node.ComponentId < 0)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG node {i} has invalid component id {node.ComponentId}." });
+                if (IsInvalidFloat(node.UnityX) || IsInvalidFloat(node.UnityY) || IsInvalidFloat(node.UnityZ))
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG node {i} has invalid Unity coordinates." });
+                ValidateNavigationWindow($"HPG node {i} fine edge", node.FirstEdgeIndex, node.EdgeCount, edges.Length, issues);
+            }
+
+            for (int i = 0; i < edges.Length; i++)
+            {
+                var edge = edges[i];
+                if ((uint)edge.FromNodeIndex >= (uint)nodes.Length || (uint)edge.ToNodeIndex >= (uint)nodes.Length)
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG edge {i} has invalid node range {edge.FromNodeIndex}->{edge.ToNodeIndex}." });
+                    continue;
+                }
+
+                if (!fineEdgeKeys.Add(PackNavigationEdgeKey(edge.FromNodeIndex, edge.ToNodeIndex)))
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG edge {i} duplicates {edge.FromNodeIndex}->{edge.ToNodeIndex}." });
+                if (IsInvalidFloat(edge.Cost) || edge.Cost < 0f)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG edge {i} has invalid cost {edge.Cost}." });
+                if (edge.Kind == PathGridNavigationEdgeKind.ExteriorBorder &&
+                    !AreAdjacentExteriorPathGrids(pathGrids, nodes[edge.FromNodeIndex].PathGridIndex, nodes[edge.ToNodeIndex].PathGridIndex))
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG exterior border edge {i} does not connect adjacent exterior pathgrids." });
+                }
+            }
+
+            for (int i = 0; i < portals.Length; i++)
+            {
+                var portal = portals[i];
+                if ((uint)portal.NodeIndex >= (uint)nodes.Length || (uint)portal.PathGridIndex >= (uint)pathGrids.Length)
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG portal {i} has invalid node/pathgrid index." });
+                    continue;
+                }
+
+                if (nodes[portal.NodeIndex].IsPortal == 0)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG portal {i} points at non-portal node {portal.NodeIndex}." });
+                ValidateNavigationWindow($"HPG portal {i} abstract edge", portal.FirstAbstractEdgeIndex, portal.AbstractEdgeCount, abstractEdges.Length, issues);
+            }
+
+            for (int i = 0; i < abstractEdges.Length; i++)
+            {
+                var edge = abstractEdges[i];
+                if ((uint)edge.FromPortalIndex >= (uint)portals.Length || (uint)edge.ToPortalIndex >= (uint)portals.Length)
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG abstract edge {i} has invalid portal range {edge.FromPortalIndex}->{edge.ToPortalIndex}." });
+                    continue;
+                }
+
+                if (!abstractEdgeKeys.Add(PackNavigationEdgeKey(edge.FromPortalIndex, edge.ToPortalIndex)))
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG abstract edge {i} duplicates {edge.FromPortalIndex}->{edge.ToPortalIndex}." });
+                if (IsInvalidFloat(edge.Cost) || edge.Cost < 0f)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG abstract edge {i} has invalid cost {edge.Cost}." });
+                if (edge.Kind == PathGridNavigationEdgeKind.ExteriorBorder &&
+                    !AreAdjacentExteriorPathGrids(pathGrids, portals[edge.FromPortalIndex].PathGridIndex, portals[edge.ToPortalIndex].PathGridIndex))
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG abstract exterior edge {i} does not connect adjacent exterior pathgrids." });
+                }
+            }
+
+            for (int i = 0; i < neighbors.Length; i++)
+            {
+                var neighbor = neighbors[i];
+                if ((uint)neighbor.PathGridIndex >= (uint)pathGrids.Length ||
+                    (uint)neighbor.NeighborPathGridIndex >= (uint)pathGrids.Length)
+                {
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG neighbor {i} has invalid pathgrid range {neighbor.PathGridIndex}->{neighbor.NeighborPathGridIndex}." });
+                    continue;
+                }
+
+                if (!AreAdjacentExteriorPathGrids(pathGrids, neighbor.PathGridIndex, neighbor.NeighborPathGridIndex))
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG neighbor {i} does not connect adjacent exterior pathgrids." });
+                if (neighbor.BorderEdgeCount <= 0 || IsInvalidFloat(neighbor.MinCost) || neighbor.MinCost < 0f)
+                    issues.Add(new ValidationIssue { IsError = true, Message = $"HPG neighbor {i} has invalid count/cost." });
+            }
+        }
+
+        static void ValidateNavigationWindow(string label, int first, int count, int total, List<ValidationIssue> issues)
+        {
+            if (count < 0)
+            {
+                issues.Add(new ValidationIssue { IsError = true, Message = $"{label} window has negative count {count}." });
+                return;
+            }
+
+            if (count == 0)
+                return;
+
+            if (first < 0 || first + count > total)
+                issues.Add(new ValidationIssue { IsError = true, Message = $"{label} window is out of range ({first}, {count}) over {total}." });
+        }
+
+        static bool AreAdjacentExteriorPathGrids(PathGridDef[] pathGrids, int aIndex, int bIndex)
+        {
+            if ((uint)aIndex >= (uint)pathGrids.Length || (uint)bIndex >= (uint)pathGrids.Length)
+                return false;
+
+            var a = pathGrids[aIndex];
+            var b = pathGrids[bIndex];
+            if (a.IsExterior == 0 || b.IsExterior == 0)
+                return false;
+
+            int dx = Math.Abs(a.GridX - b.GridX);
+            int dy = Math.Abs(a.GridY - b.GridY);
+            return dx + dy == 1;
+        }
+
+        static void ValidateExteriorPathGridPoint(
+            PathGridDef pathGrid,
+            PathGridPointDef point,
+            int pointOffset,
+            List<ValidationIssue> issues)
+        {
+            if (pathGrid.IsExterior == 0)
+                return;
+
+            int minX = (pathGrid.GridX - 1) * LandRecordSize.CellUnitsMw;
+            int maxX = (pathGrid.GridX + 2) * LandRecordSize.CellUnitsMw;
+            int minY = (pathGrid.GridY - 1) * LandRecordSize.CellUnitsMw;
+            int maxY = (pathGrid.GridY + 2) * LandRecordSize.CellUnitsMw;
+            if (point.SourceX < minX || point.SourceX > maxX || point.SourceY < minY || point.SourceY > maxY)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = false,
+                    Message = $"Exterior pathgrid '{pathGrid.Id}' point {pointOffset} is far outside declared grid ({pathGrid.GridX}, {pathGrid.GridY}) at source ({point.SourceX}, {point.SourceY}, {point.SourceZ}).",
+                });
             }
         }
 
@@ -2416,6 +3780,97 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
+        static void ValidateActorAiPackageRange(
+            string family,
+            ActorDef def,
+            ActorAiPackageDef[] actorAiPackages,
+            List<ValidationIssue> issues)
+        {
+            if (def.AiPackageCount <= 0)
+                return;
+
+            if (actorAiPackages == null || def.FirstAiPackageIndex < 0 || def.FirstAiPackageIndex + def.AiPackageCount > actorAiPackages.Length)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' has an out-of-range actor AI package window ({def.FirstAiPackageIndex}, {def.AiPackageCount}).",
+                });
+                return;
+            }
+
+            for (int i = 0; i < def.AiPackageCount; i++)
+            {
+                var package = actorAiPackages[def.FirstAiPackageIndex + i];
+                if (!IsKnownAiPackageType(package.Type))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"{family} '{def.Id}' has actor AI package with unknown type {(int)package.Type}.",
+                    });
+                }
+
+                if (RequiresAiTarget(package.Type) && string.IsNullOrWhiteSpace(package.TargetId))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = false,
+                        Message = $"{family} '{def.Id}' has {package.Type} AI package with no target id/name.",
+                    });
+                }
+            }
+        }
+
+        static void ValidateActorTravelDestinationRange(
+            string family,
+            ActorDef def,
+            ActorTravelDestinationDef[] actorTravelDestinations,
+            List<ValidationIssue> issues)
+        {
+            if (def.TravelDestinationCount <= 0)
+                return;
+
+            if (actorTravelDestinations == null || def.FirstTravelDestinationIndex < 0 || def.FirstTravelDestinationIndex + def.TravelDestinationCount > actorTravelDestinations.Length)
+            {
+                issues.Add(new ValidationIssue
+                {
+                    IsError = true,
+                    Message = $"{family} '{def.Id}' has an out-of-range actor travel destination window ({def.FirstTravelDestinationIndex}, {def.TravelDestinationCount}).",
+                });
+                return;
+            }
+
+            for (int i = 0; i < def.TravelDestinationCount; i++)
+            {
+                var destination = actorTravelDestinations[def.FirstTravelDestinationIndex + i];
+                if (IsInvalidFloat(destination.PosX) || IsInvalidFloat(destination.PosY) || IsInvalidFloat(destination.PosZ)
+                    || IsInvalidFloat(destination.RotX) || IsInvalidFloat(destination.RotY) || IsInvalidFloat(destination.RotZ))
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"{family} '{def.Id}' has actor travel destination with invalid position or rotation values.",
+                    });
+                }
+            }
+        }
+
+        static bool IsKnownAiPackageType(ActorAiPackageType type)
+            => type == ActorAiPackageType.Wander
+            || type == ActorAiPackageType.Travel
+            || type == ActorAiPackageType.Follow
+            || type == ActorAiPackageType.Escort
+            || type == ActorAiPackageType.Activate;
+
+        static bool RequiresAiTarget(ActorAiPackageType type)
+            => type == ActorAiPackageType.Follow
+            || type == ActorAiPackageType.Escort
+            || type == ActorAiPackageType.Activate;
+
+        static bool IsInvalidFloat(float value)
+            => float.IsNaN(value) || float.IsInfinity(value);
+
         static bool HasAnyAttribute(ActorAttributeDef attributes)
             => attributes.Strength != 0
             || attributes.Intelligence != 0
@@ -2462,6 +3917,33 @@ namespace VVardenfell.Importer.Bake
                 var def = defs[i];
                 ValidateAssetPath(family, def.Id, "model", def.Model, assetIndex, issues);
                 ValidateAssetPath(family, def.Id, "icon", def.Icon, assetIndex, issues);
+            }
+        }
+
+        static void ValidateActorBodyParts(ActorBodyPartDef[] defs, HashSet<string> assetIndex, List<ValidationIssue> issues)
+        {
+            defs ??= Array.Empty<ActorBodyPartDef>();
+            for (int i = 0; i < defs.Length; i++)
+            {
+                var def = defs[i];
+                ValidateAssetPath("TypedBodyPart", def.Id, "model", def.Model, assetIndex, issues);
+                if ((byte)def.Part > (byte)ActorBodyPartMeshPart.Tail)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"Typed body part '{def.Id}' has unknown mesh part {(byte)def.Part}.",
+                    });
+                }
+
+                if ((byte)def.Type > (byte)ActorBodyPartMeshType.Armor)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        IsError = true,
+                        Message = $"Typed body part '{def.Id}' has unknown mesh type {(byte)def.Type}.",
+                    });
+                }
             }
         }
 
@@ -2643,6 +4125,100 @@ namespace VVardenfell.Importer.Bake
                 ItemId = ReadFixedString(bytes, 4, bytes.Length - 4),
             };
             return !string.IsNullOrWhiteSpace(item.ItemId);
+        }
+
+        static bool TryReadAiWanderPackage(byte[] bytes, out ActorAiPackageDef package)
+        {
+            package = default;
+            if (bytes == null || bytes.Length < 14)
+                return false;
+
+            package = new ActorAiPackageDef
+            {
+                Type = ActorAiPackageType.Wander,
+                WanderDistance = ReadInt16(bytes, 0),
+                Duration = ReadInt16(bytes, 2),
+                TimeOfDay = bytes[4],
+                Idle0 = bytes[5],
+                Idle1 = bytes[6],
+                Idle2 = bytes[7],
+                Idle3 = bytes[8],
+                Idle4 = bytes[9],
+                Idle5 = bytes[10],
+                Idle6 = bytes[11],
+                Idle7 = bytes[12],
+                ShouldRepeat = bytes[13],
+            };
+            return true;
+        }
+
+        static bool TryReadAiTravelPackage(byte[] bytes, out ActorAiPackageDef package)
+        {
+            package = default;
+            if (bytes == null || bytes.Length < 13)
+                return false;
+
+            package = new ActorAiPackageDef
+            {
+                Type = ActorAiPackageType.Travel,
+                X = ReadSingle(bytes, 0),
+                Y = ReadSingle(bytes, 4),
+                Z = ReadSingle(bytes, 8),
+                ShouldRepeat = bytes[12],
+            };
+            return true;
+        }
+
+        static bool TryReadAiTargetPackage(byte[] bytes, ActorAiPackageType type, out ActorAiPackageDef package)
+        {
+            package = default;
+            if (bytes == null || bytes.Length < 47)
+                return false;
+
+            package = new ActorAiPackageDef
+            {
+                Type = type,
+                X = ReadSingle(bytes, 0),
+                Y = ReadSingle(bytes, 4),
+                Z = ReadSingle(bytes, 8),
+                Duration = ReadInt16(bytes, 12),
+                TargetId = ReadFixedString(bytes, 14, 32),
+                ShouldRepeat = bytes[46],
+            };
+            return true;
+        }
+
+        static bool TryReadAiActivatePackage(byte[] bytes, out ActorAiPackageDef package)
+        {
+            package = default;
+            if (bytes == null || bytes.Length < 33)
+                return false;
+
+            package = new ActorAiPackageDef
+            {
+                Type = ActorAiPackageType.Activate,
+                TargetId = ReadFixedString(bytes, 0, 32),
+                ShouldRepeat = bytes[32],
+            };
+            return true;
+        }
+
+        static bool TryReadTravelDestination(byte[] bytes, out ActorTravelDestinationDef destination)
+        {
+            destination = default;
+            if (bytes == null || bytes.Length < 24)
+                return false;
+
+            destination = new ActorTravelDestinationDef
+            {
+                PosX = ReadSingle(bytes, 0),
+                PosY = ReadSingle(bytes, 4),
+                PosZ = ReadSingle(bytes, 8),
+                RotX = ReadSingle(bytes, 12),
+                RotY = ReadSingle(bytes, 16),
+                RotZ = ReadSingle(bytes, 20),
+            };
+            return true;
         }
 
         static ActorAttributeDef ReadNpcAttributes(byte[] bytes, int offset)

@@ -51,6 +51,9 @@ namespace VVardenfell.Importer.Nif
         }
     }
 
+    /// <summary>Morrowind KF root: text keys live in extra data and target names in paired NiStringExtraData records.</summary>
+    public class NiSequenceStreamHelper : NiObjectNET { }
+
     public class NiAVObject : NiObjectNET
     {
         public ushort Flags;
@@ -365,6 +368,30 @@ namespace VVardenfell.Importer.Nif
         }
     }
 
+    public class NiTriStripsData : NiTriBasedGeomData
+    {
+        public ushort[][] Strips;
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+
+            ushort numStrips = s.ReadUInt16();
+            var lengths = new ushort[numStrips];
+            for (int i = 0; i < numStrips; i++)
+                lengths[i] = s.ReadUInt16();
+
+            Strips = new ushort[numStrips][];
+            for (int i = 0; i < numStrips; i++)
+            {
+                var strip = new ushort[lengths[i]];
+                for (int j = 0; j < strip.Length; j++)
+                    strip[j] = s.ReadUInt16();
+                Strips[i] = strip;
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------
     // Properties
     // ------------------------------------------------------------------------
@@ -555,6 +582,20 @@ namespace VVardenfell.Importer.Nif
 
     internal enum NifKeyValueKind { Float, Vec3, Vec4, Quat }
 
+    public struct NifAnimationKey
+    {
+        public float Time;
+        public Vector4 Value;
+        public Vector4 InTan;
+        public Vector4 OutTan;
+    }
+
+    public sealed class NifKeyGroup
+    {
+        public NifInterpolationType InterpolationType;
+        public NifAnimationKey[] Keys = System.Array.Empty<NifAnimationKey>();
+    }
+
     internal static class NifKeyReader
     {
         /// <summary>
@@ -562,34 +603,39 @@ namespace VVardenfell.Importer.Nif
         /// Returns the interpolation type (so NiKeyframeData can detect XYZ rotations).
         /// Per OpenMW, Quadratic for quats has no tangents.
         /// </summary>
-        public static NifInterpolationType Read(NifStream s, NifKeyValueKind kind, bool morph = false)
+        public static NifKeyGroup Read(NifStream s, NifKeyValueKind kind, bool morph = false)
         {
+            var group = new NifKeyGroup();
             uint count = s.ReadUInt32();
-            if (count == 0 && !morph) return NifInterpolationType.Unknown;
+            if (count == 0 && !morph) return group;
             var type = (NifInterpolationType)s.ReadUInt32();
-            if (count == 0) return type;
+            group.InterpolationType = type;
+            if (count == 0) return group;
 
+            group.Keys = new NifAnimationKey[count];
             for (int i = 0; i < count; i++)
             {
-                s.ReadFloat(); // time
+                var key = new NifAnimationKey { Time = s.ReadFloat() };
 
                 switch (type)
                 {
                     case NifInterpolationType.Linear:
                     case NifInterpolationType.Constant:
-                        SkipValue(s, kind);
+                        key.Value = ReadValue(s, kind);
                         break;
                     case NifInterpolationType.Quadratic:
-                        SkipValue(s, kind);
+                        key.Value = ReadValue(s, kind);
                         if (kind != NifKeyValueKind.Quat)
                         {
-                            SkipValue(s, kind); // in tan
-                            SkipValue(s, kind); // out tan
+                            key.InTan = ReadValue(s, kind);
+                            key.OutTan = ReadValue(s, kind);
                         }
                         break;
                     case NifInterpolationType.TBC:
-                        SkipValue(s, kind);
-                        s.ReadFloat(); s.ReadFloat(); s.ReadFloat(); // tension, bias, continuity
+                        key.Value = ReadValue(s, kind);
+                        key.InTan.x = s.ReadFloat(); // tension
+                        key.InTan.y = s.ReadFloat(); // bias
+                        key.InTan.z = s.ReadFloat(); // continuity
                         break;
                     case NifInterpolationType.XYZ:
                         // No inline keys — caller handles the followup X/Y/Z sub-maps.
@@ -597,18 +643,31 @@ namespace VVardenfell.Importer.Nif
                     default:
                         throw new System.NotSupportedException($"Unknown key interpolation type {(int)type}");
                 }
+                group.Keys[i] = key;
             }
-            return type;
+            return group;
         }
 
-        private static void SkipValue(NifStream s, NifKeyValueKind kind)
+        private static Vector4 ReadValue(NifStream s, NifKeyValueKind kind)
         {
             switch (kind)
             {
-                case NifKeyValueKind.Float: s.ReadFloat(); break;
-                case NifKeyValueKind.Vec3: s.Skip(12); break;
-                case NifKeyValueKind.Vec4: s.Skip(16); break;
-                case NifKeyValueKind.Quat: s.Skip(16); break;
+                case NifKeyValueKind.Float:
+                    return new Vector4(s.ReadFloat(), 0f, 0f, 0f);
+                case NifKeyValueKind.Vec3:
+                {
+                    Vector3 value = s.ReadVec3();
+                    return new Vector4(value.x, value.y, value.z, 0f);
+                }
+                case NifKeyValueKind.Vec4:
+                    return new Vector4(s.ReadFloat(), s.ReadFloat(), s.ReadFloat(), s.ReadFloat());
+                case NifKeyValueKind.Quat:
+                {
+                    Quaternion value = s.ReadQuat();
+                    return new Vector4(value.x, value.y, value.z, value.w);
+                }
+                default:
+                    return default;
             }
         }
     }
@@ -798,98 +857,194 @@ namespace VVardenfell.Importer.Nif
         }
     }
 
+    public struct NifControlledBlock
+    {
+        public string TargetName;
+        public int Controller;
+    }
+
+    /// <summary>Morrowind KF root record. It points text keys plus per-node controller blocks at skeleton node names.</summary>
+    public class NiSequence : NifRecord
+    {
+        public string Name;
+        public string AccumRootName;
+        public int TextKeys;
+        public NifControlledBlock[] ControlledBlocks = System.Array.Empty<NifControlledBlock>();
+
+        public override void Read(NifStream s)
+        {
+            Name = s.ReadSizedString();
+            AccumRootName = s.ReadSizedString();
+            TextKeys = s.ReadInt32();
+            uint count = s.ReadUInt32();
+            ControlledBlocks = new NifControlledBlock[count];
+            for (int i = 0; i < count; i++)
+            {
+                ControlledBlocks[i] = new NifControlledBlock
+                {
+                    TargetName = s.ReadSizedString(),
+                    Controller = s.ReadInt32(),
+                };
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------
     // Animation data
     // ------------------------------------------------------------------------
 
     public class NiKeyframeData : NifRecord
     {
+        public NifKeyGroup Rotations;
+        public NifKeyGroup XRotations;
+        public NifKeyGroup YRotations;
+        public NifKeyGroup ZRotations;
+        public NifKeyGroup Translations;
+        public NifKeyGroup Scales;
+        public uint AxisOrder;
+
         public override void Read(NifStream s)
         {
-            var rotType = NiReadRotationsOrXyz(s);
-            NifKeyReader.Read(s, NifKeyValueKind.Vec3);   // translations
-            NifKeyReader.Read(s, NifKeyValueKind.Float);  // scales
-            _ = rotType;
+            ReadRotationsOrXyz(s);
+            Translations = NifKeyReader.Read(s, NifKeyValueKind.Vec3);
+            Scales = NifKeyReader.Read(s, NifKeyValueKind.Float);
         }
 
         /// <summary>Reads either a quaternion key-map or, if XYZ, three float key-maps with an axis-order header.</summary>
-        private static NifInterpolationType NiReadRotationsOrXyz(NifStream s)
+        private void ReadRotationsOrXyz(NifStream s)
         {
             uint count = s.ReadUInt32();
-            if (count == 0) return NifInterpolationType.Unknown;
+            if (count == 0)
+            {
+                Rotations = new NifKeyGroup();
+                return;
+            }
+
             var type = (NifInterpolationType)s.ReadUInt32();
             if (type == NifInterpolationType.XYZ)
             {
-                s.ReadUInt32(); // axis order
-                NifKeyReader.Read(s, NifKeyValueKind.Float);
-                NifKeyReader.Read(s, NifKeyValueKind.Float);
-                NifKeyReader.Read(s, NifKeyValueKind.Float);
-                return type;
+                AxisOrder = s.ReadUInt32();
+                XRotations = NifKeyReader.Read(s, NifKeyValueKind.Float);
+                YRotations = NifKeyReader.Read(s, NifKeyValueKind.Float);
+                ZRotations = NifKeyReader.Read(s, NifKeyValueKind.Float);
+                Rotations = new NifKeyGroup { InterpolationType = NifInterpolationType.XYZ };
+                return;
             }
+
+            Rotations = new NifKeyGroup
+            {
+                InterpolationType = type,
+                Keys = new NifAnimationKey[count],
+            };
+
             for (int i = 0; i < count; i++)
             {
-                s.ReadFloat(); // time
+                var key = new NifAnimationKey { Time = s.ReadFloat() };
                 switch (type)
                 {
                     case NifInterpolationType.Linear:
                     case NifInterpolationType.Constant:
-                        s.Skip(16); break; // quat value
                     case NifInterpolationType.Quadratic:
-                        s.Skip(16); break; // quadratic quat has no tangents
+                    {
+                        Quaternion value = s.ReadQuat();
+                        key.Value = new Vector4(value.x, value.y, value.z, value.w);
+                        break;
+                    }
                     case NifInterpolationType.TBC:
-                        s.Skip(16 + 12); break;
+                    {
+                        Quaternion value = s.ReadQuat();
+                        key.Value = new Vector4(value.x, value.y, value.z, value.w);
+                        key.InTan.x = s.ReadFloat();
+                        key.InTan.y = s.ReadFloat();
+                        key.InTan.z = s.ReadFloat();
+                        break;
+                    }
                     default:
                         throw new System.NotSupportedException($"Unknown rotation interp {(int)type}");
                 }
+                Rotations.Keys[i] = key;
             }
-            return type;
         }
     }
 
     public class NiFloatData : NifRecord
     {
-        public override void Read(NifStream s) => NifKeyReader.Read(s, NifKeyValueKind.Float);
+        public NifKeyGroup Keys;
+
+        public override void Read(NifStream s) => Keys = NifKeyReader.Read(s, NifKeyValueKind.Float);
     }
 
     public class NiPosData : NifRecord
     {
-        public override void Read(NifStream s) => NifKeyReader.Read(s, NifKeyValueKind.Vec3);
+        public NifKeyGroup Keys;
+
+        public override void Read(NifStream s) => Keys = NifKeyReader.Read(s, NifKeyValueKind.Vec3);
     }
 
     public class NiColorData : NifRecord
     {
-        public override void Read(NifStream s) => NifKeyReader.Read(s, NifKeyValueKind.Vec4);
+        public NifKeyGroup Keys;
+
+        public override void Read(NifStream s) => Keys = NifKeyReader.Read(s, NifKeyValueKind.Vec4);
     }
 
     public class NiUVData : NifRecord
     {
+        public NifKeyGroup[] Keys = new NifKeyGroup[4];
+
         public override void Read(NifStream s)
         {
-            for (int i = 0; i < 4; i++) NifKeyReader.Read(s, NifKeyValueKind.Float);
+            for (int i = 0; i < Keys.Length; i++)
+                Keys[i] = NifKeyReader.Read(s, NifKeyValueKind.Float);
         }
     }
 
     public class NiVisData : NifRecord
     {
+        public struct Key { public float Time; public bool Value; }
+        public Key[] Keys;
+
         public override void Read(NifStream s)
         {
             uint n = s.ReadUInt32();
-            for (int i = 0; i < n; i++) { s.ReadFloat(); s.ReadByte(); }
+            Keys = new Key[n];
+            for (int i = 0; i < n; i++)
+            {
+                Keys[i].Time = s.ReadFloat();
+                Keys[i].Value = s.ReadByte() != 0;
+            }
         }
     }
 
     /// <summary>Per-morph vertex deltas driven by a NiGeomMorpherController.</summary>
     public class NiMorphData : NifRecord
     {
+        public sealed class Morph
+        {
+            public NifKeyGroup Keys;
+            public Vector3[] Vertices;
+        }
+
+        public Morph[] Morphs = System.Array.Empty<Morph>();
+        public uint NumVertices;
+        public byte RelativeTargets;
+
         public override void Read(NifStream s)
         {
             uint numMorphs = s.ReadUInt32();
-            uint numVerts = s.ReadUInt32();
-            s.ReadByte(); // relativeTargets
+            NumVertices = s.ReadUInt32();
+            RelativeTargets = s.ReadByte();
+            Morphs = new Morph[numMorphs];
             for (int i = 0; i < numMorphs; i++)
             {
-                NifKeyReader.Read(s, NifKeyValueKind.Float, morph: true);
-                s.Skip(numVerts * 12); // per-vertex Vec3 delta
+                var morph = new Morph
+                {
+                    Keys = NifKeyReader.Read(s, NifKeyValueKind.Float, morph: true),
+                    Vertices = new Vector3[(int)NumVertices],
+                };
+                for (int v = 0; v < morph.Vertices.Length; v++)
+                    morph.Vertices[v] = s.ReadVec3();
+                Morphs[i] = morph;
             }
         }
     }
@@ -957,22 +1112,68 @@ namespace VVardenfell.Importer.Nif
 
     public class NiSkinData : NifRecord
     {
+        public struct SkinTransform
+        {
+            public Matrix4x4 Rotation;
+            public Vector3 Translation;
+            public float Scale;
+        }
+
+        public struct VertexWeight
+        {
+            public ushort Vertex;
+            public float Weight;
+        }
+
+        public sealed class BoneInfo
+        {
+            public SkinTransform Transform;
+            public Vector3 BoundSphereCenter;
+            public float BoundSphereRadius;
+            public VertexWeight[] Weights = System.Array.Empty<VertexWeight>();
+        }
+
+        public SkinTransform Transform;
+        public int Partitions;
+        public BoneInfo[] Bones = System.Array.Empty<BoneInfo>();
+
         public override void Read(NifStream s)
         {
-            // Overall skin transform: mat3 rot + vec3 trans + float scale = 52 bytes
-            s.Skip(52);
+            Transform = ReadSkinTransform(s);
             uint numBones = s.ReadUInt32();
             // MW reads partitions link here (version <= 10.1.0.0)
-            s.ReadInt32(); // partitions link, ignored
+            Partitions = s.ReadInt32();
             // hasVertexWeights is NOT read for MW (version < 4.2.1.0), defaults to true.
+            Bones = new BoneInfo[numBones];
             for (int b = 0; b < numBones; b++)
             {
-                s.Skip(52);           // per-bone transform
-                s.Skip(16);           // bounding sphere (vec3 + float)
+                var bone = new BoneInfo
+                {
+                    Transform = ReadSkinTransform(s),
+                    BoundSphereCenter = s.ReadVec3(),
+                    BoundSphereRadius = s.ReadFloat(),
+                };
                 ushort numVerts = s.ReadUInt16();
-                s.Skip(numVerts * 6); // each weight: uint16 vertex + float weight
+                bone.Weights = new VertexWeight[numVerts];
+                for (int i = 0; i < numVerts; i++)
+                {
+                    bone.Weights[i] = new VertexWeight
+                    {
+                        Vertex = s.ReadUInt16(),
+                        Weight = s.ReadFloat(),
+                    };
+                }
+                Bones[b] = bone;
             }
         }
+
+        static SkinTransform ReadSkinTransform(NifStream s)
+            => new()
+            {
+                Rotation = s.ReadMatrix3(),
+                Translation = s.ReadVec3(),
+                Scale = s.ReadFloat(),
+            };
     }
 
     // ------------------------------------------------------------------------

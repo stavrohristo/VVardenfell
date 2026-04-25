@@ -15,6 +15,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Dds;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Pathfinding;
 using Debug = UnityEngine.Debug;
 using VVardenfell.Runtime.Streaming;
 
@@ -50,10 +51,14 @@ namespace VVardenfell.Runtime.Cache
         public Material[] Materials { get; private set; }
         public RenderShardCatalogData RenderShardCatalog { get; private set; }
         public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
+        public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
         public MaterialRegistry Registry { get; private set; }
         public RuntimeContentDatabase ContentDatabase { get; private set; }
+
+        Dictionary<string, int> _actorAnimationBindingsByModelPath;
+        Dictionary<string, int> _actorAnimationBindingsByModelAndReference;
 
         public bool TryLoad(out string error)
         {
@@ -92,6 +97,10 @@ namespace VVardenfell.Runtime.Cache
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
+                if (!ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog))
+                    Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
+                ActorAnimationCatalog = actorAnimationCatalog ?? new ActorAnimationCatalogData();
+                BuildActorAnimationLookup();
             }
             finally
             {
@@ -108,6 +117,9 @@ namespace VVardenfell.Runtime.Cache
             try
             {
                 ContentDatabase = RuntimeContentDatabase.LoadFromCache();
+                if (WorldResources.PathGridNavigation.IsCreated)
+                    WorldResources.PathGridNavigation.Dispose();
+                WorldResources.PathGridNavigation = PathGridNavigationWorld.Create(ContentDatabase);
             }
             finally
             {
@@ -115,7 +127,7 @@ namespace VVardenfell.Runtime.Cache
             }
             gameplaySw.Stop();
             progress?.Report(
-                $"Gameplay content ready: {ContentDatabase.ActorCount} actors, {ContentDatabase.LightCount} lights, {ContentDatabase.SoundCount} sounds",
+                $"Gameplay content ready: {ContentDatabase.ActorCount} actors, {ContentDatabase.LightCount} lights, {ContentDatabase.SoundCount} sounds, {ContentDatabase.PathGridNavigationNodeCount} path nodes",
                 1,
                 1);
             progress?.CompleteStage();
@@ -154,6 +166,186 @@ namespace VVardenfell.Runtime.Cache
             terrainSw.Stop();
 
             totalSw.Stop();
+        }
+
+        public bool TryGetActorAnimationBinding(string modelPath, out int bindingIndex, out ActorAnimationModelBindingDef binding)
+        {
+            bindingIndex = -1;
+            binding = null;
+
+            if (_actorAnimationBindingsByModelPath == null)
+                return false;
+
+            string normalized = NormalizeActorModelPath(modelPath);
+            if (string.IsNullOrEmpty(normalized) || !_actorAnimationBindingsByModelPath.TryGetValue(normalized, out bindingIndex))
+                return false;
+
+            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            if ((uint)bindingIndex >= (uint)bindings.Length)
+            {
+                bindingIndex = -1;
+                return false;
+            }
+
+            binding = bindings[bindingIndex];
+            return binding != null && binding.SkeletonIndex >= 0;
+        }
+
+        public bool TryGetActorAnimationBinding(
+            string modelPath,
+            string bindReferenceSkeletonPath,
+            out int bindingIndex,
+            out ActorAnimationModelBindingDef binding)
+        {
+            if (string.IsNullOrWhiteSpace(bindReferenceSkeletonPath))
+                return TryGetActorAnimationBinding(modelPath, out bindingIndex, out binding);
+
+            bindingIndex = -1;
+            binding = null;
+
+            if (_actorAnimationBindingsByModelAndReference == null)
+                return false;
+
+            string key = BuildActorAnimationBindingKey(modelPath, bindReferenceSkeletonPath);
+            if (string.IsNullOrEmpty(key)
+                || !_actorAnimationBindingsByModelAndReference.TryGetValue(key, out bindingIndex))
+            {
+                return false;
+            }
+
+            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            if ((uint)bindingIndex >= (uint)bindings.Length)
+            {
+                bindingIndex = -1;
+                return false;
+            }
+
+            binding = bindings[bindingIndex];
+            return binding != null && binding.SkeletonIndex >= 0;
+        }
+
+        public bool TryResolveActorAnimationBinding(
+            RuntimeContentDatabase contentDb,
+            in ActorDef actor,
+            bool firstPerson,
+            out int bindingIndex,
+            out ActorAnimationModelBindingDef binding)
+        {
+            if (actor.Kind == ActorDefKind.Creature)
+                return TryGetActorAnimationBinding(actor.Model, out bindingIndex, out binding);
+
+            if (!string.IsNullOrWhiteSpace(actor.Model)
+                && TryGetActorAnimationBinding(actor.Model, out bindingIndex, out binding))
+                return true;
+
+            bool female = (actor.Flags & 0x1u) != 0;
+            bool beast = false;
+            if (contentDb != null
+                && contentDb.TryGetRaceHandle(actor.RaceId, out var raceHandle)
+                && raceHandle.IsValid)
+            {
+                ref readonly RaceDef race = ref contentDb.GetRace(raceHandle);
+                beast = (race.Flags & 0x02) != 0;
+            }
+
+            foreach (string candidate in EnumerateNpcSkeletonCandidates(firstPerson, female, beast))
+            {
+                if (TryGetActorAnimationBinding(candidate, out bindingIndex, out binding))
+                    return true;
+            }
+
+            var bodyParts = contentDb?.Data?.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
+            for (int i = 0; i < bodyParts.Length; i++)
+            {
+                var part = bodyParts[i];
+                if (part.Type != ActorBodyPartMeshType.Skin)
+                    continue;
+                if (!string.Equals(part.RaceId, actor.RaceId ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if ((part.Female != 0) != female)
+                    continue;
+                if ((part.FirstPerson != 0) != firstPerson)
+                    continue;
+
+                if (TryGetActorAnimationBinding(part.Model, out bindingIndex, out binding))
+                    return true;
+            }
+
+            bindingIndex = -1;
+            binding = null;
+            return false;
+        }
+
+        public static string NormalizeActorModelPath(string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return string.Empty;
+
+            string trimmed = modelPath.Trim().Replace('/', '\\');
+            while (trimmed.Contains("\\\\"))
+                trimmed = trimmed.Replace("\\\\", "\\");
+
+            if (trimmed.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase))
+                return trimmed;
+
+            return $"meshes\\{trimmed}";
+        }
+
+        void BuildActorAnimationLookup()
+        {
+            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            _actorAnimationBindingsByModelPath = new Dictionary<string, int>(bindings.Length, StringComparer.OrdinalIgnoreCase);
+            _actorAnimationBindingsByModelAndReference = new Dictionary<string, int>(bindings.Length, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < bindings.Length; i++)
+            {
+                var binding = bindings[i];
+                string path = NormalizeActorModelPath(binding?.ModelPath);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    string referencePath = NormalizeActorModelPath(binding?.BindReferenceSkeletonPath);
+                    if (string.IsNullOrEmpty(referencePath))
+                    {
+                        if (!_actorAnimationBindingsByModelPath.ContainsKey(path))
+                            _actorAnimationBindingsByModelPath[path] = i;
+                    }
+                    else
+                    {
+                        string key = BuildActorAnimationBindingKey(path, referencePath);
+                        if (!string.IsNullOrEmpty(key))
+                            _actorAnimationBindingsByModelAndReference[key] = i;
+                    }
+                }
+            }
+        }
+
+        static string BuildActorAnimationBindingKey(string modelPath, string bindReferenceSkeletonPath)
+        {
+            string model = NormalizeActorModelPath(modelPath);
+            string reference = NormalizeActorModelPath(bindReferenceSkeletonPath);
+            return string.IsNullOrEmpty(model) || string.IsNullOrEmpty(reference)
+                ? string.Empty
+                : $"{model}|{reference}";
+        }
+
+        static IEnumerable<string> EnumerateNpcSkeletonCandidates(bool firstPerson, bool female, bool beast)
+        {
+            if (firstPerson)
+            {
+                if (beast)
+                    yield return "meshes\\base_animkna.1st.nif";
+                if (female)
+                    yield return "meshes\\base_anim_female.1st.nif";
+                yield return "meshes\\xbase_anim.1st.nif";
+            }
+            else
+            {
+                if (beast)
+                    yield return "meshes\\base_animkna.nif";
+                if (female)
+                    yield return "meshes\\base_anim_female.nif";
+                yield return "meshes\\base_anim.nif";
+                yield return "meshes\\xbase_anim.nif";
+            }
         }
 
         private IEnumerator ReadMeshesIncremental(RuntimeLoadProgress progress)
@@ -387,7 +579,9 @@ namespace VVardenfell.Runtime.Cache
                     bucketIndexByKey[keys[i]] = i;
 
                 int remappedShardCount = 0;
+                int invalidShardMeshCount = 0;
                 var remappedBuckets = new HashSet<int>();
+                Mesh invalidShardMeshFallback = null;
 
                 var rmas = new RenderMeshArray[records.Length];
                 shardRanges = new NativeArray<int2>(records.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
@@ -414,7 +608,14 @@ namespace VVardenfell.Runtime.Cache
                     {
                         int globalMeshIndex = globalMeshIndices[meshIndex];
                         if ((uint)globalMeshIndex >= (uint)Meshes.Length)
-                            throw new InvalidDataException($"render shard {shardIndex} references mesh index {globalMeshIndex}, but meshes.bin only contains {Meshes.Length} meshes.");
+                        {
+                            invalidShardMeshCount++;
+                            invalidShardMeshFallback ??= CreateInvalidShardMeshFallback();
+                            shardMeshes[meshIndex] = invalidShardMeshFallback;
+                            shardGlobalMeshIndices[shardGlobalCursor++] = -1;
+                            continue;
+                        }
+
                         shardMeshes[meshIndex] = Meshes[globalMeshIndex];
                         shardGlobalMeshIndices[shardGlobalCursor++] = globalMeshIndex;
                     }
@@ -447,6 +648,8 @@ namespace VVardenfell.Runtime.Cache
 
                     Debug.LogWarning($"[VVardenfell] remapped {remappedShardCount} render shard(s) ({missingBuckets}) to fallback bucket due to missing bucket keys.");
                 }
+                if (invalidShardMeshCount > 0)
+                    Debug.LogWarning($"[VVardenfell] replaced {invalidShardMeshCount} invalid render shard mesh slot(s) with a fallback mesh. Rebake the cache to remove stale shard data.");
                 success = true;
             }
             finally
@@ -658,6 +861,38 @@ namespace VVardenfell.Runtime.Cache
                 if (indexBytes != null)
                     ArrayPool<byte>.Shared.Return(indexBytes);
             }
+        }
+
+        private static Mesh CreateInvalidShardMeshFallback()
+        {
+            var mesh = new Mesh
+            {
+                name = "VV:InvalidRenderShardFallback",
+                indexFormat = IndexFormat.UInt16,
+            };
+
+            mesh.SetVertices(new[]
+            {
+                new Vector3(0f, 0f, 0f),
+                new Vector3(0f, 0.001f, 0f),
+                new Vector3(0.001f, 0f, 0f),
+            });
+            mesh.SetNormals(new[]
+            {
+                Vector3.up,
+                Vector3.up,
+                Vector3.up,
+            });
+            mesh.SetUVs(0, new[]
+            {
+                Vector2.zero,
+                Vector2.zero,
+                Vector2.zero,
+            });
+            mesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0, calculateBounds: false);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 0.001f);
+            mesh.UploadMeshData(true);
+            return mesh;
         }
 
         private static void ReadExactly(BinaryReader r, byte[] buffer, int length)

@@ -89,11 +89,13 @@ namespace VVardenfell.Importer.Nif
             { "NiSwitchNode", () => new NiSwitchNode() },
             { "NiLODNode", () => new NiLODNode() },
             { "NiFltAnimationNode", () => new NiFltAnimationNode() },
+            { "NiSequenceStreamHelper", () => new NiSequenceStreamHelper() },
 
             // Geometry
             { "NiTriShape", () => new NiTriShape() },
             { "NiTriShapeData", () => new NiTriShapeData() },
-            // (NiTriStrips + NiTriStripsData not yet implemented — will add on demand)
+            { "NiTriStrips", () => new NiTriStrips() },
+            { "NiTriStripsData", () => new NiTriStripsData() },
 
             // Particles (parsed structurally; not rendered in first pass)
             { "NiParticles", () => new NiParticles() },
@@ -104,6 +106,7 @@ namespace VVardenfell.Importer.Nif
             { "NiRotatingParticlesData", () => new NiRotatingParticlesData() },
 
             // Controllers
+            { "NiSequence", () => new NiSequence() },
             { "NiParticleSystemController", () => new NiParticleSystemController() },
             { "NiBSPArrayController", () => new NiBSPArrayController() },
             { "NiKeyframeController", () => new NiKeyframeController() },

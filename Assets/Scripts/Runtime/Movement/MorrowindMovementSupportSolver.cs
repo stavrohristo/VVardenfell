@@ -146,6 +146,56 @@ namespace VVardenfell.Runtime.Movement
                 dropDistance);
         }
 
+        static GroundSupportResult FindGroundSupportUnmanaged(
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            float3 position,
+            in MorrowindMovementTuning tuning,
+            bool wasGrounded,
+            bool allowRecoveryFallback)
+        {
+            if (allowRecoveryFallback)
+            {
+                return GroundSupportResult.Create(
+                    MorrowindSupportKind.RecoveryFlat,
+                    math.up(),
+                    position,
+                    position,
+                    Entity.Null,
+                    0f,
+                    0f);
+            }
+
+            float dropDistance = 2f * tuning.GroundOffset + (wasGrounded ? tuning.StepSizeDown : 0f);
+            var castInput = new ColliderCastInput(
+                collider.Value,
+                position,
+                position - new float3(0f, dropDistance, 0f),
+                quaternion.identity);
+
+            if (!world.CastCollider(castInput, out ColliderCastHit hit))
+                return GroundSupportResult.None(position);
+
+            float3 hitPosition = position - new float3(0f, dropDistance * hit.Fraction, 0f);
+            float3 supportedPosition = hitPosition + new float3(0f, tuning.GroundOffset, 0f);
+            bool walkable = IsWalkableSlope(hit.SurfaceNormal, tuning.MaxSlopeCosine);
+            if (!walkable)
+                return GroundSupportResult.None(position, rejectedSteep: true);
+
+            MorrowindSupportKind kind = hit.SurfaceNormal.y >= SupportSlopeReportingThreshold
+                ? MorrowindSupportKind.FlatGround
+                : MorrowindSupportKind.WalkableSlope;
+
+            return GroundSupportResult.Create(
+                kind,
+                hit.SurfaceNormal,
+                hitPosition,
+                supportedPosition,
+                hit.Entity,
+                hit.Fraction,
+                dropDistance);
+        }
+
         static void ApplySupportResult(
             in CollisionWorld world,
             in PhysicsCollider collider,

@@ -27,7 +27,8 @@ MonoBehaviour:
   m_RendererFeatures:
   - {fileID: 7833122117494664109}
   - {fileID: 6534511581813211391}
-  m_RendererFeatureMap: ad6b866f10d7b46cff00a78ea93faf5a
+  - {fileID: 8715144715598568205}
+  m_RendererFeatureMap: ad6b866f10d7b46cff00a78ea93faf5a0d1b60abf169f278
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
@@ -103,3 +104,17 @@ MonoBehaviour:
     BlurQuality: 0
     Falloff: 299.76
     SampleCount: -1
+--- !u!114 &8715144715598568205
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0ac59af6da894d90a92f48836b6cf436, type: 3}
+  m_Name: ActorProceduralRendererFeature
+  m_EditorClassIdentifier: 
+  m_Active: 1
+  _renderPassEvent: 300

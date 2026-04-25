@@ -156,5 +156,126 @@ namespace VVardenfell.Runtime.Movement
             trace.EndPosition = position;
             return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
         }
+
+        public static MorrowindActorMovementResult SolveUnmanaged(
+            in CollisionWorld world,
+            in PhysicsCollider collider,
+            in MorrowindMovementTuning tuning,
+            in MorrowindActorMovementStats.UnmanagedContext stats,
+            quaternion rotation,
+            ref float3 position,
+            ref MorrowindMovementIntent intent,
+            ref MorrowindActorKinematicState kinematic,
+            in MorrowindMovementFrameTrace previousTrace,
+            float dt)
+        {
+            var trace = new MorrowindMovementFrameTrace
+            {
+                Sequence = previousTrace.Sequence + 1,
+                DeltaTime = dt,
+                StartPosition = position,
+                EndPosition = position,
+                GroundNormal = math.up(),
+            };
+
+            bool wasGrounded = kinematic.Grounded;
+            bool wasOnSlope = kinematic.OnSlope;
+            bool hadSolidGroundBeforeMove = wasGrounded && !wasOnSlope;
+            trace.PreviousSupportKind = previousTrace.SupportKind != 0
+                ? previousTrace.SupportKind
+                : (byte)(kinematic.WalkingOnWater
+                    ? MorrowindSupportKind.WaterSurfaceCandidate
+                    : (kinematic.Grounded ? MorrowindSupportKind.FlatGround : MorrowindSupportKind.None));
+            trace.SupportKind = (byte)MorrowindSupportKind.None;
+            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
+
+            float2 planarInput = intent.LocalMove.xy;
+            float inputLengthSq = math.lengthsq(planarInput);
+            if (inputLengthSq > 1f)
+                planarInput *= math.rsqrt(inputLengthSq);
+
+            intent.SpeedFactor = math.saturate(math.length(planarInput));
+            intent.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
+
+            float3 forward = math.normalizesafe(math.mul(rotation, new float3(0f, 0f, 1f)));
+            float3 right = math.normalizesafe(math.mul(rotation, new float3(1f, 0f, 0f)));
+            float3 localMoveWorld = right * planarInput.x + forward * planarInput.y;
+            localMoveWorld.y = 0f;
+            float moveLengthSq = math.lengthsq(localMoveWorld);
+            if (moveLengthSq > 1f)
+                localMoveWorld *= math.rsqrt(moveLengthSq);
+
+            float3 desiredVelocity = float3.zero;
+            if (moveLengthSq > MinInputEpsilonSq)
+            {
+                float speed = stats.GetCurrentSpeed(intent.RunHeld, intent.SneakHeld, kinematic.Grounded, intent.SpeedFactor, intent.IsStrafing);
+                trace.ResolvedSpeed = speed;
+                desiredVelocity = localMoveWorld * speed;
+            }
+            trace.DesiredVelocity = desiredVelocity;
+
+            bool jumpRequested = intent.LocalMove.z > 0f;
+            trace.JumpRequested = ToByte(jumpRequested);
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !intent.SneakHeld;
+            if (canJump)
+            {
+                trace.JumpAccepted = 1;
+                float jumpSpeed = stats.GetJumpSpeed(intent.RunHeld);
+                if (math.lengthsq(desiredVelocity.xz) <= MinMoveEpsilon)
+                {
+                    kinematic.Inertia = new float3(0f, jumpSpeed, 0f);
+                }
+                else
+                {
+                    float3 horizontal = math.normalizesafe(new float3(desiredVelocity.x, 0f, desiredVelocity.z));
+                    kinematic.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
+                }
+
+                hadSolidGroundBeforeMove = false;
+            }
+
+            float airControlFactor = 1f;
+            if (!hadSolidGroundBeforeMove)
+                airControlFactor = stats.GetJumpMoveFactor();
+
+            float3 velocity = desiredVelocity * airControlFactor;
+            if (!hadSolidGroundBeforeMove)
+                velocity += kinematic.Inertia;
+
+            if (math.lengthsq(velocity) > MinMoveEpsilon)
+                MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref trace);
+
+            bool allowGroundedRecoveryFallback = false;
+            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f;
+            var support = shouldResolveSupport
+                ? FindGroundSupportUnmanaged(
+                    world,
+                    collider,
+                    position,
+                    tuning,
+                    wasGrounded,
+                    allowGroundedRecoveryFallback)
+                : GroundSupportResult.None(position);
+
+            ApplySupportResult(
+                world,
+                collider,
+                tuning,
+                ref position,
+                ref kinematic,
+                ref trace,
+                support,
+                hadSolidGroundBeforeMove);
+
+            if (kinematic.Grounded && !kinematic.OnSlope)
+                velocity.y = 0f;
+
+            if (!(kinematic.Grounded && !kinematic.OnSlope))
+                kinematic.Inertia.y -= tuning.Gravity * dt;
+
+            trace.FinalVelocity = velocity;
+            trace.EndPosition = position;
+            return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
+        }
     }
 }

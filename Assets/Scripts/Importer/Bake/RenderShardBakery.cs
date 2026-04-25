@@ -46,6 +46,27 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < records.Length; i++)
             {
                 var record = records[i];
+                var sourceMeshIndices = record?.GlobalMeshIndices ?? Array.Empty<int>();
+                var validMeshIndices = new List<int>(sourceMeshIndices.Length);
+                for (int meshIndex = 0; meshIndex < sourceMeshIndices.Length; meshIndex++)
+                {
+                    int globalMeshIndex = sourceMeshIndices[meshIndex];
+                    if (globalMeshIndex < 0)
+                    {
+                        Modified = true;
+                        continue;
+                    }
+
+                    validMeshIndices.Add(globalMeshIndex);
+                }
+
+                if (validMeshIndices.Count == 0)
+                {
+                    if (sourceMeshIndices.Length > 0)
+                        Modified = true;
+                    continue;
+                }
+
                 var state = new ShardState
                 {
                     Record = new RenderShardRecord
@@ -53,7 +74,7 @@ namespace VVardenfell.Importer.Bake
                         BucketKey = record?.BucketKey ?? 0,
                         FamilyKey = record?.FamilyKey ?? string.Empty,
                         PageIndex = record?.PageIndex ?? 0,
-                        GlobalMeshIndices = record?.GlobalMeshIndices ?? Array.Empty<int>(),
+                        GlobalMeshIndices = validMeshIndices.ToArray(),
                     }
                 };
 

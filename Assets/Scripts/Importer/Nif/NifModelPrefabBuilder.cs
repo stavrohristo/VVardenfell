@@ -90,8 +90,8 @@ namespace VVardenfell.Importer.Nif
                 return switchNode;
             }
 
-            if (obj is NiTriShape tri)
-                return AddRenderLeaf(nif, tri, parentIndex, state);
+            if (obj is NiGeometry geometry && TryResolveRenderableGeometry(nif, geometry, out _))
+                return AddRenderLeaf(nif, geometry, parentIndex, state);
 
             if (obj is not NiNode node)
                 return AddTransformNode(state, obj, parentIndex, kind);
@@ -122,13 +122,12 @@ namespace VVardenfell.Importer.Nif
             return nodeIndex;
         }
 
-        static int AddRenderLeaf(NifFile nif, NiTriShape tri, int parentIndex, BuildState state)
+        static int AddRenderLeaf(NifFile nif, NiGeometry geometry, int parentIndex, BuildState state)
         {
-            var data = Resolve<NiTriShapeData>(nif, tri.Data);
-            if (data == null || data.Vertices == null || data.NumVertices == 0 || data.Triangles == null)
+            if (!TryResolveRenderableGeometry(nif, geometry, out var data))
                 return -1;
 
-            FindAlpha(nif, tri, out ushort alphaFlags, out byte alphaThreshold);
+            FindAlpha(nif, geometry, out ushort alphaFlags, out byte alphaThreshold);
             uint materialFlags = 0;
             if ((alphaFlags & 0x0001) != 0)
                 materialFlags |= CacheFormat.MatFlagAlphaBlend;
@@ -136,10 +135,10 @@ namespace VVardenfell.Importer.Nif
                 materialFlags |= CacheFormat.MatFlagAlphaClip;
             materialFlags = CacheFormat.PackAlphaThreshold(materialFlags, alphaThreshold);
 
-            var node = CreateBaseNode(tri, parentIndex, ResolveKind(tri));
+            var node = CreateBaseNode(geometry, parentIndex, ResolveKind(geometry));
             node.MaterialFlags = materialFlags;
-            node.TexturePath = FindTexture(nif, tri);
-            node.RenderLeaf = BuildLocalRawMesh(tri, data, node.TexturePath, alphaFlags, alphaThreshold);
+            node.TexturePath = FindTexture(nif, geometry, out int uvSet);
+            node.RenderLeaf = BuildLocalRawMesh(geometry, data, uvSet, node.TexturePath, alphaFlags, alphaThreshold);
             return AddNode(state, node);
         }
 
@@ -227,6 +226,7 @@ namespace VVardenfell.Importer.Nif
                 NiBSParticleNode => ModelPrefabNodeKind.BsParticle,
                 NiCollisionSwitch => ModelPrefabNodeKind.CollisionSwitch,
                 NiTriShape => ModelPrefabNodeKind.RenderLeaf,
+                NiTriStrips => ModelPrefabNodeKind.RenderLeaf,
                 _ => ModelPrefabNodeKind.Transform,
             };
         }
@@ -239,8 +239,8 @@ namespace VVardenfell.Importer.Nif
                 obj.Translation.y) * WorldScale.MwUnitsToMeters;
 
             Vector3 right = new(obj.Rotation.m00, obj.Rotation.m20, obj.Rotation.m10);
-            Vector3 up = new(obj.Rotation.m01, obj.Rotation.m21, obj.Rotation.m11);
-            Vector3 forward = new(obj.Rotation.m02, obj.Rotation.m22, obj.Rotation.m12);
+            Vector3 up = new(obj.Rotation.m02, obj.Rotation.m22, obj.Rotation.m12);
+            Vector3 forward = new(obj.Rotation.m01, obj.Rotation.m21, obj.Rotation.m11);
             if (right.sqrMagnitude <= 0f || up.sqrMagnitude <= 0f || forward.sqrMagnitude <= 0f)
             {
                 rotation = Quaternion.identity;
@@ -254,8 +254,9 @@ namespace VVardenfell.Importer.Nif
         }
 
         static NifMeshBuilder.RawBuiltMesh BuildLocalRawMesh(
-            NiTriShape tri,
-            NiTriShapeData data,
+            NiGeometry geometry,
+            NiGeometryData data,
+            int uvSet,
             string texturePath,
             ushort alphaFlags,
             byte alphaThreshold)
@@ -263,9 +264,7 @@ namespace VVardenfell.Importer.Nif
             int vcount = data.NumVertices;
             var verts = new Vector3[vcount];
             var normals = data.Normals != null ? new Vector3[vcount] : null;
-            var uvs = (data.UvSets != null && data.UvSets.Length > 0 && data.UvSets[0] != null && data.UvSets[0].Length == vcount)
-                ? (Vector2[])data.UvSets[0].Clone()
-                : null;
+            var uvs = ResolveUvSet(data, uvSet, vcount);
 
             var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
             var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
@@ -284,13 +283,9 @@ namespace VVardenfell.Importer.Nif
                 }
             }
 
-            int[] indices = new int[data.Triangles.Length];
-            for (int i = 0; i < data.Triangles.Length; i += 3)
-            {
-                indices[i + 0] = data.Triangles[i + 0];
-                indices[i + 1] = data.Triangles[i + 2];
-                indices[i + 2] = data.Triangles[i + 1];
-            }
+            int[] indices = BuildTriangleIndices(geometry, data);
+            if (indices.Length == 0)
+                return default;
 
             var bounds = new Bounds((min + max) * 0.5f, max - min);
             return new NifMeshBuilder.RawBuiltMesh(
@@ -299,22 +294,22 @@ namespace VVardenfell.Importer.Nif
                 uvs,
                 indices,
                 texturePath,
-                tri.Name ?? string.Empty,
+                geometry.Name ?? string.Empty,
                 bounds,
                 alphaFlags,
                 alphaThreshold);
         }
 
-        static void FindAlpha(NifFile nif, NiTriShape tri, out ushort flags, out byte threshold)
+        static void FindAlpha(NifFile nif, NiGeometry geometry, out ushort flags, out byte threshold)
         {
             flags = 0;
             threshold = 0;
-            if (tri.PropertyLinks == null)
+            if (geometry.PropertyLinks == null)
                 return;
 
-            for (int i = 0; i < tri.PropertyLinks.Length; i++)
+            for (int i = 0; i < geometry.PropertyLinks.Length; i++)
             {
-                int propertyIndex = tri.PropertyLinks[i];
+                int propertyIndex = geometry.PropertyLinks[i];
                 if (propertyIndex < 0 || propertyIndex >= nif.Records.Length)
                     continue;
                 if (nif.Records[propertyIndex] is not NiAlphaProperty alpha)
@@ -326,14 +321,15 @@ namespace VVardenfell.Importer.Nif
             }
         }
 
-        static string FindTexture(NifFile nif, NiTriShape tri)
+        static string FindTexture(NifFile nif, NiGeometry geometry, out int uvSet)
         {
-            if (tri.PropertyLinks == null)
+            uvSet = 0;
+            if (geometry.PropertyLinks == null)
                 return null;
 
-            for (int i = 0; i < tri.PropertyLinks.Length; i++)
+            for (int i = 0; i < geometry.PropertyLinks.Length; i++)
             {
-                int propertyIndex = tri.PropertyLinks[i];
+                int propertyIndex = geometry.PropertyLinks[i];
                 if (propertyIndex < 0 || propertyIndex >= nif.Records.Length)
                     continue;
                 if (nif.Records[propertyIndex] is not NiTexturingProperty textureProperty
@@ -345,10 +341,110 @@ namespace VVardenfell.Importer.Nif
 
                 var source = Resolve<NiSourceTexture>(nif, textureProperty.Textures[0].SourceTexture);
                 if (source != null && source.External)
+                {
+                    uvSet = (int)textureProperty.Textures[0].UVSet;
                     return source.FileName;
+                }
             }
 
             return null;
+        }
+
+        static bool TryResolveRenderableGeometry(NifFile nif, NiGeometry geometry, out NiGeometryData data)
+        {
+            data = null;
+            if (geometry == null)
+                return false;
+
+            data = geometry switch
+            {
+                NiTriShape => Resolve<NiTriShapeData>(nif, geometry.Data),
+                NiTriStrips => Resolve<NiTriStripsData>(nif, geometry.Data),
+                _ => null,
+            };
+
+            return data != null
+                && data.Vertices != null
+                && data.NumVertices > 0
+                && BuildTriangleIndices(geometry, data).Length > 0;
+        }
+
+        static Vector2[] ResolveUvSet(NiGeometryData data, int uvSet, int vertexCount)
+        {
+            if (data?.UvSets == null || data.UvSets.Length == 0)
+                return null;
+
+            if (uvSet < 0 || uvSet >= data.UvSets.Length || data.UvSets[uvSet] == null || data.UvSets[uvSet].Length != vertexCount)
+                uvSet = 0;
+
+            return data.UvSets[uvSet] != null && data.UvSets[uvSet].Length == vertexCount
+                ? (Vector2[])data.UvSets[uvSet].Clone()
+                : null;
+        }
+
+        static int[] BuildTriangleIndices(NiGeometry geometry, NiGeometryData data)
+        {
+            switch (geometry)
+            {
+                case NiTriShape when data is NiTriShapeData triShapeData:
+                {
+                    if (triShapeData.Triangles == null || triShapeData.Triangles.Length == 0)
+                        return System.Array.Empty<int>();
+
+                    int[] indices = new int[triShapeData.Triangles.Length];
+                    for (int i = 0; i < triShapeData.Triangles.Length; i += 3)
+                    {
+                        indices[i + 0] = triShapeData.Triangles[i + 0];
+                        indices[i + 1] = triShapeData.Triangles[i + 2];
+                        indices[i + 2] = triShapeData.Triangles[i + 1];
+                    }
+                    return indices;
+                }
+                case NiTriStrips when data is NiTriStripsData triStripsData:
+                    return ConvertTriangleStrips(triStripsData.Strips);
+                default:
+                    return System.Array.Empty<int>();
+            }
+        }
+
+        static int[] ConvertTriangleStrips(ushort[][] strips)
+        {
+            if (strips == null || strips.Length == 0)
+                return System.Array.Empty<int>();
+
+            var triangles = new List<int>();
+            for (int s = 0; s < strips.Length; s++)
+            {
+                var strip = strips[s];
+                if (strip == null || strip.Length < 3)
+                    continue;
+
+                ushort b = strip[0];
+                ushort c = strip[1];
+                for (int i = 2; i < strip.Length; i++)
+                {
+                    ushort a = b;
+                    b = c;
+                    c = strip[i];
+                    if (a == b || b == c || a == c)
+                        continue;
+
+                    if ((i & 1) == 0)
+                    {
+                        triangles.Add(a);
+                        triangles.Add(c);
+                        triangles.Add(b);
+                    }
+                    else
+                    {
+                        triangles.Add(a);
+                        triangles.Add(b);
+                        triangles.Add(c);
+                    }
+                }
+            }
+
+            return triangles.ToArray();
         }
 
         static T Resolve<T>(NifFile nif, int link) where T : NifRecord

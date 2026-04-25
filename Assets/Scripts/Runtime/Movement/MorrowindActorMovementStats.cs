@@ -108,6 +108,39 @@ namespace VVardenfell.Runtime.Movement
             }
         }
 
+        public readonly struct UnmanagedContext
+        {
+            readonly ActorDerivedMovementStats _derived;
+
+            public UnmanagedContext(in ActorDerivedMovementStats derived)
+            {
+                _derived = derived;
+            }
+
+            public float GetCurrentSpeed(bool running, bool sneaking, bool inAir, float speedFactor, bool strafing)
+            {
+                float speed = running && !sneaking
+                    ? _derived.RunSpeed
+                    : (sneaking ? _derived.SneakWalkSpeed : _derived.WalkSpeed);
+
+                speed *= math.saturate(speedFactor);
+                if (strafing)
+                    speed *= 0.75f;
+
+                return speed * WorldScale.MwUnitsToMeters;
+            }
+
+            public float GetJumpSpeed(bool running)
+            {
+                return _derived.JumpSpeed * WorldScale.MwUnitsToMeters;
+            }
+
+            public float GetJumpMoveFactor() => _derived.JumpMoveFactor;
+        }
+
+        public static UnmanagedContext BuildUnmanaged(in ActorDerivedMovementStats derived)
+            => new UnmanagedContext(derived);
+
         public static ActorRuntimeStatSeed CreateDefaultPlayerSeed()
         {
             var attributes = new ActorAttributeSet

@@ -50,6 +50,11 @@ namespace VVardenfell.Core.Cache
         public int StaticCount;
         public int BodyPartCount;
         public int PathGridCount;
+        public int PathGridNavigationNodeCount;
+        public int PathGridNavigationEdgeCount;
+        public int PathGridNavigationPortalCount;
+        public int PathGridNavigationAbstractEdgeCount;
+        public int PathGridNavigationNeighborCount;
 
         public static GameplayContentManifest FromSources(string[] sourcePaths)
         {
@@ -156,6 +161,11 @@ namespace VVardenfell.Core.Cache
             w.Write(StaticCount);
             w.Write(BodyPartCount);
             w.Write(PathGridCount);
+            w.Write(PathGridNavigationNodeCount);
+            w.Write(PathGridNavigationEdgeCount);
+            w.Write(PathGridNavigationPortalCount);
+            w.Write(PathGridNavigationAbstractEdgeCount);
+            w.Write(PathGridNavigationNeighborCount);
         }
 
         public static bool TryRead(string path, out GameplayContentManifest manifest)
@@ -224,6 +234,11 @@ namespace VVardenfell.Core.Cache
                 manifest.StaticCount = r.ReadInt32();
                 manifest.BodyPartCount = r.ReadInt32();
                 manifest.PathGridCount = r.ReadInt32();
+                manifest.PathGridNavigationNodeCount = r.ReadInt32();
+                manifest.PathGridNavigationEdgeCount = r.ReadInt32();
+                manifest.PathGridNavigationPortalCount = r.ReadInt32();
+                manifest.PathGridNavigationAbstractEdgeCount = r.ReadInt32();
+                manifest.PathGridNavigationNeighborCount = r.ReadInt32();
                 return true;
             }
             catch

@@ -82,12 +82,13 @@ namespace VVardenfell.Runtime.Streaming
                 if (i >= childEntities.Length)
                     break;
 
-                Entity child = childEntities[i];
-                if (child == Entity.Null || !em.Exists(child))
-                    continue;
-
                 RefEntry entry = refs[i];
                 if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
+                    continue;
+
+                Entity child = childEntities[i];
+                bool hasChild = child != Entity.Null && em.Exists(child);
+                if (!hasChild && contentReference.Kind != ContentReferenceKind.Actor)
                     continue;
 
                 uint placedRefId = entry.PlacedRefId;
@@ -123,14 +124,17 @@ namespace VVardenfell.Runtime.Streaming
                         proxyQueueCount++;
                 }
 
-                k_LogicalRefLink.Begin();
-                try
+                if (hasChild)
                 {
-                    LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
-                }
-                finally
-                {
-                    k_LogicalRefLink.End();
+                    k_LogicalRefLink.Begin();
+                    try
+                    {
+                        LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
+                    }
+                    finally
+                    {
+                        k_LogicalRefLink.End();
+                    }
                 }
 
                 if (((i + 1) % RefGatherBatchSize) == 0)
@@ -171,12 +175,13 @@ namespace VVardenfell.Runtime.Streaming
                 if (i >= childEntities.Length)
                     break;
 
-                Entity child = childEntities[i];
-                if (child == Entity.Null || !em.Exists(child))
-                    continue;
-
                 RefEntry entry = refs[i];
                 if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
+                    continue;
+
+                Entity child = childEntities[i];
+                bool hasChild = child != Entity.Null && em.Exists(child);
+                if (!hasChild && contentReference.Kind != ContentReferenceKind.Actor)
                     continue;
 
                 uint placedRefId = entry.PlacedRefId;
@@ -212,14 +217,17 @@ namespace VVardenfell.Runtime.Streaming
                         proxyQueueCount++;
                 }
 
-                k_LogicalRefLink.Begin();
-                try
+                if (hasChild)
                 {
-                    LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
-                }
-                finally
-                {
-                    k_LogicalRefLink.End();
+                    k_LogicalRefLink.Begin();
+                    try
+                    {
+                        LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
+                    }
+                    finally
+                    {
+                        k_LogicalRefLink.End();
+                    }
                 }
             }
 
@@ -281,6 +289,9 @@ namespace VVardenfell.Runtime.Streaming
             float3 worldOffset,
             RenderShardRecord[] shardCatalog)
         {
+            if (entry.RenderShardIndex < 0 || entry.LocalMeshIndex < 0 || entry.LocalMaterialIndex < 0)
+                return Entity.Null;
+
             var prefabs = WorldResources.RefPrefabs;
             if (prefabs == null || (uint)entry.RenderShardIndex >= (uint)prefabs.Length)
                 return Entity.Null;

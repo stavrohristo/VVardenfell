@@ -37,7 +37,9 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, GenericRecordDefHandle> _landTexturesById;
         readonly Dictionary<string, GenericRecordDefHandle> _staticsById;
         readonly Dictionary<string, GenericRecordDefHandle> _bodyPartsById;
+        readonly Dictionary<string, GenericRecordDefHandle> _actorBodyPartsById;
         readonly Dictionary<string, GenericRecordDefHandle> _pathGridsById;
+        readonly Dictionary<long, GenericRecordDefHandle> _pathGridsByExteriorCoord;
         readonly Dictionary<string, ContentReference> _placeablesById;
 
         public static RuntimeContentDatabase Active { get; private set; }
@@ -75,7 +77,13 @@ namespace VVardenfell.Runtime.Content
         public int LandTextureCount => Data.LandTextures.Length;
         public int StaticCount => Data.Statics.Length;
         public int BodyPartCount => Data.BodyParts.Length;
+        public int ActorBodyPartCount => Data.ActorBodyParts?.Length ?? 0;
         public int PathGridCount => Data.PathGrids.Length;
+        public int PathGridNavigationNodeCount => Data.PathGridNavigationNodes?.Length ?? 0;
+        public int PathGridNavigationEdgeCount => Data.PathGridNavigationEdges?.Length ?? 0;
+        public int PathGridNavigationPortalCount => Data.PathGridNavigationPortals?.Length ?? 0;
+        public int PathGridNavigationAbstractEdgeCount => Data.PathGridNavigationAbstractEdges?.Length ?? 0;
+        public int PathGridNavigationNeighborCount => Data.PathGridNavigationNeighbors?.Length ?? 0;
 
         RuntimeContentDatabase(GameplayContentManifest manifest, GameplayContentData data)
         {
@@ -110,7 +118,9 @@ namespace VVardenfell.Runtime.Content
             _landTexturesById = BuildIndex(data.LandTextures, def => def.Id, GenericRecordDefHandle.FromIndex);
             _staticsById = BuildIndex(data.Statics, def => def.Id, GenericRecordDefHandle.FromIndex);
             _bodyPartsById = BuildIndex(data.BodyParts, def => def.Id, GenericRecordDefHandle.FromIndex);
+            _actorBodyPartsById = BuildIndex(data.ActorBodyParts, def => def.Id, GenericRecordDefHandle.FromIndex);
             _pathGridsById = BuildIndex(data.PathGrids, def => def.Id, GenericRecordDefHandle.FromIndex);
+            _pathGridsByExteriorCoord = BuildPathGridExteriorIndex(data.PathGrids);
             _placeablesById = GameplayContentReferenceIndex.BuildPlaceableIndex(data);
         }
 
@@ -156,7 +166,13 @@ namespace VVardenfell.Runtime.Content
         public bool TryGetSoundGeneratorHandle(string id, out GenericRecordDefHandle handle) => _soundGeneratorsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetLandTextureHandle(string id, out GenericRecordDefHandle handle) => _landTexturesById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetBodyPartHandle(string id, out GenericRecordDefHandle handle) => _bodyPartsById.TryGetValue(id ?? string.Empty, out handle);
-        public bool TryGetPathGridHandle(string id, out GenericRecordDefHandle handle) => _pathGridsById.TryGetValue(id ?? string.Empty, out handle);
+        public bool TryGetActorBodyPartHandle(string id, out GenericRecordDefHandle handle) => _actorBodyPartsById.TryGetValue(id ?? string.Empty, out handle);
+        public bool TryGetPathGridHandle(string id, out GenericRecordDefHandle handle)
+            => _pathGridsById.TryGetValue(ContentId.NormalizeId(id ?? string.Empty), out handle);
+        public bool TryGetInteriorPathGridHandle(string cellId, out GenericRecordDefHandle handle)
+            => _pathGridsById.TryGetValue(ContentId.NormalizeId(cellId ?? string.Empty), out handle);
+        public bool TryGetExteriorPathGridHandle(int gridX, int gridY, out GenericRecordDefHandle handle)
+            => _pathGridsByExteriorCoord.TryGetValue(PackExteriorPathGridKey(gridX, gridY), out handle);
         public bool TryGetGlobalHandle(string id, out GenericRecordDefHandle handle) => _globalsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryResolvePlaceable(string id, out ContentReference contentRef) => _placeablesById.TryGetValue(id ?? string.Empty, out contentRef);
         public bool TryGetGameSettingFloat(string id, out float value)
@@ -219,7 +235,8 @@ namespace VVardenfell.Runtime.Content
         public ref readonly GenericRecordDef GetSoundGenerator(GenericRecordDefHandle handle) => ref Data.SoundGenerators[handle.Index];
         public ref readonly GenericRecordDef GetLandTexture(GenericRecordDefHandle handle) => ref Data.LandTextures[handle.Index];
         public ref readonly GenericRecordDef GetBodyPart(GenericRecordDefHandle handle) => ref Data.BodyParts[handle.Index];
-        public ref readonly GenericRecordDef GetPathGrid(GenericRecordDefHandle handle) => ref Data.PathGrids[handle.Index];
+        public ref readonly ActorBodyPartDef GetActorBodyPart(GenericRecordDefHandle handle) => ref Data.ActorBodyParts[handle.Index];
+        public ref readonly PathGridDef GetPathGrid(GenericRecordDefHandle handle) => ref Data.PathGrids[handle.Index];
         public ref readonly GenericRecordDef GetGlobal(GenericRecordDefHandle handle) => ref Data.Globals[handle.Index];
 
         public ReadOnlySpan<ContainerItemDef> GetContainerItems(ContainerDefHandle handle)
@@ -264,6 +281,174 @@ namespace VVardenfell.Runtime.Content
 
             int count = Math.Min(actor.InventoryCount, Data.ActorInventoryItems.Length - actor.FirstInventoryIndex);
             return new ReadOnlySpan<ContainerItemDef>(Data.ActorInventoryItems, actor.FirstInventoryIndex, count);
+        }
+
+        public ReadOnlySpan<ActorAiPackageDef> GetActorAiPackages(ActorDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.Actors.Length)
+                return ReadOnlySpan<ActorAiPackageDef>.Empty;
+
+            var actor = Data.Actors[handle.Index];
+            if (actor.FirstAiPackageIndex < 0 || actor.AiPackageCount <= 0 || Data.ActorAiPackages == null)
+                return ReadOnlySpan<ActorAiPackageDef>.Empty;
+
+            if (actor.FirstAiPackageIndex >= Data.ActorAiPackages.Length)
+                return ReadOnlySpan<ActorAiPackageDef>.Empty;
+
+            int count = Math.Min(actor.AiPackageCount, Data.ActorAiPackages.Length - actor.FirstAiPackageIndex);
+            return new ReadOnlySpan<ActorAiPackageDef>(Data.ActorAiPackages, actor.FirstAiPackageIndex, count);
+        }
+
+        public ReadOnlySpan<ActorTravelDestinationDef> GetActorTravelDestinations(ActorDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.Actors.Length)
+                return ReadOnlySpan<ActorTravelDestinationDef>.Empty;
+
+            var actor = Data.Actors[handle.Index];
+            if (actor.FirstTravelDestinationIndex < 0 || actor.TravelDestinationCount <= 0 || Data.ActorTravelDestinations == null)
+                return ReadOnlySpan<ActorTravelDestinationDef>.Empty;
+
+            if (actor.FirstTravelDestinationIndex >= Data.ActorTravelDestinations.Length)
+                return ReadOnlySpan<ActorTravelDestinationDef>.Empty;
+
+            int count = Math.Min(actor.TravelDestinationCount, Data.ActorTravelDestinations.Length - actor.FirstTravelDestinationIndex);
+            return new ReadOnlySpan<ActorTravelDestinationDef>(Data.ActorTravelDestinations, actor.FirstTravelDestinationIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridPointDef> GetPathGridPoints(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridPointDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstPointIndex < 0 || pathGrid.PointCount <= 0 || Data.PathGridPoints == null)
+                return ReadOnlySpan<PathGridPointDef>.Empty;
+
+            if (pathGrid.FirstPointIndex >= Data.PathGridPoints.Length)
+                return ReadOnlySpan<PathGridPointDef>.Empty;
+
+            int count = Math.Min(pathGrid.PointCount, Data.PathGridPoints.Length - pathGrid.FirstPointIndex);
+            return new ReadOnlySpan<PathGridPointDef>(Data.PathGridPoints, pathGrid.FirstPointIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridConnectionDef> GetPathGridConnections(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridConnectionDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstConnectionIndex < 0 || pathGrid.ConnectionCount <= 0 || Data.PathGridConnections == null)
+                return ReadOnlySpan<PathGridConnectionDef>.Empty;
+
+            if (pathGrid.FirstConnectionIndex >= Data.PathGridConnections.Length)
+                return ReadOnlySpan<PathGridConnectionDef>.Empty;
+
+            int count = Math.Min(pathGrid.ConnectionCount, Data.PathGridConnections.Length - pathGrid.FirstConnectionIndex);
+            return new ReadOnlySpan<PathGridConnectionDef>(Data.PathGridConnections, pathGrid.FirstConnectionIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridConnectionDef> GetPathGridPointConnections(in PathGridPointDef point)
+        {
+            if (point.FirstConnectionIndex < 0 || point.ConnectionCount <= 0 || Data.PathGridConnections == null)
+                return ReadOnlySpan<PathGridConnectionDef>.Empty;
+
+            if (point.FirstConnectionIndex >= Data.PathGridConnections.Length)
+                return ReadOnlySpan<PathGridConnectionDef>.Empty;
+
+            int count = Math.Min(point.ConnectionCount, Data.PathGridConnections.Length - point.FirstConnectionIndex);
+            return new ReadOnlySpan<PathGridConnectionDef>(Data.PathGridConnections, point.FirstConnectionIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationNodeDef> GetPathGridNavigationNodes(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridNavigationNodeDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstNavigationNodeIndex < 0 || pathGrid.NavigationNodeCount <= 0 || Data.PathGridNavigationNodes == null)
+                return ReadOnlySpan<PathGridNavigationNodeDef>.Empty;
+
+            if (pathGrid.FirstNavigationNodeIndex >= Data.PathGridNavigationNodes.Length)
+                return ReadOnlySpan<PathGridNavigationNodeDef>.Empty;
+
+            int count = Math.Min(pathGrid.NavigationNodeCount, Data.PathGridNavigationNodes.Length - pathGrid.FirstNavigationNodeIndex);
+            return new ReadOnlySpan<PathGridNavigationNodeDef>(Data.PathGridNavigationNodes, pathGrid.FirstNavigationNodeIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationEdgeDef> GetPathGridNavigationEdges(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridNavigationEdgeDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstNavigationEdgeIndex < 0 || pathGrid.NavigationEdgeCount <= 0 || Data.PathGridNavigationEdges == null)
+                return ReadOnlySpan<PathGridNavigationEdgeDef>.Empty;
+
+            if (pathGrid.FirstNavigationEdgeIndex >= Data.PathGridNavigationEdges.Length)
+                return ReadOnlySpan<PathGridNavigationEdgeDef>.Empty;
+
+            int count = Math.Min(pathGrid.NavigationEdgeCount, Data.PathGridNavigationEdges.Length - pathGrid.FirstNavigationEdgeIndex);
+            return new ReadOnlySpan<PathGridNavigationEdgeDef>(Data.PathGridNavigationEdges, pathGrid.FirstNavigationEdgeIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationEdgeDef> GetPathGridNavigationNodeEdges(in PathGridNavigationNodeDef node)
+        {
+            if (node.FirstEdgeIndex < 0 || node.EdgeCount <= 0 || Data.PathGridNavigationEdges == null)
+                return ReadOnlySpan<PathGridNavigationEdgeDef>.Empty;
+
+            if (node.FirstEdgeIndex >= Data.PathGridNavigationEdges.Length)
+                return ReadOnlySpan<PathGridNavigationEdgeDef>.Empty;
+
+            int count = Math.Min(node.EdgeCount, Data.PathGridNavigationEdges.Length - node.FirstEdgeIndex);
+            return new ReadOnlySpan<PathGridNavigationEdgeDef>(Data.PathGridNavigationEdges, node.FirstEdgeIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationPortalDef> GetPathGridNavigationPortals(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridNavigationPortalDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstNavigationPortalIndex < 0 || pathGrid.NavigationPortalCount <= 0 || Data.PathGridNavigationPortals == null)
+                return ReadOnlySpan<PathGridNavigationPortalDef>.Empty;
+
+            if (pathGrid.FirstNavigationPortalIndex >= Data.PathGridNavigationPortals.Length)
+                return ReadOnlySpan<PathGridNavigationPortalDef>.Empty;
+
+            int count = Math.Min(pathGrid.NavigationPortalCount, Data.PathGridNavigationPortals.Length - pathGrid.FirstNavigationPortalIndex);
+            return new ReadOnlySpan<PathGridNavigationPortalDef>(Data.PathGridNavigationPortals, pathGrid.FirstNavigationPortalIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationAbstractEdgeDef> GetPathGridNavigationAbstractEdges(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridNavigationAbstractEdgeDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstNavigationAbstractEdgeIndex < 0 || pathGrid.NavigationAbstractEdgeCount <= 0 || Data.PathGridNavigationAbstractEdges == null)
+                return ReadOnlySpan<PathGridNavigationAbstractEdgeDef>.Empty;
+
+            if (pathGrid.FirstNavigationAbstractEdgeIndex >= Data.PathGridNavigationAbstractEdges.Length)
+                return ReadOnlySpan<PathGridNavigationAbstractEdgeDef>.Empty;
+
+            int count = Math.Min(pathGrid.NavigationAbstractEdgeCount, Data.PathGridNavigationAbstractEdges.Length - pathGrid.FirstNavigationAbstractEdgeIndex);
+            return new ReadOnlySpan<PathGridNavigationAbstractEdgeDef>(Data.PathGridNavigationAbstractEdges, pathGrid.FirstNavigationAbstractEdgeIndex, count);
+        }
+
+        public ReadOnlySpan<PathGridNavigationNeighborDef> GetPathGridNavigationNeighbors(GenericRecordDefHandle handle)
+        {
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= Data.PathGrids.Length)
+                return ReadOnlySpan<PathGridNavigationNeighborDef>.Empty;
+
+            var pathGrid = Data.PathGrids[handle.Index];
+            if (pathGrid.FirstNavigationNeighborIndex < 0 || pathGrid.NavigationNeighborCount <= 0 || Data.PathGridNavigationNeighbors == null)
+                return ReadOnlySpan<PathGridNavigationNeighborDef>.Empty;
+
+            if (pathGrid.FirstNavigationNeighborIndex >= Data.PathGridNavigationNeighbors.Length)
+                return ReadOnlySpan<PathGridNavigationNeighborDef>.Empty;
+
+            int count = Math.Min(pathGrid.NavigationNeighborCount, Data.PathGridNavigationNeighbors.Length - pathGrid.FirstNavigationNeighborIndex);
+            return new ReadOnlySpan<PathGridNavigationNeighborDef>(Data.PathGridNavigationNeighbors, pathGrid.FirstNavigationNeighborIndex, count);
         }
 
         public ReadOnlySpan<DialogueInfoDef> GetDialogueInfos(DialogueDefHandle handle)
@@ -348,6 +533,24 @@ namespace VVardenfell.Runtime.Content
                 map[defs[i].Index] = MagicEffectDefHandle.FromIndex(i);
             return map;
         }
+
+        static Dictionary<long, GenericRecordDefHandle> BuildPathGridExteriorIndex(PathGridDef[] defs)
+        {
+            var map = new Dictionary<long, GenericRecordDefHandle>(defs?.Length ?? 0);
+            if (defs == null)
+                return map;
+
+            for (int i = 0; i < defs.Length; i++)
+            {
+                if (defs[i].IsExterior != 0)
+                    map[PackExteriorPathGridKey(defs[i].GridX, defs[i].GridY)] = GenericRecordDefHandle.FromIndex(i);
+            }
+
+            return map;
+        }
+
+        static long PackExteriorPathGridKey(int gridX, int gridY)
+            => ((long)gridX << 32) ^ (uint)gridY;
 
     }
 }

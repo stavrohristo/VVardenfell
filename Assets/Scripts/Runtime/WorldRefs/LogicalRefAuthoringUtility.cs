@@ -1,8 +1,17 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Physics;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Pathfinding;
+using VVardenfell.Runtime.Streaming;
+using CapsuleCollider = Unity.Physics.CapsuleCollider;
+using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Components
 {
@@ -14,6 +23,10 @@ namespace VVardenfell.Runtime.Components
             Entity logicalEntity,
             RuntimeContentDatabase contentDb,
             ContentReference contentReference,
+            float3 worldPosition = default,
+            bool isInterior = false,
+            int2 exteriorCell = default,
+            FixedString128Bytes interiorCellId = default,
             bool attachDoorInteractable = false,
             DoorInteractable doorInteractable = default)
         {
@@ -29,6 +42,16 @@ namespace VVardenfell.Runtime.Components
                     ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
                     ecb.AddComponent(logicalEntity, new DialogueSpeakerAuthoring { Definition = handle });
                     ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(handle, actor));
+                    QueueActorRuntimeComponents(
+                        ref ecb,
+                        logicalEntity,
+                        contentDb,
+                        handle,
+                        actor,
+                        worldPosition,
+                        isInterior,
+                        exteriorCell,
+                        interiorCellId);
                     return true;
                 }
 
@@ -133,6 +156,131 @@ namespace VVardenfell.Runtime.Components
                 CanTalk = (byte)(canTalk ? 1 : 0),
                 DisplayName = displayName,
             };
+        }
+
+        static void QueueActorRuntimeComponents(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            RuntimeContentDatabase contentDb,
+            ActorDefHandle actorHandle,
+            in ActorDef actor,
+            float3 worldPosition,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId)
+        {
+            var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(contentDb, actor);
+            ecb.AddComponent(logicalEntity, statSeed.Attributes);
+            ecb.AddComponent(logicalEntity, statSeed.Skills);
+            ecb.AddComponent(logicalEntity, statSeed.Vitals);
+            ecb.AddComponent(logicalEntity, statSeed.EffectModifiers);
+            ecb.AddComponent(logicalEntity, MorrowindActorMovementStats.BuildDerived(
+                contentDb,
+                statSeed.Attributes,
+                statSeed.Skills,
+                statSeed.Vitals,
+                statSeed.EffectModifiers,
+                inventoryWeight: 0f));
+            ecb.AddComponent(logicalEntity, MorrowindActorMovementStats.CreateIdentityFromActor(actor));
+            ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
+
+            ecb.AddComponent(logicalEntity, new MorrowindMovementIntent());
+            ecb.AddComponent(logicalEntity, new MorrowindActorKinematicState());
+            ecb.AddComponent(logicalEntity, MorrowindMovementTuning.OpenMwDefaults());
+            ecb.AddComponent(logicalEntity, new MorrowindMovementFrameTrace());
+            QueueActorCollider(ref ecb, logicalEntity);
+
+            ecb.AddComponent(logicalEntity, PathGridTraversalSettings.Defaults);
+            ecb.AddComponent(logicalEntity, new PathGridTraversalState());
+            ecb.AddComponent(logicalEntity, new PathGridTraversalRequest());
+            ecb.AddBuffer<PathGridTraversalNode>(logicalEntity);
+
+            var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
+            ecb.AddComponent(logicalEntity, new ActorAiState
+            {
+                HomePosition = worldPosition,
+                CurrentNodeIndex = -1,
+                GoalNodeIndex = -1,
+                RandomSeed = BuildActorAiSeed(actorHandle, worldPosition, exteriorCell, isInterior),
+                Status = (byte)ActorAiPlannerStatus.Idle,
+            });
+            ecb.AddComponent(logicalEntity, anchor);
+            var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
+            ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
+        }
+
+        static void QueueActorCollider(ref EntityCommandBuffer ecb, Entity logicalEntity)
+        {
+            var collider = EnsureActorCapsuleCollider();
+            if (!collider.IsCreated)
+                return;
+
+            ecb.AddComponent(logicalEntity, new RuntimeColliderSource
+            {
+                Value = collider,
+                Kind = RuntimeColliderKind.Actor,
+            });
+            ecb.AddComponent(logicalEntity, new PhysicsCollider { Value = collider });
+            ecb.AddSharedComponent(logicalEntity, new PhysicsWorldIndex { Value = 0 });
+        }
+
+        static BlobAssetReference<Collider> EnsureActorCapsuleCollider()
+        {
+            if (WorldResources.ActorCapsuleCollider.IsCreated)
+                return WorldResources.ActorCapsuleCollider;
+
+            const float Radius = 0.35f;
+            const float Height = 1.8f;
+            WorldResources.ActorCapsuleCollider = CapsuleCollider.Create(
+                new CapsuleGeometry
+                {
+                    Vertex0 = new float3(0f, Radius, 0f),
+                    Vertex1 = new float3(0f, Height - Radius, 0f),
+                    Radius = Radius,
+                },
+                InteractionCollisionLayers.PlayerBodyFilter);
+            return WorldResources.ActorCapsuleCollider;
+        }
+
+        static ActorAiNavigationAnchor BuildActorAiAnchor(
+            RuntimeContentDatabase contentDb,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId)
+        {
+            var anchor = new ActorAiNavigationAnchor
+            {
+                PathGridIndex = -1,
+                GridX = exteriorCell.x,
+                GridY = exteriorCell.y,
+                IsInterior = (byte)(isInterior ? 1 : 0),
+            };
+
+            if (isInterior)
+            {
+                if (contentDb.TryGetInteriorPathGridHandle(interiorCellId.ToString(), out var handle) && handle.IsValid)
+                {
+                    anchor.PathGridIndex = handle.Index;
+                    anchor.IsResolved = 1;
+                }
+            }
+            else if (contentDb.TryGetExteriorPathGridHandle(exteriorCell.x, exteriorCell.y, out var handle) && handle.IsValid)
+            {
+                anchor.PathGridIndex = handle.Index;
+                anchor.IsResolved = 1;
+            }
+
+            return anchor;
+        }
+
+        static uint BuildActorAiSeed(ActorDefHandle actor, float3 position, int2 exteriorCell, bool isInterior)
+        {
+            uint seed = math.hash(new uint4(
+                (uint)actor.Value,
+                math.asuint(position.x) ^ math.asuint(position.z),
+                (uint)exteriorCell.x ^ ((uint)exteriorCell.y << 16),
+                isInterior ? 1u : 0u));
+            return seed == 0u ? 1u : seed;
         }
 
         static LightInstanceFlags BuildLightInstanceFlags(int flags)

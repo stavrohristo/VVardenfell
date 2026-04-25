@@ -34,7 +34,8 @@ namespace VVardenfell.Importer.Bake
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures,
-            CollisionBakery collisions)
+            CollisionBakery collisions,
+            ActorAnimationBakery.Assignment actorAnimation = default)
         {
             modelPath ??= string.Empty;
             if (_assignmentsByPath.TryGetValue(modelPath, out var existing))
@@ -44,7 +45,7 @@ namespace VVardenfell.Importer.Bake
                 ? collisions.AddOrGet(source.Collision)
                 : -1;
 
-            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex);
+            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex, actorAnimation);
             int index = _records.Count;
             _records.Add(record);
 
@@ -72,7 +73,8 @@ namespace VVardenfell.Importer.Bake
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures,
-            int collisionIndex)
+            int collisionIndex,
+            ActorAnimationBakery.Assignment actorAnimation)
         {
             if (source == null)
             {
@@ -81,6 +83,11 @@ namespace VVardenfell.Importer.Bake
                     ModelPath = modelPath,
                     RootNodeIndex = -1,
                     CollisionIndex = collisionIndex,
+                    ActorSkeletonIndex = actorAnimation.SkeletonIndex,
+                    FirstActorSkinMeshIndex = actorAnimation.FirstSkinMeshIndex,
+                    ActorSkinMeshCount = actorAnimation.SkinMeshCount,
+                    FirstActorClipIndex = actorAnimation.FirstClipIndex,
+                    ActorClipCount = actorAnimation.ClipCount,
                     Nodes = Array.Empty<ModelPrefabNodeDef>(),
                     ChildIndices = Array.Empty<int>(),
                 };
@@ -137,6 +144,11 @@ namespace VVardenfell.Importer.Bake
                 ModelPath = modelPath,
                 RootNodeIndex = 0,
                 CollisionIndex = collisionIndex,
+                ActorSkeletonIndex = actorAnimation.SkeletonIndex,
+                FirstActorSkinMeshIndex = actorAnimation.FirstSkinMeshIndex,
+                ActorSkinMeshCount = actorAnimation.SkinMeshCount,
+                FirstActorClipIndex = actorAnimation.FirstClipIndex,
+                ActorClipCount = actorAnimation.ClipCount,
                 Nodes = nodes,
                 ChildIndices = childIndices,
             };
@@ -187,6 +199,11 @@ namespace VVardenfell.Importer.Bake
                 ModelPath = source?.ModelPath ?? string.Empty,
                 RootNodeIndex = source?.RootNodeIndex ?? -1,
                 CollisionIndex = source?.CollisionIndex ?? -1,
+                ActorSkeletonIndex = source?.ActorSkeletonIndex ?? -1,
+                FirstActorSkinMeshIndex = source?.FirstActorSkinMeshIndex ?? -1,
+                ActorSkinMeshCount = source?.ActorSkinMeshCount ?? 0,
+                FirstActorClipIndex = source?.FirstActorClipIndex ?? -1,
+                ActorClipCount = source?.ActorClipCount ?? 0,
                 Nodes = clonedNodes,
                 ChildIndices = clonedChildIndices,
             };
