@@ -24,6 +24,7 @@ namespace VVardenfell.Runtime.Animation
         public BlobArray<ActorAnimationTrackBlob> Tracks;
         public BlobArray<ActorAnimationKeyBlob> Keys;
         public BlobArray<ActorAnimationTextKeyBlob> TextKeys;
+        public BlobArray<ActorAnimationTextMarkerBlob> TextMarkers;
         public BlobArray<ActorAnimationHashEntryBlob> ClipHashes;
     }
 
@@ -42,6 +43,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public FixedString128Bytes ModelPath;
         public int AccumulationBoneIndex;
+        public int AccumulationSubtreeEndIndex;
         public int FirstBoneIndex;
         public int BoneCount;
     }
@@ -105,6 +107,8 @@ namespace VVardenfell.Runtime.Animation
         public int TrackCount;
         public int FirstTextKeyIndex;
         public int TextKeyCount;
+        public int FirstTextMarkerIndex;
+        public int TextMarkerCount;
     }
 
     public struct ActorAnimationTrackBlob
@@ -135,6 +139,15 @@ namespace VVardenfell.Runtime.Animation
     {
         public float Time;
         public FixedString128Bytes Text;
+    }
+
+    public struct ActorAnimationTextMarkerBlob
+    {
+        public float Time;
+        public FixedString64Bytes Group;
+        public FixedString64Bytes Value;
+        public FixedString128Bytes Text;
+        public ActorAnimationTextMarkerKind Kind;
     }
 
     public struct ActorAnimationHashEntryBlob
@@ -221,6 +234,7 @@ namespace VVardenfell.Runtime.Animation
             BuildTracks(source, trackTargetBoneIndices, ref builder, ref root);
             BuildKeys(source, ref builder, ref root);
             BuildTextKeys(source, ref builder, ref root);
+            BuildTextMarkers(source, ref builder, ref root);
             BuildClipHashes(source, clipBindingIndices, ref builder, ref root);
 
             var blob = builder.CreateBlobAssetReference<ActorAnimationCatalogBlob>(Allocator.Persistent);
@@ -273,6 +287,7 @@ namespace VVardenfell.Runtime.Animation
                 {
                     ModelPath = Fixed128(ActorAnimationHash.NormalizePath(skeleton?.ModelPath)),
                     AccumulationBoneIndex = skeleton?.AccumulationBoneIndex ?? -1,
+                    AccumulationSubtreeEndIndex = ResolveSubtreeEnd(bones, skeleton?.AccumulationBoneIndex ?? -1),
                     FirstBoneIndex = cursor,
                     BoneCount = bones.Length,
                 };
@@ -388,6 +403,8 @@ namespace VVardenfell.Runtime.Animation
                     TrackCount = clip?.TrackCount ?? 0,
                     FirstTextKeyIndex = clip?.FirstTextKeyIndex ?? -1,
                     TextKeyCount = clip?.TextKeyCount ?? 0,
+                    FirstTextMarkerIndex = clip?.FirstTextMarkerIndex ?? -1,
+                    TextMarkerCount = clip?.TextMarkerCount ?? 0,
                 };
             }
         }
@@ -450,6 +467,26 @@ namespace VVardenfell.Runtime.Animation
             BlobBuilderArray<ActorAnimationTextKeyBlob> dst = builder.Allocate(ref root.TextKeys, keys.Length);
             for (int i = 0; i < keys.Length; i++)
                 dst[i] = new ActorAnimationTextKeyBlob { Time = keys[i].Time, Text = Fixed128(keys[i].Text) };
+        }
+
+        static void BuildTextMarkers(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var markers = source.TextMarkers ?? Array.Empty<ActorAnimationTextMarkerDef>();
+            BlobBuilderArray<ActorAnimationTextMarkerBlob> dst = builder.Allocate(ref root.TextMarkers, markers.Length);
+            for (int i = 0; i < markers.Length; i++)
+            {
+                dst[i] = new ActorAnimationTextMarkerBlob
+                {
+                    Time = markers[i].Time,
+                    Group = Fixed64(markers[i].Group),
+                    Value = Fixed64(markers[i].Value),
+                    Text = Fixed128(markers[i].Text),
+                    Kind = markers[i].Kind,
+                };
+            }
         }
 
         static void BuildClipHashes(
@@ -548,6 +585,32 @@ namespace VVardenfell.Runtime.Animation
             if ((uint)skeletonIndex >= (uint)skeletons.Length)
                 return null;
             return skeletons[skeletonIndex]?.Bones;
+        }
+
+        static int ResolveSubtreeEnd(ActorSkeletonBoneDef[] bones, int rootIndex)
+        {
+            if (bones == null || (uint)rootIndex >= (uint)bones.Length)
+                return -1;
+
+            int end = rootIndex + 1;
+            for (int i = rootIndex + 1; i < bones.Length; i++)
+            {
+                if (IsDescendantOf(bones, i, rootIndex))
+                    end = i + 1;
+            }
+            return end;
+        }
+
+        static bool IsDescendantOf(ActorSkeletonBoneDef[] bones, int boneIndex, int ancestorIndex)
+        {
+            int parent = bones[boneIndex].ParentIndex;
+            while ((uint)parent < (uint)bones.Length)
+            {
+                if (parent == ancestorIndex)
+                    return true;
+                parent = bones[parent].ParentIndex;
+            }
+            return false;
         }
 
         static int FindBoneIndex(ActorSkeletonBoneDef[] bones, string name)

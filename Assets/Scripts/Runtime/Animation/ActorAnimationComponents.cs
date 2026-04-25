@@ -44,6 +44,7 @@ namespace VVardenfell.Runtime.Animation
         public int SkeletonIndex;
         public int BoneCount;
         public int AccumulationBoneIndex;
+        public int AccumulationSubtreeEndIndex;
         public int FirstClipIndex;
         public int ClipCount;
     }
@@ -154,18 +155,13 @@ namespace VVardenfell.Runtime.Animation
         public byte IsDead;
     }
 
-    public struct ActorAnimationDebugSequence : IComponentData
-    {
-        public FixedString64Bytes CurrentGroup;
-        public int GroupIndex;
-        public double NextSwitchTime;
-    }
-
     public struct ActorAnimationEvent : IBufferElementData
     {
         public FixedString64Bytes Group;
+        public FixedString64Bytes Value;
         public FixedString128Bytes Text;
         public float Time;
+        public ActorAnimationTextMarkerKind Kind;
     }
 
     public struct ActorRootMotion : IComponentData

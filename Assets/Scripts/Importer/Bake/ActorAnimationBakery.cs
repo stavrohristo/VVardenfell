@@ -63,6 +63,7 @@ namespace VVardenfell.Importer.Bake
         readonly List<ActorAnimationTrackDef> _tracks = new();
         readonly List<ActorAnimationKeyDef> _keys = new();
         readonly List<ActorAnimationTextKeyDef> _textKeys = new();
+        readonly List<ActorAnimationTextMarkerDef> _textMarkers = new();
 
         public bool Modified { get; private set; }
         public int ModelBindingCount => _bindings.Count;
@@ -145,7 +146,9 @@ namespace VVardenfell.Importer.Bake
         }
 
         public ActorAnimationCatalogData BuildCatalog()
-            => new()
+        {
+            RebuildTextMarkers();
+            return new()
             {
                 ModelBindings = _bindings.ToArray(),
                 Skeletons = _skeletons.ToArray(),
@@ -155,7 +158,86 @@ namespace VVardenfell.Importer.Bake
                 Tracks = _tracks.ToArray(),
                 Keys = _keys.ToArray(),
                 TextKeys = _textKeys.ToArray(),
+                TextMarkers = _textMarkers.ToArray(),
             };
+        }
+
+        void RebuildTextMarkers()
+        {
+            _textMarkers.Clear();
+            for (int clipIndex = 0; clipIndex < _clips.Count; clipIndex++)
+            {
+                var clip = _clips[clipIndex];
+                if (clip == null || clip.FirstTextKeyIndex < 0 || clip.TextKeyCount <= 0)
+                {
+                    if (clip != null)
+                    {
+                        clip.FirstTextMarkerIndex = -1;
+                        clip.TextMarkerCount = 0;
+                    }
+                    continue;
+                }
+
+                int firstMarker = _textMarkers.Count;
+                int keyEnd = Math.Min(_textKeys.Count, clip.FirstTextKeyIndex + clip.TextKeyCount);
+                for (int keyIndex = clip.FirstTextKeyIndex; keyIndex < keyEnd; keyIndex++)
+                    AddTextMarkers(_textKeys[keyIndex]);
+
+                clip.FirstTextMarkerIndex = _textMarkers.Count > firstMarker ? firstMarker : -1;
+                clip.TextMarkerCount = _textMarkers.Count - firstMarker;
+            }
+        }
+
+        void AddTextMarkers(ActorAnimationTextKeyDef key)
+        {
+            if (string.IsNullOrWhiteSpace(key.Text))
+                return;
+
+            string[] markers = key.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < markers.Length; i++)
+            {
+                string text = markers[i]?.Trim();
+                if (string.IsNullOrEmpty(text))
+                    continue;
+
+                SplitMarker(text, out string group, out string value);
+                _textMarkers.Add(new ActorAnimationTextMarkerDef
+                {
+                    Time = key.Time,
+                    Group = group,
+                    Value = value,
+                    Text = text,
+                    Kind = ResolveMarkerKind(value),
+                });
+            }
+        }
+
+        static void SplitMarker(string text, out string group, out string value)
+        {
+            int colon = text.IndexOf(':');
+            if (colon < 0)
+            {
+                group = string.Empty;
+                value = text.Trim();
+                return;
+            }
+
+            group = text.Substring(0, colon).Trim();
+            value = text.Substring(colon + 1).Trim();
+        }
+
+        static ActorAnimationTextMarkerKind ResolveMarkerKind(string value)
+        {
+            if (string.Equals(value, "start", StringComparison.OrdinalIgnoreCase))
+                return ActorAnimationTextMarkerKind.Start;
+            if (string.Equals(value, "loop start", StringComparison.OrdinalIgnoreCase))
+                return ActorAnimationTextMarkerKind.LoopStart;
+            if (string.Equals(value, "loop stop", StringComparison.OrdinalIgnoreCase))
+                return ActorAnimationTextMarkerKind.LoopStop;
+            if (string.Equals(value, "stop", StringComparison.OrdinalIgnoreCase))
+                return ActorAnimationTextMarkerKind.Stop;
+            return ActorAnimationTextMarkerKind.Marker;
+        }
 
         void AddClips(NifFile nif)
         {

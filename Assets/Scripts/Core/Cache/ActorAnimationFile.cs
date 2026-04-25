@@ -128,6 +128,24 @@ namespace VVardenfell.Core.Cache
         public string Text;
     }
 
+    public enum ActorAnimationTextMarkerKind : byte
+    {
+        Marker = 0,
+        Start = 1,
+        LoopStart = 2,
+        LoopStop = 3,
+        Stop = 4,
+    }
+
+    public struct ActorAnimationTextMarkerDef
+    {
+        public float Time;
+        public string Group;
+        public string Value;
+        public string Text;
+        public ActorAnimationTextMarkerKind Kind;
+    }
+
     public struct ActorAnimationKeyDef
     {
         public float Time;
@@ -161,6 +179,8 @@ namespace VVardenfell.Core.Cache
         public int TrackCount;
         public int FirstTextKeyIndex;
         public int TextKeyCount;
+        public int FirstTextMarkerIndex;
+        public int TextMarkerCount;
     }
 
     public sealed class ActorAnimationCatalogData
@@ -173,6 +193,7 @@ namespace VVardenfell.Core.Cache
         public ActorAnimationTrackDef[] Tracks = Array.Empty<ActorAnimationTrackDef>();
         public ActorAnimationKeyDef[] Keys = Array.Empty<ActorAnimationKeyDef>();
         public ActorAnimationTextKeyDef[] TextKeys = Array.Empty<ActorAnimationTextKeyDef>();
+        public ActorAnimationTextMarkerDef[] TextMarkers = Array.Empty<ActorAnimationTextMarkerDef>();
     }
 
     public sealed class ActorAnimationModelBindingDef
@@ -189,7 +210,7 @@ namespace VVardenfell.Core.Cache
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 22u;
+        const uint Version = 24u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {
@@ -232,6 +253,7 @@ namespace VVardenfell.Core.Cache
                 Tracks = ReadArray(r, ReadTrack),
                 Keys = ReadArray(r, ReadKey),
                 TextKeys = ReadArray(r, ReadTextKey),
+                TextMarkers = ReadArray(r, ReadTextMarker),
             };
             return data;
         }
@@ -251,6 +273,7 @@ namespace VVardenfell.Core.Cache
             WriteArray(w, data?.Tracks, WriteTrack);
             WriteArray(w, data?.Keys, WriteKey);
             WriteArray(w, data?.TextKeys, WriteTextKey);
+            WriteArray(w, data?.TextMarkers, WriteTextMarker);
         }
 
         static void WriteModelBinding(BinaryWriter w, ActorAnimationModelBindingDef value)
@@ -403,6 +426,8 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.TrackCount ?? 0);
             w.Write(value?.FirstTextKeyIndex ?? -1);
             w.Write(value?.TextKeyCount ?? 0);
+            w.Write(value?.FirstTextMarkerIndex ?? -1);
+            w.Write(value?.TextMarkerCount ?? 0);
         }
 
         static ActorAnimationClipDef ReadClip(BinaryReader r)
@@ -416,6 +441,8 @@ namespace VVardenfell.Core.Cache
                 TrackCount = r.ReadInt32(),
                 FirstTextKeyIndex = r.ReadInt32(),
                 TextKeyCount = r.ReadInt32(),
+                FirstTextMarkerIndex = r.ReadInt32(),
+                TextMarkerCount = r.ReadInt32(),
             };
 
         static void WriteTrack(BinaryWriter w, ActorAnimationTrackDef value)
@@ -483,6 +510,25 @@ namespace VVardenfell.Core.Cache
 
         static ActorAnimationTextKeyDef ReadTextKey(BinaryReader r)
             => new() { Time = r.ReadSingle(), Text = r.ReadString() };
+
+        static void WriteTextMarker(BinaryWriter w, ActorAnimationTextMarkerDef value)
+        {
+            w.Write(value.Time);
+            w.Write(value.Group ?? string.Empty);
+            w.Write(value.Value ?? string.Empty);
+            w.Write(value.Text ?? string.Empty);
+            w.Write((byte)value.Kind);
+        }
+
+        static ActorAnimationTextMarkerDef ReadTextMarker(BinaryReader r)
+            => new()
+            {
+                Time = r.ReadSingle(),
+                Group = r.ReadString(),
+                Value = r.ReadString(),
+                Text = r.ReadString(),
+                Kind = (ActorAnimationTextMarkerKind)r.ReadByte(),
+            };
 
         static void WriteArray<T>(BinaryWriter w, T[] values, Action<BinaryWriter, T> write)
         {

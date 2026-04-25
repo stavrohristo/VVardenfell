@@ -103,6 +103,7 @@ namespace VVardenfell.Runtime.Animation
                     SkeletonIndex = hasBinding ? binding.SkeletonIndex : -1,
                     BoneCount = boneCount,
                     AccumulationBoneIndex = ResolveAccumulationBoneIndex(ref catalog, hasBinding ? binding.SkeletonIndex : -1),
+                    AccumulationSubtreeEndIndex = ResolveAccumulationSubtreeEndIndex(ref catalog, hasBinding ? binding.SkeletonIndex : -1),
                     FirstClipIndex = hasBinding ? binding.FirstClipIndex : -1,
                     ClipCount = hasBinding ? binding.ClipCount : 0,
                 });
@@ -173,6 +174,13 @@ namespace VVardenfell.Runtime.Animation
             if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
                 return -1;
             return catalog.Skeletons[skeletonIndex].AccumulationBoneIndex;
+        }
+
+        static int ResolveAccumulationSubtreeEndIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
+        {
+            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
+                return -1;
+            return catalog.Skeletons[skeletonIndex].AccumulationSubtreeEndIndex;
         }
 
         static ulong ResolveClipHash(ref ActorAnimationCatalogBlob catalog, int clipIndex)

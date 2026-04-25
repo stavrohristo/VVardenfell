@@ -1,7 +1,7 @@
-using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -157,19 +157,18 @@ namespace VVardenfell.Runtime.Animation
             if (presentation.FirstClipIndex < 0 || presentation.ClipCount <= 0)
                 return -1;
 
-            string groupName = group.ToString();
             int end = math.min(catalog.Clips.Length, presentation.FirstClipIndex + presentation.ClipCount);
             for (int i = end - 1; i >= presentation.FirstClipIndex; i--)
             {
                 var clip = catalog.Clips[i];
-                if (string.Equals(clip.Name.ToString(), groupName, StringComparison.OrdinalIgnoreCase))
+                if (EqualsIgnoreCase(clip.Name, group))
                     return i;
             }
 
             for (int i = end - 1; i >= presentation.FirstClipIndex; i--)
             {
                 var clip = catalog.Clips[i];
-                if (ClipHasGroupTextKey(ref catalog, clip, groupName))
+                if (ClipHasGroupTextKey(ref catalog, clip, group))
                     return i;
             }
 
@@ -183,20 +182,15 @@ namespace VVardenfell.Runtime.Animation
             return catalog.Clips[clipIndex].AnimationHash;
         }
 
-        static bool ClipHasGroupTextKey(ref ActorAnimationCatalogBlob catalog, ActorAnimationClipBlob clip, string groupName)
+        static bool ClipHasGroupTextKey(ref ActorAnimationCatalogBlob catalog, ActorAnimationClipBlob clip, FixedString64Bytes group)
         {
-            if (clip.FirstTextKeyIndex < 0 || clip.TextKeyCount <= 0)
+            if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
                 return false;
 
-            int end = math.min(catalog.TextKeys.Length, clip.FirstTextKeyIndex + clip.TextKeyCount);
-            string prefix = groupName + ":";
-            for (int i = clip.FirstTextKeyIndex; i < end; i++)
-            {
-                string text = catalog.TextKeys[i].Text.ToString();
-                foreach (string marker in SplitTextKeyMarkers(text))
-                    if (marker.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        return true;
-            }
+            int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
+            for (int i = clip.FirstTextMarkerIndex; i < end; i++)
+                if (EqualsIgnoreCase(catalog.TextMarkers[i].Group, group))
+                    return true;
             return false;
         }
 
@@ -222,55 +216,54 @@ namespace VVardenfell.Runtime.Animation
             loopStop = duration;
             stopTime = duration;
 
-            if (clip.FirstTextKeyIndex < 0 || clip.TextKeyCount <= 0)
+            if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
                 return;
 
-            string groupName = group.ToString();
-            string startMarker = groupName + ": start";
-            string groupPrefix = groupName + ":";
-            int end = math.min(catalog.TextKeys.Length, clip.FirstTextKeyIndex + clip.TextKeyCount);
+            int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
             bool insideGroup = false;
             bool finished = false;
-            for (int i = clip.FirstTextKeyIndex; i < end; i++)
+            for (int i = clip.FirstTextMarkerIndex; i < end; i++)
             {
-                var key = catalog.TextKeys[i];
-                foreach (string text in SplitTextKeyMarkers(key.Text.ToString()))
+                var marker = catalog.TextMarkers[i];
+                bool groupMatches = EqualsIgnoreCase(marker.Group, group);
+                if (groupMatches)
+                    insideGroup = true;
+
+                if (groupMatches && marker.Kind == ActorAnimationTextMarkerKind.Start)
                 {
-                    if (text.StartsWith(groupPrefix, StringComparison.OrdinalIgnoreCase))
-                        insideGroup = true;
+                    startTime = marker.Time;
+                    loopStart = marker.Time;
+                    insideGroup = true;
+                    continue;
+                }
 
-                    if (string.Equals(text, startMarker, StringComparison.OrdinalIgnoreCase))
-                    {
-                        startTime = key.Time;
-                        loopStart = key.Time;
-                        insideGroup = true;
-                        continue;
-                    }
+                if (!insideGroup)
+                    continue;
 
-                    if (!insideGroup)
-                        continue;
-
-                    string marker = text;
-                    if (text.StartsWith(groupPrefix, StringComparison.OrdinalIgnoreCase))
-                        marker = text.Substring(groupPrefix.Length).Trim();
-
-                    if (string.Equals(marker, "loop start", StringComparison.OrdinalIgnoreCase))
-                        loopStart = key.Time;
-                    else if (string.Equals(marker, "loop stop", StringComparison.OrdinalIgnoreCase))
-                        loopStop = key.Time;
-                    else if (string.Equals(marker, "stop", StringComparison.OrdinalIgnoreCase))
-                    {
-                        stopTime = key.Time;
-                        finished = true;
+                switch (marker.Kind)
+                {
+                    case ActorAnimationTextMarkerKind.LoopStart:
+                        if (marker.Group.IsEmpty || groupMatches)
+                            loopStart = marker.Time;
                         break;
-                    }
-                    else if (text.EndsWith(": start", StringComparison.OrdinalIgnoreCase)
-                             && !text.StartsWith(groupPrefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        stopTime = key.Time;
-                        finished = true;
+                    case ActorAnimationTextMarkerKind.LoopStop:
+                        if (marker.Group.IsEmpty || groupMatches)
+                            loopStop = marker.Time;
                         break;
-                    }
+                    case ActorAnimationTextMarkerKind.Stop:
+                        if (marker.Group.IsEmpty || groupMatches)
+                        {
+                            stopTime = marker.Time;
+                            finished = true;
+                        }
+                        break;
+                    case ActorAnimationTextMarkerKind.Start:
+                        if (!marker.Group.IsEmpty && !groupMatches)
+                        {
+                            stopTime = marker.Time;
+                            finished = true;
+                        }
+                        break;
                 }
 
                 if (finished)
@@ -283,17 +276,6 @@ namespace VVardenfell.Runtime.Animation
                 loopStart = startTime;
             if (loopStop <= loopStart || loopStop > stopTime)
                 loopStop = stopTime;
-        }
-
-        static string[] SplitTextKeyMarkers(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return Array.Empty<string>();
-
-            string[] markers = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < markers.Length; i++)
-                markers[i] = markers[i].Trim();
-            return markers;
         }
 
         static bool IsLooping(FixedString64Bytes group)
@@ -313,5 +295,25 @@ namespace VVardenfell.Runtime.Animation
                 || group.Equals(new FixedString64Bytes("sneakleft"))
                 || group.Equals(new FixedString64Bytes("sneakright"));
         }
+
+        static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
+        {
+            if (left.Length != right.Length)
+                return false;
+
+            for (int i = 0; i < left.Length; i++)
+            {
+                byte a = ToLowerAscii(left[i]);
+                byte b = ToLowerAscii(right[i]);
+                if (a != b)
+                    return false;
+            }
+            return true;
+        }
+
+        static byte ToLowerAscii(byte value)
+            => value >= (byte)'A' && value <= (byte)'Z'
+                ? (byte)(value + 32)
+                : value;
     }
 }

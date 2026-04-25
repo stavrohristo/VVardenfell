@@ -70,9 +70,9 @@ namespace VVardenfell.Runtime.Rendering
         public NativeList<ActorProceduralDrawBatch> Batches;
         public NativeList<ActorProceduralMatrixGpu> BoneMatrices;
 
-        readonly NativeList<ActorProceduralVertexGpu> _vertices;
-        readonly NativeList<int> _indices;
-        readonly NativeList<uint> _indirectArgs;
+        NativeList<ActorProceduralVertexGpu> _vertices;
+        NativeList<int> _indices;
+        NativeList<uint> _indirectArgs;
 
         GraphicsBuffer _vertexBuffer;
         GraphicsBuffer _indexBuffer;
@@ -124,6 +124,56 @@ namespace VVardenfell.Runtime.Rendering
             Batches.Clear();
             BoneMatrices.Clear();
             _indirectArgs.Clear();
+        }
+
+        public void ReserveFrameCapacity(int drawCount, int boneMatrixCount)
+        {
+            if (drawCount > Draws.Capacity)
+                Draws.Capacity = drawCount;
+            if (boneMatrixCount > BoneMatrices.Capacity)
+                BoneMatrices.Capacity = boneMatrixCount;
+            if (drawCount > Batches.Capacity)
+                Batches.Capacity = drawCount;
+            int indirectArgCount = drawCount * ProceduralIndirectArgsCount;
+            if (indirectArgCount > _indirectArgs.Capacity)
+                _indirectArgs.Capacity = indirectArgCount;
+        }
+
+        public void PrepareFrameData(int drawCount, int boneMatrixCount)
+        {
+            ReserveFrameCapacity(drawCount, boneMatrixCount);
+            Draws.ResizeUninitialized(drawCount);
+            BoneMatrices.ResizeUninitialized(boneMatrixCount);
+            Batches.ResizeUninitialized(drawCount);
+            _indirectArgs.Clear();
+        }
+
+        public void CompactBatches()
+        {
+            if (Batches.Length <= 1)
+                return;
+
+            int write = 0;
+            for (int read = 1; read < Batches.Length; read++)
+            {
+                var current = Batches[read];
+                var last = Batches[write];
+                if (last.BucketIndex == current.BucketIndex
+                    && last.MaterialIndex == current.MaterialIndex
+                    && last.IndexCount == current.IndexCount
+                    && last.DrawBase + last.DrawCount == current.DrawBase)
+                {
+                    last.DrawCount += current.DrawCount;
+                    Batches[write] = last;
+                    continue;
+                }
+
+                write++;
+                if (write != read)
+                    Batches[write] = current;
+            }
+
+            Batches.ResizeUninitialized(write + 1);
         }
 
         public int AddBoneMatrices(DynamicBuffer<ActorBone> bones)
@@ -221,31 +271,7 @@ namespace VVardenfell.Runtime.Rendering
                     $"Actor skin bone '{skinBone.Name}' references invalid baked bone index {boneIndex} for actor with {bones.Length} bones.");
             }
 
-            if (!skinBone.Name.IsEmpty && !BoneNamesMatch(bones[boneIndex].Name.ToString(), skinBone.Name.ToString()))
-            {
-                throw new InvalidOperationException(
-                    $"Actor skin bone '{skinBone.Name}' baked index {boneIndex} resolves to actor bone '{bones[boneIndex].Name}'.");
-            }
-
             return boneIndex;
-        }
-
-        static bool BoneNamesMatch(string actorBoneName, string skinBoneName)
-        {
-            return string.Equals(actorBoneName, skinBoneName, StringComparison.OrdinalIgnoreCase)
-                   || string.Equals(CanonicalBoneName(actorBoneName), CanonicalBoneName(skinBoneName), StringComparison.OrdinalIgnoreCase);
-        }
-
-        static string CanonicalBoneName(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name))
-                return string.Empty;
-
-            string value = name.Trim().ToLowerInvariant();
-            while (value.Contains("  ", StringComparison.Ordinal))
-                value = value.Replace("  ", " ");
-
-            return value;
         }
 
         public void UploadFrame()

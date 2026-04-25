@@ -320,8 +320,8 @@ namespace VVardenfell.Importer.Nif
                     {
                         float u = s.ReadFloat();
                         float v = s.ReadFloat();
-                        // NIF → OpenGL convention flips V; Unity follows OpenGL, so keep flip.
-                        uvs[i] = new Vector2(u, 1f - v);
+                        // Morrowind/OpenMW consume NIF UVs as-authored. Texture upload owns image orientation.
+                        uvs[i] = new Vector2(u, v);
                     }
                     UvSets[set] = uvs;
                 }
