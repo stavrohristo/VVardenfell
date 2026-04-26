@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Animation
             public float Scale;
             public float3 AxisRotation;
             public byte AxisFlags;
+            public byte HasTrack;
             public int AxisOrder;
         }
 
@@ -36,6 +37,7 @@ namespace VVardenfell.Runtime.Animation
             public float3 Position;
             public quaternion Rotation;
             public float Scale;
+            public byte HasTrack;
         }
 
         public static void Validate(
@@ -144,11 +146,24 @@ namespace VVardenfell.Runtime.Animation
             for (int boneIndex = 0; boneIndex < boneCount; boneIndex++)
             {
                 var bindBone = catalog.Bones[firstBoneIndex + boneIndex];
+                if (sampled[boneIndex].HasTrack == 0)
+                {
+                    local[boneIndex] = new LocalPose
+                    {
+                        Position = bindBone.BindPosition,
+                        Rotation = SafeNormalize(bindBone.BindRotation),
+                        Scale = bindBone.BindScale <= 0f ? 1f : bindBone.BindScale,
+                        HasTrack = 0,
+                    };
+                    continue;
+                }
+
                 local[boneIndex] = new LocalPose
                 {
                     Position = math.lerp(bindBone.BindPosition, sampled[boneIndex].Position, weight),
                     Rotation = SafeNormalize(math.slerp(SafeNormalize(bindBone.BindRotation), SafeNormalize(sampled[boneIndex].Rotation), weight)),
                     Scale = math.lerp(bindBone.BindScale <= 0f ? 1f : bindBone.BindScale, sampled[boneIndex].Scale, weight),
+                    HasTrack = 1,
                 };
             }
 
@@ -193,7 +208,8 @@ namespace VVardenfell.Runtime.Animation
                     var skinBone = catalog.SkinBones[skinBoneIndex];
                     int boneIndex = skinBone.BoneIndex;
                     float4x4 pose = (uint)boneIndex < (uint)localToRoot.Length ? localToRoot[boneIndex] : float4x4.identity;
-                    skinMatrices.Add(math.mul(pose, skinBone.BindPose));
+                    skinMatrices.Add(ActorAnimationSpaceConversion.SourceAffineToUnity(
+                        math.mul(math.mul(skinMesh.GeometryToSkeleton, pose), skinBone.BindPose)));
                     skinMeshIndices.Add(skinMeshIndex);
                     boneIndices.Add(boneIndex);
                 }
@@ -207,8 +223,17 @@ namespace VVardenfell.Runtime.Animation
             for (int boneIndex = 0; boneIndex < localPoses.Length; boneIndex++)
             {
                 var bone = catalog.Bones[firstBoneIndex + boneIndex];
-                float scale = localPoses[boneIndex].Scale <= 0f ? 1f : localPoses[boneIndex].Scale;
-                float4x4 local = float4x4.TRS(localPoses[boneIndex].Position, SafeNormalize(localPoses[boneIndex].Rotation), new float3(scale));
+                float4x4 local;
+                if (localPoses[boneIndex].HasTrack == 0)
+                {
+                    local = bone.BindLocalMatrix;
+                }
+                else
+                {
+                    float scale = localPoses[boneIndex].Scale <= 0f ? 1f : localPoses[boneIndex].Scale;
+                    local = float4x4.TRS(localPoses[boneIndex].Position, SafeNormalize(localPoses[boneIndex].Rotation), new float3(scale));
+                }
+
                 localToRoot[boneIndex] = bone.ParentIndex >= 0 && bone.ParentIndex < boneIndex
                     ? math.mul(localToRoot[bone.ParentIndex], local)
                     : local;
@@ -233,17 +258,18 @@ namespace VVardenfell.Runtime.Animation
 
                 float trackTime = MapTrackTime(layerTime, track);
                 var pose = sampled[boneIndex];
+                pose.HasTrack = 1;
                 switch (track.Kind)
                 {
                     case ActorAnimationTrackKind.Translation:
                     {
                         float4 value = SampleValue(ref catalog, track, trackTime);
-                        pose.Position = new float3(value.x, value.z, value.y) * WorldScale.MwUnitsToMeters;
+                        pose.Position = value.xyz;
                         break;
                     }
                     case ActorAnimationTrackKind.Rotation:
                     {
-                        pose.Rotation = ToUnityRotation(SampleSourceRotation(ref catalog, track, trackTime));
+                        pose.Rotation = SampleSourceRotation(ref catalog, track, trackTime);
                         break;
                     }
                     case ActorAnimationTrackKind.Scale:
@@ -286,7 +312,7 @@ namespace VVardenfell.Runtime.Animation
                 if (sampled[i].AxisFlags == 0)
                     continue;
 
-                sampled[i].Rotation = ToUnityRotation(ComposeSourceXyzRotation(sampled[i].AxisRotation, sampled[i].AxisOrder));
+                sampled[i].Rotation = ComposeSourceXyzRotation(sampled[i].AxisRotation, sampled[i].AxisOrder);
             }
         }
 
@@ -302,6 +328,7 @@ namespace VVardenfell.Runtime.Animation
                 Position = bindBone.BindPosition,
                 Rotation = SafeNormalize(bindBone.BindRotation),
                 Scale = bindBone.BindScale <= 0f ? 1f : bindBone.BindScale,
+                HasTrack = 0,
             };
         }
 
@@ -319,6 +346,7 @@ namespace VVardenfell.Runtime.Animation
                     Scale = bone.BindScale <= 0f ? 1f : bone.BindScale,
                     AxisRotation = float3.zero,
                     AxisFlags = 0,
+                    HasTrack = 0,
                     AxisOrder = 0,
                 };
             }
@@ -338,6 +366,7 @@ namespace VVardenfell.Runtime.Animation
                     Position = bone.BindPosition,
                     Rotation = SafeNormalize(bone.BindRotation),
                     Scale = bone.BindScale <= 0f ? 1f : bone.BindScale,
+                    HasTrack = 0,
                 };
             }
 
@@ -594,15 +623,6 @@ namespace VVardenfell.Runtime.Animation
                 5 => SafeNormalize(math.mul(math.mul(z, y), x)),
                 _ => SafeNormalize(math.mul(math.mul(x, y), z)),
             };
-        }
-
-        static quaternion ToUnityRotation(quaternion sourceRotation)
-        {
-            sourceRotation = SafeNormalize(sourceRotation);
-            float3x3 source = new(sourceRotation);
-            float3 up = new(source.c2.x, source.c2.z, source.c2.y);
-            float3 forward = new(source.c1.x, source.c1.z, source.c1.y);
-            return SafeNormalize(quaternion.LookRotationSafe(forward, up));
         }
 
         static quaternion SafeNormalize(quaternion value)

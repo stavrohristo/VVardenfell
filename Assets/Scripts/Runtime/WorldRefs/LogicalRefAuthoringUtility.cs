@@ -245,6 +245,7 @@ namespace VVardenfell.Runtime.Components
             }
 
             uint resolutionSeed = placedRefId != 0u ? placedRefId : (uint)actorHandle.Value;
+            ref readonly var actor = ref contentDb.Get(actorHandle);
             for (int i = 0; i < authoredItems.Length; i++)
             {
                 var authored = authoredItems[i];
@@ -268,7 +269,6 @@ namespace VVardenfell.Runtime.Components
                 var itemHandle = new ItemDefHandle { Value = content.HandleValue };
                 if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
                     continue;
-
                 int slot = (int)itemEquipment.Slot;
                 if ((uint)slot >= SlotCapacity || slot == (int)ItemEquipmentSlot.None)
                     continue;

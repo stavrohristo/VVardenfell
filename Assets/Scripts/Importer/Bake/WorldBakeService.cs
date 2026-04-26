@@ -791,7 +791,9 @@ namespace VVardenfell.Importer.Bake
             }
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
+            bakeryActorAnimations.ConfigureCreatureAnimationSources(gameplayContent, bsaByName);
             yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
+            bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
@@ -838,7 +840,7 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "actor_animations.bin";
             progress.Current = 5;
             yield return null;
-            if (bakeryActorAnimations.Modified || !File.Exists(CachePaths.ActorAnimations))
+            if (bakeryActorAnimations.Modified || !ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
                 ActorAnimationFile.Write(CachePaths.ActorAnimations, bakeryActorAnimations.BuildCatalog());
 
             progress.Label = "textures.bin";
@@ -1269,30 +1271,51 @@ namespace VVardenfell.Importer.Bake
                 {
                     if (!bsaByName.TryGetValue(path, out var entry))
                         return null;
-
-                    NifFile nif;
-                    try
-                    {
-                        nif = NifFile.Parse(path, sharedBsa.Read(entry));
-                    }
-                    catch
-                    {
-                        return null;
-                    }
-
-                    var built = NifMeshBuilder.BuildRaw(nif);
-                    var prefab = NifModelPrefabBuilder.Build(nif);
-                    var collisionResult = NifCollisionExtractor.Extract(nif);
-                    CollisionPayload authoredCollision = collisionResult.Source == CollisionExtractionSource.AuthoredRootCollision
-                        ? collisionResult.Payload
-                        : default;
-                    CollisionPayload autoVisualStaticCollision = collisionResult.Source == CollisionExtractionSource.AutoVisualStatic
-                        ? collisionResult.Payload
-                        : default;
-                    return new ModelSource(path, nif, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
+                    try { return CreateModelSource(path, sharedBsa, entry); }
+                    catch { return null; }
                 }, LazyThreadSafetyMode.ExecutionAndPublication));
 
             return lazy.Value;
+        }
+
+        private static ModelSource EnsureRequiredModelSource(
+            string modelPath,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            string context)
+        {
+            string nifPath = NormalizeModelPath(modelPath);
+            if (string.IsNullOrEmpty(nifPath))
+                throw new InvalidOperationException($"{context} has an empty model path.");
+            if (sharedBsa == null || bsaByName == null || !bsaByName.TryGetValue(nifPath, out var entry))
+                throw new InvalidOperationException($"{context} required model '{nifPath}' is missing from the archive.");
+
+            try
+            {
+                var source = CreateModelSource(nifPath, sharedBsa, entry);
+                modelCache[nifPath] = new Lazy<ModelSource>(() => source, LazyThreadSafetyMode.ExecutionAndPublication);
+                return source;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"{context} required model '{nifPath}' could not be loaded.", ex);
+            }
+        }
+
+        private static ModelSource CreateModelSource(string path, BsaArchive sharedBsa, BsaEntry entry)
+        {
+            var nif = NifFile.Parse(path, sharedBsa.Read(entry));
+            var built = NifMeshBuilder.BuildRaw(nif);
+            var prefab = NifModelPrefabBuilder.Build(nif);
+            var collisionResult = NifCollisionExtractor.Extract(nif);
+            CollisionPayload authoredCollision = collisionResult.Source == CollisionExtractionSource.AuthoredRootCollision
+                ? collisionResult.Payload
+                : default;
+            CollisionPayload autoVisualStaticCollision = collisionResult.Source == CollisionExtractionSource.AutoVisualStatic
+                ? collisionResult.Payload
+                : default;
+            return new ModelSource(path, nif, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
         }
 
         static string NormalizeModelPath(string modelPath)
@@ -1307,6 +1330,42 @@ namespace VVardenfell.Importer.Bake
             return trimmed.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)
                 ? trimmed
                 : "meshes\\" + trimmed;
+        }
+
+        static string ResolveActorAnimationModelPath(string modelPath, Dictionary<string, BsaEntry> bsaByName)
+        {
+            string model = NormalizeModelPath(modelPath);
+            if (string.IsNullOrEmpty(model))
+                return model;
+
+            string corrected = BuildPrefixedActorModelPath(model);
+            string correctedKf = BuildCompanionKfPath(corrected);
+            if (bsaByName == null || !bsaByName.ContainsKey(correctedKf))
+                return model;
+
+            if (!bsaByName.ContainsKey(corrected))
+                throw new InvalidOperationException(
+                    $"Actor model '{model}' resolves animation source '{correctedKf}' but required actor model '{corrected}' is missing.");
+
+            return corrected;
+        }
+
+        static string BuildPrefixedActorModelPath(string modelPath)
+        {
+            string normalized = NormalizeModelPath(modelPath);
+            int slash = normalized.LastIndexOf('\\');
+            return slash >= 0
+                ? normalized.Substring(0, slash + 1) + "x" + normalized.Substring(slash + 1)
+                : "x" + normalized;
+        }
+
+        static string BuildCompanionKfPath(string modelPath)
+        {
+            string normalized = NormalizeModelPath(modelPath);
+            int dot = normalized.LastIndexOf('.');
+            if (dot < 0)
+                return normalized + ".kf";
+            return normalized.Substring(0, dot) + ".kf";
         }
 
         private static void SeedRuntimeSpawnableModels(
@@ -1325,6 +1384,17 @@ namespace VVardenfell.Importer.Bake
                     continue;
 
                 EnsureModelSource(actors[i].Model, sharedBsa, bsaByName, modelCache);
+                string actorModel = ResolveActorAnimationModelPath(actors[i].Model, bsaByName);
+                if (!string.IsNullOrEmpty(actorModel)
+                    && !string.Equals(actorModel, NormalizeModelPath(actors[i].Model), StringComparison.OrdinalIgnoreCase))
+                {
+                    EnsureRequiredModelSource(
+                        actorModel,
+                        sharedBsa,
+                        bsaByName,
+                        modelCache,
+                        $"Creature actor '{actors[i].Id}' animation model seed");
+                }
             }
 
             var items = gameplayContent.Items ?? Array.Empty<BaseDef>();
@@ -1352,15 +1422,18 @@ namespace VVardenfell.Importer.Bake
                 "meshes\\base_anim.nif",
                 "meshes\\base_anim_female.nif",
                 "meshes\\base_animkna.nif",
-                "meshes\\xbase_anim.nif",
-                "meshes\\xbase_anim_female.nif",
                 "meshes\\base_anim_female.1st.nif",
                 "meshes\\base_animkna.1st.nif",
                 "meshes\\xbase_anim.1st.nif",
             };
 
             for (int i = 0; i < models.Length; i++)
-                EnsureModelSource(models[i], sharedBsa, bsaByName, modelCache);
+                EnsureRequiredModelSource(
+                    models[i],
+                    sharedBsa,
+                    bsaByName,
+                    modelCache,
+                    "NPC animation model seed");
         }
 
         private static IEnumerator PrepareDirtyCellsIncremental(
@@ -1466,7 +1539,7 @@ namespace VVardenfell.Importer.Bake
         {
             var keys = new List<string>(modelCache.Keys);
             keys.Sort(StringComparer.OrdinalIgnoreCase);
-            var actorBodyPartModels = BuildActorBodyPartModelSet(gameplayContent);
+            var actorBodyPartModels = BuildActorBodyPartModelSet(gameplayContent, bsaByName);
 
             progress.Stage = "Model Prefabs";
             progress.Total = Math.Max(1, keys.Count);
@@ -1555,11 +1628,63 @@ namespace VVardenfell.Importer.Bake
                 if (((i + 1) & 31) == 0 || i + 1 == keys.Count)
                     yield return null;
             }
+
+            EnsureDefaultNpcAnimationAssignments(
+                actorAnimations,
+                modelCache,
+                sharedBsa,
+                bsaByName,
+                meshes,
+                materials,
+                textures);
         }
 
-        static HashSet<string> BuildActorBodyPartModelSet(GameplayContentData gameplayContent)
+        static void EnsureDefaultNpcAnimationAssignments(
+            ActorAnimationBakery actorAnimations,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            MeshBakery meshes,
+            MaterialBakery materials,
+            TextureBakery textures)
+        {
+            string[] models =
+            {
+                "meshes\\base_anim.nif",
+                "meshes\\base_anim_female.nif",
+                "meshes\\base_animkna.nif",
+                "meshes\\base_anim_female.1st.nif",
+                "meshes\\base_animkna.1st.nif",
+                "meshes\\xbase_anim.1st.nif",
+            };
+
+            for (int i = 0; i < models.Length; i++)
+            {
+                string normalized = NormalizeModelPath(models[i]);
+                var source = EnsureRequiredModelSource(
+                    normalized,
+                    sharedBsa,
+                    bsaByName,
+                    modelCache,
+                    "NPC animation assignment");
+
+                actorAnimations.GetOrAddModel(
+                    source.ModelPath,
+                    source.Nif,
+                    source.Prefab,
+                    meshes,
+                    materials,
+                    textures,
+                    sharedBsa,
+                    bsaByName,
+                    forceActorModel: true);
+            }
+        }
+
+        static HashSet<string> BuildActorBodyPartModelSet(GameplayContentData gameplayContent, Dictionary<string, BsaEntry> bsaByName)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            AddDefaultNpcAnimationModels(result);
             var bodyParts = gameplayContent?.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
             for (int i = 0; i < bodyParts.Length; i++)
             {
@@ -1567,7 +1692,32 @@ namespace VVardenfell.Importer.Bake
                 if (!string.IsNullOrEmpty(model))
                     result.Add(model);
             }
+
+            var actors = gameplayContent?.Actors ?? Array.Empty<ActorDef>();
+            for (int i = 0; i < actors.Length; i++)
+            {
+                if (actors[i].Kind != ActorDefKind.Creature)
+                    continue;
+
+                string actorModel = ResolveActorAnimationModelPath(actors[i].Model, bsaByName);
+                if (!string.IsNullOrEmpty(actorModel))
+                    result.Add(actorModel);
+            }
+
             return result;
+        }
+
+        static void AddDefaultNpcAnimationModels(HashSet<string> result)
+        {
+            if (result == null)
+                return;
+
+            result.Add("meshes\\base_anim.nif");
+            result.Add("meshes\\base_anim_female.nif");
+            result.Add("meshes\\base_animkna.nif");
+            result.Add("meshes\\base_anim_female.1st.nif");
+            result.Add("meshes\\base_animkna.1st.nif");
+            result.Add("meshes\\xbase_anim.1st.nif");
         }
 
         static Dictionary<string, HashSet<string>> BuildActorBodyPartSkinReferenceSkeletonMap(
@@ -1585,14 +1735,18 @@ namespace VVardenfell.Importer.Bake
                     && part.Type != ActorBodyPartMeshType.Clothing
                     && part.Type != ActorBodyPartMeshType.Armor)
                     continue;
-                if (part.FirstPerson != 0)
-                    continue;
 
                 if (part.Type != ActorBodyPartMeshType.Skin)
                 {
-                    AddEquipmentSkinReferenceTargets(result, part, bsaByName);
+                    if (part.FirstPerson != 0)
+                        AddFirstPersonEquipmentSkinReferenceTargets(result, part, bsaByName);
+                    else
+                        AddEquipmentSkinReferenceTargets(result, part, bsaByName);
                     continue;
                 }
+
+                if (part.FirstPerson != 0)
+                    continue;
 
                 string targetSkeleton = ResolveNpcSkeletonModel(
                     part.FirstPerson != 0,
@@ -1615,6 +1769,9 @@ namespace VVardenfell.Importer.Bake
                 for (int pass = 0; pass < 2; pass++)
                 {
                     bool firstPerson = pass != 0;
+                    if (firstPerson && !IsPlayerActor(actor))
+                        continue;
+
                     string targetSkeleton = ResolveNpcSkeletonModel(firstPerson, female, beast, bsaByName);
                     if (string.IsNullOrEmpty(targetSkeleton))
                         continue;
@@ -1662,6 +1819,20 @@ namespace VVardenfell.Importer.Bake
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, true, bsaByName), part.Id);
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, true, true, bsaByName), part.Id);
 
+            if (!IsFirstPersonMeshPart(part.Part))
+                return;
+
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, false, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, true, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, false, true, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, true, true, bsaByName), part.Id);
+        }
+
+        static void AddFirstPersonEquipmentSkinReferenceTargets(
+            Dictionary<string, HashSet<string>> result,
+            ActorBodyPartDef part,
+            Dictionary<string, BsaEntry> bsaByName)
+        {
             if (!IsFirstPersonMeshPart(part.Part))
                 return;
 
@@ -1727,6 +1898,10 @@ namespace VVardenfell.Importer.Bake
                && races.TryGetValue(raceId, out var race)
                && (race.Flags & 0x02) != 0;
 
+        static bool IsPlayerActor(ActorDef actor)
+            => actor.Kind == ActorDefKind.Npc
+               && string.Equals(actor.Id, "player", StringComparison.OrdinalIgnoreCase);
+
         static void AddExplicitActorBodyPartTarget(
             Dictionary<string, HashSet<string>> targets,
             Dictionary<string, ActorBodyPartDef> bodyPartsById,
@@ -1771,38 +1946,13 @@ namespace VVardenfell.Importer.Bake
             bool female,
             bool beast,
             Dictionary<string, BsaEntry> bsaByName)
-        {
-            foreach (string candidate in EnumerateNpcSkeletonCandidates(firstPerson, female, beast))
-            {
-                string normalized = NormalizeModelPath(candidate);
-                if (bsaByName == null || bsaByName.ContainsKey(normalized))
-                    return normalized;
-            }
-
-            throw new InvalidOperationException(
-                $"No NPC skeleton model found for firstPerson={firstPerson}, female={female}, beast={beast}.");
-        }
-
-        static IEnumerable<string> EnumerateNpcSkeletonCandidates(bool firstPerson, bool female, bool beast)
-        {
-            if (firstPerson)
-            {
-                if (beast)
-                    yield return "meshes\\base_animkna.1st.nif";
-                if (female)
-                    yield return "meshes\\base_anim_female.1st.nif";
-                yield return "meshes\\xbase_anim.1st.nif";
-            }
-            else
-            {
-                if (beast)
-                    yield return "meshes\\base_animkna.nif";
-                if (female)
-                    yield return "meshes\\base_anim_female.nif";
-                yield return "meshes\\base_anim.nif";
-                yield return "meshes\\xbase_anim.nif";
-            }
-        }
+            => NormalizeModelPath(firstPerson
+                ? beast ? "meshes\\base_animkna.1st.nif"
+                    : female ? "meshes\\base_anim_female.1st.nif"
+                    : "meshes\\xbase_anim.1st.nif"
+                : beast ? "meshes\\base_animkna.nif"
+                    : female ? "meshes\\base_anim_female.nif"
+                    : "meshes\\base_anim.nif");
 
         static bool TryResolveNpcRaceBodyPart(
             ActorBodyPartDef[] bodyParts,
@@ -1816,11 +1966,8 @@ namespace VVardenfell.Importer.Bake
             bodyParts ??= Array.Empty<ActorBodyPartDef>();
 
             ActorBodyPartMeshPart meshPart = GetMeshPart(partReference);
-            bool isHand = meshPart == ActorBodyPartMeshPart.Hand
-                          || meshPart == ActorBodyPartMeshPart.Wrist
-                          || meshPart == ActorBodyPartMeshPart.Forearm
-                          || meshPart == ActorBodyPartMeshPart.Upperarm;
-            bool hasFallback = false;
+            bool isFirstPersonArmPart = IsFirstPersonMeshPart(meshPart);
+            int bestScore = int.MaxValue;
             for (int i = 0; i < bodyParts.Length; i++)
             {
                 var part = bodyParts[i];
@@ -1835,37 +1982,39 @@ namespace VVardenfell.Importer.Bake
 
                 bool partFirstPerson = part.FirstPerson != 0;
                 bool partFemale = part.Female != 0;
-                if (firstPerson && isHand && !partFirstPerson)
-                {
-                    if (!hasFallback || partFemale == female || female)
-                    {
-                        result = part;
-                        hasFallback = true;
-                    }
-                    continue;
-                }
-
-                if (partFirstPerson != firstPerson)
-                    continue;
-
-                if (female && !partFemale)
-                {
-                    if (!hasFallback)
-                    {
-                        result = part;
-                        hasFallback = true;
-                    }
-                    continue;
-                }
-
-                if (female != partFemale)
+                int score = ResolveNpcRaceBodyPartScore(firstPerson, female, isFirstPersonArmPart, partFirstPerson, partFemale);
+                if (score >= bestScore)
                     continue;
 
                 result = part;
-                return true;
+                bestScore = score;
+                if (score == 0)
+                    return true;
             }
 
-            return hasFallback;
+            return bestScore < int.MaxValue;
+        }
+
+        static int ResolveNpcRaceBodyPartScore(
+            bool firstPerson,
+            bool female,
+            bool isFirstPersonArmPart,
+            bool partFirstPerson,
+            bool partFemale)
+        {
+            if (partFirstPerson == firstPerson && partFemale == female)
+                return 0;
+
+            if (firstPerson && isFirstPersonArmPart && !partFirstPerson && partFemale == female)
+                return 10;
+
+            if (female && partFirstPerson == firstPerson && !partFemale)
+                return 20;
+
+            if (firstPerson && isFirstPersonArmPart && female && !partFirstPerson && !partFemale)
+                return 30;
+
+            return int.MaxValue;
         }
 
         static bool IsBaseSkinPartReference(ActorSkinPartReferenceType type)

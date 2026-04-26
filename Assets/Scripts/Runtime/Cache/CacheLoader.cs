@@ -57,8 +57,8 @@ namespace VVardenfell.Runtime.Cache
         public MaterialRegistry Registry { get; private set; }
         public RuntimeContentDatabase ContentDatabase { get; private set; }
 
-        Dictionary<string, int> _actorAnimationBindingsByModelPath;
-        Dictionary<string, int> _actorAnimationBindingsByModelAndReference;
+        Dictionary<ulong, int> _actorVisualRecipesByActorAndView;
+        Dictionary<ulong, int> _equipmentVisualsByItemRigViewAndVariant;
 
         public bool TryLoad(out string error)
         {
@@ -100,7 +100,7 @@ namespace VVardenfell.Runtime.Cache
                 if (!ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog))
                     Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
                 ActorAnimationCatalog = actorAnimationCatalog ?? new ActorAnimationCatalogData();
-                BuildActorAnimationLookup();
+                BuildActorVisualLookup();
             }
             finally
             {
@@ -168,180 +168,97 @@ namespace VVardenfell.Runtime.Cache
             totalSw.Stop();
         }
 
-        public bool TryGetActorAnimationBinding(string modelPath, out int bindingIndex, out ActorAnimationModelBindingDef binding)
+        public bool TryGetActorVisualRecipe(ContentId actorContentId, bool firstPerson, out ActorVisualRecipeDef recipe)
         {
-            bindingIndex = -1;
-            binding = null;
-
-            if (_actorAnimationBindingsByModelPath == null)
+            recipe = null;
+            if (_actorVisualRecipesByActorAndView == null)
                 return false;
 
-            string normalized = NormalizeActorModelPath(modelPath);
-            if (string.IsNullOrEmpty(normalized) || !_actorAnimationBindingsByModelPath.TryGetValue(normalized, out bindingIndex))
+            ulong key = BuildActorVisualRecipeKey(actorContentId.Value, firstPerson);
+            if (!_actorVisualRecipesByActorAndView.TryGetValue(key, out int index))
                 return false;
 
-            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
-            if ((uint)bindingIndex >= (uint)bindings.Length)
-            {
-                bindingIndex = -1;
+            var recipes = ActorAnimationCatalog?.ActorVisualRecipes ?? Array.Empty<ActorVisualRecipeDef>();
+            if ((uint)index >= (uint)recipes.Length)
                 return false;
-            }
 
-            binding = bindings[bindingIndex];
-            return binding != null && binding.SkeletonIndex >= 0;
+            recipe = recipes[index];
+            return recipe != null && recipe.RigFamilyIndex >= 0;
         }
 
-        public bool TryGetActorAnimationBinding(
-            string modelPath,
-            string bindReferenceSkeletonPath,
-            out int bindingIndex,
-            out ActorAnimationModelBindingDef binding)
-        {
-            if (string.IsNullOrWhiteSpace(bindReferenceSkeletonPath))
-                return TryGetActorAnimationBinding(modelPath, out bindingIndex, out binding);
-
-            bindingIndex = -1;
-            binding = null;
-
-            if (_actorAnimationBindingsByModelAndReference == null)
-                return false;
-
-            string key = BuildActorAnimationBindingKey(modelPath, bindReferenceSkeletonPath);
-            if (string.IsNullOrEmpty(key)
-                || !_actorAnimationBindingsByModelAndReference.TryGetValue(key, out bindingIndex))
-            {
-                return false;
-            }
-
-            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
-            if ((uint)bindingIndex >= (uint)bindings.Length)
-            {
-                bindingIndex = -1;
-                return false;
-            }
-
-            binding = bindings[bindingIndex];
-            return binding != null && binding.SkeletonIndex >= 0;
-        }
-
-        public bool TryResolveActorAnimationBinding(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+        public bool TryGetEquipmentVisual(
+            ContentId itemContentId,
+            int rigFamilyIndex,
             bool firstPerson,
-            out int bindingIndex,
-            out ActorAnimationModelBindingDef binding)
+            ActorVisualBodyVariant bodyVariant,
+            out ActorEquipmentVisualDef visual)
         {
-            if (actor.Kind == ActorDefKind.Creature)
-                return TryGetActorAnimationBinding(actor.Model, out bindingIndex, out binding);
+            visual = null;
+            if (_equipmentVisualsByItemRigViewAndVariant == null)
+                return false;
 
-            bool female = (actor.Flags & 0x1u) != 0;
-            bool beast = false;
-            if (contentDb != null
-                && contentDb.TryGetRaceHandle(actor.RaceId, out var raceHandle)
-                && raceHandle.IsValid)
-            {
-                ref readonly RaceDef race = ref contentDb.GetRace(raceHandle);
-                beast = (race.Flags & 0x02) != 0;
-            }
+            ulong key = BuildEquipmentVisualKey(itemContentId.Value, rigFamilyIndex, firstPerson, bodyVariant);
+            if (!_equipmentVisualsByItemRigViewAndVariant.TryGetValue(key, out int index))
+                return false;
 
-            foreach (string candidate in EnumerateNpcSkeletonCandidates(firstPerson, female, beast))
-            {
-                if (TryGetActorAnimationBinding(candidate, out bindingIndex, out binding))
-                    return true;
-            }
+            var values = ActorAnimationCatalog?.EquipmentVisuals ?? Array.Empty<ActorEquipmentVisualDef>();
+            if ((uint)index >= (uint)values.Length)
+                return false;
 
-            var bodyParts = contentDb?.Data?.ActorBodyParts ?? Array.Empty<ActorBodyPartDef>();
-            for (int i = 0; i < bodyParts.Length; i++)
-            {
-                var part = bodyParts[i];
-                if (part.Type != ActorBodyPartMeshType.Skin)
-                    continue;
-                if (!string.Equals(part.RaceId, actor.RaceId ?? string.Empty, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if ((part.Female != 0) != female)
-                    continue;
-                if ((part.FirstPerson != 0) != firstPerson)
-                    continue;
-
-                if (TryGetActorAnimationBinding(part.Model, out bindingIndex, out binding))
-                    return true;
-            }
-
-            bindingIndex = -1;
-            binding = null;
-            return false;
+            visual = values[index];
+            return visual != null;
         }
 
-        public static string NormalizeActorModelPath(string modelPath)
+        void BuildActorVisualLookup()
         {
-            if (string.IsNullOrWhiteSpace(modelPath))
-                return string.Empty;
-
-            string trimmed = modelPath.Trim().Replace('/', '\\');
-            while (trimmed.Contains("\\\\"))
-                trimmed = trimmed.Replace("\\\\", "\\");
-
-            if (trimmed.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase))
-                return trimmed;
-
-            return $"meshes\\{trimmed}";
-        }
-
-        void BuildActorAnimationLookup()
-        {
-            var bindings = ActorAnimationCatalog?.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
-            _actorAnimationBindingsByModelPath = new Dictionary<string, int>(bindings.Length, StringComparer.OrdinalIgnoreCase);
-            _actorAnimationBindingsByModelAndReference = new Dictionary<string, int>(bindings.Length, StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < bindings.Length; i++)
+            var recipes = ActorAnimationCatalog?.ActorVisualRecipes ?? Array.Empty<ActorVisualRecipeDef>();
+            _actorVisualRecipesByActorAndView = new Dictionary<ulong, int>(recipes.Length);
+            for (int i = 0; i < recipes.Length; i++)
             {
-                var binding = bindings[i];
-                string path = NormalizeActorModelPath(binding?.ModelPath);
-                if (!string.IsNullOrEmpty(path))
-                {
-                    string referencePath = NormalizeActorModelPath(binding?.BindReferenceSkeletonPath);
-                    if (string.IsNullOrEmpty(referencePath))
-                    {
-                        if (!_actorAnimationBindingsByModelPath.ContainsKey(path))
-                            _actorAnimationBindingsByModelPath[path] = i;
-                    }
-                    else
-                    {
-                        string key = BuildActorAnimationBindingKey(path, referencePath);
-                        if (!string.IsNullOrEmpty(key))
-                            _actorAnimationBindingsByModelAndReference[key] = i;
-                    }
-                }
+                var recipe = recipes[i];
+                if (recipe == null || recipe.ActorContentId.Value == 0UL)
+                    continue;
+
+                ulong key = BuildActorVisualRecipeKey(recipe.ActorContentId.Value, recipe.FirstPerson != 0);
+                if (!_actorVisualRecipesByActorAndView.ContainsKey(key))
+                    _actorVisualRecipesByActorAndView[key] = i;
+            }
+
+            var visuals = ActorAnimationCatalog?.EquipmentVisuals ?? Array.Empty<ActorEquipmentVisualDef>();
+            _equipmentVisualsByItemRigViewAndVariant = new Dictionary<ulong, int>(visuals.Length);
+            for (int i = 0; i < visuals.Length; i++)
+            {
+                var visual = visuals[i];
+                if (visual == null || visual.ItemContentId.Value == 0UL || visual.RigFamilyIndex < 0)
+                    continue;
+
+                ulong key = BuildEquipmentVisualKey(
+                    visual.ItemContentId.Value,
+                    visual.RigFamilyIndex,
+                    visual.FirstPerson != 0,
+                    visual.BodyVariant);
+                if (!_equipmentVisualsByItemRigViewAndVariant.ContainsKey(key))
+                    _equipmentVisualsByItemRigViewAndVariant[key] = i;
             }
         }
 
-        static string BuildActorAnimationBindingKey(string modelPath, string bindReferenceSkeletonPath)
+        static ulong BuildActorVisualRecipeKey(ulong contentId, bool firstPerson)
+            => contentId ^ (firstPerson ? 0x9E3779B97F4A7C15UL : 0UL);
+
+        static ulong BuildEquipmentVisualKey(ulong contentId, int rigFamilyIndex, bool firstPerson, ActorVisualBodyVariant bodyVariant)
         {
-            string model = NormalizeActorModelPath(modelPath);
-            string reference = NormalizeActorModelPath(bindReferenceSkeletonPath);
-            return string.IsNullOrEmpty(model) || string.IsNullOrEmpty(reference)
-                ? string.Empty
-                : $"{model}|{reference}";
+            ulong hash = 14695981039346656037UL;
+            Mix(ref hash, contentId);
+            Mix(ref hash, (uint)rigFamilyIndex);
+            Mix(ref hash, firstPerson ? 1UL : 0UL);
+            Mix(ref hash, (byte)bodyVariant);
+            return hash;
         }
 
-        static IEnumerable<string> EnumerateNpcSkeletonCandidates(bool firstPerson, bool female, bool beast)
+        static void Mix(ref ulong hash, ulong value)
         {
-            if (firstPerson)
-            {
-                if (beast)
-                    yield return "meshes\\base_animkna.1st.nif";
-                if (female)
-                    yield return "meshes\\base_anim_female.1st.nif";
-                yield return "meshes\\xbase_anim.1st.nif";
-            }
-            else
-            {
-                if (beast)
-                    yield return "meshes\\base_animkna.nif";
-                if (female)
-                    yield return "meshes\\base_anim_female.nif";
-                yield return "meshes\\base_anim.nif";
-                yield return "meshes\\xbase_anim.nif";
-            }
+            hash ^= value;
+            hash *= 1099511628211UL;
         }
 
         private IEnumerator ReadMeshesIncremental(RuntimeLoadProgress progress)

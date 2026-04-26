@@ -69,7 +69,10 @@ namespace VVardenfell.Runtime.Player
                 return;
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+
             Entity firstPersonVisual = CreatePlayerVisual(
+                ref ecb,
                 player,
                 view,
                 actorHandle,
@@ -78,6 +81,7 @@ namespace VVardenfell.Runtime.Player
                 contentDb,
                 inventory);
             Entity thirdPersonVisual = CreatePlayerVisual(
+                ref ecb,
                 player,
                 view,
                 actorHandle,
@@ -86,7 +90,7 @@ namespace VVardenfell.Runtime.Player
                 contentDb,
                 inventory);
 
-            EntityManager.AddComponentData(player, new LocalPlayerPresentationState
+            ecb.AddComponent(player, new LocalPlayerPresentationState
             {
                 Mode = PlayerViewMode.FirstPerson,
                 ThirdPersonDistance = 3f,
@@ -94,9 +98,12 @@ namespace VVardenfell.Runtime.Player
                 ThirdPersonVisual = thirdPersonVisual,
                 Actor = actorHandle,
             });
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         Entity CreatePlayerVisual(
+            ref EntityCommandBuffer ecb,
             Entity player,
             Entity view,
             ActorDefHandle actorHandle,
@@ -105,27 +112,29 @@ namespace VVardenfell.Runtime.Player
             RuntimeContentDatabase contentDb,
             DynamicBuffer<PlayerInventoryItem> inventory)
         {
-            Entity visual = EntityManager.CreateEntity();
-            EntityManager.SetName(visual, firstPerson ? "VVardenfell.PlayerFirstPersonVisual" : "VVardenfell.PlayerThirdPersonVisual");
-            EntityManager.AddComponentData(visual, new ActorSpawnSource
+            Entity visual = ecb.CreateEntity();
+            ecb.SetName(visual, new FixedString64Bytes(firstPerson
+                ? "VVardenfell.PlayerFirstPersonVisual"
+                : "VVardenfell.PlayerThirdPersonVisual"));
+            ecb.AddComponent(visual, new ActorSpawnSource
             {
                 Definition = actorHandle,
                 FirstPerson = (byte)(firstPerson ? 1 : 0),
             });
-            EntityManager.AddComponentData(visual, new LocalPlayerVisual
+            ecb.AddComponent(visual, new LocalPlayerVisual
             {
                 Player = player,
                 View = view,
                 FirstPerson = (byte)(firstPerson ? 1 : 0),
             });
-            EntityManager.AddComponentData(visual, new Parent { Value = firstPerson ? view : player });
-            EntityManager.AddComponentData(visual, LocalTransform.Identity);
-            EntityManager.AddComponentData(visual, new LocalToWorld());
-            EntityManager.AddComponent<ActorRenderVisible>(visual);
-            EntityManager.SetComponentEnabled<ActorRenderVisible>(visual, visible);
+            ecb.AddComponent(visual, new Parent { Value = firstPerson ? view : player });
+            ecb.AddComponent(visual, LocalTransform.Identity);
+            ecb.AddComponent(visual, new LocalToWorld());
+            ecb.AddComponent<ActorRenderVisible>(visual);
+            ecb.SetComponentEnabled<ActorRenderVisible>(visual, visible);
 
-            var actorInventory = EntityManager.AddBuffer<ActorInventoryItem>(visual);
-            var equipment = EntityManager.AddBuffer<ActorEquipmentSlot>(visual);
+            var actorInventory = ecb.AddBuffer<ActorInventoryItem>(visual);
+            var equipment = ecb.AddBuffer<ActorEquipmentSlot>(visual);
             HydratePlayerVisualEquipment(contentDb, inventory, actorInventory, equipment);
             return visual;
         }
@@ -158,7 +167,6 @@ namespace VVardenfell.Runtime.Player
         {
             if (contentDb == null)
                 return;
-
             const int SlotCapacity = 32;
             var bestScores = new long[SlotCapacity];
             var bestInventoryIndices = new int[SlotCapacity];
@@ -188,7 +196,6 @@ namespace VVardenfell.Runtime.Player
                 var itemHandle = new ItemDefHandle { Value = item.Content.HandleValue };
                 if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
                     continue;
-
                 int slot = (int)itemEquipment.Slot;
                 if ((uint)slot >= SlotCapacity || slot == (int)ItemEquipmentSlot.None)
                     continue;

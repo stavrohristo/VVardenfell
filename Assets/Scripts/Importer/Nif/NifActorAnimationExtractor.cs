@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
-using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Importer.Nif
@@ -14,8 +13,8 @@ namespace VVardenfell.Importer.Nif
             var bones = new List<ActorSkeletonBoneDef>();
             foreach (int root in nif.Roots)
             {
-                if (Resolve<NiAVObject>(nif, root) is NiAVObject av)
-                    CollectBones(nif, av, -1, bones);
+                if (Resolve<NiAVObject>(nif, root) is NiAVObject av && IsActorSkeletonNode(av))
+                    CollectBones(nif, av, -1, Matrix4x4.identity, bones);
             }
 
             return new ActorSkeletonDef
@@ -146,18 +145,27 @@ namespace VVardenfell.Importer.Nif
                     BoneIndices = boneIndices,
                     BoneNames = boneNames,
                     SkinRootName = ResolveSkinRootName(nif, skinInstance.Root),
-                    BindPoseMatrices = BuildBindPoseMatrices(sourceBones),
-                    GeometryToSkeletonMatrix = PackMatrix(ToUnityMatrix(skinData.Transform)),
+                    BindPoseMatrices = BuildCombinedBindPoseMatrices(skinData.Transform, sourceBones),
+                    GeometryToSkeletonMatrix = PackMatrix(Matrix4x4.identity),
                 });
             }
 
             return skinMeshes.ToArray();
         }
 
-        static void CollectBones(NifFile nif, NiAVObject obj, int parentIndex, List<ActorSkeletonBoneDef> bones)
+        static void CollectBones(
+            NifFile nif,
+            NiAVObject obj,
+            int parentIndex,
+            Matrix4x4 parentBindLocalToRoot,
+            List<ActorSkeletonBoneDef> bones)
         {
             int index = bones.Count;
-            ConvertLocalTransform(obj, out Vector3 position, out Quaternion rotation, out float scale);
+            ExtractSourceLocalTransform(obj, out Vector3 position, out Quaternion rotation, out float scale);
+            Matrix4x4 bindLocal = ToSourceMatrix(obj.Rotation, obj.Translation, obj.Scale);
+            Matrix4x4 bindLocalToRoot = parentIndex >= 0
+                ? parentBindLocalToRoot * bindLocal
+                : bindLocal;
             bones.Add(new ActorSkeletonBoneDef
             {
                 Name = obj.Name ?? string.Empty,
@@ -170,6 +178,8 @@ namespace VVardenfell.Importer.Nif
                 RotZ = rotation.z,
                 RotW = rotation.w,
                 Scale = scale,
+                BindLocalMatrix = PackMatrix(bindLocal),
+                BindLocalToRootMatrix = PackMatrix(bindLocalToRoot),
             });
 
             if (obj is not NiNode node || node.Children == null)
@@ -177,9 +187,14 @@ namespace VVardenfell.Importer.Nif
 
             for (int i = 0; i < node.Children.Length; i++)
             {
-                if (Resolve<NiAVObject>(nif, node.Children[i]) is NiAVObject child)
-                    CollectBones(nif, child, index, bones);
+                if (Resolve<NiAVObject>(nif, node.Children[i]) is NiAVObject child && IsActorSkeletonNode(child))
+                    CollectBones(nif, child, index, bindLocalToRoot, bones);
             }
+        }
+
+        static bool IsActorSkeletonNode(NiAVObject obj)
+        {
+            return obj is not NiCamera;
         }
 
         static void AddControlledBlockTracks(
@@ -251,7 +266,7 @@ namespace VVardenfell.Importer.Nif
             int firstTextKey = textKeys.Count;
             for (int i = 0; i < nif.Roots.Length; i++)
             {
-                if (Resolve<NiAVObject>(nif, nif.Roots[i]) is NiAVObject root)
+                if (Resolve<NiAVObject>(nif, nif.Roots[i]) is NiAVObject root && IsActorSkeletonNode(root))
                     AddInlineNode(nif, root, tracks, keys, textKeys);
             }
 
@@ -286,7 +301,7 @@ namespace VVardenfell.Importer.Nif
 
             for (int i = 0; i < niNode.Children.Length; i++)
             {
-                if (Resolve<NiAVObject>(nif, niNode.Children[i]) is NiAVObject child)
+                if (Resolve<NiAVObject>(nif, niNode.Children[i]) is NiAVObject child && IsActorSkeletonNode(child))
                     AddInlineNode(nif, child, tracks, keys, textKeys);
             }
         }
@@ -338,11 +353,13 @@ namespace VVardenfell.Importer.Nif
             if (Resolve<NiKeyframeData>(nif, controller.Data) is not NiKeyframeData data)
                 return;
 
-            AddTrack(targetName, ActorAnimationTrackKind.Rotation, data.Rotations, (int)data.AxisOrder, controller, tracks, keys);
-            AddTrack(targetName, ActorAnimationTrackKind.XRotation, data.XRotations, (int)data.AxisOrder, controller, tracks, keys);
-            AddTrack(targetName, ActorAnimationTrackKind.YRotation, data.YRotations, (int)data.AxisOrder, controller, tracks, keys);
-            AddTrack(targetName, ActorAnimationTrackKind.ZRotation, data.ZRotations, (int)data.AxisOrder, controller, tracks, keys);
-            AddTrack(targetName, ActorAnimationTrackKind.Translation, data.Translations, 0, controller, tracks, keys);
+            int sourceAxisOrder = (int)data.AxisOrder;
+
+            AddTrack(targetName, ActorAnimationTrackKind.Rotation, data.Rotations, sourceAxisOrder, controller, tracks, keys);
+            AddTrack(targetName, ActorAnimationTrackKind.XRotation, data.XRotations, sourceAxisOrder, controller, tracks, keys);
+            AddTrack(targetName, ActorAnimationTrackKind.YRotation, data.YRotations, sourceAxisOrder, controller, tracks, keys);
+            AddTrack(targetName, ActorAnimationTrackKind.ZRotation, data.ZRotations, sourceAxisOrder, controller, tracks, keys);
+            AddTrack(targetName, ActorAnimationTrackKind.Translation, data.Translations, sourceAxisOrder, controller, tracks, keys);
             AddTrack(targetName, ActorAnimationTrackKind.Scale, data.Scales, 0, controller, tracks, keys);
         }
 
@@ -529,13 +546,14 @@ namespace VVardenfell.Importer.Nif
             return Resolve<NiAVObject>(nif, skinRoot)?.Name ?? string.Empty;
         }
 
-        static float[] BuildBindPoseMatrices(NiSkinData.BoneInfo[] bones)
+        static float[] BuildCombinedBindPoseMatrices(NiSkinData.SkinTransform skinTransform, NiSkinData.BoneInfo[] bones)
         {
             bones ??= Array.Empty<NiSkinData.BoneInfo>();
             var matrices = new float[bones.Length * 16];
+            Matrix4x4 skin = ToSourceMatrix(skinTransform);
             for (int i = 0; i < bones.Length; i++)
             {
-                Matrix4x4 m = ToUnityMatrix(bones[i].Transform);
+                Matrix4x4 m = skin * ToSourceMatrix(bones[i].Transform);
                 int o = i * 16;
                 matrices[o + 0] = m.m00; matrices[o + 1] = m.m01; matrices[o + 2] = m.m02; matrices[o + 3] = m.m03;
                 matrices[o + 4] = m.m10; matrices[o + 5] = m.m11; matrices[o + 6] = m.m12; matrices[o + 7] = m.m13;
@@ -570,25 +588,19 @@ namespace VVardenfell.Importer.Nif
             var matrices = new Matrix4x4[bones?.Length ?? 0];
             for (int i = 0; i < matrices.Length; i++)
             {
-                var bone = bones[i];
-                var rotation = new Quaternion(bone.RotX, bone.RotY, bone.RotZ, bone.RotW);
-                float rotationLengthSq = rotation.x * rotation.x
-                    + rotation.y * rotation.y
-                    + rotation.z * rotation.z
-                    + rotation.w * rotation.w;
-                if (rotationLengthSq <= 0.000001f)
-                    rotation = Quaternion.identity;
-                else
-                    rotation.Normalize();
+                if (TryUnpackMatrix(bones[i].BindLocalToRootMatrix, 0, out Matrix4x4 root)
+                    && IsFiniteMatrix(root))
+                {
+                    matrices[i] = root;
+                    continue;
+                }
 
-                float scale = bone.Scale <= 0f ? 1f : bone.Scale;
-                var local = Matrix4x4.TRS(
-                    new Vector3(bone.PosX, bone.PosY, bone.PosZ),
-                    rotation,
-                    new Vector3(scale, scale, scale));
-
-                matrices[i] = bone.ParentIndex >= 0 && bone.ParentIndex < i
-                    ? matrices[bone.ParentIndex] * local
+                Matrix4x4 local = TryUnpackMatrix(bones[i].BindLocalMatrix, 0, out Matrix4x4 exactLocal)
+                    && IsFiniteMatrix(exactLocal)
+                        ? exactLocal
+                        : BuildDecomposedBindLocalMatrix(bones[i]);
+                matrices[i] = bones[i].ParentIndex >= 0 && bones[i].ParentIndex < i
+                    ? matrices[bones[i].ParentIndex] * local
                     : local;
             }
             return matrices;
@@ -621,28 +633,79 @@ namespace VVardenfell.Importer.Nif
             };
         }
 
-        static Matrix4x4 ToUnityMatrix(NiSkinData.SkinTransform transform)
-        {
-            var source = transform.Rotation;
-            float scale = transform.Scale;
-            var matrix = Matrix4x4.identity;
+        static Matrix4x4 ToSourceMatrix(NiSkinData.SkinTransform transform)
+            => ToSourceMatrix(transform.Rotation, transform.Translation, transform.Scale);
 
-            // Convert from Morrowind/NIF basis to Unity basis: U = A * N * A,
-            // where A swaps Y/Z. This keeps identity bind transforms as identity.
+        static Matrix4x4 ToSourceMatrix(Matrix4x4 source, Vector3 translation, float scale)
+        {
+            var matrix = Matrix4x4.identity;
             matrix.m00 = source.m00 * scale;
-            matrix.m01 = source.m02 * scale;
-            matrix.m02 = source.m01 * scale;
-            matrix.m10 = source.m20 * scale;
-            matrix.m11 = source.m22 * scale;
-            matrix.m12 = source.m21 * scale;
-            matrix.m20 = source.m10 * scale;
-            matrix.m21 = source.m12 * scale;
-            matrix.m22 = source.m11 * scale;
-            matrix.m03 = transform.Translation.x * WorldScale.MwUnitsToMeters;
-            matrix.m13 = transform.Translation.z * WorldScale.MwUnitsToMeters;
-            matrix.m23 = transform.Translation.y * WorldScale.MwUnitsToMeters;
+            matrix.m01 = source.m01 * scale;
+            matrix.m02 = source.m02 * scale;
+            matrix.m10 = source.m10 * scale;
+            matrix.m11 = source.m11 * scale;
+            matrix.m12 = source.m12 * scale;
+            matrix.m20 = source.m20 * scale;
+            matrix.m21 = source.m21 * scale;
+            matrix.m22 = source.m22 * scale;
+            matrix.m03 = translation.x;
+            matrix.m13 = translation.y;
+            matrix.m23 = translation.z;
             return matrix;
         }
+
+        static Matrix4x4 UnpackMatrix(float[] values, int start, Matrix4x4 fallback)
+        {
+            if (values == null || values.Length < start + 16)
+                return fallback;
+
+            var m = Matrix4x4.identity;
+            m.m00 = values[start + 0]; m.m01 = values[start + 1]; m.m02 = values[start + 2]; m.m03 = values[start + 3];
+            m.m10 = values[start + 4]; m.m11 = values[start + 5]; m.m12 = values[start + 6]; m.m13 = values[start + 7];
+            m.m20 = values[start + 8]; m.m21 = values[start + 9]; m.m22 = values[start + 10]; m.m23 = values[start + 11];
+            m.m30 = values[start + 12]; m.m31 = values[start + 13]; m.m32 = values[start + 14]; m.m33 = values[start + 15];
+            return m;
+        }
+
+        static bool TryUnpackMatrix(float[] values, int start, out Matrix4x4 matrix)
+        {
+            if (values == null || values.Length < start + 16)
+            {
+                matrix = Matrix4x4.identity;
+                return false;
+            }
+
+            matrix = UnpackMatrix(values, start, Matrix4x4.identity);
+            return true;
+        }
+
+        static Matrix4x4 BuildDecomposedBindLocalMatrix(ActorSkeletonBoneDef bone)
+        {
+            var rotation = new Quaternion(bone.RotX, bone.RotY, bone.RotZ, bone.RotW);
+            float rotationLengthSq = rotation.x * rotation.x
+                + rotation.y * rotation.y
+                + rotation.z * rotation.z
+                + rotation.w * rotation.w;
+            if (rotationLengthSq <= 0.000001f)
+                rotation = Quaternion.identity;
+            else
+                rotation.Normalize();
+
+            float scale = bone.Scale <= 0f ? 1f : bone.Scale;
+            return Matrix4x4.TRS(
+                new Vector3(bone.PosX, bone.PosY, bone.PosZ),
+                rotation,
+                new Vector3(scale, scale, scale));
+        }
+
+        static bool IsFiniteMatrix(Matrix4x4 m)
+            => IsFinite(m.m00) && IsFinite(m.m01) && IsFinite(m.m02) && IsFinite(m.m03)
+               && IsFinite(m.m10) && IsFinite(m.m11) && IsFinite(m.m12) && IsFinite(m.m13)
+               && IsFinite(m.m20) && IsFinite(m.m21) && IsFinite(m.m22) && IsFinite(m.m23)
+               && IsFinite(m.m30) && IsFinite(m.m31) && IsFinite(m.m32) && IsFinite(m.m33);
+
+        static bool IsFinite(float value)
+            => !float.IsNaN(value) && !float.IsInfinity(value);
 
         static int FindAccumulationBone(List<ActorSkeletonBoneDef> bones)
         {
@@ -668,11 +731,11 @@ namespace VVardenfell.Importer.Nif
             return data != null && data.Vertices != null && data.NumVertices > 0;
         }
 
-        static void ConvertLocalTransform(NiAVObject obj, out Vector3 position, out Quaternion rotation, out float scale)
+        static void ExtractSourceLocalTransform(NiAVObject obj, out Vector3 position, out Quaternion rotation, out float scale)
         {
-            position = new Vector3(obj.Translation.x, obj.Translation.z, obj.Translation.y) * WorldScale.MwUnitsToMeters;
-            Vector3 up = new(obj.Rotation.m02, obj.Rotation.m22, obj.Rotation.m12);
-            Vector3 forward = new(obj.Rotation.m01, obj.Rotation.m21, obj.Rotation.m11);
+            position = obj.Translation;
+            Vector3 up = new(obj.Rotation.m01, obj.Rotation.m11, obj.Rotation.m21);
+            Vector3 forward = new(obj.Rotation.m02, obj.Rotation.m12, obj.Rotation.m22);
             rotation = up.sqrMagnitude <= 0f || forward.sqrMagnitude <= 0f
                 ? Quaternion.identity
                 : Quaternion.LookRotation(forward.normalized, up.normalized);

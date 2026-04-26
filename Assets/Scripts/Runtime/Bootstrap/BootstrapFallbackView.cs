@@ -12,7 +12,7 @@ namespace VVardenfell.Runtime.Bootstrap
         // between phases doesn't feel like swapping dialogs.
         const float WindowWidth = 720f;
         const float PickerHeight = 232f;
-        const float ModePickerHeight = 244f;
+        const float ModePickerHeight = 294f;
         const float ProgressHeight = 232f;
         const float ErrorHeight = 204f;
         const float DialogVisualScale = 1.5f;
@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
         MorrowindButtonView _sandboxButton;
+        MorrowindButtonView _actorPreviewButton;
         Text _pathPromptText;
         Text _pathErrorText;
         Text _modePromptText;
@@ -366,6 +367,27 @@ namespace VVardenfell.Runtime.Bootstrap
             RuntimeUiFactory.Stretch(_sandboxButton.Root);
             ReplaceButtonLabel(_sandboxButton, "Sandbox");
             _sandboxButton.Button.onClick.AddListener(OnSandboxPressed);
+
+            var actorPreviewRect = RuntimeUiFactory.CreateAnchoredRect(
+                "ActorPreviewButtonRow",
+                _modeRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
+            actorPreviewRect.pivot = new Vector2(0f, 1f);
+
+            _actorPreviewButton = RuntimeUiFactory.CreateMorrowindButton(
+                "ActorPreviewButton",
+                actorPreviewRect,
+                _theme,
+                "Actor Preview",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            RuntimeUiFactory.Stretch(_actorPreviewButton.Root);
+            ReplaceButtonLabel(_actorPreviewButton, "Actor Preview");
+            _actorPreviewButton.Button.onClick.AddListener(OnActorPreviewPressed);
         }
 
         void BuildProgressView()
@@ -554,6 +576,11 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnSandboxPressed()
         {
             _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
+        }
+
+        void OnActorPreviewPressed()
+        {
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.ActorPreview);
         }
 
         void OnDestroy()

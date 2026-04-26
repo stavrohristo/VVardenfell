@@ -23,6 +23,12 @@ namespace VVardenfell.Runtime.Animation
         public float3 BindPosition;
         public float BindScale;
         public float4 BindRotation;
+        public float4 BindLocalRow0;
+        public float4 BindLocalRow1;
+        public float4 BindLocalRow2;
+        public float4 BindRootRow0;
+        public float4 BindRootRow1;
+        public float4 BindRootRow2;
     }
 
     struct ActorGpuAnimationClipGpu
@@ -287,6 +293,12 @@ namespace VVardenfell.Runtime.Animation
                     BindPosition = source.BindPosition,
                     BindScale = source.BindScale <= 0f ? 1f : source.BindScale,
                     BindRotation = source.BindRotation.value,
+                    BindLocalRow0 = new float4(source.BindLocalMatrix.c0.x, source.BindLocalMatrix.c1.x, source.BindLocalMatrix.c2.x, source.BindLocalMatrix.c3.x),
+                    BindLocalRow1 = new float4(source.BindLocalMatrix.c0.y, source.BindLocalMatrix.c1.y, source.BindLocalMatrix.c2.y, source.BindLocalMatrix.c3.y),
+                    BindLocalRow2 = new float4(source.BindLocalMatrix.c0.z, source.BindLocalMatrix.c1.z, source.BindLocalMatrix.c2.z, source.BindLocalMatrix.c3.z),
+                    BindRootRow0 = new float4(source.BindLocalToRootMatrix.c0.x, source.BindLocalToRootMatrix.c1.x, source.BindLocalToRootMatrix.c2.x, source.BindLocalToRootMatrix.c3.x),
+                    BindRootRow1 = new float4(source.BindLocalToRootMatrix.c0.y, source.BindLocalToRootMatrix.c1.y, source.BindLocalToRootMatrix.c2.y, source.BindLocalToRootMatrix.c3.y),
+                    BindRootRow2 = new float4(source.BindLocalToRootMatrix.c0.z, source.BindLocalToRootMatrix.c1.z, source.BindLocalToRootMatrix.c2.z, source.BindLocalToRootMatrix.c3.z),
                 };
             }
 

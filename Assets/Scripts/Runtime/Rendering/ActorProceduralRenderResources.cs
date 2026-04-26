@@ -123,6 +123,7 @@ namespace VVardenfell.Runtime.Rendering
         GraphicsBuffer _drawBuffer;
         GraphicsBuffer _indirectArgsBuffer;
         Material[][] _materials;
+        Texture2DArray _manualWhiteArray;
         Shader _shader;
         int _geometrySkinMeshCount = -1;
         int _invalidBatchTypeId = -1;
@@ -238,6 +239,61 @@ namespace VVardenfell.Runtime.Rendering
             Batches.ResizeUninitialized(batchCount);
         }
 
+        public void LoadManualPreview(
+            ActorProceduralVertexGpu[] vertices,
+            int[] indices,
+            ActorProceduralMatrixGpu[] boneMatrices,
+            ActorProceduralDrawGpu[] draws,
+            ActorProceduralDrawBatch[] batches)
+        {
+            EnsureManualPreviewMaterial();
+
+            _vertices.Clear();
+            _indices.Clear();
+            BeginFrame();
+
+            if (vertices != null)
+            {
+                for (int i = 0; i < vertices.Length; i++)
+                    _vertices.Add(vertices[i]);
+            }
+
+            if (indices != null)
+            {
+                for (int i = 0; i < indices.Length; i++)
+                    _indices.Add(indices[i]);
+            }
+
+            if (boneMatrices != null)
+            {
+                for (int i = 0; i < boneMatrices.Length; i++)
+                    BoneMatrices.Add(boneMatrices[i]);
+            }
+
+            if (draws != null)
+            {
+                for (int i = 0; i < draws.Length; i++)
+                    Draws.Add(draws[i]);
+            }
+
+            if (batches != null)
+            {
+                for (int i = 0; i < batches.Length; i++)
+                    Batches.Add(batches[i]);
+            }
+
+            EnsureBuffer(ref _vertexBuffer, _vertices.Length, UnsafeUtility.SizeOf<ActorProceduralVertexGpu>(), "VV:ActorPreviewVertices");
+            EnsureBuffer(ref _indexBuffer, _indices.Length, sizeof(int), "VV:ActorPreviewIndices");
+            if (_vertices.Length > 0)
+                _vertexBuffer.SetData(_vertices.AsArray());
+            if (_indices.Length > 0)
+                _indexBuffer.SetData(_indices.AsArray());
+
+            _geometrySkinMeshCount = -1;
+            _geometryUploaded = true;
+            UploadFrame();
+        }
+
         public int AddBoneMatrices(DynamicBuffer<ActorBone> bones)
         {
             int offset = BoneMatrices.Length;
@@ -288,9 +344,6 @@ namespace VVardenfell.Runtime.Rendering
                 float4x4 attach = (uint)attachBoneIndex < (uint)bones.Length
                     ? bones[attachBoneIndex].LocalToRoot
                     : float4x4.identity;
-                float4x4 attachOffset = math.lengthsq(skinMesh.RigidOffset) > 0f
-                    ? float4x4.Translate(skinMesh.RigidOffset)
-                    : float4x4.identity;
                 float4x4 mirror = rigidMirrorX != 0
                     ? new float4x4(
                         new float4(-1f, 0f, 0f, 0f),
@@ -298,7 +351,8 @@ namespace VVardenfell.Runtime.Rendering
                         new float4(0f, 0f, 1f, 0f),
                         new float4(0f, 0f, 0f, 1f))
                     : float4x4.identity;
-                float4x4 localAttach = math.mul(math.mul(attachOffset, mirror), skinMesh.GeometryToSkeleton);
+                float4x4 gts = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
+                float4x4 localAttach = math.mul(mirror, gts);
                 BoneMatrices.Add(ToGpuMatrix(math.mul(attach, localAttach)));
                 return offset;
             }
@@ -306,13 +360,15 @@ namespace VVardenfell.Runtime.Rendering
             int firstSkinBone = skinMesh.FirstSkinBoneIndex;
             int skinBoneCount = skinMesh.SkinBoneCount;
             int end = math.min(catalog.SkinBones.Length, firstSkinBone + skinBoneCount);
+            float4x4 geometryToSkeleton = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
 
             for (int i = firstSkinBone; i < end; i++)
             {
                 var skinBone = catalog.SkinBones[i];
                 int actorBoneIndex = ResolveActorBoneIndex(bones, skinBone);
                 float4x4 pose = bones[actorBoneIndex].LocalToRoot;
-                BoneMatrices.Add(ToGpuMatrix(math.mul(pose, skinBone.BindPose)));
+                float4x4 bindPose = ActorAnimationSpaceConversion.SourceAffineToUnity(skinBone.BindPose);
+                BoneMatrices.Add(ToGpuMatrix(math.mul(math.mul(geometryToSkeleton, pose), bindPose)));
             }
 
             if (BoneMatrices.Length == offset)
@@ -406,6 +462,12 @@ namespace VVardenfell.Runtime.Rendering
                             UnityEngine.Object.Destroy(bucketMaterials[i]);
                 }
                 _materials = null;
+            }
+
+            if (_manualWhiteArray != null)
+            {
+                UnityEngine.Object.Destroy(_manualWhiteArray);
+                _manualWhiteArray = null;
             }
 
             if (_vertices.IsCreated) _vertices.Dispose();
@@ -595,6 +657,56 @@ namespace VVardenfell.Runtime.Rendering
                 material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
             else
                 material.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        }
+
+        void EnsureManualPreviewMaterial()
+        {
+            _shader = _shader != null ? _shader : Shader.Find("VVardenfell/MwActorProcedural");
+            if (_shader == null)
+                return;
+
+            if (_manualWhiteArray == null)
+            {
+                _manualWhiteArray = new Texture2DArray(1, 1, 1, TextureFormat.RGBA32, false)
+                {
+                    name = "VV:ActorPreviewWhiteArray",
+                    wrapMode = TextureWrapMode.Repeat,
+                    filterMode = FilterMode.Point,
+                };
+                _manualWhiteArray.SetPixels(new[] { Color.white }, 0);
+                _manualWhiteArray.Apply(false, true);
+            }
+
+            if (_materials != null && _materials.Length == 1 && _materials[0]?.Length == 1 && _materials[0][0] != null)
+                return;
+
+            if (_materials != null)
+            {
+                for (int bucket = 0; bucket < _materials.Length; bucket++)
+                {
+                    var bucketMaterials = _materials[bucket];
+                    if (bucketMaterials == null)
+                        continue;
+
+                    for (int i = 0; i < bucketMaterials.Length; i++)
+                        if (bucketMaterials[i] != null)
+                            UnityEngine.Object.Destroy(bucketMaterials[i]);
+                }
+            }
+
+            var material = new Material(_shader)
+            {
+                name = "VV:ActorPreviewProceduralWhite",
+                enableInstancing = false,
+                doubleSidedGI = true,
+            };
+            material.SetTexture(BaseArrayId, _manualWhiteArray);
+            material.SetFloat(SrcBlendId, (float)BlendMode.One);
+            material.SetFloat(DstBlendId, (float)BlendMode.Zero);
+            material.SetFloat(ZWriteId, 1f);
+            material.SetFloat(CutoffId, 0.5f);
+            material.renderQueue = (int)RenderQueue.Geometry;
+            _materials = new[] { new[] { material } };
         }
 
         void AppendBatch(int bucketIndex, int materialIndex, int drawIndex, int indexCount)

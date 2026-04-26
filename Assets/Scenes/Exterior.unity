@@ -172,6 +172,7 @@ MonoBehaviour:
     JumpSpeed: 25
     CoyoteTime: 0.12
     JumpBufferTime: 0.12
+  _actorPreviewMaterial: {fileID: 2100000, guid: 0a412daf141cdcd43b07635628022a1c, type: 2}
 --- !u!4 &101423244
 Transform:
   m_ObjectHideFlags: 0
@@ -207,7 +208,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!81 &330585544
 AudioListener:
   m_ObjectHideFlags: 0

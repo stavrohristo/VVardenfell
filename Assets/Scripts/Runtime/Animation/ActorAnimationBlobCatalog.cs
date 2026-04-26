@@ -13,7 +13,12 @@ namespace VVardenfell.Runtime.Animation
 
     public struct ActorAnimationCatalogBlob
     {
-        public BlobArray<ActorAnimationModelBindingBlob> ModelBindings;
+        public BlobArray<ActorRigFamilyBlob> RigFamilies;
+        public BlobArray<ActorSkinBindingBlob> SkinBindings;
+        public BlobArray<ActorVisualRecipeBlob> ActorVisualRecipes;
+        public BlobArray<ActorVisualRecipeEntryBlob> ActorVisualRecipeEntries;
+        public BlobArray<ActorEquipmentVisualBlob> EquipmentVisuals;
+        public BlobArray<ActorEquipmentVisualEntryBlob> EquipmentVisualEntries;
         public BlobArray<ActorSkeletonBlob> Skeletons;
         public BlobArray<ActorSkeletonBoneBlob> Bones;
         public BlobArray<ActorSkinMeshBlob> SkinMeshes;
@@ -28,15 +33,61 @@ namespace VVardenfell.Runtime.Animation
         public BlobArray<ActorAnimationHashEntryBlob> ClipHashes;
     }
 
-    public struct ActorAnimationModelBindingBlob
+    public struct ActorRigFamilyBlob
     {
-        public FixedString128Bytes ModelPath;
-        public ulong ModelHash;
+        public ActorRigFamilyKind FamilyKind;
+        public FixedString128Bytes SkeletonModelPath;
         public int SkeletonIndex;
-        public int FirstSkinMeshIndex;
-        public int SkinMeshCount;
         public int FirstClipIndex;
         public int ClipCount;
+    }
+
+    public struct ActorSkinBindingBlob
+    {
+        public FixedString128Bytes SkinModelPath;
+        public int RigFamilyIndex;
+        public int FirstSkinMeshIndex;
+        public int SkinMeshCount;
+    }
+
+    public struct ActorVisualRecipeBlob
+    {
+        public ulong ActorContentId;
+        public byte FirstPerson;
+        public ActorVisualBodyVariant BodyVariant;
+        public int RigFamilyIndex;
+        public int FirstEntryIndex;
+        public int EntryCount;
+    }
+
+    public struct ActorVisualRecipeEntryBlob
+    {
+        public ActorVisualPartReference PartReference;
+        public int SkinBindingIndex;
+        public int SkinMeshIndex;
+        public int AttachBoneIndex;
+        public byte RigidMirrorX;
+    }
+
+    public struct ActorEquipmentVisualBlob
+    {
+        public ulong ItemContentId;
+        public int RigFamilyIndex;
+        public byte FirstPerson;
+        public ActorVisualBodyVariant BodyVariant;
+        public byte IsValid;
+        public uint CoverageMask;
+        public int FirstEntryIndex;
+        public int EntryCount;
+    }
+
+    public struct ActorEquipmentVisualEntryBlob
+    {
+        public ItemEquipmentPartReference PartReference;
+        public int SkinBindingIndex;
+        public int SkinMeshIndex;
+        public int AttachBoneIndex;
+        public byte RigidMirrorX;
     }
 
     public struct ActorSkeletonBlob
@@ -55,6 +106,8 @@ namespace VVardenfell.Runtime.Animation
         public float3 BindPosition;
         public quaternion BindRotation;
         public float BindScale;
+        public float4x4 BindLocalMatrix;
+        public float4x4 BindLocalToRootMatrix;
     }
 
     public struct ActorSkinMeshBlob
@@ -154,7 +207,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public ulong Hash;
         public int ClipIndex;
-        public int BindingIndex;
+        public int RigFamilyIndex;
     }
 
     public static class ActorAnimationHash
@@ -220,48 +273,156 @@ namespace VVardenfell.Runtime.Animation
         {
             source ??= new ActorAnimationCatalogData();
 
-            int[] clipBindingIndices = BuildClipBindingIndices(source);
-            int[] trackTargetBoneIndices = BuildTrackTargetBoneIndices(source, clipBindingIndices);
+            int[] clipRigFamilyIndices = BuildClipRigFamilyIndices(source);
+            int[] trackTargetBoneIndices = BuildTrackTargetBoneIndices(source, clipRigFamilyIndices);
             CountSkinPayload(source, out int vertexCount, out int indexCount, out int skinBoneCount);
 
             var builder = new BlobBuilder(Allocator.Temp);
             ref ActorAnimationCatalogBlob root = ref builder.ConstructRoot<ActorAnimationCatalogBlob>();
 
-            BuildBindings(source, ref builder, ref root);
+            BuildRigFamilies(source, ref builder, ref root);
+            BuildSkinBindings(source, ref builder, ref root);
+            BuildActorVisualRecipes(source, ref builder, ref root);
+            BuildActorVisualRecipeEntries(source, ref builder, ref root);
+            BuildEquipmentVisuals(source, ref builder, ref root);
+            BuildEquipmentVisualEntries(source, ref builder, ref root);
             BuildSkeletons(source, ref builder, ref root);
             BuildSkinMeshes(source, ref builder, ref root, vertexCount, indexCount, skinBoneCount);
-            BuildClips(source, clipBindingIndices, ref builder, ref root);
+            BuildClips(source, clipRigFamilyIndices, ref builder, ref root);
             BuildTracks(source, trackTargetBoneIndices, ref builder, ref root);
             BuildKeys(source, ref builder, ref root);
             BuildTextKeys(source, ref builder, ref root);
             BuildTextMarkers(source, ref builder, ref root);
-            BuildClipHashes(source, clipBindingIndices, ref builder, ref root);
+            BuildClipHashes(source, clipRigFamilyIndices, ref builder, ref root);
 
             var blob = builder.CreateBlobAssetReference<ActorAnimationCatalogBlob>(Allocator.Persistent);
             builder.Dispose();
             return blob;
         }
 
-        static void BuildBindings(
+        static void BuildRigFamilies(
             ActorAnimationCatalogData source,
             ref BlobBuilder builder,
             ref ActorAnimationCatalogBlob root)
         {
-            var values = source.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
-            BlobBuilderArray<ActorAnimationModelBindingBlob> dst = builder.Allocate(ref root.ModelBindings, values.Length);
+            var values = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
+            BlobBuilderArray<ActorRigFamilyBlob> dst = builder.Allocate(ref root.RigFamilies, values.Length);
             for (int i = 0; i < values.Length; i++)
             {
                 var value = values[i];
-                string normalized = ActorAnimationHash.NormalizePath(value?.ModelPath);
-                dst[i] = new ActorAnimationModelBindingBlob
+                dst[i] = new ActorRigFamilyBlob
                 {
-                    ModelPath = Fixed128(normalized),
-                    ModelHash = ActorAnimationHash.Combine(normalized, string.Empty),
+                    FamilyKind = value?.FamilyKind ?? default,
+                    SkeletonModelPath = Fixed128(ActorAnimationHash.NormalizePath(value?.SkeletonModelPath)),
                     SkeletonIndex = value?.SkeletonIndex ?? -1,
-                    FirstSkinMeshIndex = value?.FirstSkinMeshIndex ?? -1,
-                    SkinMeshCount = value?.SkinMeshCount ?? 0,
                     FirstClipIndex = value?.FirstClipIndex ?? -1,
                     ClipCount = value?.ClipCount ?? 0,
+                };
+            }
+        }
+
+        static void BuildSkinBindings(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.SkinBindings ?? Array.Empty<ActorSkinBindingDef>();
+            BlobBuilderArray<ActorSkinBindingBlob> dst = builder.Allocate(ref root.SkinBindings, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                var value = values[i];
+                dst[i] = new ActorSkinBindingBlob
+                {
+                    SkinModelPath = Fixed128(ActorAnimationHash.NormalizePath(value?.SkinModelPath)),
+                    RigFamilyIndex = value?.RigFamilyIndex ?? -1,
+                    FirstSkinMeshIndex = value?.FirstSkinMeshIndex ?? -1,
+                    SkinMeshCount = value?.SkinMeshCount ?? 0,
+                };
+            }
+        }
+
+        static void BuildActorVisualRecipes(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.ActorVisualRecipes ?? Array.Empty<ActorVisualRecipeDef>();
+            BlobBuilderArray<ActorVisualRecipeBlob> dst = builder.Allocate(ref root.ActorVisualRecipes, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                var value = values[i];
+                dst[i] = new ActorVisualRecipeBlob
+                {
+                    ActorContentId = value?.ActorContentId.Value ?? 0UL,
+                    FirstPerson = value?.FirstPerson ?? 0,
+                    BodyVariant = value?.BodyVariant ?? default,
+                    RigFamilyIndex = value?.RigFamilyIndex ?? -1,
+                    FirstEntryIndex = value?.FirstEntryIndex ?? -1,
+                    EntryCount = value?.EntryCount ?? 0,
+                };
+            }
+        }
+
+        static void BuildActorVisualRecipeEntries(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.ActorVisualRecipeEntries ?? Array.Empty<ActorVisualRecipeEntryDef>();
+            BlobBuilderArray<ActorVisualRecipeEntryBlob> dst = builder.Allocate(ref root.ActorVisualRecipeEntries, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                dst[i] = new ActorVisualRecipeEntryBlob
+                {
+                    PartReference = values[i].PartReference,
+                    SkinBindingIndex = values[i].SkinBindingIndex,
+                    SkinMeshIndex = values[i].SkinMeshIndex,
+                    AttachBoneIndex = values[i].AttachBoneIndex,
+                    RigidMirrorX = values[i].RigidMirrorX,
+                };
+            }
+        }
+
+        static void BuildEquipmentVisuals(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.EquipmentVisuals ?? Array.Empty<ActorEquipmentVisualDef>();
+            BlobBuilderArray<ActorEquipmentVisualBlob> dst = builder.Allocate(ref root.EquipmentVisuals, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                var value = values[i];
+                dst[i] = new ActorEquipmentVisualBlob
+                {
+                    ItemContentId = value?.ItemContentId.Value ?? 0UL,
+                    RigFamilyIndex = value?.RigFamilyIndex ?? -1,
+                    FirstPerson = value?.FirstPerson ?? 0,
+                    BodyVariant = value?.BodyVariant ?? default,
+                    IsValid = value?.IsValid ?? 0,
+                    CoverageMask = value?.CoverageMask ?? 0u,
+                    FirstEntryIndex = value?.FirstEntryIndex ?? -1,
+                    EntryCount = value?.EntryCount ?? 0,
+                };
+            }
+        }
+
+        static void BuildEquipmentVisualEntries(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.EquipmentVisualEntries ?? Array.Empty<ActorEquipmentVisualEntryDef>();
+            BlobBuilderArray<ActorEquipmentVisualEntryBlob> dst = builder.Allocate(ref root.EquipmentVisualEntries, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                dst[i] = new ActorEquipmentVisualEntryBlob
+                {
+                    PartReference = values[i].PartReference,
+                    SkinBindingIndex = values[i].SkinBindingIndex,
+                    SkinMeshIndex = values[i].SkinMeshIndex,
+                    AttachBoneIndex = values[i].AttachBoneIndex,
+                    RigidMirrorX = values[i].RigidMirrorX,
                 };
             }
         }
@@ -292,6 +453,7 @@ namespace VVardenfell.Runtime.Animation
                     BoneCount = bones.Length,
                 };
 
+                float4x4[] bindLocalToRoot = BuildBindLocalToRootMatrices(bones);
                 for (int j = 0; j < bones.Length; j++)
                 {
                     var bone = bones[j];
@@ -306,6 +468,8 @@ namespace VVardenfell.Runtime.Animation
                         BindPosition = new float3(bone.PosX, bone.PosY, bone.PosZ),
                         BindRotation = math.normalize(rotation),
                         BindScale = bone.Scale <= 0f ? 1f : bone.Scale,
+                        BindLocalMatrix = ReadMatrix(bone.BindLocalMatrix, 0, BuildDecomposedBindLocalMatrix(bone)),
+                        BindLocalToRootMatrix = bindLocalToRoot[j],
                     };
                 }
             }
@@ -377,20 +541,20 @@ namespace VVardenfell.Runtime.Animation
 
         static void BuildClips(
             ActorAnimationCatalogData source,
-            int[] clipBindingIndices,
+            int[] clipRigFamilyIndices,
             ref BlobBuilder builder,
             ref ActorAnimationCatalogBlob root)
         {
             var clips = source.Clips ?? Array.Empty<ActorAnimationClipDef>();
-            var bindings = source.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            var rigFamilies = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
             BlobBuilderArray<ActorAnimationClipBlob> dst = builder.Allocate(ref root.Clips, clips.Length);
             for (int i = 0; i < clips.Length; i++)
             {
                 var clip = clips[i];
                 string modelPath = string.Empty;
-                int bindingIndex = (uint)i < (uint)clipBindingIndices.Length ? clipBindingIndices[i] : -1;
-                if ((uint)bindingIndex < (uint)bindings.Length)
-                    modelPath = bindings[bindingIndex]?.ModelPath;
+                int rigFamilyIndex = (uint)i < (uint)clipRigFamilyIndices.Length ? clipRigFamilyIndices[i] : -1;
+                if ((uint)rigFamilyIndex < (uint)rigFamilies.Length)
+                    modelPath = rigFamilies[rigFamilyIndex]?.SkeletonModelPath;
 
                 dst[i] = new ActorAnimationClipBlob
                 {
@@ -491,60 +655,60 @@ namespace VVardenfell.Runtime.Animation
 
         static void BuildClipHashes(
             ActorAnimationCatalogData source,
-            int[] clipBindingIndices,
+            int[] clipRigFamilyIndices,
             ref BlobBuilder builder,
             ref ActorAnimationCatalogBlob root)
         {
             var clips = source.Clips ?? Array.Empty<ActorAnimationClipDef>();
-            var bindings = source.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            var rigFamilies = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
             BlobBuilderArray<ActorAnimationHashEntryBlob> dst = builder.Allocate(ref root.ClipHashes, clips.Length);
             for (int i = 0; i < clips.Length; i++)
             {
-                int bindingIndex = (uint)i < (uint)clipBindingIndices.Length ? clipBindingIndices[i] : -1;
-                string modelPath = (uint)bindingIndex < (uint)bindings.Length ? bindings[bindingIndex]?.ModelPath : string.Empty;
+                int rigFamilyIndex = (uint)i < (uint)clipRigFamilyIndices.Length ? clipRigFamilyIndices[i] : -1;
+                string modelPath = (uint)rigFamilyIndex < (uint)rigFamilies.Length ? rigFamilies[rigFamilyIndex]?.SkeletonModelPath : string.Empty;
                 dst[i] = new ActorAnimationHashEntryBlob
                 {
                     Hash = ActorAnimationHash.Clip(modelPath, clips[i]?.Name),
                     ClipIndex = i,
-                    BindingIndex = bindingIndex,
+                    RigFamilyIndex = rigFamilyIndex,
                 };
             }
         }
 
-        static int[] BuildClipBindingIndices(ActorAnimationCatalogData source)
+        static int[] BuildClipRigFamilyIndices(ActorAnimationCatalogData source)
         {
             int clipCount = source.Clips?.Length ?? 0;
             var result = new int[clipCount];
             Array.Fill(result, -1);
-            var bindings = source.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
-            for (int bindingIndex = 0; bindingIndex < bindings.Length; bindingIndex++)
+            var rigFamilies = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
+            for (int rigFamilyIndex = 0; rigFamilyIndex < rigFamilies.Length; rigFamilyIndex++)
             {
-                var binding = bindings[bindingIndex];
-                int first = binding?.FirstClipIndex ?? -1;
-                int count = binding?.ClipCount ?? 0;
+                var rigFamily = rigFamilies[rigFamilyIndex];
+                int first = rigFamily?.FirstClipIndex ?? -1;
+                int count = rigFamily?.ClipCount ?? 0;
                 if (first < 0 || count <= 0)
                     continue;
 
                 int end = math.min(clipCount, first + count);
                 for (int clipIndex = first; clipIndex < end; clipIndex++)
                     if (result[clipIndex] < 0)
-                        result[clipIndex] = bindingIndex;
+                        result[clipIndex] = rigFamilyIndex;
             }
             return result;
         }
 
-        static int[] BuildTrackTargetBoneIndices(ActorAnimationCatalogData source, int[] clipBindingIndices)
+        static int[] BuildTrackTargetBoneIndices(ActorAnimationCatalogData source, int[] clipRigFamilyIndices)
         {
             int trackCount = source.Tracks?.Length ?? 0;
             var result = new int[trackCount];
             Array.Fill(result, -1);
 
             var clips = source.Clips ?? Array.Empty<ActorAnimationClipDef>();
-            var bindings = source.ModelBindings ?? Array.Empty<ActorAnimationModelBindingDef>();
+            var rigFamilies = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
             for (int clipIndex = 0; clipIndex < clips.Length; clipIndex++)
             {
-                int bindingIndex = (uint)clipIndex < (uint)clipBindingIndices.Length ? clipBindingIndices[clipIndex] : -1;
-                int skeletonIndex = (uint)bindingIndex < (uint)bindings.Length ? bindings[bindingIndex]?.SkeletonIndex ?? -1 : -1;
+                int rigFamilyIndex = (uint)clipIndex < (uint)clipRigFamilyIndices.Length ? clipRigFamilyIndices[clipIndex] : -1;
+                int skeletonIndex = (uint)rigFamilyIndex < (uint)rigFamilies.Length ? rigFamilies[rigFamilyIndex]?.SkeletonIndex ?? -1 : -1;
                 var bones = ResolveBones(source, skeletonIndex);
                 var clip = clips[clipIndex];
                 if (clip == null || bones == null || clip.FirstTrackIndex < 0 || clip.TrackCount <= 0)
@@ -792,15 +956,52 @@ namespace VVardenfell.Runtime.Animation
         }
 
         static float4x4 ReadMatrix(float[] values, int start)
+            => ReadMatrix(values, start, float4x4.identity);
+
+        static float4x4 ReadMatrix(float[] values, int start, float4x4 fallback)
         {
             if (values == null || start < 0 || start + 15 >= values.Length)
-                return float4x4.identity;
+                return fallback;
 
             return new float4x4(
                 new float4(values[start], values[start + 4], values[start + 8], values[start + 12]),
                 new float4(values[start + 1], values[start + 5], values[start + 9], values[start + 13]),
                 new float4(values[start + 2], values[start + 6], values[start + 10], values[start + 14]),
                 new float4(values[start + 3], values[start + 7], values[start + 11], values[start + 15]));
+        }
+
+        static float4x4 BuildDecomposedBindLocalMatrix(ActorSkeletonBoneDef bone)
+        {
+            quaternion rotation = new(bone.RotX, bone.RotY, bone.RotZ, bone.RotW);
+            if (math.lengthsq(rotation.value) <= 0.000001f)
+                rotation = quaternion.identity;
+            else
+                rotation = math.normalize(rotation);
+
+            float scale = bone.Scale <= 0f ? 1f : bone.Scale;
+            return float4x4.TRS(
+                new float3(bone.PosX, bone.PosY, bone.PosZ),
+                rotation,
+                new float3(scale));
+        }
+
+        static float4x4[] BuildBindLocalToRootMatrices(ActorSkeletonBoneDef[] bones)
+        {
+            var matrices = new float4x4[bones?.Length ?? 0];
+            for (int i = 0; i < matrices.Length; i++)
+            {
+                var bone = bones[i];
+                float4x4 local = ReadMatrix(bone.BindLocalMatrix, 0, BuildDecomposedBindLocalMatrix(bone));
+                float4x4 root = ReadMatrix(bone.BindLocalToRootMatrix, 0, default);
+                bool hasRoot = !root.Equals(default(float4x4));
+                matrices[i] = hasRoot
+                    ? root
+                    : bone.ParentIndex >= 0 && bone.ParentIndex < i
+                        ? math.mul(matrices[bone.ParentIndex], local)
+                        : local;
+            }
+
+            return matrices;
         }
 
         static FixedString64Bytes Fixed64(string value)

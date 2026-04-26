@@ -127,6 +127,9 @@ namespace VVardenfell.Runtime.Bootstrap
         [Header("Player Movement")]
         [SerializeField] private PlayerMovementSettings _playerMovement = new PlayerMovementSettings();
 
+        [Header("Actor Preview")]
+        [SerializeField] private Material _actorPreviewMaterial;
+
         private Stage _stage = Stage.PickPath;
         private string _path = "";
         private string _pathError;
@@ -267,6 +270,12 @@ namespace VVardenfell.Runtime.Bootstrap
             _progress.Error = null;
             _progress.Done = false;
 
+            if (mode == BootstrapRuntimeMode.ActorPreview)
+            {
+                BeginLoading();
+                return;
+            }
+
             string esmPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.esm");
             string bsaPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.bsa");
             string[] gameplayRecordSources = InstalledContentSources.ResolveGameplayRecordSources(_config.InstallPath);
@@ -383,6 +392,58 @@ namespace VVardenfell.Runtime.Bootstrap
         {
             _loadProgress.Reset();
             var sw = Stopwatch.StartNew();
+
+            if (_selectedRuntimeMode == BootstrapRuntimeMode.ActorPreview)
+            {
+                var previewRoutine = DirectActorPreviewBootstrap.InstallIncremental(_config, _loadProgress, _actorPreviewMaterial);
+                var previewStack = new System.Collections.Generic.Stack<IEnumerator>();
+                previewStack.Push(previewRoutine);
+                while (previewStack.Count > 0)
+                {
+                    var top = previewStack.Peek();
+                    bool movedNext;
+                    object current = null;
+
+                    try
+                    {
+                        movedNext = top.MoveNext();
+                        if (movedNext)
+                            current = top.Current;
+                    }
+                    catch (System.Exception ex)
+                    {
+                        sw.Stop();
+                        _loadProgress.Fail(ex.Message);
+                        SetFatalError($"Direct actor preview failed: {ex.Message}");
+                        _stage = Stage.Failed;
+                        _loadCoroutine = null;
+                        yield break;
+                    }
+
+                    if (!movedNext)
+                    {
+                        previewStack.Pop();
+                        continue;
+                    }
+
+                    if (current is IEnumerator nested)
+                    {
+                        previewStack.Push(nested);
+                        continue;
+                    }
+
+                    yield return current;
+                }
+
+                sw.Stop();
+                _loadProgress.Complete("Ready", "Direct actor preview ready");
+                _loadCoroutine = null;
+                _loadStartRequested = false;
+                _stage = Stage.Ready;
+                Destroy(gameObject);
+                yield break;
+            }
+
             var loader = new CacheLoader();
             var routines = new IEnumerator[]
             {
@@ -632,7 +693,8 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private static bool ShouldSkipPresentationForMode(BootstrapRuntimeMode mode)
         {
-            return mode == BootstrapRuntimeMode.Sandbox;
+            return mode == BootstrapRuntimeMode.Sandbox
+                || mode == BootstrapRuntimeMode.ActorPreview;
         }
 
         private Action GetBrowseCallback()

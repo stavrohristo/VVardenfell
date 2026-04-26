@@ -153,6 +153,40 @@ namespace VVardenfell.Importer.Nif
         // Morrowind billboard mode is encoded in the NiAVObject.Flags field, no extra bytes.
     }
 
+    public class NiCamera : NiAVObject
+    {
+        public float Left;
+        public float Right;
+        public float Top;
+        public float Bottom;
+        public float NearDistance;
+        public float FarDistance;
+        public float ViewportLeft;
+        public float ViewportRight;
+        public float ViewportTop;
+        public float ViewportBottom;
+        public float LodAdjust;
+        public int Scene;
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+            Left = s.ReadFloat();
+            Right = s.ReadFloat();
+            Top = s.ReadFloat();
+            Bottom = s.ReadFloat();
+            NearDistance = s.ReadFloat();
+            FarDistance = s.ReadFloat();
+            ViewportLeft = s.ReadFloat();
+            ViewportRight = s.ReadFloat();
+            ViewportTop = s.ReadFloat();
+            ViewportBottom = s.ReadFloat();
+            LodAdjust = s.ReadFloat();
+            Scene = s.ReadInt32();
+            s.Skip(4);
+        }
+    }
+
     public class NiSwitchNode : NiNode
     {
         public uint InitialIndex;

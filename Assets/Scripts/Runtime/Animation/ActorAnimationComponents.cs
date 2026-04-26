@@ -23,7 +23,7 @@ namespace VVardenfell.Runtime.Animation
         public byte IsFemale;
         public byte IsFirstPerson;
         public byte IsCreature;
-        public int ModelBindingIndex;
+        public int RigFamilyIndex;
         public int SkeletonIndex;
         public int FirstSkinMeshIndex;
         public int SkinMeshCount;
@@ -56,9 +56,12 @@ namespace VVardenfell.Runtime.Animation
         public float3 BindPosition;
         public quaternion BindRotation;
         public float BindScale;
+        public float4x4 BindLocalMatrix;
+        public float4x4 BindLocalToRootMatrix;
         public float3 LocalPosition;
         public quaternion LocalRotation;
         public float LocalScale;
+        public byte LocalPoseAnimated;
         public float4x4 LocalToRoot;
         public float4x4 SkinMatrix;
     }
@@ -110,6 +113,7 @@ namespace VVardenfell.Runtime.Animation
         public float Scale;
         public float3 AxisRotation;
         public byte AxisFlags;
+        public byte HasTrack;
         public int AxisOrder;
     }
 
@@ -133,13 +137,6 @@ namespace VVardenfell.Runtime.Animation
         public int BoneMatrixCount;
     }
 
-    public struct ActorGpuAnimationCpuFallback : IComponentData
-    {
-        public byte RequiresFullPoseSampling;
-        public byte RequiresRootMotion;
-        public byte RequiresAttachments;
-    }
-
     public struct ActorLocalBounds : IComponentData
     {
         public float3 Center;
@@ -155,17 +152,8 @@ namespace VVardenfell.Runtime.Animation
         public int BoneIndex;
     }
 
-    public enum ActorAnimationLodOverrideMode : byte
-    {
-        None = 0,
-        ForceCpu = 1,
-        ForceGpu = 2,
-    }
-
     public struct ActorAnimationLodSettings : IComponentData
     {
-        public float CpuNearDistance;
-        public ActorAnimationLodOverrideMode OverrideMode;
         public byte ValidationEnabled;
         public int ValidationActorIndex;
     }

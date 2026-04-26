@@ -90,6 +90,7 @@ namespace VVardenfell.Importer.Nif
             { "NiLODNode", () => new NiLODNode() },
             { "NiFltAnimationNode", () => new NiFltAnimationNode() },
             { "NiSequenceStreamHelper", () => new NiSequenceStreamHelper() },
+            { "NiCamera", () => new NiCamera() },
 
             // Geometry
             { "NiTriShape", () => new NiTriShape() },

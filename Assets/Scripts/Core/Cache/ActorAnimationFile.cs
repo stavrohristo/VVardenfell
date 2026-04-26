@@ -75,6 +75,8 @@ namespace VVardenfell.Core.Cache
         public float PosX, PosY, PosZ;
         public float RotX, RotY, RotZ, RotW;
         public float Scale;
+        public float[] BindLocalMatrix;
+        public float[] BindLocalToRootMatrix;
     }
 
     public sealed class ActorSkeletonDef
@@ -185,7 +187,12 @@ namespace VVardenfell.Core.Cache
 
     public sealed class ActorAnimationCatalogData
     {
-        public ActorAnimationModelBindingDef[] ModelBindings = Array.Empty<ActorAnimationModelBindingDef>();
+        public ActorRigFamilyDef[] RigFamilies = Array.Empty<ActorRigFamilyDef>();
+        public ActorSkinBindingDef[] SkinBindings = Array.Empty<ActorSkinBindingDef>();
+        public ActorVisualRecipeDef[] ActorVisualRecipes = Array.Empty<ActorVisualRecipeDef>();
+        public ActorVisualRecipeEntryDef[] ActorVisualRecipeEntries = Array.Empty<ActorVisualRecipeEntryDef>();
+        public ActorEquipmentVisualDef[] EquipmentVisuals = Array.Empty<ActorEquipmentVisualDef>();
+        public ActorEquipmentVisualEntryDef[] EquipmentVisualEntries = Array.Empty<ActorEquipmentVisualEntryDef>();
         public ActorSkeletonDef[] Skeletons = Array.Empty<ActorSkeletonDef>();
         public ActorSkinMeshDef[] SkinMeshes = Array.Empty<ActorSkinMeshDef>();
         public ActorSkinWeightDef[] SkinWeights = Array.Empty<ActorSkinWeightDef>();
@@ -196,21 +203,117 @@ namespace VVardenfell.Core.Cache
         public ActorAnimationTextMarkerDef[] TextMarkers = Array.Empty<ActorAnimationTextMarkerDef>();
     }
 
-    public sealed class ActorAnimationModelBindingDef
+    public enum ActorRigFamilyKind : byte
     {
-        public string ModelPath;
-        public string BindReferenceSkeletonPath;
+        NpcMale = 0,
+        NpcFemale = 1,
+        NpcBeast = 2,
+        NpcMaleFirstPerson = 3,
+        NpcFemaleFirstPerson = 4,
+        NpcBeastFirstPerson = 5,
+        Creature = 6,
+        Werewolf = 7,
+    }
+
+    public enum ActorVisualBodyVariant : byte
+    {
+        Male = 0,
+        Female = 1,
+    }
+
+    public enum ActorVisualPartReference : byte
+    {
+        Head = 0,
+        Hair = 1,
+        Neck = 2,
+        Cuirass = 3,
+        Groin = 4,
+        Skirt = 5,
+        RightHand = 6,
+        LeftHand = 7,
+        RightWrist = 8,
+        LeftWrist = 9,
+        Shield = 10,
+        RightForearm = 11,
+        LeftForearm = 12,
+        RightUpperarm = 13,
+        LeftUpperarm = 14,
+        RightFoot = 15,
+        LeftFoot = 16,
+        RightAnkle = 17,
+        LeftAnkle = 18,
+        RightKnee = 19,
+        LeftKnee = 20,
+        RightLeg = 21,
+        LeftLeg = 22,
+        RightPauldron = 23,
+        LeftPauldron = 24,
+        Weapon = 25,
+        Tail = 26,
+        Count = 27,
+    }
+
+    public sealed class ActorRigFamilyDef
+    {
+        public ActorRigFamilyKind FamilyKind;
+        public string SkeletonModelPath;
         public int SkeletonIndex = -1;
-        public int FirstSkinMeshIndex = -1;
-        public int SkinMeshCount;
         public int FirstClipIndex = -1;
         public int ClipCount;
+    }
+
+    public sealed class ActorSkinBindingDef
+    {
+        public string SkinModelPath;
+        public int RigFamilyIndex = -1;
+        public int FirstSkinMeshIndex = -1;
+        public int SkinMeshCount;
+    }
+
+    public sealed class ActorVisualRecipeDef
+    {
+        public ContentId ActorContentId;
+        public byte FirstPerson;
+        public ActorVisualBodyVariant BodyVariant;
+        public int RigFamilyIndex = -1;
+        public int FirstEntryIndex = -1;
+        public int EntryCount;
+    }
+
+    public struct ActorVisualRecipeEntryDef
+    {
+        public ActorVisualPartReference PartReference;
+        public int SkinBindingIndex;
+        public int SkinMeshIndex;
+        public int AttachBoneIndex;
+        public byte RigidMirrorX;
+    }
+
+    public sealed class ActorEquipmentVisualDef
+    {
+        public ContentId ItemContentId;
+        public int RigFamilyIndex = -1;
+        public byte FirstPerson;
+        public ActorVisualBodyVariant BodyVariant;
+        public byte IsValid;
+        public uint CoverageMask;
+        public int FirstEntryIndex = -1;
+        public int EntryCount;
+    }
+
+    public struct ActorEquipmentVisualEntryDef
+    {
+        public ItemEquipmentPartReference PartReference;
+        public int SkinBindingIndex;
+        public int SkinMeshIndex;
+        public int AttachBoneIndex;
+        public byte RigidMirrorX;
     }
 
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 24u;
+        const uint Version = 45u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {
@@ -230,6 +333,23 @@ namespace VVardenfell.Core.Cache
             }
         }
 
+        public static bool IsCurrentVersion(string path)
+        {
+            if (!File.Exists(path))
+                return false;
+
+            try
+            {
+                using var fs = File.OpenRead(path);
+                using var r = new BinaryReader(fs);
+                return r.ReadUInt32() == Magic && r.ReadUInt32() == Version;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static ActorAnimationCatalogData Read(string path)
         {
             using var fs = File.OpenRead(path);
@@ -245,7 +365,12 @@ namespace VVardenfell.Core.Cache
 
             var data = new ActorAnimationCatalogData
             {
-                ModelBindings = ReadArray(r, ReadModelBinding),
+                RigFamilies = ReadArray(r, ReadRigFamily),
+                SkinBindings = ReadArray(r, ReadSkinBinding),
+                ActorVisualRecipes = ReadArray(r, ReadActorVisualRecipe),
+                ActorVisualRecipeEntries = ReadArray(r, ReadActorVisualRecipeEntry),
+                EquipmentVisuals = ReadArray(r, ReadEquipmentVisual),
+                EquipmentVisualEntries = ReadArray(r, ReadEquipmentVisualEntry),
                 Skeletons = ReadArray(r, ReadSkeleton),
                 SkinMeshes = ReadArray(r, ReadSkinMesh),
                 SkinWeights = ReadArray(r, ReadSkinWeight),
@@ -265,7 +390,12 @@ namespace VVardenfell.Core.Cache
             using var w = new BinaryWriter(fs);
             w.Write(Magic);
             w.Write(Version);
-            WriteArray(w, data?.ModelBindings, WriteModelBinding);
+            WriteArray(w, data?.RigFamilies, WriteRigFamily);
+            WriteArray(w, data?.SkinBindings, WriteSkinBinding);
+            WriteArray(w, data?.ActorVisualRecipes, WriteActorVisualRecipe);
+            WriteArray(w, data?.ActorVisualRecipeEntries, WriteActorVisualRecipeEntry);
+            WriteArray(w, data?.EquipmentVisuals, WriteEquipmentVisual);
+            WriteArray(w, data?.EquipmentVisualEntries, WriteEquipmentVisualEntry);
             WriteArray(w, data?.Skeletons, WriteSkeleton);
             WriteArray(w, data?.SkinMeshes, WriteSkinMesh);
             WriteArray(w, data?.SkinWeights, WriteSkinWeight);
@@ -276,27 +406,124 @@ namespace VVardenfell.Core.Cache
             WriteArray(w, data?.TextMarkers, WriteTextMarker);
         }
 
-        static void WriteModelBinding(BinaryWriter w, ActorAnimationModelBindingDef value)
+        static void WriteRigFamily(BinaryWriter w, ActorRigFamilyDef value)
         {
-            w.Write(value?.ModelPath ?? string.Empty);
-            w.Write(value?.BindReferenceSkeletonPath ?? string.Empty);
+            w.Write((byte)(value?.FamilyKind ?? default));
+            w.Write(value?.SkeletonModelPath ?? string.Empty);
             w.Write(value?.SkeletonIndex ?? -1);
-            w.Write(value?.FirstSkinMeshIndex ?? -1);
-            w.Write(value?.SkinMeshCount ?? 0);
             w.Write(value?.FirstClipIndex ?? -1);
             w.Write(value?.ClipCount ?? 0);
         }
 
-        static ActorAnimationModelBindingDef ReadModelBinding(BinaryReader r)
+        static ActorRigFamilyDef ReadRigFamily(BinaryReader r)
             => new()
             {
-                ModelPath = r.ReadString(),
-                BindReferenceSkeletonPath = r.ReadString(),
+                FamilyKind = (ActorRigFamilyKind)r.ReadByte(),
+                SkeletonModelPath = r.ReadString(),
                 SkeletonIndex = r.ReadInt32(),
-                FirstSkinMeshIndex = r.ReadInt32(),
-                SkinMeshCount = r.ReadInt32(),
                 FirstClipIndex = r.ReadInt32(),
                 ClipCount = r.ReadInt32(),
+            };
+
+        static void WriteSkinBinding(BinaryWriter w, ActorSkinBindingDef value)
+        {
+            w.Write(value?.SkinModelPath ?? string.Empty);
+            w.Write(value?.RigFamilyIndex ?? -1);
+            w.Write(value?.FirstSkinMeshIndex ?? -1);
+            w.Write(value?.SkinMeshCount ?? 0);
+        }
+
+        static ActorSkinBindingDef ReadSkinBinding(BinaryReader r)
+            => new()
+            {
+                SkinModelPath = r.ReadString(),
+                RigFamilyIndex = r.ReadInt32(),
+                FirstSkinMeshIndex = r.ReadInt32(),
+                SkinMeshCount = r.ReadInt32(),
+            };
+
+        static void WriteActorVisualRecipe(BinaryWriter w, ActorVisualRecipeDef value)
+        {
+            w.Write(value?.ActorContentId.Value ?? 0UL);
+            w.Write(value?.FirstPerson ?? 0);
+            w.Write((byte)(value?.BodyVariant ?? default));
+            w.Write(value?.RigFamilyIndex ?? -1);
+            w.Write(value?.FirstEntryIndex ?? -1);
+            w.Write(value?.EntryCount ?? 0);
+        }
+
+        static ActorVisualRecipeDef ReadActorVisualRecipe(BinaryReader r)
+            => new()
+            {
+                ActorContentId = new ContentId(r.ReadUInt64()),
+                FirstPerson = r.ReadByte(),
+                BodyVariant = (ActorVisualBodyVariant)r.ReadByte(),
+                RigFamilyIndex = r.ReadInt32(),
+                FirstEntryIndex = r.ReadInt32(),
+                EntryCount = r.ReadInt32(),
+            };
+
+        static void WriteActorVisualRecipeEntry(BinaryWriter w, ActorVisualRecipeEntryDef value)
+        {
+            w.Write((byte)value.PartReference);
+            w.Write(value.SkinBindingIndex);
+            w.Write(value.SkinMeshIndex);
+            w.Write(value.AttachBoneIndex);
+            w.Write(value.RigidMirrorX);
+        }
+
+        static ActorVisualRecipeEntryDef ReadActorVisualRecipeEntry(BinaryReader r)
+            => new()
+            {
+                PartReference = (ActorVisualPartReference)r.ReadByte(),
+                SkinBindingIndex = r.ReadInt32(),
+                SkinMeshIndex = r.ReadInt32(),
+                AttachBoneIndex = r.ReadInt32(),
+                RigidMirrorX = r.ReadByte(),
+            };
+
+        static void WriteEquipmentVisual(BinaryWriter w, ActorEquipmentVisualDef value)
+        {
+            w.Write(value?.ItemContentId.Value ?? 0UL);
+            w.Write(value?.RigFamilyIndex ?? -1);
+            w.Write(value?.FirstPerson ?? 0);
+            w.Write((byte)(value?.BodyVariant ?? default));
+            w.Write(value?.IsValid ?? 0);
+            w.Write(value?.CoverageMask ?? 0u);
+            w.Write(value?.FirstEntryIndex ?? -1);
+            w.Write(value?.EntryCount ?? 0);
+        }
+
+        static ActorEquipmentVisualDef ReadEquipmentVisual(BinaryReader r)
+            => new()
+            {
+                ItemContentId = new ContentId(r.ReadUInt64()),
+                RigFamilyIndex = r.ReadInt32(),
+                FirstPerson = r.ReadByte(),
+                BodyVariant = (ActorVisualBodyVariant)r.ReadByte(),
+                IsValid = r.ReadByte(),
+                CoverageMask = r.ReadUInt32(),
+                FirstEntryIndex = r.ReadInt32(),
+                EntryCount = r.ReadInt32(),
+            };
+
+        static void WriteEquipmentVisualEntry(BinaryWriter w, ActorEquipmentVisualEntryDef value)
+        {
+            w.Write((byte)value.PartReference);
+            w.Write(value.SkinBindingIndex);
+            w.Write(value.SkinMeshIndex);
+            w.Write(value.AttachBoneIndex);
+            w.Write(value.RigidMirrorX);
+        }
+
+        static ActorEquipmentVisualEntryDef ReadEquipmentVisualEntry(BinaryReader r)
+            => new()
+            {
+                PartReference = (ItemEquipmentPartReference)r.ReadByte(),
+                SkinBindingIndex = r.ReadInt32(),
+                SkinMeshIndex = r.ReadInt32(),
+                AttachBoneIndex = r.ReadInt32(),
+                RigidMirrorX = r.ReadByte(),
             };
 
         static void WriteSkeleton(BinaryWriter w, ActorSkeletonDef value)
@@ -321,6 +548,8 @@ namespace VVardenfell.Core.Cache
             w.Write(value.PosX); w.Write(value.PosY); w.Write(value.PosZ);
             w.Write(value.RotX); w.Write(value.RotY); w.Write(value.RotZ); w.Write(value.RotW);
             w.Write(value.Scale);
+            WriteFloatArray(w, value.BindLocalMatrix);
+            WriteFloatArray(w, value.BindLocalToRootMatrix);
         }
 
         static ActorSkeletonBoneDef ReadSkeletonBone(BinaryReader r)
@@ -336,6 +565,8 @@ namespace VVardenfell.Core.Cache
                 RotZ = r.ReadSingle(),
                 RotW = r.ReadSingle(),
                 Scale = r.ReadSingle(),
+                BindLocalMatrix = ReadFloatArray(r),
+                BindLocalToRootMatrix = ReadFloatArray(r),
             };
 
         static void WriteSkinMesh(BinaryWriter w, ActorSkinMeshDef value)

@@ -358,9 +358,6 @@ namespace VVardenfell.Runtime.Rendering
                     float4x4 attach = (uint)attachBoneIndex < (uint)bones.Length
                         ? bones[attachBoneIndex].LocalToRoot
                         : float4x4.identity;
-                    float4x4 attachOffset = math.lengthsq(skinMesh.RigidOffset) > 0f
-                        ? float4x4.Translate(skinMesh.RigidOffset)
-                        : float4x4.identity;
                     float4x4 mirror = rigidMirrorX != 0
                         ? new float4x4(
                             new float4(-1f, 0f, 0f, 0f),
@@ -368,7 +365,8 @@ namespace VVardenfell.Runtime.Rendering
                             new float4(0f, 0f, 1f, 0f),
                             new float4(0f, 0f, 0f, 1f))
                         : float4x4.identity;
-                    float4x4 localAttach = math.mul(math.mul(attachOffset, mirror), skinMesh.GeometryToSkeleton);
+                    float4x4 gts = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
+                    float4x4 localAttach = math.mul(mirror, gts);
                     BoneMatrices[boneCursor++] = ToGpuMatrix(math.mul(attach, localAttach));
                     return;
                 }
@@ -377,6 +375,7 @@ namespace VVardenfell.Runtime.Rendering
                 int skinBoneCount = skinMesh.SkinBoneCount;
                 int end = math.min(catalog.SkinBones.Length, firstSkinBone + skinBoneCount);
                 int start = boneCursor;
+                float4x4 geometryToSkeleton = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
                 for (int i = firstSkinBone; i < end; i++)
                 {
                     var skinBone = catalog.SkinBones[i];
@@ -384,7 +383,8 @@ namespace VVardenfell.Runtime.Rendering
                     float4x4 pose = (uint)actorBoneIndex < (uint)bones.Length
                         ? bones[actorBoneIndex].LocalToRoot
                         : float4x4.identity;
-                    BoneMatrices[boneCursor++] = ToGpuMatrix(math.mul(pose, skinBone.BindPose));
+                    float4x4 bindPose = ActorAnimationSpaceConversion.SourceAffineToUnity(skinBone.BindPose);
+                    BoneMatrices[boneCursor++] = ToGpuMatrix(math.mul(math.mul(geometryToSkeleton, pose), bindPose));
                 }
 
                 if (boneCursor == start)
