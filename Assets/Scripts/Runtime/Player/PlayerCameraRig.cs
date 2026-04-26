@@ -140,7 +140,19 @@ namespace VVardenfell.Runtime.Player
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             var localToWorld = _viewQuery.GetSingleton<LocalToWorld>();
             float4x4 viewMatrix = localToWorld.Value;
-            cam.transform.position = viewMatrix.c3.xyz;
+            float3 cameraPosition = viewMatrix.c3.xyz;
+            if (SystemAPI.HasSingleton<LocalPlayerPresentationState>())
+            {
+                var presentation = SystemAPI.GetSingleton<LocalPlayerPresentationState>();
+                if (presentation.Mode == PlayerViewMode.ThirdPerson)
+                {
+                    float distance = math.max(0.25f, presentation.ThirdPersonDistance);
+                    float3 forward = math.normalizesafe(viewMatrix.c2.xyz, new float3(0f, 0f, 1f));
+                    cameraPosition -= forward * distance;
+                }
+            }
+
+            cam.transform.position = cameraPosition;
             quaternion viewRotation = quaternion.LookRotationSafe(
                 math.normalizesafe(viewMatrix.c2.xyz, new float3(0f, 0f, 1f)),
                 math.normalizesafe(viewMatrix.c1.xyz, math.up()));

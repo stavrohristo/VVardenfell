@@ -10,6 +10,29 @@ namespace VVardenfell.Runtime.Components
         public int Count;
     }
 
+    public struct ActorInventoryItem : IBufferElementData
+    {
+        public ContentReference Content;
+        public int Count;
+        public int AuthoredOrder;
+    }
+
+    public struct ActorEquipmentSlot : IBufferElementData
+    {
+        public ItemEquipmentSlot Slot;
+        public ContentReference Content;
+        public int InventoryIndex;
+        public byte VisualMode;
+    }
+
+    public struct ActorRigidEquipment : IBufferElementData
+    {
+        public ItemEquipmentSlot Slot;
+        public ContentReference Content;
+        public int ModelPrefabIndex;
+        public int AttachBoneIndex;
+    }
+
     public struct ContainerSessionHeader : IBufferElementData
     {
         public uint PlacedRefId;

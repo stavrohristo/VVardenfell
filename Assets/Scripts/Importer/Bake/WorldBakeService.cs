@@ -1581,10 +1581,18 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < bodyParts.Length; i++)
             {
                 var part = bodyParts[i];
-                if (part.Type != ActorBodyPartMeshType.Skin)
+                if (part.Type != ActorBodyPartMeshType.Skin
+                    && part.Type != ActorBodyPartMeshType.Clothing
+                    && part.Type != ActorBodyPartMeshType.Armor)
                     continue;
                 if (part.FirstPerson != 0)
                     continue;
+
+                if (part.Type != ActorBodyPartMeshType.Skin)
+                {
+                    AddEquipmentSkinReferenceTargets(result, part, bsaByName);
+                    continue;
+                }
 
                 string targetSkeleton = ResolveNpcSkeletonModel(
                     part.FirstPerson != 0,
@@ -1604,36 +1612,63 @@ namespace VVardenfell.Importer.Bake
 
                 bool female = (actor.Flags & 0x1u) != 0;
                 bool beast = IsBeastRace(actor.RaceId, races);
-                const bool firstPerson = false;
-                string targetSkeleton = ResolveNpcSkeletonModel(firstPerson, female, beast, bsaByName);
-                if (string.IsNullOrEmpty(targetSkeleton))
-                    continue;
-
-                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HeadId, targetSkeleton);
-                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HairId, targetSkeleton);
-
-                for (int partReference = (int)ActorSkinPartReferenceType.Neck;
-                     partReference < (int)ActorSkinPartReferenceType.Count;
-                     partReference++)
+                for (int pass = 0; pass < 2; pass++)
                 {
-                    var reference = (ActorSkinPartReferenceType)partReference;
-                    if (!IsBaseSkinPartReference(reference))
+                    bool firstPerson = pass != 0;
+                    string targetSkeleton = ResolveNpcSkeletonModel(firstPerson, female, beast, bsaByName);
+                    if (string.IsNullOrEmpty(targetSkeleton))
                         continue;
 
-                    if (TryResolveNpcRaceBodyPart(
-                            bodyParts,
-                            actor.RaceId,
-                            reference,
-                            female,
-                            firstPerson,
-                            out var part))
+                    if (!firstPerson)
                     {
-                        AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
+                        AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HeadId, targetSkeleton);
+                        AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HairId, targetSkeleton);
+                    }
+
+                    for (int partReference = (int)ActorSkinPartReferenceType.Neck;
+                         partReference < (int)ActorSkinPartReferenceType.Count;
+                         partReference++)
+                    {
+                        var reference = (ActorSkinPartReferenceType)partReference;
+                        if (!IsBaseSkinPartReference(reference))
+                            continue;
+                        if (firstPerson && !IsFirstPersonPartReference(reference))
+                            continue;
+
+                        if (TryResolveNpcRaceBodyPart(
+                                bodyParts,
+                                actor.RaceId,
+                                reference,
+                                female,
+                                firstPerson,
+                                out var part))
+                        {
+                            AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
+                        }
                     }
                 }
             }
 
             return result;
+        }
+
+        static void AddEquipmentSkinReferenceTargets(
+            Dictionary<string, HashSet<string>> result,
+            ActorBodyPartDef part,
+            Dictionary<string, BsaEntry> bsaByName)
+        {
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, true, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, true, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, true, true, bsaByName), part.Id);
+
+            if (!IsFirstPersonMeshPart(part.Part))
+                return;
+
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, false, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, true, false, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, false, true, bsaByName), part.Id);
+            AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, true, true, bsaByName), part.Id);
         }
 
         static ActorSkeletonDef GetOrExtractActorSkeleton(
@@ -1855,6 +1890,26 @@ namespace VVardenfell.Importer.Bake
                 or ActorSkinPartReferenceType.RightLeg
                 or ActorSkinPartReferenceType.LeftLeg
                 or ActorSkinPartReferenceType.Tail;
+        }
+
+        static bool IsFirstPersonPartReference(ActorSkinPartReferenceType type)
+        {
+            return type is ActorSkinPartReferenceType.RightHand
+                or ActorSkinPartReferenceType.LeftHand
+                or ActorSkinPartReferenceType.RightWrist
+                or ActorSkinPartReferenceType.LeftWrist
+                or ActorSkinPartReferenceType.RightForearm
+                or ActorSkinPartReferenceType.LeftForearm
+                or ActorSkinPartReferenceType.RightUpperarm
+                or ActorSkinPartReferenceType.LeftUpperarm;
+        }
+
+        static bool IsFirstPersonMeshPart(ActorBodyPartMeshPart part)
+        {
+            return part is ActorBodyPartMeshPart.Hand
+                or ActorBodyPartMeshPart.Wrist
+                or ActorBodyPartMeshPart.Forearm
+                or ActorBodyPartMeshPart.Upperarm;
         }
 
         static ActorBodyPartMeshPart GetMeshPart(ActorSkinPartReferenceType type)

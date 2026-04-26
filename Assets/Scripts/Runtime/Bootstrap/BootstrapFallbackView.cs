@@ -12,6 +12,7 @@ namespace VVardenfell.Runtime.Bootstrap
         // between phases doesn't feel like swapping dialogs.
         const float WindowWidth = 720f;
         const float PickerHeight = 232f;
+        const float ModePickerHeight = 244f;
         const float ProgressHeight = 232f;
         const float ErrorHeight = 204f;
         const float DialogVisualScale = 1.5f;
@@ -43,13 +44,18 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindWindowView _window;
         Text _windowTitleText;
         RectTransform _pickerRoot;
+        RectTransform _modeRoot;
         RectTransform _progressRoot;
         RectTransform _errorRoot;
         RuntimeUiTextInputView _pathInput;
         MorrowindButtonView _continueButton;
         MorrowindButtonView _browseButton;
+        MorrowindButtonView _vanillaButton;
+        MorrowindButtonView _sandboxButton;
         Text _pathPromptText;
         Text _pathErrorText;
+        Text _modePromptText;
+        Text _modeInstallPathText;
         Text _progressDescriptionText;
         Text _progressStageText;
         Text _progressDetailText;
@@ -59,6 +65,7 @@ namespace VVardenfell.Runtime.Bootstrap
         Action<string> _onPathChanged;
         Action _onContinue;
         Action _onBrowse;
+        Action<BootstrapRuntimeMode> _onModeSelected;
 
         public void Initialize(Action<string> onPathChanged, Action onContinue, Action onBrowse)
         {
@@ -114,6 +121,7 @@ namespace VVardenfell.Runtime.Bootstrap
             _window.Root.localScale = Vector3.one * DialogVisualScale;
 
             BuildPickerView();
+            BuildModePickerView();
             BuildProgressView();
             BuildErrorView();
             Hide();
@@ -124,6 +132,7 @@ namespace VVardenfell.Runtime.Bootstrap
             EnsureInitialized();
             ShowRoot("VVardenfell - Locate Morrowind Installation", PickerHeight);
             _pickerRoot.gameObject.SetActive(true);
+            _modeRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(false);
             SetInputDisplay(path ?? string.Empty, "Path to Morrowind");
@@ -132,11 +141,26 @@ namespace VVardenfell.Runtime.Bootstrap
             _browseButton.Root.gameObject.SetActive(_onBrowse != null);
         }
 
+        public void ShowModePicker(string installPath, Action<BootstrapRuntimeMode> onModeSelected)
+        {
+            EnsureInitialized();
+            _onModeSelected = onModeSelected;
+            ShowRoot("VVardenfell - Select Startup Mode", ModePickerHeight);
+            _pickerRoot.gameObject.SetActive(false);
+            _modeRoot.gameObject.SetActive(true);
+            _progressRoot.gameObject.SetActive(false);
+            _errorRoot.gameObject.SetActive(false);
+            _modeInstallPathText.text = string.IsNullOrWhiteSpace(installPath)
+                ? string.Empty
+                : $"Install: {installPath.Trim()}";
+        }
+
         public void ShowProgress(string title, string stage, string detail, int current, int total, float fraction, string footer)
         {
             EnsureInitialized();
             ShowRoot(title, ProgressHeight);
             _pickerRoot.gameObject.SetActive(false);
+            _modeRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(true);
             _errorRoot.gameObject.SetActive(false);
 
@@ -153,6 +177,7 @@ namespace VVardenfell.Runtime.Bootstrap
             EnsureInitialized();
             ShowRoot(title, ErrorHeight);
             _pickerRoot.gameObject.SetActive(false);
+            _modeRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(true);
             _errorBodyText.text = string.IsNullOrWhiteSpace(body) ? string.Empty : body.Trim();
@@ -263,6 +288,84 @@ namespace VVardenfell.Runtime.Bootstrap
             _pathErrorText.rectTransform.anchoredPosition = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(62f));
             _pathErrorText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f));
             _pathErrorText.gameObject.SetActive(false);
+        }
+
+        void BuildModePickerView()
+        {
+            _modeRoot = RuntimeUiFactory.CreateStretchRect("ModePickerRoot", _window.Client);
+            _modeRoot.gameObject.SetActive(false);
+
+            _modePromptText = CreateUnityText(
+                "ModePromptText",
+                _modeRoot,
+                "Choose how to boot this session.",
+                RuntimeUiScaleSettings.ScaleFontSize((int)StagePixelHeight),
+                BodyTextColor,
+                TextAnchor.UpperLeft);
+            _modePromptText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _modePromptText.verticalOverflow = VerticalWrapMode.Truncate;
+            _modePromptText.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _modePromptText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _modePromptText.rectTransform.pivot = new Vector2(0f, 1f);
+            _modePromptText.rectTransform.anchoredPosition = Vector2.zero;
+            _modePromptText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(28f));
+
+            _modeInstallPathText = CreateUnityText(
+                "ModeInstallPathText",
+                _modeRoot,
+                string.Empty,
+                RuntimeUiScaleSettings.ScaleFontSize((int)FooterPixelHeight),
+                SubtleTextColor,
+                TextAnchor.UpperLeft);
+            _modeInstallPathText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _modeInstallPathText.verticalOverflow = VerticalWrapMode.Truncate;
+            _modeInstallPathText.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _modeInstallPathText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _modeInstallPathText.rectTransform.pivot = new Vector2(0f, 1f);
+            _modeInstallPathText.rectTransform.anchoredPosition = new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(32f));
+            _modeInstallPathText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(34f));
+
+            var vanillaRect = RuntimeUiFactory.CreateAnchoredRect(
+                "VanillaButtonRow",
+                _modeRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(82f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
+            vanillaRect.pivot = new Vector2(0f, 1f);
+
+            _vanillaButton = RuntimeUiFactory.CreateMorrowindButton(
+                "VanillaButton",
+                vanillaRect,
+                _theme,
+                "Vanilla",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            RuntimeUiFactory.Stretch(_vanillaButton.Root);
+            ReplaceButtonLabel(_vanillaButton, "Vanilla");
+            _vanillaButton.Button.onClick.AddListener(OnVanillaPressed);
+
+            var sandboxRect = RuntimeUiFactory.CreateAnchoredRect(
+                "SandboxButtonRow",
+                _modeRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(132f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
+            sandboxRect.pivot = new Vector2(0f, 1f);
+
+            _sandboxButton = RuntimeUiFactory.CreateMorrowindButton(
+                "SandboxButton",
+                sandboxRect,
+                _theme,
+                "Sandbox",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            RuntimeUiFactory.Stretch(_sandboxButton.Root);
+            ReplaceButtonLabel(_sandboxButton, "Sandbox");
+            _sandboxButton.Button.onClick.AddListener(OnSandboxPressed);
         }
 
         void BuildProgressView()
@@ -441,6 +544,16 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnBrowsePressed()
         {
             _onBrowse?.Invoke();
+        }
+
+        void OnVanillaPressed()
+        {
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.Vanilla);
+        }
+
+        void OnSandboxPressed()
+        {
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
         }
 
         void OnDestroy()

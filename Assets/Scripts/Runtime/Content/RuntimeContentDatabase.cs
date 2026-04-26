@@ -41,6 +41,7 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, GenericRecordDefHandle> _pathGridsById;
         readonly Dictionary<long, GenericRecordDefHandle> _pathGridsByExteriorCoord;
         readonly Dictionary<string, ContentReference> _placeablesById;
+        readonly int[] _itemEquipmentByItemIndex;
 
         public static RuntimeContentDatabase Active { get; private set; }
 
@@ -122,6 +123,7 @@ namespace VVardenfell.Runtime.Content
             _pathGridsById = BuildIndex(data.PathGrids, def => def.Id, GenericRecordDefHandle.FromIndex);
             _pathGridsByExteriorCoord = BuildPathGridExteriorIndex(data.PathGrids);
             _placeablesById = GameplayContentReferenceIndex.BuildPlaceableIndex(data);
+            _itemEquipmentByItemIndex = BuildItemEquipmentIndex(data);
         }
 
         public static RuntimeContentDatabase LoadFromCache()
@@ -238,6 +240,32 @@ namespace VVardenfell.Runtime.Content
         public ref readonly ActorBodyPartDef GetActorBodyPart(GenericRecordDefHandle handle) => ref Data.ActorBodyParts[handle.Index];
         public ref readonly PathGridDef GetPathGrid(GenericRecordDefHandle handle) => ref Data.PathGrids[handle.Index];
         public ref readonly GenericRecordDef GetGlobal(GenericRecordDefHandle handle) => ref Data.Globals[handle.Index];
+
+        public bool TryGetItemEquipment(ItemDefHandle handle, out ItemEquipmentDef equipment)
+        {
+            equipment = default;
+            if (!handle.IsValid || _itemEquipmentByItemIndex == null || (uint)handle.Index >= (uint)_itemEquipmentByItemIndex.Length)
+                return false;
+
+            int equipmentIndex = _itemEquipmentByItemIndex[handle.Index];
+            if ((uint)equipmentIndex >= (uint)(Data.ItemEquipment?.Length ?? 0))
+                return false;
+
+            equipment = Data.ItemEquipment[equipmentIndex];
+            return true;
+        }
+
+        public ReadOnlySpan<ItemEquipmentBodyPartDef> GetItemEquipmentBodyParts(in ItemEquipmentDef equipment)
+        {
+            if (equipment.FirstBodyPartIndex < 0 || equipment.BodyPartCount <= 0 || Data.ItemEquipmentBodyParts == null)
+                return ReadOnlySpan<ItemEquipmentBodyPartDef>.Empty;
+
+            if (equipment.FirstBodyPartIndex >= Data.ItemEquipmentBodyParts.Length)
+                return ReadOnlySpan<ItemEquipmentBodyPartDef>.Empty;
+
+            int count = Math.Min(equipment.BodyPartCount, Data.ItemEquipmentBodyParts.Length - equipment.FirstBodyPartIndex);
+            return new ReadOnlySpan<ItemEquipmentBodyPartDef>(Data.ItemEquipmentBodyParts, equipment.FirstBodyPartIndex, count);
+        }
 
         public ReadOnlySpan<ContainerItemDef> GetContainerItems(ContainerDefHandle handle)
         {
@@ -547,6 +575,27 @@ namespace VVardenfell.Runtime.Content
             }
 
             return map;
+        }
+
+        static int[] BuildItemEquipmentIndex(GameplayContentData data)
+        {
+            int itemCount = data?.Items?.Length ?? 0;
+            var result = new int[itemCount];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = -1;
+
+            var equipment = data?.ItemEquipment;
+            if (equipment == null)
+                return result;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                int itemIndex = equipment[i].Item.Index;
+                if ((uint)itemIndex < (uint)result.Length)
+                    result[itemIndex] = i;
+            }
+
+            return result;
         }
 
         static long PackExteriorPathGridKey(int gridX, int gridY)

@@ -110,6 +110,9 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         public static void PublishGameInitialization(EntityManager em)
+            => PublishGameInitialization(em, WorldBootstrapOptions.Vanilla);
+
+        public static void PublishGameInitialization(EntityManager em, WorldBootstrapOptions options)
         {
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
             ResolveInitialPlayerData(
@@ -125,9 +128,11 @@ namespace VVardenfell.Runtime.Streaming
                 PlayerSettings = ResolvePlayerMovementSettings(),
                 PlayerActorStats = playerStats,
                 PlayerIdentity = playerIdentity,
-                PlayerPosition = WorldBootstrap.DefaultPlayerSpawnPosition(),
-                PlayerRotation = quaternion.identity,
+                PlayerPosition = options.PlayerStartPosition,
+                PlayerRotation = options.PlayerStartRotation,
                 PlayerPitchDegrees = 0f,
+                RuntimeMode = (byte)options.Mode,
+                SpawnLocalPlayer = (byte)(options.SpawnLocalPlayer ? 1 : 0),
                 HasSerializedSavePayload = hasSerializedSavePayload,
                 SerializedSavePayloadStatus = new FixedString128Bytes(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });

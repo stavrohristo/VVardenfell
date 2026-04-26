@@ -1,3 +1,4 @@
+using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -7,6 +8,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
@@ -27,6 +29,7 @@ namespace VVardenfell.Runtime.Components
             bool isInterior = false,
             int2 exteriorCell = default,
             FixedString128Bytes interiorCellId = default,
+            uint placedRefId = 0u,
             bool attachDoorInteractable = false,
             DoorInteractable doorInteractable = default)
         {
@@ -51,7 +54,8 @@ namespace VVardenfell.Runtime.Components
                         worldPosition,
                         isInterior,
                         exteriorCell,
-                        interiorCellId);
+                        interiorCellId,
+                        placedRefId);
                     return true;
                 }
 
@@ -167,7 +171,8 @@ namespace VVardenfell.Runtime.Components
             float3 worldPosition,
             bool isInterior,
             int2 exteriorCell,
-            FixedString128Bytes interiorCellId)
+            FixedString128Bytes interiorCellId,
+            uint placedRefId)
         {
             var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(contentDb, actor);
             ecb.AddComponent(logicalEntity, statSeed.Attributes);
@@ -192,7 +197,10 @@ namespace VVardenfell.Runtime.Components
 
             ecb.AddComponent(logicalEntity, PathGridTraversalSettings.Defaults);
             ecb.AddComponent(logicalEntity, new PathGridTraversalState());
-            ecb.AddComponent(logicalEntity, new PathGridTraversalRequest());
+            ecb.AddComponent(logicalEntity, new PathGridTraversalPendingRequest());
+            ecb.SetComponentEnabled<PathGridTraversalPendingRequest>(logicalEntity, false);
+            ecb.AddComponent(logicalEntity, new PathGridTraversalAwaitingResult());
+            ecb.SetComponentEnabled<PathGridTraversalAwaitingResult>(logicalEntity, false);
             ecb.AddBuffer<PathGridTraversalNode>(logicalEntity);
 
             var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
@@ -207,6 +215,128 @@ namespace VVardenfell.Runtime.Components
             ecb.AddComponent(logicalEntity, anchor);
             var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
             ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
+
+            var inventory = ecb.AddBuffer<ActorInventoryItem>(logicalEntity);
+            var equipment = ecb.AddBuffer<ActorEquipmentSlot>(logicalEntity);
+            HydrateActorInventoryAndEquipment(contentDb, actorHandle, placedRefId, inventory, equipment);
+        }
+
+        static void HydrateActorInventoryAndEquipment(
+            RuntimeContentDatabase contentDb,
+            ActorDefHandle actorHandle,
+            uint placedRefId,
+            DynamicBuffer<ActorInventoryItem> inventory,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
+        {
+            if (contentDb == null || !actorHandle.IsValid)
+                return;
+
+            ReadOnlySpan<ContainerItemDef> authoredItems = contentDb.GetActorInventoryItems(actorHandle);
+            if (authoredItems.Length == 0)
+                return;
+
+            const int SlotCapacity = 32;
+            var bestScores = new long[SlotCapacity];
+            var bestInventoryIndices = new int[SlotCapacity];
+            for (int i = 0; i < SlotCapacity; i++)
+            {
+                bestScores[i] = long.MinValue;
+                bestInventoryIndices[i] = -1;
+            }
+
+            uint resolutionSeed = placedRefId != 0u ? placedRefId : (uint)actorHandle.Value;
+            for (int i = 0; i < authoredItems.Length; i++)
+            {
+                var authored = authoredItems[i];
+                if (authored.Count <= 0 || string.IsNullOrWhiteSpace(authored.ItemId))
+                    continue;
+
+                if (!TryResolveActorInventoryContent(contentDb, authored.ItemId, resolutionSeed, out var content) || !content.IsValid)
+                    continue;
+
+                int inventoryIndex = inventory.Length;
+                inventory.Add(new ActorInventoryItem
+                {
+                    Content = content,
+                    Count = authored.Count,
+                    AuthoredOrder = i,
+                });
+
+                if (content.Kind != ContentReferenceKind.Item)
+                    continue;
+
+                var itemHandle = new ItemDefHandle { Value = content.HandleValue };
+                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    continue;
+
+                int slot = (int)itemEquipment.Slot;
+                if ((uint)slot >= SlotCapacity || slot == (int)ItemEquipmentSlot.None)
+                    continue;
+
+                long score = ScoreInitialEquipment(itemEquipment, i);
+                if (score <= bestScores[slot])
+                    continue;
+
+                bestScores[slot] = score;
+                bestInventoryIndices[slot] = inventoryIndex;
+            }
+
+            for (int slot = 0; slot < SlotCapacity; slot++)
+            {
+                int inventoryIndex = bestInventoryIndices[slot];
+                if (inventoryIndex < 0 || inventoryIndex >= inventory.Length)
+                    continue;
+
+                var item = inventory[inventoryIndex];
+                var itemHandle = new ItemDefHandle { Value = item.Content.HandleValue };
+                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    continue;
+
+                equipment.Add(new ActorEquipmentSlot
+                {
+                    Slot = (ItemEquipmentSlot)slot,
+                    Content = item.Content,
+                    InventoryIndex = inventoryIndex,
+                    VisualMode = ResolveEquipmentVisualMode(itemEquipment),
+                });
+            }
+        }
+
+        static bool TryResolveActorInventoryContent(
+            RuntimeContentDatabase contentDb,
+            string itemId,
+            uint resolutionSeed,
+            out ContentReference content)
+        {
+            content = default;
+            if (ContainerLootUtility.TryResolveDirectCarryable(contentDb, itemId, out content, out _))
+                return true;
+
+            if (!contentDb.TryGetItemLeveledListHandle(itemId, out var listHandle))
+                return false;
+
+            return ContainerLootUtility.TryResolveLooseLeveledCarryable(contentDb, listHandle, resolutionSeed, out content, out _);
+        }
+
+        static long ScoreInitialEquipment(in ItemEquipmentDef equipment, int authoredOrder)
+        {
+            long tieBreaker = 1000 - System.Math.Min(999, authoredOrder);
+            return equipment.Kind switch
+            {
+                ItemEquipmentKind.Weapon => 3_000_000_000L + equipment.DamageMax * 1_000_000L + equipment.Value * 100L + tieBreaker,
+                ItemEquipmentKind.Armor => 2_000_000_000L + equipment.Armor * 1_000_000L + equipment.Value * 100L + tieBreaker,
+                ItemEquipmentKind.Clothing => 1_000_000_000L + equipment.Value * 100L + tieBreaker,
+                _ => tieBreaker,
+            };
+        }
+
+        static byte ResolveEquipmentVisualMode(in ItemEquipmentDef equipment)
+        {
+            if (equipment.Kind == ItemEquipmentKind.Weapon || equipment.Slot == ItemEquipmentSlot.Shield)
+                return 2;
+            if (equipment.Kind == ItemEquipmentKind.Armor || equipment.Kind == ItemEquipmentKind.Clothing)
+                return 1;
+            return 0;
         }
 
         static void QueueActorCollider(ref EntityCommandBuffer ecb, Entity logicalEntity)

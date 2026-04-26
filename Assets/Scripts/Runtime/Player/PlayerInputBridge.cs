@@ -59,6 +59,7 @@ namespace VVardenfell.Runtime.Player
                 control.SprintHeld = false;
                 control.CrouchHeld = false;
                 control.InteractPressed = false;
+                control.ToggleViewPressed = false;
                 intent = default;
                 return;
             }
@@ -77,6 +78,7 @@ namespace VVardenfell.Runtime.Player
                 : float2.zero;
             bool jumpPressedThisFrame = kb.spaceKey.wasPressedThisFrame;
             bool interactPressedThisFrame = kb.eKey.wasPressedThisFrame;
+            bool toggleViewPressedThisFrame = kb.vKey.wasPressedThisFrame;
 
             control.MoveInput = move;
             control.LookDeltaDegrees += frameLookDelta;
@@ -84,6 +86,7 @@ namespace VVardenfell.Runtime.Player
             control.SprintHeld = kb.leftShiftKey.isPressed;
             control.CrouchHeld = kb.leftCtrlKey.isPressed || kb.cKey.isPressed;
             control.InteractPressed |= interactPressedThisFrame;
+            control.ToggleViewPressed |= toggleViewPressedThisFrame;
 
             intent.LocalMove = new float3(move.x, move.y, math.max(intent.LocalMove.z, jumpPressedThisFrame ? 1f : 0f));
             intent.LookDeltaDegrees = control.LookDeltaDegrees;

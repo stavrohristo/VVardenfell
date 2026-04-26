@@ -73,9 +73,9 @@ Shader "VVardenfell/MwActorProcedural"
             struct ActorDraw
             {
                 int FirstIndex;
-                int IndexCount;
                 int FirstVertex;
                 int BoneMatrixOffset;
+                int BoneMatrixSource;
                 int TextureSlice;
                 int Padding0;
                 int Padding1;
@@ -85,9 +85,13 @@ Shader "VVardenfell/MwActorProcedural"
 
             StructuredBuffer<ActorVertex> _ActorVertices;
             StructuredBuffer<int> _ActorIndices;
-            StructuredBuffer<ActorMatrix3x4> _ActorBoneMatrices;
+            StructuredBuffer<ActorMatrix3x4> _ActorCpuBoneMatrices;
+            StructuredBuffer<ActorMatrix3x4> _ActorGpuBoneMatrices;
             StructuredBuffer<ActorDraw> _ActorDraws;
-            int _ActorDrawIndex;
+            int _ActorDrawBase;
+            float4 _ActorMainLightDirection;
+            float4 _ActorMainLightColor;
+            float _ActorMainLightValid;
 
             struct Varyings
             {
@@ -108,10 +112,15 @@ Shader "VVardenfell/MwActorProcedural"
                 return result;
             }
 
-            ActorMatrix3x4 LoadBone(int boneIndex, int baseIndex)
+            ActorMatrix3x4 LoadBone(int boneIndex, int baseIndex, int sourceIndex)
             {
                 if (boneIndex >= 0)
-                    return _ActorBoneMatrices[baseIndex + boneIndex];
+                {
+                    if (sourceIndex != 0)
+                        return _ActorGpuBoneMatrices[baseIndex + boneIndex];
+
+                    return _ActorCpuBoneMatrices[baseIndex + boneIndex];
+                }
 
                 return IdentityMatrix3x4();
             }
@@ -135,19 +144,20 @@ Shader "VVardenfell/MwActorProcedural"
                 float3 objectPosition,
                 float3 objectNormal,
                 inout float3 skinnedPosition,
-                inout float3 skinnedNormal)
+                inout float3 skinnedNormal,
+                int boneSource)
             {
                 if (weight <= 0.0 || boneIndex < 0)
                     return;
 
-                ActorMatrix3x4 bone = LoadBone(boneIndex, boneBase);
+                ActorMatrix3x4 bone = LoadBone(boneIndex, boneBase, boneSource);
                 skinnedPosition += TransformActorPoint(bone, objectPosition) * weight;
                 skinnedNormal += TransformActorDirection(bone, objectNormal) * weight;
             }
 
             Varyings vert(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
             {
-                ActorDraw draw = _ActorDraws[_ActorDrawIndex];
+                ActorDraw draw = _ActorDraws[_ActorDrawBase + instanceId];
                 int sourceIndex = _ActorIndices[draw.FirstIndex + vertexId];
                 ActorVertex source = _ActorVertices[draw.FirstVertex + sourceIndex];
 
@@ -155,14 +165,14 @@ Shader "VVardenfell/MwActorProcedural"
                 float3 skinnedPosition = 0.0;
                 float3 skinnedNormal = 0.0;
 
-                AccumulateInfluence(source.BoneIndices0.x, source.Weights0.x, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices0.y, source.Weights0.y, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices0.z, source.Weights0.z, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices0.w, source.Weights0.w, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices1.x, source.Weights1.x, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices1.y, source.Weights1.y, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices1.z, source.Weights1.z, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
-                AccumulateInfluence(source.BoneIndices1.w, source.Weights1.w, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal);
+                AccumulateInfluence(source.BoneIndices0.x, source.Weights0.x, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices0.y, source.Weights0.y, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices0.z, source.Weights0.z, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices0.w, source.Weights0.w, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices1.x, source.Weights1.x, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices1.y, source.Weights1.y, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices1.z, source.Weights1.z, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
+                AccumulateInfluence(source.BoneIndices1.w, source.Weights1.w, draw.BoneMatrixOffset, objectPosition, source.Normal, skinnedPosition, skinnedNormal, draw.BoneMatrixSource);
 
                 float weightSum = dot(source.Weights0, float4(1.0, 1.0, 1.0, 1.0))
                     + dot(source.Weights1, float4(1.0, 1.0, 1.0, 1.0));
@@ -196,8 +206,14 @@ Shader "VVardenfell/MwActorProcedural"
                 float3 N = normalize(IN.normalWS);
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
-                float ndotl = saturate(dot(N, mainLight.direction));
-                half3 lit = albedo.rgb * (mainLight.color * ndotl * mainLight.shadowAttenuation + SampleSH(N));
+                float3 mainDirection = _ActorMainLightValid > 0.5
+                    ? normalize(_ActorMainLightDirection.xyz)
+                    : mainLight.direction;
+                half3 mainColor = _ActorMainLightValid > 0.5
+                    ? _ActorMainLightColor.rgb
+                    : mainLight.color;
+                float ndotl = saturate(dot(N, mainDirection));
+                half3 lit = albedo.rgb * (mainColor * ndotl * mainLight.shadowAttenuation + SampleSH(N));
 
                 #if defined(_ADDITIONAL_LIGHTS)
                 uint additionalLightCount = GetAdditionalLightsCount();

@@ -7,7 +7,9 @@ using Unity.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Rendering;
@@ -37,6 +39,7 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         public static CacheLoader Cache;
+        public static BootstrapRuntimeMode RuntimeMode;
         public static Shader TerrainShader;
         /// <summary>
         /// Per-cell terrain materials are cloned from this asset. Holds shader +
@@ -72,6 +75,7 @@ namespace VVardenfell.Runtime.Streaming
         public static RuntimeSpawnPrefabDescriptor[] SpawnableLightPrefabs;
         public static PathGridNavigationWorld PathGridNavigation;
         public static ActorProceduralRenderResources ActorProceduralRenderer;
+        public static ActorGpuAnimationResources ActorGpuAnimation;
 
         /// <summary>
         /// Per-mesh local AABB, indexed by MeshIndex. Built once at bootstrap from
@@ -252,6 +256,8 @@ namespace VVardenfell.Runtime.Streaming
             if (TexBucketInfo.IsCreated) TexBucketInfo.Dispose();
             ActorProceduralRenderer?.Dispose();
             ActorProceduralRenderer = null;
+            ActorGpuAnimation?.Dispose();
+            ActorGpuAnimation = null;
             FallbackBucketSlice = default;
             BlendVariantCount = 0;
             // TerrainFallbackMat / TerrainTemplate are registry-owned assets in editor —
@@ -261,6 +267,7 @@ namespace VVardenfell.Runtime.Streaming
             TerrainShader = null;
             RefsRmas = null;
             Cache = null;
+            RuntimeMode = BootstrapRuntimeMode.Vanilla;
             RefPrefabs = null;
             ModelPrefabs = null;
             SpawnableCreaturePrefabs = null;

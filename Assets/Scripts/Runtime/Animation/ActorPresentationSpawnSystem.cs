@@ -2,6 +2,8 @@ using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Transforms;
+using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -47,6 +49,11 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationBlobCatalogSystem))]
     public partial class ActorPresentationSpawnSystem : SystemBase
     {
+        static readonly bool s_SpawnWeaponsDrawnOnPresentation = false;
+        static readonly bool s_EnableGpuAnimationByDefault = true;
+        static readonly System.Collections.Generic.HashSet<string> s_PresentationWarnings = new(System.StringComparer.OrdinalIgnoreCase);
+        static readonly System.Collections.Generic.HashSet<int> s_RigidEquipmentPrefabBuildSet = new();
+
         protected override void OnUpdate()
         {
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
@@ -61,6 +68,8 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ref var catalog = ref blobRef.Value;
+            PrebuildRigidEquipmentPrefabs(contentDb);
+
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (source, entity) in
                      SystemAPI.Query<RefRO<ActorSpawnSource>>()
@@ -72,7 +81,7 @@ namespace VVardenfell.Runtime.Animation
 
                 ref readonly ActorDef actor = ref contentDb.Get(source.ValueRO.Definition);
                 bool isNpc = actor.Kind == ActorDefKind.Npc;
-                bool firstPerson = false;
+                bool firstPerson = source.ValueRO.FirstPerson != 0;
                 int bindingIndex = -1;
                 ActorAnimationModelBindingDef binding = null;
                 bool hasBinding = cache != null
@@ -109,7 +118,6 @@ namespace VVardenfell.Runtime.Animation
                 });
                 ecb.AddComponent<CPUAnimation>(entity);
                 ecb.AddComponent<GPUAnimation>(entity);
-                ecb.SetComponentEnabled<GPUAnimation>(entity, false);
                 ecb.AddComponent(entity, new ActorAnimationController
                 {
                     RequestedGroup = new FixedString64Bytes("idle"),
@@ -118,15 +126,31 @@ namespace VVardenfell.Runtime.Animation
                 });
                 ecb.AddComponent(entity, new ActorAnimationState());
                 ecb.AddComponent(entity, new ActorRootMotion());
+                ecb.AddComponent(entity, new ActorGpuAnimationState
+                {
+                    SkeletonIndex = hasBinding ? binding.SkeletonIndex : -1,
+                });
+                ecb.AddComponent(entity, new ActorGpuAnimationCpuFallback());
+                ecb.AddComponent<ActorAttachmentBoneAnimation>(entity);
                 ecb.AddComponent(entity, new ActorAnimationEventCursor());
-                ecb.AddComponent(entity, new ActorProceduralRenderState());
+                if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
+                {
+                    ecb.AddComponent<ActorRenderVisible>(entity);
+                    ecb.SetComponentEnabled<ActorRenderVisible>(entity, true);
+                }
                 var boneBuffer = ecb.AddBuffer<ActorBone>(entity);
                 PopulateBoneBuffer(boneBuffer, ref catalog, hasBinding ? binding.SkeletonIndex : -1);
                 var sampledPoseBuffer = ecb.AddBuffer<ActorSampledBonePose>(entity);
                 PopulateSampledPoseBuffer(sampledPoseBuffer, boneCount);
                 var skinMeshBuffer = ecb.AddBuffer<ActorSkinMesh>(entity);
+                var rigidEquipmentBuffer = ecb.AddBuffer<ActorRigidEquipment>(entity);
+                bool hasEquipment = EntityManager.HasBuffer<ActorEquipmentSlot>(entity);
+                DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
+                    ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
+                    : default;
                 PopulateSkinMeshBuffer(
                     skinMeshBuffer,
+                    rigidEquipmentBuffer,
                     boneBuffer,
                     ref catalog,
                     cache,
@@ -134,7 +158,32 @@ namespace VVardenfell.Runtime.Animation
                     actor,
                     isNpc,
                     firstPerson,
-                        binding);
+                    binding,
+                    hasEquipment,
+                    equipmentBuffer);
+                PopulateRigidEquipment(
+                    ref ecb,
+                    entity,
+                    rigidEquipmentBuffer,
+                    boneBuffer,
+                    contentDb,
+                    hasEquipment,
+                    equipmentBuffer);
+                var attachmentBoneBuffer = ecb.AddBuffer<ActorAttachmentBone>(entity);
+                PopulateAttachmentBoneBuffer(attachmentBoneBuffer, bones: boneBuffer, rigidEquipment: rigidEquipmentBuffer);
+                ecb.AddComponent(entity, BuildLocalBounds(skinMeshBuffer, ref catalog));
+                bool supportsGpuAnimation = s_EnableGpuAnimationByDefault
+                    && SystemInfo.supportsComputeShaders
+                    && boneCount > 0;
+                ecb.SetComponentEnabled<GPUAnimation>(entity, false);
+                ecb.SetComponentEnabled<CPUAnimation>(entity, false);
+                ecb.SetComponentEnabled<ActorAttachmentBoneAnimation>(entity, false);
+                ecb.SetComponent(entity, new ActorGpuAnimationCpuFallback
+                {
+                    RequiresFullPoseSampling = (byte)(supportsGpuAnimation ? 0 : 1),
+                    RequiresRootMotion = 0,
+                    RequiresAttachments = (byte)(rigidEquipmentBuffer.Length > 0 ? 1 : 0),
+                });
 
                 var layerBuffer = ecb.AddBuffer<ActorAnimationLayer>(entity);
                 if (hasBinding && binding.FirstClipIndex >= 0 && binding.ClipCount > 0)
@@ -153,7 +202,6 @@ namespace VVardenfell.Runtime.Animation
                 }
                 ecb.AddBuffer<ActorAnimationEvent>(entity);
                 ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
-                ecb.AddBuffer<ActorProceduralDraw>(entity);
                 ecb.AddComponent<ActorAnimationPoseDirty>(entity);
                 ecb.SetComponentEnabled<ActorAnimationPoseDirty>(entity, boneCount > 0);
             }
@@ -174,6 +222,82 @@ namespace VVardenfell.Runtime.Animation
             if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
                 return -1;
             return catalog.Skeletons[skeletonIndex].AccumulationBoneIndex;
+        }
+
+        static ActorLocalBounds BuildLocalBounds(DynamicBuffer<ActorSkinMesh> skinMeshes, ref ActorAnimationCatalogBlob catalog)
+        {
+            float3 min = default;
+            float3 max = default;
+            bool hasBounds = false;
+
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    continue;
+
+                var skinMesh = catalog.SkinMeshes[skinMeshIndex];
+                float3 meshExtents = math.max(skinMesh.BoundsExtents, new float3(0.05f));
+                float3 meshMin = skinMesh.BoundsCenter - meshExtents;
+                float3 meshMax = skinMesh.BoundsCenter + meshExtents;
+
+                if (!hasBounds)
+                {
+                    min = meshMin;
+                    max = meshMax;
+                    hasBounds = true;
+                    continue;
+                }
+
+                min = math.min(min, meshMin);
+                max = math.max(max, meshMax);
+            }
+
+            if (!hasBounds)
+            {
+                return new ActorLocalBounds
+                {
+                    Center = float3.zero,
+                    Extents = new float3(0.5f),
+                };
+            }
+
+            return new ActorLocalBounds
+            {
+                Center = (min + max) * 0.5f,
+                Extents = math.max((max - min) * 0.5f, new float3(0.05f)),
+            };
+        }
+
+        static void PopulateAttachmentBoneBuffer(
+            DynamicBuffer<ActorAttachmentBone> attachmentBones,
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorRigidEquipment> rigidEquipment)
+        {
+            if (bones.Length == 0 || rigidEquipment.Length == 0)
+                return;
+
+            var included = new bool[bones.Length];
+            for (int i = 0; i < rigidEquipment.Length; i++)
+            {
+                int boneIndex = rigidEquipment[i].AttachBoneIndex;
+                while ((uint)boneIndex < (uint)bones.Length && !included[boneIndex])
+                {
+                    included[boneIndex] = true;
+                    boneIndex = bones[boneIndex].ParentIndex;
+                }
+            }
+
+            for (int boneIndex = 0; boneIndex < included.Length; boneIndex++)
+            {
+                if (!included[boneIndex])
+                    continue;
+
+                attachmentBones.Add(new ActorAttachmentBone
+                {
+                    BoneIndex = boneIndex,
+                });
+            }
         }
 
         static int ResolveAccumulationSubtreeEndIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
@@ -261,6 +385,7 @@ namespace VVardenfell.Runtime.Animation
 
         static int PopulateSkinMeshBuffer(
             DynamicBuffer<ActorSkinMesh> buffer,
+            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
             DynamicBuffer<ActorBone> bones,
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
@@ -268,19 +393,24 @@ namespace VVardenfell.Runtime.Animation
             in ActorDef actor,
             bool isNpc,
             bool firstPerson,
-            ActorAnimationModelBindingDef binding)
+            ActorAnimationModelBindingDef binding,
+            bool hasEquipment,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
         {
             if (isNpc)
             {
                 int npcSkinCount = PopulateNpcBodySkinMeshBuffer(
                     buffer,
+                    rigidEquipment,
                     bones,
                     ref catalog,
                     cache,
                     contentDb,
                     actor,
                     firstPerson,
-                    binding);
+                    binding,
+                    hasEquipment,
+                    equipment);
                 if (npcSkinCount > 0)
                     return npcSkinCount;
             }
@@ -290,13 +420,16 @@ namespace VVardenfell.Runtime.Animation
 
         static int PopulateNpcBodySkinMeshBuffer(
             DynamicBuffer<ActorSkinMesh> buffer,
+            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
             DynamicBuffer<ActorBone> bones,
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
             RuntimeContentDatabase contentDb,
             in ActorDef actor,
             bool firstPerson,
-            ActorAnimationModelBindingDef actorBinding)
+            ActorAnimationModelBindingDef actorBinding,
+            bool hasEquipment,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
         {
             if (cache == null || contentDb?.Data?.ActorBodyParts == null || actorBinding == null)
                 return 0;
@@ -306,34 +439,55 @@ namespace VVardenfell.Runtime.Animation
             uint usedPartReferences = 0u;
             int added = 0;
 
-            added += TryAddNpcExplicitBodyPart(
-                buffer,
-                bones,
-                ref catalog,
-                cache,
-                contentDb,
-                actor.HeadId,
-                ActorBodyPartMeshPart.Head,
-                female,
-                firstPerson,
-                referenceSkeletonPath,
-                ref usedPartReferences);
-            added += TryAddNpcExplicitBodyPart(
-                buffer,
-                bones,
-                ref catalog,
-                cache,
-                contentDb,
-                actor.HairId,
-                ActorBodyPartMeshPart.Hair,
-                female,
-                firstPerson,
-                referenceSkeletonPath,
-                ref usedPartReferences);
+            if (!firstPerson)
+            {
+                added += TryAddNpcExplicitBodyPart(
+                    buffer,
+                    bones,
+                    ref catalog,
+                    cache,
+                    contentDb,
+                    actor.HeadId,
+                    ActorBodyPartMeshPart.Head,
+                    female,
+                    firstPerson,
+                    referenceSkeletonPath,
+                    ref usedPartReferences);
+                added += TryAddNpcExplicitBodyPart(
+                    buffer,
+                    bones,
+                    ref catalog,
+                    cache,
+                    contentDb,
+                    actor.HairId,
+                    ActorBodyPartMeshPart.Hair,
+                    female,
+                    firstPerson,
+                    referenceSkeletonPath,
+                    ref usedPartReferences);
+            }
+
+            if (hasEquipment)
+            {
+                added += AddNpcEquipmentSkinMeshes(
+                    buffer,
+                    rigidEquipment,
+                    bones,
+                    ref catalog,
+                    cache,
+                    contentDb,
+                    equipment,
+                    female,
+                    firstPerson,
+                    referenceSkeletonPath,
+                    ref usedPartReferences);
+            }
 
             for (int partReference = (int)ActorPartReferenceType.Neck; partReference < (int)ActorPartReferenceType.Count; partReference++)
             {
                 if (!IsBaseSkinPartReference((ActorPartReferenceType)partReference))
+                    continue;
+                if (firstPerson && !IsFirstPersonPartReference((ActorPartReferenceType)partReference))
                     continue;
 
                 if (!TryResolveNpcRaceBodyPart(
@@ -353,8 +507,12 @@ namespace VVardenfell.Runtime.Animation
                 usedPartReferences |= mask;
 
                 if (!cache.TryGetActorAnimationBinding(part.Model, referenceSkeletonPath, out _, out var bodyBinding))
-                    throw new InvalidOperationException(
-                        $"NPC body skin binding missing for model '{part.Model}' with reference skeleton '{referenceSkeletonPath}'.");
+                {
+                    WarnPresentationOnce(
+                        $"missing-body-binding:{part.Model}:{referenceSkeletonPath}",
+                        $"[VVardenfell] NPC body skin binding missing for model '{part.Model}' with reference skeleton '{referenceSkeletonPath}'.");
+                    continue;
+                }
 
                 added += AddBindingSkinMeshes(
                     buffer,
@@ -496,8 +654,12 @@ namespace VVardenfell.Runtime.Animation
             }
 
             if (!cache.TryGetActorAnimationBinding(part.Model, referenceSkeletonPath, out _, out var binding))
-                throw new InvalidOperationException(
-                    $"NPC explicit body skin binding missing for part '{bodyPartId}' model '{part.Model}' with reference skeleton '{referenceSkeletonPath}'.");
+            {
+                WarnPresentationOnce(
+                    $"missing-explicit-body-binding:{bodyPartId}:{part.Model}:{referenceSkeletonPath}",
+                    $"[VVardenfell] NPC explicit body skin binding missing for part '{bodyPartId}' model '{part.Model}' with reference skeleton '{referenceSkeletonPath}'.");
+                return 0;
+            }
 
             return AddBindingSkinMeshes(
                 buffer,
@@ -506,6 +668,314 @@ namespace VVardenfell.Runtime.Animation
                 GetMeshFilter(partReference),
                 ResolveAttachBoneIndex(bones, GetAttachBoneName(partReference)),
                 IsLeftPartReference(partReference) ? (byte)1 : (byte)0);
+        }
+
+        static int AddNpcEquipmentSkinMeshes(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
+            DynamicBuffer<ActorBone> bones,
+            ref ActorAnimationCatalogBlob catalog,
+            CacheLoader cache,
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            bool female,
+            bool firstPerson,
+            string referenceSkeletonPath,
+            ref uint usedPartReferences)
+        {
+            int added = 0;
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var slot = equipment[i];
+                if (slot.Content.Kind != ContentReferenceKind.Item)
+                    continue;
+
+                var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
+                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    continue;
+
+                    if (itemEquipment.Kind == ItemEquipmentKind.Weapon)
+                        continue;
+
+                var bodyParts = contentDb.GetItemEquipmentBodyParts(itemEquipment);
+                for (int partIndex = 0; partIndex < bodyParts.Length; partIndex++)
+                {
+                    var bodyPartRef = bodyParts[partIndex];
+                    if (!TryMapEquipmentPartReference(bodyPartRef.Part, out var partReference))
+                        continue;
+                    if (firstPerson && !IsFirstPersonPartReference(partReference))
+                        continue;
+
+                    int partBit = (int)partReference;
+                    if ((uint)partBit >= 32u)
+                        continue;
+
+                    uint mask = 1u << partBit;
+                    if ((usedPartReferences & mask) != 0)
+                        continue;
+
+                    if (!TryResolveEquipmentBodyPart(
+                            contentDb,
+                            bodyPartRef,
+                            female,
+                            firstPerson,
+                            out var bodyPartId,
+                            out var bodyPart))
+                    {
+                        continue;
+                    }
+
+                    if (bodyPart.Type != ActorBodyPartMeshType.Armor && bodyPart.Type != ActorBodyPartMeshType.Clothing)
+                        continue;
+
+                    if (!cache.TryGetActorAnimationBinding(bodyPart.Model, referenceSkeletonPath, out _, out var binding))
+                    {
+                        WarnPresentationOnce(
+                            $"missing-binding:{bodyPart.Model}:{referenceSkeletonPath}",
+                            $"[VVardenfell] NPC equipment skin binding missing for model '{bodyPart.Model}' with reference skeleton '{referenceSkeletonPath}'.");
+                        continue;
+                    }
+
+                    usedPartReferences |= mask;
+                    added += AddBindingSkinMeshes(
+                        buffer,
+                        ref catalog,
+                        binding,
+                        GetMeshFilter(partReference),
+                        ResolveAttachBoneIndex(bones, GetAttachBoneName(partReference)),
+                        IsLeftPartReference(partReference) ? (byte)1 : (byte)0);
+                }
+            }
+
+            return added;
+        }
+
+        static bool TryResolveEquipmentBodyPart(
+            RuntimeContentDatabase contentDb,
+            in ItemEquipmentBodyPartDef bodyPartRef,
+            bool female,
+            bool firstPerson,
+            out string bodyPartId,
+            out ActorBodyPartDef bodyPart)
+        {
+            bodyPart = default;
+            bodyPartId = female && !string.IsNullOrWhiteSpace(bodyPartRef.FemaleBodyPartId)
+                ? bodyPartRef.FemaleBodyPartId
+                : bodyPartRef.MaleBodyPartId;
+            if (string.IsNullOrWhiteSpace(bodyPartId))
+                bodyPartId = bodyPartRef.FemaleBodyPartId;
+            if (string.IsNullOrWhiteSpace(bodyPartId))
+                return false;
+
+            if (!TryGetBodyPart(contentDb, bodyPartId, out bodyPart))
+            {
+                WarnPresentationOnce($"missing-body:{bodyPartId}", $"[VVardenfell] NPC equipment body part '{bodyPartId}' could not be resolved.");
+                return false;
+            }
+
+            bool wantsFirstPerson = firstPerson;
+            if ((bodyPart.FirstPerson != 0) == wantsFirstPerson)
+                return true;
+
+            if (!firstPerson)
+                return false;
+
+            string firstPersonId = $"{bodyPartId}.1st";
+            if (TryGetBodyPart(contentDb, firstPersonId, out var firstPersonPart))
+            {
+                bodyPartId = firstPersonId;
+                bodyPart = firstPersonPart;
+                return true;
+            }
+
+            return true;
+        }
+
+        static bool TryGetBodyPart(RuntimeContentDatabase contentDb, string bodyPartId, out ActorBodyPartDef bodyPart)
+        {
+            bodyPart = default;
+            if (contentDb == null || !contentDb.TryGetActorBodyPartHandle(bodyPartId, out var handle))
+                return false;
+
+            bodyPart = contentDb.GetActorBodyPart(handle);
+            return true;
+        }
+
+        static bool IsFirstPersonPartReference(ActorPartReferenceType type)
+        {
+            return type is ActorPartReferenceType.RightHand
+                or ActorPartReferenceType.LeftHand
+                or ActorPartReferenceType.RightWrist
+                or ActorPartReferenceType.LeftWrist
+                or ActorPartReferenceType.RightForearm
+                or ActorPartReferenceType.LeftForearm
+                or ActorPartReferenceType.RightUpperarm
+                or ActorPartReferenceType.LeftUpperarm;
+        }
+
+        static bool TryMapEquipmentPartReference(ItemEquipmentPartReference source, out ActorPartReferenceType target)
+        {
+            if ((byte)source >= (byte)ActorPartReferenceType.Count)
+            {
+                target = default;
+                return false;
+            }
+
+            target = (ActorPartReferenceType)(byte)source;
+            return target != ActorPartReferenceType.Weapon;
+        }
+
+        static void WarnPresentationOnce(string key, string message)
+        {
+            if (!s_PresentationWarnings.Add(key))
+                return;
+            UnityEngine.Debug.LogWarning(message);
+        }
+
+        void PrebuildRigidEquipmentPrefabs(RuntimeContentDatabase contentDb)
+        {
+            s_RigidEquipmentPrefabBuildSet.Clear();
+            if (contentDb == null
+                || WorldResources.Cache == null
+                || WorldResources.SpawnableItemPrefabs == null
+                || WorldResources.ModelPrefabs == null)
+            {
+                return;
+            }
+
+            foreach (var (_, entity) in
+                     SystemAPI.Query<RefRO<ActorSpawnSource>>()
+                         .WithNone<ActorPresentation>()
+                         .WithEntityAccess())
+            {
+                if (!EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
+                    continue;
+
+                var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(entity);
+                for (int i = 0; i < equipment.Length; i++)
+                {
+                    var slot = equipment[i];
+                    if (slot.Content.Kind != ContentReferenceKind.Item)
+                        continue;
+
+                    var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
+                    if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                        continue;
+
+                    if (itemEquipment.Kind != ItemEquipmentKind.Weapon)
+                        continue;
+                    if (!ShouldSpawnRigidEquipmentAtPresentation(itemEquipment))
+                        continue;
+
+                    if ((uint)itemHandle.Index >= (uint)WorldResources.SpawnableItemPrefabs.Length)
+                        continue;
+
+                    var descriptor = WorldResources.SpawnableItemPrefabs[itemHandle.Index];
+                    if (descriptor.IsSupported)
+                        s_RigidEquipmentPrefabBuildSet.Add(descriptor.ModelPrefabIndex);
+                }
+            }
+
+            foreach (int modelPrefabIndex in s_RigidEquipmentPrefabBuildSet)
+                WorldBootstrap.EnsureModelPrefabBuilt(EntityManager, WorldResources.Cache, modelPrefabIndex);
+        }
+
+        void PopulateRigidEquipment(
+            ref EntityCommandBuffer ecb,
+            Entity actorEntity,
+            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
+            DynamicBuffer<ActorBone> bones,
+            RuntimeContentDatabase contentDb,
+            bool hasEquipment,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
+        {
+            if (!hasEquipment || contentDb == null || WorldResources.ModelPrefabs == null)
+                return;
+
+            LocalTransform initialTransform = EntityManager.HasComponent<LocalTransform>(actorEntity)
+                ? EntityManager.GetComponentData<LocalTransform>(actorEntity)
+                : LocalTransform.Identity;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var slot = equipment[i];
+                if (slot.Content.Kind != ContentReferenceKind.Item)
+                    continue;
+
+                var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
+                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    continue;
+
+                if (itemEquipment.Kind != ItemEquipmentKind.Weapon)
+                    continue;
+                if (!ShouldSpawnRigidEquipmentAtPresentation(itemEquipment))
+                    continue;
+
+                if ((uint)itemHandle.Index >= (uint)(WorldResources.SpawnableItemPrefabs?.Length ?? 0))
+                    continue;
+
+                var descriptor = WorldResources.SpawnableItemPrefabs[itemHandle.Index];
+                if (!descriptor.IsSupported)
+                    continue;
+
+                Entity prefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
+                if (prefab == Entity.Null || !EntityManager.Exists(prefab))
+                    continue;
+
+                int attachBoneIndex = ResolveRigidEquipmentAttachBone(bones, itemEquipment);
+                if (attachBoneIndex < 0)
+                    continue;
+
+                rigidEquipment.Add(new ActorRigidEquipment
+                {
+                    Slot = itemEquipment.Slot,
+                    Content = slot.Content,
+                    ModelPrefabIndex = descriptor.ModelPrefabIndex,
+                    AttachBoneIndex = attachBoneIndex,
+                });
+
+                Entity equipmentRoot = ecb.Instantiate(prefab);
+                ecb.SetComponent(equipmentRoot, initialTransform);
+                ecb.AddComponent(equipmentRoot, new ActorRigidEquipmentAttachment
+                {
+                    Actor = actorEntity,
+                    BoneIndex = attachBoneIndex,
+                    LocalPosition = float3.zero,
+                    LocalRotation = quaternion.identity,
+                    LocalScale = 1f,
+                });
+
+                if (EntityManager.HasComponent<InteriorCellMember>(actorEntity))
+                    ecb.AddComponent<InteriorCellMember>(equipmentRoot);
+                if (EntityManager.HasComponent<CellLink>(actorEntity))
+                    ecb.AddComponent(equipmentRoot, EntityManager.GetComponentData<CellLink>(actorEntity));
+            }
+        }
+
+        static bool ShouldSpawnRigidEquipmentAtPresentation(in ItemEquipmentDef equipment)
+        {
+            // Vanilla keeps equipped weapons sheathed/invisible until the actor is in a drawn weapon state.
+            // Keep the data equipped now; a later combat/draw-state pass can spawn or enable this visual.
+            return equipment.Kind == ItemEquipmentKind.Weapon && s_SpawnWeaponsDrawnOnPresentation;
+        }
+
+        static int ResolveRigidEquipmentAttachBone(DynamicBuffer<ActorBone> bones, in ItemEquipmentDef equipment)
+        {
+            if (equipment.Kind == ItemEquipmentKind.Weapon)
+            {
+                if (equipment.Type == 9)
+                {
+                    int leftWeaponBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("weapon bone left"));
+                    if (leftWeaponBone >= 0)
+                        return leftWeaponBone;
+                }
+
+                int weaponBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("weapon bone"));
+                return weaponBone >= 0 ? weaponBone : ResolveAttachBoneIndex(bones, new FixedString64Bytes("bip01 r hand"));
+            }
+
+            int shieldBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("shield bone"));
+            return shieldBone >= 0 ? shieldBone : ResolveAttachBoneIndex(bones, new FixedString64Bytes("bip01 l forearm"));
         }
 
         static int AddBindingSkinMeshes(
@@ -586,6 +1056,7 @@ namespace VVardenfell.Runtime.Animation
                 ActorPartReferenceType.LeftHand => new FixedString64Bytes("left hand"),
                 ActorPartReferenceType.RightWrist => new FixedString64Bytes("right wrist"),
                 ActorPartReferenceType.LeftWrist => new FixedString64Bytes("left wrist"),
+                ActorPartReferenceType.Shield => new FixedString64Bytes("shield bone"),
                 ActorPartReferenceType.RightForearm => new FixedString64Bytes("right forearm"),
                 ActorPartReferenceType.LeftForearm => new FixedString64Bytes("left forearm"),
                 ActorPartReferenceType.RightUpperarm => new FixedString64Bytes("right upper arm"),
@@ -610,6 +1081,7 @@ namespace VVardenfell.Runtime.Animation
             return type switch
             {
                 ActorPartReferenceType.Hair => new FixedString64Bytes("head"),
+                ActorPartReferenceType.Weapon => new FixedString64Bytes("weapon bone"),
                 _ => GetMeshFilter(type),
             };
         }

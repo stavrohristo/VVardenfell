@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
@@ -141,6 +142,134 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
+        public static WorldBootstrapPreloadResult PreloadSandboxCells(CacheLoader cache, SandboxWorldProfile profile)
+        {
+            var cellGrid = cache.Manifest.CellGrid;
+            var loaded = new CellData[cellGrid.Length];
+            var failures = new WorldBootstrapPreloadFailureInfo[cellGrid.Length];
+            var interiorIds = cache.Manifest.InteriorCellIds ?? System.Array.Empty<string>();
+            var loadedInteriors = new CellData[interiorIds.Length];
+            var interiorFailures = new WorldBootstrapPreloadFailureInfo[interiorIds.Length];
+            var stateByKey = BuildCellStateLookup(cache.Manifest.CellStates);
+            var exteriorIndexByCoord = BuildExteriorIndexLookup(cellGrid);
+            var interiorIndexById = BuildInteriorIndexLookup(interiorIds);
+            var requiredExterior = new HashSet<int2>();
+            var requiredInteriors = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+            if (profile != null)
+            {
+                requiredExterior.Add(WorldBootstrap.WorldPositionToCell(profile.PlayerStartPosition));
+                if (profile.GenerateActorInspectionGrid)
+                    requiredExterior.Add(profile.ActorInspectionExteriorCell);
+
+                var spawns = profile.Spawns ?? System.Array.Empty<SandboxSpawnSpec>();
+                for (int i = 0; i < spawns.Length; i++)
+                {
+                    var spawn = spawns[i];
+                    if (spawn.IsInterior)
+                    {
+                        requiredInteriors.Add(spawn.InteriorCellId ?? string.Empty);
+                    }
+                    else
+                    {
+                        requiredExterior.Add(spawn.ExteriorCell);
+                        requiredExterior.Add(WorldBootstrap.WorldPositionToCell(spawn.Position));
+                    }
+
+                    if (spawn.DoorDestination.Enabled)
+                    {
+                        if (!string.IsNullOrWhiteSpace(spawn.DoorDestination.DestinationCellId))
+                            requiredInteriors.Add(spawn.DoorDestination.DestinationCellId);
+                        else
+                            requiredExterior.Add(WorldBootstrap.WorldPositionToCell(spawn.DoorDestination.Position));
+                    }
+                }
+            }
+
+            foreach (var coord in requiredExterior)
+            {
+                if (!exteriorIndexByCoord.TryGetValue(coord, out int index))
+                {
+                    Debug.LogWarning($"[VVardenfell][Sandbox] requested exterior cell ({coord.x},{coord.y}) is not present in the baked cache.");
+                    continue;
+                }
+
+                string path = CachePaths.CellFile(coord.x, coord.y);
+                if (!File.Exists(path))
+                {
+                    Debug.LogWarning($"[VVardenfell][Sandbox] requested exterior cell ({coord.x},{coord.y}) has no baked cell file at '{path}'.");
+                    continue;
+                }
+
+                try
+                {
+                    loaded[index] = CellFile.Read(path);
+                    failures[index] = ValidatePreloadedCell(
+                        loaded[index],
+                        ResolveCellState(stateByKey, false, coord.x, coord.y, null),
+                        false,
+                        $"({coord.x},{coord.y})",
+                        path);
+                    if (failures[index] != null)
+                        loaded[index] = null;
+                }
+                catch (System.Exception ex)
+                {
+                    failures[index] = CreatePreloadFailure(
+                        isInterior: false,
+                        cellLabel: $"({coord.x},{coord.y})",
+                        path: path,
+                        ex: ex);
+                }
+            }
+
+            foreach (string cellId in requiredInteriors)
+            {
+                string normalizedCellId = cellId ?? string.Empty;
+                if (!interiorIndexById.TryGetValue(normalizedCellId, out int index))
+                {
+                    Debug.LogWarning($"[VVardenfell][Sandbox] requested interior '{normalizedCellId}' is not present in the baked cache.");
+                    continue;
+                }
+
+                string path = CachePaths.InteriorCellFile(normalizedCellId);
+                if (!File.Exists(path))
+                {
+                    Debug.LogWarning($"[VVardenfell][Sandbox] requested interior '{normalizedCellId}' has no baked cell file at '{path}'.");
+                    continue;
+                }
+
+                try
+                {
+                    loadedInteriors[index] = CellFile.Read(path, isInterior: true, cellId: normalizedCellId);
+                    interiorFailures[index] = ValidatePreloadedCell(
+                        loadedInteriors[index],
+                        ResolveCellState(stateByKey, true, 0, 0, normalizedCellId),
+                        true,
+                        normalizedCellId,
+                        path);
+                    if (interiorFailures[index] != null)
+                        loadedInteriors[index] = null;
+                }
+                catch (System.Exception ex)
+                {
+                    interiorFailures[index] = CreatePreloadFailure(
+                        isInterior: true,
+                        cellLabel: normalizedCellId,
+                        path: path,
+                        ex: ex);
+                }
+            }
+
+            return new WorldBootstrapPreloadResult
+            {
+                ExteriorCells = loaded,
+                ExteriorFailures = failures,
+                InteriorCells = loadedInteriors,
+                InteriorFailures = interiorFailures,
+            };
+        }
+
         public static WorldBootstrapPreloadFailureInfo GetFirstPreloadFailure(WorldBootstrapPreloadResult result)
         {
             if (result?.ExteriorFailures != null)
@@ -228,6 +357,28 @@ namespace VVardenfell.Runtime.Streaming
                 lookup[key] = state;
             }
 
+            return lookup;
+        }
+
+        static Dictionary<int2, int> BuildExteriorIndexLookup((int X, int Y)[] cellGrid)
+        {
+            var lookup = new Dictionary<int2, int>();
+            if (cellGrid == null)
+                return lookup;
+
+            for (int i = 0; i < cellGrid.Length; i++)
+                lookup[new int2(cellGrid[i].X, cellGrid[i].Y)] = i;
+            return lookup;
+        }
+
+        static Dictionary<string, int> BuildInteriorIndexLookup(string[] interiorIds)
+        {
+            var lookup = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
+            if (interiorIds == null)
+                return lookup;
+
+            for (int i = 0; i < interiorIds.Length; i++)
+                lookup[interiorIds[i] ?? string.Empty] = i;
             return lookup;
         }
 

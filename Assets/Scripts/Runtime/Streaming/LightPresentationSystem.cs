@@ -7,6 +7,7 @@ using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
@@ -59,6 +60,10 @@ namespace VVardenfell.Runtime.Streaming
                 ComponentType.ReadOnly<LocalToWorld>());
             RequireForUpdate<StreamingConfig>();
             RequireForUpdate<ActiveEnvironmentState>();
+            RequireForUpdate<MainCameraSingleton>();
+            
+            _root = new GameObject("VVardenfell.RuntimePointLights");
+            Object.DontDestroyOnLoad(_root);
         }
 
         protected override void OnDestroy()
@@ -84,14 +89,7 @@ namespace VVardenfell.Runtime.Streaming
             using var _ = k_SyncLights.Auto();
 
             CompleteDependency();
-            EnsureRoot();
-
-            var cam = Camera.main;
-            if (cam == null)
-            {
-                ReleaseAllPresentedLights();
-                return;
-            }
+            
 
             bool interiorActive = false;
             FixedString128Bytes activeInteriorCellId = default;
@@ -129,7 +127,8 @@ namespace VVardenfell.Runtime.Streaming
             using var flags = _lightQuery.ToComponentDataArray<LightInstanceFlags>(Unity.Collections.Allocator.Temp);
             using var locations = _lightQuery.ToComponentDataArray<LogicalRefLocation>(Unity.Collections.Allocator.Temp);
 
-            float3 cameraPosition = cam.transform.position;
+            var camSingleton = SystemAPI.GetSingleton<MainCameraSingleton>();
+            float3 cameraPosition = camSingleton.Ref.Value.transform.position;
 
             for (int i = 0; i < entities.Length; i++)
             {
@@ -190,15 +189,6 @@ namespace VVardenfell.Runtime.Streaming
                     _activeLights.Remove(entity);
                 }
             }
-        }
-
-        void EnsureRoot()
-        {
-            if (_root != null)
-                return;
-
-            _root = new GameObject("VVardenfell.RuntimePointLights");
-            Object.DontDestroyOnLoad(_root);
         }
 
         void PresentLight(in LightCandidate candidate)

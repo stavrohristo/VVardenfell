@@ -1,9 +1,15 @@
 using Unity.Entities;
 using Unity.Mathematics;
+using UnityEngine;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
 {
+    public struct MainLightSingleton : IComponentData
+    {
+        public UnityObjectRef<Light> Value;
+    }
+
     public struct LightInstanceFlags : IComponentData
     {
         public byte Carry;

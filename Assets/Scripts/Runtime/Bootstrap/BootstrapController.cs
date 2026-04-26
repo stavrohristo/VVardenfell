@@ -121,7 +121,7 @@ namespace VVardenfell.Runtime.Bootstrap
             }
         }
 
-        private enum Stage { PickPath, Baking, Loading, Ready, Failed }
+        private enum Stage { PickPath, PickMode, Baking, Loading, Ready, Failed }
         public static BootstrapController Active { get; private set; }
 
         [Header("Player Movement")]
@@ -140,6 +140,8 @@ namespace VVardenfell.Runtime.Bootstrap
         private BootstrapFallbackView _fallbackView;
         private bool _presentationReady;
         private bool _loadStartRequested;
+        private BootstrapRuntimeMode _selectedRuntimeMode = BootstrapRuntimeMode.Vanilla;
+        private WorldBootstrapOptions _bootstrapOptions = WorldBootstrapOptions.Vanilla;
 
         public static PlayerCharacterComponent ResolvePlayerMovementSettings()
         {
@@ -190,7 +192,7 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 _config = c;
                 ApplyPersistedSettings(c);
-                BeginCacheFlow();
+                ShowModeSelection();
             }
             else
             {
@@ -243,8 +245,21 @@ namespace VVardenfell.Runtime.Bootstrap
             // up, and the Options window itself writes FOV live when moved.
         }
 
-        private void BeginCacheFlow()
+        public static BootstrapRuntimeMode CurrentRuntimeMode
+            => Active != null ? Active._selectedRuntimeMode : BootstrapRuntimeMode.Vanilla;
+
+        private void ShowModeSelection()
         {
+            _stage = Stage.PickMode;
+            _loadStartRequested = false;
+            _loadCoroutine = null;
+            _presentationReady = false;
+        }
+
+        private void BeginCacheFlow(BootstrapRuntimeMode mode)
+        {
+            _selectedRuntimeMode = mode;
+            _bootstrapOptions = BuildBootstrapOptions(mode);
             _progress.Stage = "";
             _progress.Label = "";
             _progress.Current = 0;
@@ -335,13 +350,22 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private void BeginLoading()
         {
+            _loadProgress.Reset();
+            _stage = Stage.Loading;
+
+            if (ShouldSkipPresentationForMode(_selectedRuntimeMode))
+            {
+                _loadStartRequested = false;
+                if (_loadCoroutine == null)
+                    _loadCoroutine = StartCoroutine(LoadRoutine());
+                return;
+            }
+
             if (!EnsurePresentation())
                 return;
 
-            _loadProgress.Reset();
             _loadProgress.BeginStage("Boot Sequence", "Waiting for intro sequence", 1);
             _loadProgress.Report("Waiting for intro sequence", 0, 1);
-            _stage = Stage.Loading;
             _loadStartRequested = true;
         }
 
@@ -363,7 +387,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var routines = new IEnumerator[]
             {
                 loader.LoadIncremental(_loadProgress),
-                WorldBootstrap.InstallIncremental(loader, _loadProgress),
+                WorldBootstrap.InstallIncremental(loader, _loadProgress, _bootstrapOptions),
             };
 
             for (int i = 0; i < routines.Length; i++)
@@ -527,6 +551,9 @@ namespace VVardenfell.Runtime.Bootstrap
                 case Stage.PickPath:
                     _fallbackView.ShowPathPicker(_path, _pathError);
                     break;
+                case Stage.PickMode:
+                    _fallbackView.ShowModePicker(_config?.InstallPath, OnFallbackModeSelected);
+                    break;
                 case Stage.Baking:
                     _fallbackView.ShowProgress(
                         "Optimizing",
@@ -577,12 +604,35 @@ namespace VVardenfell.Runtime.Bootstrap
                 ConfigStorage.Save(cfg);
                 _config = cfg;
                 _pathError = null;
-                BeginCacheFlow();
+                ApplyPersistedSettings(cfg);
+                ShowModeSelection();
             }
             else
             {
                 SetPathError(err);
             }
+        }
+
+        private void OnFallbackModeSelected(BootstrapRuntimeMode mode)
+        {
+            BeginCacheFlow(mode);
+        }
+
+        private static WorldBootstrapOptions BuildBootstrapOptions(BootstrapRuntimeMode mode)
+        {
+            if (mode == BootstrapRuntimeMode.Sandbox)
+            {
+                var profile = SandboxWorldFixtures.Active;
+                if (profile != null)
+                    return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
+            }
+
+            return WorldBootstrapOptions.Vanilla;
+        }
+
+        private static bool ShouldSkipPresentationForMode(BootstrapRuntimeMode mode)
+        {
+            return mode == BootstrapRuntimeMode.Sandbox;
         }
 
         private Action GetBrowseCallback()

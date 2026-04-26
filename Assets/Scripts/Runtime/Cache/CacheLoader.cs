@@ -234,10 +234,6 @@ namespace VVardenfell.Runtime.Cache
             if (actor.Kind == ActorDefKind.Creature)
                 return TryGetActorAnimationBinding(actor.Model, out bindingIndex, out binding);
 
-            if (!string.IsNullOrWhiteSpace(actor.Model)
-                && TryGetActorAnimationBinding(actor.Model, out bindingIndex, out binding))
-                return true;
-
             bool female = (actor.Flags & 0x1u) != 0;
             bool beast = false;
             if (contentDb != null

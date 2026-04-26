@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -45,6 +46,7 @@ namespace VVardenfell.Runtime.Player
         public bool SprintHeld;
         public bool CrouchHeld;
         public bool InteractPressed;
+        public bool ToggleViewPressed;
         public bool JumpThisFixedTick;
         public float3 MoveVectorWorld;
         public FixedInputEvent JumpPressedEvent;
@@ -69,6 +71,28 @@ namespace VVardenfell.Runtime.Player
         public float LocalPitchDegrees;
         public quaternion LocalViewRotation;
         public float3 LocalEyeOffset;
+    }
+
+    public enum PlayerViewMode : byte
+    {
+        FirstPerson = 0,
+        ThirdPerson = 1,
+    }
+
+    public struct LocalPlayerPresentationState : IComponentData
+    {
+        public PlayerViewMode Mode;
+        public float ThirdPersonDistance;
+        public Entity FirstPersonVisual;
+        public Entity ThirdPersonVisual;
+        public ActorDefHandle Actor;
+    }
+
+    public struct LocalPlayerVisual : IComponentData
+    {
+        public Entity Player;
+        public Entity View;
+        public byte FirstPerson;
     }
 
     public struct PlayerStanceColliders : IComponentData

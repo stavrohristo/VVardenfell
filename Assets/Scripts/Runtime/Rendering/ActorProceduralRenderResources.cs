@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
@@ -33,14 +34,42 @@ namespace VVardenfell.Runtime.Rendering
     public struct ActorProceduralDrawGpu
     {
         public int FirstIndex;
-        public int IndexCount;
         public int FirstVertex;
         public int BoneMatrixOffset;
+        public int BoneMatrixSource;
         public int TextureSlice;
         public int Padding0;
         public int Padding1;
         public int Padding2;
         public ActorProceduralMatrixGpu LocalToWorld;
+    }
+
+    public struct ActorProceduralSortEntry : IComparable<ActorProceduralSortEntry>
+    {
+        public ulong SortKey;
+        public int DrawIndex;
+
+        public int CompareTo(ActorProceduralSortEntry other)
+        {
+            return SortKey.CompareTo(other.SortKey);
+        }
+    }
+
+    public struct ActorProceduralBatchTypeInfo
+    {
+        public int BucketIndex;
+        public int MaterialIndex;
+        public int IndexCount;
+    }
+
+    public struct ActorProceduralSkinMeshRuntimeInfo
+    {
+        public int BatchTypeId;
+        public int BoneMatrixCount;
+        public int TextureSlice;
+        public int FirstIndex;
+        public int IndexCount;
+        public int FirstVertex;
     }
 
     public struct ActorProceduralDrawBatch
@@ -56,20 +85,33 @@ namespace VVardenfell.Runtime.Rendering
     {
         public static readonly int VerticesId = Shader.PropertyToID("_ActorVertices");
         public static readonly int IndicesId = Shader.PropertyToID("_ActorIndices");
-        public static readonly int BoneMatricesId = Shader.PropertyToID("_ActorBoneMatrices");
+        public static readonly int CpuBoneMatricesId = Shader.PropertyToID("_ActorCpuBoneMatrices");
+        public static readonly int GpuBoneMatricesId = Shader.PropertyToID("_ActorGpuBoneMatrices");
         public static readonly int DrawsId = Shader.PropertyToID("_ActorDraws");
         public static readonly int DrawIndexId = Shader.PropertyToID("_ActorDrawIndex");
+        public static readonly int DrawBaseId = Shader.PropertyToID("_ActorDrawBase");
+        public static readonly int MainLightDirectionId = Shader.PropertyToID("_ActorMainLightDirection");
+        public static readonly int MainLightColorId = Shader.PropertyToID("_ActorMainLightColor");
+        public static readonly int MainLightValidId = Shader.PropertyToID("_ActorMainLightValid");
         static readonly int BaseArrayId = Shader.PropertyToID("_BaseArray");
         static readonly int SrcBlendId = Shader.PropertyToID("_SrcBlend");
         static readonly int DstBlendId = Shader.PropertyToID("_DstBlend");
         static readonly int ZWriteId = Shader.PropertyToID("_ZWrite");
         static readonly int CutoffId = Shader.PropertyToID("_Cutoff");
         const int ProceduralIndirectArgsCount = 4;
+        const GraphicsBuffer.UsageFlags DynamicBufferUsage = GraphicsBuffer.UsageFlags.LockBufferForWrite;
 
         public NativeList<ActorProceduralDrawGpu> Draws;
         public NativeList<ActorProceduralDrawBatch> Batches;
         public NativeList<ActorProceduralMatrixGpu> BoneMatrices;
 
+        NativeList<ActorProceduralDrawGpu> _packedDraws;
+        NativeList<int> _packedBatchTypeIds;
+        NativeList<int> _batchTypeCounts;
+        NativeList<int> _batchTypeOffsets;
+        NativeList<int> _batchTypeWriteHeads;
+        NativeList<ActorProceduralBatchTypeInfo> _batchTypeInfos;
+        NativeList<ActorProceduralSkinMeshRuntimeInfo> _skinMeshRuntimeInfos;
         NativeList<ActorProceduralVertexGpu> _vertices;
         NativeList<int> _indices;
         NativeList<uint> _indirectArgs;
@@ -77,11 +119,13 @@ namespace VVardenfell.Runtime.Rendering
         GraphicsBuffer _vertexBuffer;
         GraphicsBuffer _indexBuffer;
         GraphicsBuffer _boneMatrixBuffer;
+        GraphicsBuffer _gpuBoneMatrixBuffer;
         GraphicsBuffer _drawBuffer;
         GraphicsBuffer _indirectArgsBuffer;
         Material[][] _materials;
         Shader _shader;
         int _geometrySkinMeshCount = -1;
+        int _invalidBatchTypeId = -1;
         bool _geometryUploaded;
 
         public ActorProceduralRenderResources()
@@ -89,6 +133,13 @@ namespace VVardenfell.Runtime.Rendering
             _vertices = new NativeList<ActorProceduralVertexGpu>(Allocator.Persistent);
             _indices = new NativeList<int>(Allocator.Persistent);
             _indirectArgs = new NativeList<uint>(Allocator.Persistent);
+            _packedDraws = new NativeList<ActorProceduralDrawGpu>(Allocator.Persistent);
+            _packedBatchTypeIds = new NativeList<int>(Allocator.Persistent);
+            _batchTypeCounts = new NativeList<int>(Allocator.Persistent);
+            _batchTypeOffsets = new NativeList<int>(Allocator.Persistent);
+            _batchTypeWriteHeads = new NativeList<int>(Allocator.Persistent);
+            _batchTypeInfos = new NativeList<ActorProceduralBatchTypeInfo>(Allocator.Persistent);
+            _skinMeshRuntimeInfos = new NativeList<ActorProceduralSkinMeshRuntimeInfo>(Allocator.Persistent);
             Draws = new NativeList<ActorProceduralDrawGpu>(Allocator.Persistent);
             Batches = new NativeList<ActorProceduralDrawBatch>(Allocator.Persistent);
             BoneMatrices = new NativeList<ActorProceduralMatrixGpu>(Allocator.Persistent);
@@ -97,7 +148,7 @@ namespace VVardenfell.Runtime.Rendering
         public bool IsReadyForDraw =>
             _vertexBuffer != null
             && _indexBuffer != null
-            && _boneMatrixBuffer != null
+            && (_boneMatrixBuffer != null || _gpuBoneMatrixBuffer != null)
             && _drawBuffer != null
             && Draws.Length > 0
             && Batches.Length > 0;
@@ -108,13 +159,14 @@ namespace VVardenfell.Runtime.Rendering
         public int IndirectArgsCount => _indirectArgs.IsCreated ? _indirectArgs.Length : 0;
         public bool HasVertexBuffer => _vertexBuffer != null;
         public bool HasIndexBuffer => _indexBuffer != null;
-        public bool HasBoneMatrixBuffer => _boneMatrixBuffer != null;
+        public bool HasBoneMatrixBuffer => _boneMatrixBuffer != null || _gpuBoneMatrixBuffer != null;
         public bool HasDrawBuffer => _drawBuffer != null;
         public bool HasIndirectArgsBuffer => _indirectArgsBuffer != null;
 
         public void EnsureStaticResources(ref ActorAnimationCatalogBlob catalog)
         {
             EnsureMaterials();
+            EnsureBatchTypes(ref catalog);
             EnsureGeometry(ref catalog);
         }
 
@@ -130,10 +182,21 @@ namespace VVardenfell.Runtime.Rendering
         {
             if (drawCount > Draws.Capacity)
                 Draws.Capacity = drawCount;
+            if (drawCount > _packedDraws.Capacity)
+                _packedDraws.Capacity = drawCount;
+            if (drawCount > _packedBatchTypeIds.Capacity)
+                _packedBatchTypeIds.Capacity = drawCount;
             if (boneMatrixCount > BoneMatrices.Capacity)
                 BoneMatrices.Capacity = boneMatrixCount;
-            if (drawCount > Batches.Capacity)
-                Batches.Capacity = drawCount;
+            int batchTypeCount = _batchTypeInfos.IsCreated ? _batchTypeInfos.Length : 0;
+            if (batchTypeCount > Batches.Capacity)
+                Batches.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeCounts.Capacity)
+                _batchTypeCounts.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeOffsets.Capacity)
+                _batchTypeOffsets.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeWriteHeads.Capacity)
+                _batchTypeWriteHeads.Capacity = batchTypeCount;
             int indirectArgCount = drawCount * ProceduralIndirectArgsCount;
             if (indirectArgCount > _indirectArgs.Capacity)
                 _indirectArgs.Capacity = indirectArgCount;
@@ -142,38 +205,37 @@ namespace VVardenfell.Runtime.Rendering
         public void PrepareFrameData(int drawCount, int boneMatrixCount)
         {
             ReserveFrameCapacity(drawCount, boneMatrixCount);
+            _packedDraws.ResizeUninitialized(drawCount);
+            _packedBatchTypeIds.ResizeUninitialized(drawCount);
             Draws.ResizeUninitialized(drawCount);
             BoneMatrices.ResizeUninitialized(boneMatrixCount);
-            Batches.ResizeUninitialized(drawCount);
+            int batchTypeCount = _batchTypeInfos.IsCreated ? _batchTypeInfos.Length : 0;
+            Batches.ResizeUninitialized(batchTypeCount);
+            _batchTypeCounts.ResizeUninitialized(batchTypeCount);
+            _batchTypeOffsets.ResizeUninitialized(batchTypeCount);
+            _batchTypeWriteHeads.ResizeUninitialized(batchTypeCount);
             _indirectArgs.Clear();
         }
 
-        public void CompactBatches()
+        public NativeArray<ActorProceduralDrawBatch> BatchScratch => Batches.AsArray();
+        public NativeArray<int> BatchTypeCounts => _batchTypeCounts.AsArray();
+        public NativeArray<int> BatchTypeOffsets => _batchTypeOffsets.AsArray();
+        public NativeArray<int> BatchTypeWriteHeads => _batchTypeWriteHeads.AsArray();
+        public NativeArray<ActorProceduralBatchTypeInfo> BatchTypeInfos => _batchTypeInfos.AsArray();
+        public NativeArray<ActorProceduralDrawGpu> PackedDraws => _packedDraws.AsArray();
+        public NativeArray<int> PackedBatchTypeIds => _packedBatchTypeIds.AsArray();
+        public NativeArray<ActorProceduralSkinMeshRuntimeInfo> SkinMeshRuntimeInfos => _skinMeshRuntimeInfos.AsArray();
+        public int InvalidBatchTypeId => _invalidBatchTypeId;
+
+        public void FinalizeBatchCount(int batchCount)
         {
-            if (Batches.Length <= 1)
-                return;
-
-            int write = 0;
-            for (int read = 1; read < Batches.Length; read++)
+            if (batchCount <= 0)
             {
-                var current = Batches[read];
-                var last = Batches[write];
-                if (last.BucketIndex == current.BucketIndex
-                    && last.MaterialIndex == current.MaterialIndex
-                    && last.IndexCount == current.IndexCount
-                    && last.DrawBase + last.DrawCount == current.DrawBase)
-                {
-                    last.DrawCount += current.DrawCount;
-                    Batches[write] = last;
-                    continue;
-                }
-
-                write++;
-                if (write != read)
-                    Batches[write] = current;
+                Batches.Clear();
+                return;
             }
 
-            Batches.ResizeUninitialized(write + 1);
+            Batches.ResizeUninitialized(batchCount);
         }
 
         public int AddBoneMatrices(DynamicBuffer<ActorBone> bones)
@@ -202,13 +264,10 @@ namespace VVardenfell.Runtime.Rendering
             Draws.Add(new ActorProceduralDrawGpu
             {
                 FirstIndex = skinMesh.FirstIndexIndex,
-                IndexCount = skinMesh.IndexCount,
                 FirstVertex = skinMesh.FirstVertexIndex,
                 BoneMatrixOffset = boneMatrixOffset,
+                BoneMatrixSource = 0,
                 TextureSlice = textureSlice,
-                Padding0 = 0,
-                Padding1 = 0,
-                Padding2 = 0,
                 LocalToWorld = ToGpuMatrix(localToWorld),
             });
 
@@ -277,16 +336,16 @@ namespace VVardenfell.Runtime.Rendering
         public void UploadFrame()
         {
             BuildIndirectArgs();
-            EnsureBuffer(ref _boneMatrixBuffer, BoneMatrices.Length, UnsafeUtility.SizeOf<ActorProceduralMatrixGpu>(), "VV:ActorBoneMatrices");
-            EnsureBuffer(ref _drawBuffer, Draws.Length, UnsafeUtility.SizeOf<ActorProceduralDrawGpu>(), "VV:ActorDraws");
-            EnsureBuffer(ref _indirectArgsBuffer, _indirectArgs.Length, sizeof(uint), "VV:ActorIndirectArgs", GraphicsBuffer.Target.IndirectArguments);
+            EnsureBuffer(ref _boneMatrixBuffer, BoneMatrices.Length, UnsafeUtility.SizeOf<ActorProceduralMatrixGpu>(), "VV:ActorBoneMatrices", GraphicsBuffer.Target.Structured, DynamicBufferUsage);
+            EnsureBuffer(ref _drawBuffer, Draws.Length, UnsafeUtility.SizeOf<ActorProceduralDrawGpu>(), "VV:ActorDraws", GraphicsBuffer.Target.Structured, DynamicBufferUsage);
+            EnsureBuffer(ref _indirectArgsBuffer, _indirectArgs.Length, sizeof(uint), "VV:ActorIndirectArgs", GraphicsBuffer.Target.IndirectArguments, DynamicBufferUsage);
 
             if (BoneMatrices.Length > 0)
-                _boneMatrixBuffer.SetData(BoneMatrices.AsArray());
+                WriteBuffer(_boneMatrixBuffer, BoneMatrices.AsArray());
             if (Draws.Length > 0)
-                _drawBuffer.SetData(Draws.AsArray());
+                WriteBuffer(_drawBuffer, Draws.AsArray());
             if (_indirectArgs.Length > 0)
-                _indirectArgsBuffer.SetData(_indirectArgs.AsArray());
+                WriteBuffer(_indirectArgsBuffer, _indirectArgs.AsArray());
 
         }
 
@@ -306,8 +365,19 @@ namespace VVardenfell.Runtime.Rendering
         {
             block.SetBuffer(VerticesId, _vertexBuffer);
             block.SetBuffer(IndicesId, _indexBuffer);
-            block.SetBuffer(BoneMatricesId, _boneMatrixBuffer);
+            block.SetBuffer(CpuBoneMatricesId, _boneMatrixBuffer ?? _gpuBoneMatrixBuffer);
+            block.SetBuffer(GpuBoneMatricesId, _gpuBoneMatrixBuffer ?? _boneMatrixBuffer);
             block.SetBuffer(DrawsId, _drawBuffer);
+        }
+
+        public void SetGpuBoneMatrixBuffer(GraphicsBuffer buffer, int boneMatrixCount)
+        {
+            _gpuBoneMatrixBuffer = buffer;
+        }
+
+        public void ClearGpuBoneMatrixBuffer()
+        {
+            _gpuBoneMatrixBuffer = null;
         }
 
         public int GetIndirectArgsOffsetBytes(int batchIndex)
@@ -341,9 +411,83 @@ namespace VVardenfell.Runtime.Rendering
             if (_vertices.IsCreated) _vertices.Dispose();
             if (_indices.IsCreated) _indices.Dispose();
             if (_indirectArgs.IsCreated) _indirectArgs.Dispose();
+            if (_packedDraws.IsCreated) _packedDraws.Dispose();
+            if (_packedBatchTypeIds.IsCreated) _packedBatchTypeIds.Dispose();
+            if (_batchTypeCounts.IsCreated) _batchTypeCounts.Dispose();
+            if (_batchTypeOffsets.IsCreated) _batchTypeOffsets.Dispose();
+            if (_batchTypeWriteHeads.IsCreated) _batchTypeWriteHeads.Dispose();
+            if (_batchTypeInfos.IsCreated) _batchTypeInfos.Dispose();
+            if (_skinMeshRuntimeInfos.IsCreated) _skinMeshRuntimeInfos.Dispose();
             if (Draws.IsCreated) Draws.Dispose();
             if (Batches.IsCreated) Batches.Dispose();
             if (BoneMatrices.IsCreated) BoneMatrices.Dispose();
+        }
+
+        void EnsureBatchTypes(ref ActorAnimationCatalogBlob catalog)
+        {
+            if (_skinMeshRuntimeInfos.IsCreated && _skinMeshRuntimeInfos.Length == catalog.SkinMeshes.Length)
+                return;
+
+            _skinMeshRuntimeInfos.Clear();
+            _batchTypeInfos.Clear();
+
+            if (catalog.SkinMeshes.Length <= 0)
+                return;
+
+            var uniqueKeys = new Dictionary<ulong, ActorProceduralBatchTypeInfo>(catalog.SkinMeshes.Length);
+            for (int i = 0; i < catalog.SkinMeshes.Length; i++)
+            {
+                var skinMesh = catalog.SkinMeshes[i];
+                ResolveTexture(skinMesh.TextureIndex, out int bucketIndex, out int textureSlice);
+                int materialIndex = math.clamp(skinMesh.MaterialIndex, 0, math.max(0, WorldResources.BlendVariantCount - 1));
+                ulong sortKey = ComposeSortKey(bucketIndex, materialIndex, skinMesh.IndexCount);
+                if (!uniqueKeys.ContainsKey(sortKey))
+                {
+                    uniqueKeys.Add(sortKey, new ActorProceduralBatchTypeInfo
+                    {
+                        BucketIndex = bucketIndex,
+                        MaterialIndex = materialIndex,
+                        IndexCount = skinMesh.IndexCount,
+                    });
+                }
+            }
+
+            var sortedKeys = new ulong[uniqueKeys.Count];
+            uniqueKeys.Keys.CopyTo(sortedKeys, 0);
+            Array.Sort(sortedKeys);
+
+            var batchTypeIdByKey = new Dictionary<ulong, int>(sortedKeys.Length);
+            for (int i = 0; i < sortedKeys.Length; i++)
+            {
+                ulong key = sortedKeys[i];
+                batchTypeIdByKey[key] = i;
+                _batchTypeInfos.Add(uniqueKeys[key]);
+            }
+
+            _invalidBatchTypeId = _batchTypeInfos.Length;
+            _batchTypeInfos.Add(new ActorProceduralBatchTypeInfo
+            {
+                BucketIndex = 0,
+                MaterialIndex = 0,
+                IndexCount = 0,
+            });
+
+            for (int i = 0; i < catalog.SkinMeshes.Length; i++)
+            {
+                var skinMesh = catalog.SkinMeshes[i];
+                ResolveTexture(skinMesh.TextureIndex, out int bucketIndex, out int textureSlice);
+                int materialIndex = math.clamp(skinMesh.MaterialIndex, 0, math.max(0, WorldResources.BlendVariantCount - 1));
+                ulong sortKey = ComposeSortKey(bucketIndex, materialIndex, skinMesh.IndexCount);
+                _skinMeshRuntimeInfos.Add(new ActorProceduralSkinMeshRuntimeInfo
+                {
+                    BatchTypeId = batchTypeIdByKey.TryGetValue(sortKey, out int batchTypeId) ? batchTypeId : -1,
+                    BoneMatrixCount = math.max(1, skinMesh.SkinBoneCount),
+                    TextureSlice = textureSlice,
+                    FirstIndex = skinMesh.FirstIndexIndex,
+                    IndexCount = skinMesh.IndexCount,
+                    FirstVertex = skinMesh.FirstVertexIndex,
+                });
+            }
         }
 
         void EnsureGeometry(ref ActorAnimationCatalogBlob catalog)
@@ -479,6 +623,28 @@ namespace VVardenfell.Runtime.Rendering
             });
         }
 
+        public static ulong ComposeSortKey(int bucketIndex, int materialIndex, int indexCount)
+        {
+            return ((ulong)(uint)bucketIndex << 48)
+                | ((ulong)(uint)materialIndex << 32)
+                | (uint)math.max(0, indexCount);
+        }
+
+        public static int ExtractBucketIndex(ulong sortKey)
+        {
+            return (int)((sortKey >> 48) & 0xFFFFu);
+        }
+
+        public static int ExtractMaterialIndex(ulong sortKey)
+        {
+            return (int)((sortKey >> 32) & 0xFFFFu);
+        }
+
+        public static int ExtractIndexCount(ulong sortKey)
+        {
+            return (int)(sortKey & 0xFFFFFFFFu);
+        }
+
         void BuildIndirectArgs()
         {
             _indirectArgs.Clear();
@@ -523,17 +689,28 @@ namespace VVardenfell.Runtime.Rendering
             int count,
             int stride,
             string name,
-            GraphicsBuffer.Target target = GraphicsBuffer.Target.Structured)
+            GraphicsBuffer.Target target = GraphicsBuffer.Target.Structured,
+            GraphicsBuffer.UsageFlags usageFlags = GraphicsBuffer.UsageFlags.None)
         {
             count = math.max(1, count);
-            if (buffer != null && buffer.count >= count && buffer.stride == stride)
+            if (buffer != null
+                && buffer.count >= count
+                && buffer.stride == stride
+                && buffer.usageFlags == usageFlags)
                 return;
 
             ReleaseBuffer(ref buffer);
-            buffer = new GraphicsBuffer(target, count, stride)
+            buffer = new GraphicsBuffer(target, usageFlags, count, stride)
             {
                 name = name,
             };
+        }
+
+        static void WriteBuffer<T>(GraphicsBuffer buffer, NativeArray<T> data) where T : unmanaged
+        {
+            var dst = buffer.LockBufferForWrite<T>(0, data.Length);
+            dst.CopyFrom(data);
+            buffer.UnlockBufferAfterWrite<T>(data.Length);
         }
 
         static void ReleaseBuffer(ref GraphicsBuffer buffer)

@@ -12,6 +12,8 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationGraphSystem))]
     public partial struct ActorPoseSamplingSystem : ISystem
     {
+        static readonly Unity.Profiling.ProfilerMarker k_AttachmentPoseSampling = new("VV.ActorPoseSampling.Attachments");
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<ActorAnimationBlobCatalog>();
@@ -26,6 +28,10 @@ namespace VVardenfell.Runtime.Animation
 
             var job = new SampleActorPoseJob { Catalog = catalog };
             state.Dependency = job.ScheduleParallel(state.Dependency);
+            using (k_AttachmentPoseSampling.Auto())
+            {
+                state.Dependency = new SampleAttachmentBonePoseJob { Catalog = catalog }.ScheduleParallel(state.Dependency);
+            }
         }
 
         [BurstCompile]
@@ -35,12 +41,18 @@ namespace VVardenfell.Runtime.Animation
             [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
 
             void Execute(
+                ref ActorRootMotion rootMotion,
+                in ActorAnimationController controller,
+                in ActorSkeleton skeleton,
                 DynamicBuffer<ActorBone> bones,
                 DynamicBuffer<ActorSampledBonePose> sampled,
                 DynamicBuffer<ActorAnimationLayer> layers)
             {
                 if (!Catalog.IsCreated || bones.Length == 0)
+                {
+                    ResetRootMotion(ref rootMotion);
                     return;
+                }
 
                 ref var catalog = ref Catalog.Value;
                 EnsureSampledLength(sampled, bones.Length);
@@ -65,7 +77,53 @@ namespace VVardenfell.Runtime.Animation
                     anyLayer = true;
                 }
 
-                ComposeHierarchy(bones);
+                if ((uint)skeleton.AccumulationBoneIndex >= (uint)bones.Length)
+                    ResetRootMotion(ref rootMotion);
+
+                ComposeHierarchy(bones, ref rootMotion, controller, skeleton.AccumulationBoneIndex);
+            }
+        }
+
+        [BurstCompile]
+        [WithAll(typeof(GPUAnimation), typeof(ActorAttachmentBoneAnimation))]
+        partial struct SampleAttachmentBonePoseJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
+
+            void Execute(
+                in ActorAnimationController controller,
+                DynamicBuffer<ActorBone> bones,
+                DynamicBuffer<ActorSampledBonePose> sampled,
+                DynamicBuffer<ActorAnimationLayer> layers,
+                DynamicBuffer<ActorAttachmentBone> attachmentBones)
+            {
+                if (!Catalog.IsCreated || bones.Length == 0 || attachmentBones.Length == 0)
+                    return;
+
+                ref var catalog = ref Catalog.Value;
+                EnsureSampledLength(sampled, bones.Length);
+                ResetAttachmentBonesToBindPose(bones, attachmentBones);
+
+                bool anyLayer = false;
+                for (int layerIndex = 0; layerIndex < layers.Length; layerIndex++)
+                {
+                    var layer = layers[layerIndex];
+                    float weight = math.clamp(layer.Weight, 0f, 1f);
+                    if (weight <= 0f || (uint)layer.ClipIndex >= (uint)catalog.Clips.Length)
+                        continue;
+
+                    var clip = catalog.Clips[layer.ClipIndex];
+                    if (clip.TrackCount <= 0 || clip.FirstTrackIndex < 0)
+                        continue;
+
+                    CopyBindPoseSubset(bones, sampled, attachmentBones);
+                    SampleClipTracksSubset(ref catalog, clip, layer.Time, sampled, attachmentBones);
+                    ApplyXyzRotationsSubset(sampled, attachmentBones);
+                    BlendLayerIntoBonesSubset(bones, sampled, weight, anyLayer, attachmentBones);
+                    anyLayer = true;
+                }
+
+                ComposeHierarchySubset(bones, attachmentBones);
             }
         }
 
@@ -87,12 +145,52 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
+        static void ResetAttachmentBonesToBindPose(DynamicBuffer<ActorBone> bones, DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                int boneIndex = attachmentBones[i].BoneIndex;
+                if ((uint)boneIndex >= (uint)bones.Length)
+                    continue;
+
+                var bone = bones[boneIndex];
+                bone.LocalPosition = bone.BindPosition;
+                bone.LocalRotation = SafeNormalize(bone.BindRotation);
+                bone.LocalScale = bone.BindScale <= 0f ? 1f : bone.BindScale;
+                bones[boneIndex] = bone;
+            }
+        }
+
         static void CopyBindPose(DynamicBuffer<ActorBone> bones, DynamicBuffer<ActorSampledBonePose> sampled)
         {
             for (int i = 0; i < bones.Length; i++)
             {
                 var bone = bones[i];
                 sampled[i] = new ActorSampledBonePose
+                {
+                    Position = bone.BindPosition,
+                    Rotation = SafeNormalize(bone.BindRotation),
+                    Scale = bone.BindScale <= 0f ? 1f : bone.BindScale,
+                    AxisRotation = float3.zero,
+                    AxisFlags = 0,
+                    AxisOrder = 0,
+                };
+            }
+        }
+
+        static void CopyBindPoseSubset(
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                int boneIndex = attachmentBones[i].BoneIndex;
+                if ((uint)boneIndex >= (uint)bones.Length || (uint)boneIndex >= (uint)sampled.Length)
+                    continue;
+
+                var bone = bones[boneIndex];
+                sampled[boneIndex] = new ActorSampledBonePose
                 {
                     Position = bone.BindPosition,
                     Rotation = SafeNormalize(bone.BindRotation),
@@ -164,6 +262,77 @@ namespace VVardenfell.Runtime.Animation
                         break;
                     }
                 }
+                sampled[boneIndex] = pose;
+            }
+        }
+
+        static void SampleClipTracksSubset(
+            ref ActorAnimationCatalogBlob catalog,
+            ActorAnimationClipBlob clip,
+            float layerTime,
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            int trackEnd = math.min(catalog.Tracks.Length, clip.FirstTrackIndex + clip.TrackCount);
+            for (int trackIndex = clip.FirstTrackIndex; trackIndex < trackEnd; trackIndex++)
+            {
+                var track = catalog.Tracks[trackIndex];
+                int boneIndex = track.TargetBoneIndex;
+                if (track.KeyCount <= 0
+                    || track.FirstKeyIndex < 0
+                    || (uint)boneIndex >= (uint)sampled.Length
+                    || !ContainsAttachmentBone(attachmentBones, boneIndex))
+                {
+                    continue;
+                }
+
+                float trackTime = MapTrackTime(layerTime, track);
+                var pose = sampled[boneIndex];
+                switch (track.Kind)
+                {
+                    case ActorAnimationTrackKind.Translation:
+                    {
+                        float4 value = SampleValue(ref catalog, track, trackTime);
+                        pose.Position = new float3(value.x, value.z, value.y) * WorldScale.MwUnitsToMeters;
+                        break;
+                    }
+                    case ActorAnimationTrackKind.Rotation:
+                    {
+                        pose.Rotation = ToUnityRotation(SampleSourceRotation(ref catalog, track, trackTime));
+                        break;
+                    }
+                    case ActorAnimationTrackKind.Scale:
+                    {
+                        float4 value = SampleValue(ref catalog, track, trackTime);
+                        pose.Scale = value.x <= 0f ? 1f : value.x;
+                        break;
+                    }
+                    case ActorAnimationTrackKind.XRotation:
+                    {
+                        float4 value = SampleValue(ref catalog, track, trackTime);
+                        pose.AxisRotation.x = value.x;
+                        pose.AxisFlags |= 1;
+                        pose.AxisOrder = track.AxisOrder;
+                        break;
+                    }
+                    case ActorAnimationTrackKind.YRotation:
+                    {
+                        float4 value = SampleValue(ref catalog, track, trackTime);
+                        pose.AxisRotation.y = value.x;
+                        pose.AxisFlags |= 2;
+                        pose.AxisOrder = track.AxisOrder;
+                        break;
+                    }
+                    case ActorAnimationTrackKind.ZRotation:
+                    {
+                        float4 value = SampleValue(ref catalog, track, trackTime);
+                        pose.AxisRotation.z = value.x;
+                        pose.AxisFlags |= 4;
+                        pose.AxisOrder = track.AxisOrder;
+                        break;
+                    }
+                }
+
                 sampled[boneIndex] = pose;
             }
         }
@@ -292,6 +461,25 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
+        static void ApplyXyzRotationsSubset(
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                int boneIndex = attachmentBones[i].BoneIndex;
+                if ((uint)boneIndex >= (uint)sampled.Length)
+                    continue;
+
+                var pose = sampled[boneIndex];
+                if (pose.AxisFlags == 0)
+                    continue;
+
+                pose.Rotation = ToUnityRotation(ComposeSourceXyzRotation(pose.AxisRotation, pose.AxisOrder));
+                sampled[boneIndex] = pose;
+            }
+        }
+
         static quaternion ComposeSourceXyzRotation(float3 angles, int axisOrder)
         {
             quaternion x = quaternion.AxisAngle(new float3(1f, 0f, 0f), angles.x);
@@ -339,11 +527,60 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
-        static void ComposeHierarchy(DynamicBuffer<ActorBone> bones)
+        static void BlendLayerIntoBonesSubset(
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            float weight,
+            bool hasPreviousLayer,
+            DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                int boneIndex = attachmentBones[i].BoneIndex;
+                if ((uint)boneIndex >= (uint)bones.Length || (uint)boneIndex >= (uint)sampled.Length)
+                    continue;
+
+                var bone = bones[boneIndex];
+                var pose = sampled[boneIndex];
+                float3 basePosition = hasPreviousLayer ? bone.LocalPosition : bone.BindPosition;
+                quaternion baseRotation = hasPreviousLayer ? SafeNormalize(bone.LocalRotation) : SafeNormalize(bone.BindRotation);
+                float baseScale = hasPreviousLayer ? bone.LocalScale : (bone.BindScale <= 0f ? 1f : bone.BindScale);
+
+                bone.LocalPosition = math.lerp(basePosition, pose.Position, weight);
+                bone.LocalRotation = SafeNormalize(math.slerp(baseRotation, SafeNormalize(pose.Rotation), weight));
+                bone.LocalScale = math.lerp(baseScale, pose.Scale, weight);
+                bones[boneIndex] = bone;
+            }
+        }
+
+        static void ComposeHierarchy(
+            DynamicBuffer<ActorBone> bones,
+            ref ActorRootMotion rootMotion,
+            in ActorAnimationController controller,
+            int accumulationBoneIndex)
         {
             for (int i = 0; i < bones.Length; i++)
             {
                 var bone = bones[i];
+                if (i == accumulationBoneIndex)
+                {
+                    float accumulationScale = bone.LocalScale <= 0f ? bone.BindScale : bone.LocalScale;
+                    if (accumulationScale <= 0f)
+                        accumulationScale = 1f;
+
+                    float4x4 animatedLocal = float4x4.TRS(
+                        bone.LocalPosition,
+                        SafeNormalize(bone.LocalRotation),
+                        new float3(accumulationScale));
+                    float4x4 animatedLocalToRoot = bone.ParentIndex >= 0 && bone.ParentIndex < i
+                        ? math.mul(bones[bone.ParentIndex].LocalToRoot, animatedLocal)
+                        : animatedLocal;
+                    UpdateRootMotion(ref rootMotion, controller, animatedLocalToRoot);
+
+                    bone.LocalPosition = bone.BindPosition;
+                    bone.LocalRotation = SafeNormalize(bone.BindRotation);
+                }
+
                 float scale = bone.LocalScale <= 0f ? bone.BindScale : bone.LocalScale;
                 if (scale <= 0f)
                     scale = 1f;
@@ -360,9 +597,104 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
+        static void ComposeHierarchySubset(
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorAttachmentBone> attachmentBones)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                int boneIndex = attachmentBones[i].BoneIndex;
+                if ((uint)boneIndex >= (uint)bones.Length)
+                    continue;
+
+                var bone = bones[boneIndex];
+                float scale = bone.LocalScale <= 0f ? bone.BindScale : bone.LocalScale;
+                if (scale <= 0f)
+                    scale = 1f;
+
+                float4x4 local = float4x4.TRS(
+                    bone.LocalPosition,
+                    SafeNormalize(bone.LocalRotation),
+                    new float3(scale));
+                bone.LocalToRoot = bone.ParentIndex >= 0 && bone.ParentIndex < bones.Length
+                    ? math.mul(bones[bone.ParentIndex].LocalToRoot, local)
+                    : local;
+                bone.SkinMatrix = bone.LocalToRoot;
+                bones[boneIndex] = bone;
+            }
+        }
+
+        static void UpdateRootMotion(
+            ref ActorRootMotion rootMotion,
+            in ActorAnimationController controller,
+            float4x4 accumulationLocalToRoot)
+        {
+            float3 currentPosition = ExtractTranslation(accumulationLocalToRoot);
+            quaternion currentRotation = ExtractRotation(accumulationLocalToRoot);
+            bool resetHistory = rootMotion.Initialized == 0
+                || !controller.CurrentGroup.Equals(rootMotion.LastGroup)
+                || controller.Time < rootMotion.LastTime;
+
+            if (resetHistory)
+            {
+                rootMotion.Delta = float3.zero;
+                rootMotion.DeltaRotation = quaternion.identity;
+                rootMotion.HasDelta = 0;
+            }
+            else
+            {
+                float3 delta = currentPosition - rootMotion.PreviousAccumulationPosition;
+                quaternion previousRotation = SafeNormalize(rootMotion.PreviousAccumulationRotation);
+                quaternion deltaRotation = math.mul(currentRotation, math.inverse(previousRotation));
+
+                rootMotion.Delta = delta;
+                rootMotion.DeltaRotation = SafeNormalize(deltaRotation);
+                rootMotion.HasDelta = (byte)(math.lengthsq(delta) > 0.0000001f
+                    || math.lengthsq(rootMotion.DeltaRotation.value - quaternion.identity.value) > 0.0000001f
+                        ? 1
+                        : 0);
+            }
+
+            rootMotion.PreviousAccumulationPosition = currentPosition;
+            rootMotion.PreviousAccumulationRotation = currentRotation;
+            rootMotion.LastGroup = controller.CurrentGroup;
+            rootMotion.LastTime = controller.Time;
+            rootMotion.Initialized = 1;
+        }
+
+        static void ResetRootMotion(ref ActorRootMotion rootMotion)
+        {
+            FixedString64Bytes lastGroup = rootMotion.LastGroup;
+            rootMotion = default;
+            rootMotion.DeltaRotation = quaternion.identity;
+            rootMotion.PreviousAccumulationRotation = quaternion.identity;
+            rootMotion.LastGroup = lastGroup;
+        }
+
+        static float3 ExtractTranslation(float4x4 matrix)
+            => matrix.c3.xyz;
+
+        static quaternion ExtractRotation(float4x4 matrix)
+        {
+            float3 forward = math.normalizesafe(matrix.c2.xyz, new float3(0f, 0f, 1f));
+            float3 up = math.normalizesafe(matrix.c1.xyz, new float3(0f, 1f, 0f));
+            return SafeNormalize(quaternion.LookRotationSafe(forward, up));
+        }
+
         static quaternion SafeNormalize(quaternion value)
             => math.lengthsq(value.value) > 0.000001f
                 ? math.normalize(value)
                 : quaternion.identity;
+
+        static bool ContainsAttachmentBone(DynamicBuffer<ActorAttachmentBone> attachmentBones, int boneIndex)
+        {
+            for (int i = 0; i < attachmentBones.Length; i++)
+            {
+                if (attachmentBones[i].BoneIndex == boneIndex)
+                    return true;
+            }
+
+            return false;
+        }
     }
 }

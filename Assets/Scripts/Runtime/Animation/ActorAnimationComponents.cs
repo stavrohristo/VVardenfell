@@ -122,6 +122,54 @@ namespace VVardenfell.Runtime.Animation
         public ActorAnimationBlendMask Mask;
     }
 
+    public struct ActorGpuAnimationState : IComponentData
+    {
+        public int SkeletonIndex;
+        public int LayerOffset;
+        public int LayerCount;
+        public int SkinMeshOffset;
+        public int SkinMeshCount;
+        public int BoneMatrixOffset;
+        public int BoneMatrixCount;
+    }
+
+    public struct ActorGpuAnimationCpuFallback : IComponentData
+    {
+        public byte RequiresFullPoseSampling;
+        public byte RequiresRootMotion;
+        public byte RequiresAttachments;
+    }
+
+    public struct ActorLocalBounds : IComponentData
+    {
+        public float3 Center;
+        public float3 Extents;
+    }
+
+    public struct ActorAttachmentBoneAnimation : IComponentData, IEnableableComponent
+    {
+    }
+
+    public struct ActorAttachmentBone : IBufferElementData
+    {
+        public int BoneIndex;
+    }
+
+    public enum ActorAnimationLodOverrideMode : byte
+    {
+        None = 0,
+        ForceCpu = 1,
+        ForceGpu = 2,
+    }
+
+    public struct ActorAnimationLodSettings : IComponentData
+    {
+        public float CpuNearDistance;
+        public ActorAnimationLodOverrideMode OverrideMode;
+        public byte ValidationEnabled;
+        public int ValidationActorIndex;
+    }
+
     public struct ActorProceduralRenderState : IComponentData
     {
         public int BoneMatrixOffset;
@@ -129,6 +177,10 @@ namespace VVardenfell.Runtime.Animation
         public int DrawStart;
         public int DrawCount;
         public uint Version;
+    }
+
+    public struct ActorRenderVisible : IComponentData, IEnableableComponent
+    {
     }
 
     public struct ActorProceduralDraw : IBufferElementData
@@ -142,6 +194,15 @@ namespace VVardenfell.Runtime.Animation
         public int DrawVertexCount;
         public int AttachBoneIndex;
         public byte RigidMirrorX;
+    }
+
+    public struct ActorRigidEquipmentAttachment : IComponentData
+    {
+        public Entity Actor;
+        public int BoneIndex;
+        public float3 LocalPosition;
+        public quaternion LocalRotation;
+        public float LocalScale;
     }
 
     public struct ActorAnimationState : IComponentData

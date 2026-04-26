@@ -1,4 +1,5 @@
 using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Runtime.Systems;
 
@@ -19,25 +20,41 @@ namespace VVardenfell.Runtime.Animation
         partial struct BuildGpuAnimationRequestsJob : IJobEntity
         {
             void Execute(
-                DynamicBuffer<ActorAnimationLayer> layers,
+                in ActorAnimationController controller,
+                [ReadOnly] DynamicBuffer<ActorAnimationLayer> layers,
                 DynamicBuffer<ActorGpuAnimationRequest> requests)
             {
                 requests.Clear();
+
+                int selectedLayerIndex = -1;
                 for (int i = 0; i < layers.Length; i++)
                 {
                     var layer = layers[i];
                     if (layer.Weight <= 0f || layer.ClipIndex < 0)
                         continue;
 
-                    requests.Add(new ActorGpuAnimationRequest
+                    if (selectedLayerIndex < 0)
+                        selectedLayerIndex = i;
+
+                    if (layer.ClipHash == controller.CurrentClipHash)
                     {
-                        ClipIndex = layer.ClipIndex,
-                        ClipHash = layer.ClipHash,
-                        Time = layer.Time,
-                        Weight = layer.Weight,
-                        Mask = layer.Mask,
-                    });
+                        selectedLayerIndex = i;
+                        break;
+                    }
                 }
+
+                if (selectedLayerIndex < 0)
+                    return;
+
+                var selectedLayer = layers[selectedLayerIndex];
+                requests.Add(new ActorGpuAnimationRequest
+                {
+                    ClipIndex = selectedLayer.ClipIndex,
+                    ClipHash = selectedLayer.ClipHash,
+                    Time = selectedLayer.Time,
+                    Weight = selectedLayer.Weight,
+                    Mask = ActorAnimationBlendMask.All,
+                });
             }
         }
     }

@@ -1,0 +1,771 @@
+#pragma kernel CSMain
+
+#define MAX_GPU_BONES 128
+struct ActorMatrix3x4
+{
+    float4 Row0;
+    float4 Row1;
+    float4 Row2;
+};
+
+struct GpuSkeleton
+{
+    int FirstBoneIndex;
+    int BoneCount;
+    int AccumulationBoneIndex;
+    int Padding;
+};
+
+struct GpuBone
+{
+    int ParentIndex;
+    uint Mask;
+    float2 Padding;
+    float3 BindPosition;
+    float BindScale;
+    float4 BindRotation;
+};
+
+struct GpuClip
+{
+    int FirstTrackIndex;
+    int TrackCount;
+    float Duration;
+    float Padding;
+};
+
+struct GpuTrack
+{
+    int TargetBoneIndex;
+    int Kind;
+    int Interpolation;
+    int AxisOrder;
+    uint ControllerFlags;
+    float Frequency;
+    float Phase;
+    float TimeStart;
+    float TimeStop;
+    int FirstKeyIndex;
+    int KeyCount;
+};
+
+struct GpuKey
+{
+    float Time;
+    float3 Padding;
+    float4 Value;
+    float4 InTangent;
+    float4 OutTangent;
+};
+
+struct GpuSkinMesh
+{
+    int FirstSkinBoneIndex;
+    int SkinBoneCount;
+    int IsRigid;
+    int Padding;
+    float3 RigidOffset;
+    float Padding1;
+    float4 GeometryRow0;
+    float4 GeometryRow1;
+    float4 GeometryRow2;
+    float4 GeometryRow3;
+};
+
+struct GpuSkinBone
+{
+    int BoneIndex;
+    float3 Padding;
+    float4 BindPoseRow0;
+    float4 BindPoseRow1;
+    float4 BindPoseRow2;
+    float4 BindPoseRow3;
+};
+
+struct GpuActor
+{
+    int SkeletonIndex;
+    int FirstLayerIndex;
+    int LayerCount;
+    int FirstSkinMeshIndex;
+    int SkinMeshCount;
+    int BoneMatrixOffset;
+    int BoneMatrixCount;
+    int Padding;
+};
+
+struct GpuLayer
+{
+    int ClipIndex;
+    float Time;
+    float Weight;
+    uint Mask;
+};
+
+struct GpuActorSkinMesh
+{
+    int SkinMeshIndex;
+    int AttachBoneIndex;
+    int RigidMirrorX;
+    int BoneMatrixOffset;
+};
+
+StructuredBuffer<GpuSkeleton> _GpuAnimationSkeletons;
+StructuredBuffer<GpuBone> _GpuAnimationBones;
+StructuredBuffer<GpuClip> _GpuAnimationClips;
+StructuredBuffer<GpuTrack> _GpuAnimationTracks;
+StructuredBuffer<GpuKey> _GpuAnimationKeys;
+StructuredBuffer<GpuSkinMesh> _GpuAnimationSkinMeshes;
+StructuredBuffer<GpuSkinBone> _GpuAnimationSkinBones;
+StructuredBuffer<GpuActor> _GpuAnimationActors;
+StructuredBuffer<GpuLayer> _GpuAnimationLayers;
+StructuredBuffer<GpuActorSkinMesh> _GpuAnimationActorSkinMeshes;
+RWStructuredBuffer<ActorMatrix3x4> _GpuActorBoneMatrices;
+
+int _ActorCount;
+
+bool IsInRange(int index, int count)
+{
+    return index >= 0 && index < count;
+}
+
+bool IsInRange(uint index, uint count)
+{
+    return index < count;
+}
+
+float4 NormalizeQuaternion(float4 q)
+{
+    float lenSq = dot(q, q);
+    if (lenSq <= 1e-8)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    return q * rsqrt(lenSq);
+}
+
+float4 QuaternionMul(float4 a, float4 b)
+{
+    return float4(
+        a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz),
+        a.w * b.w - dot(a.xyz, b.xyz));
+}
+
+float4 QuaternionAxisAngle(float3 axis, float angle)
+{
+    float halfAngle = angle * 0.5;
+    float s = sin(halfAngle);
+    return NormalizeQuaternion(float4(normalize(axis) * s, cos(halfAngle)));
+}
+
+float4 QuaternionSlerp(float4 a, float4 b, float t)
+{
+    a = NormalizeQuaternion(a);
+    b = NormalizeQuaternion(b);
+    float cosTheta = dot(a, b);
+    if (cosTheta < 0.0)
+    {
+        b = -b;
+        cosTheta = -cosTheta;
+    }
+
+    if (cosTheta > 0.9995)
+        return NormalizeQuaternion(lerp(a, b, saturate(t)));
+
+    float angle = acos(clamp(cosTheta, -1.0, 1.0));
+    float sinTheta = sin(angle);
+    if (abs(sinTheta) <= 1e-5)
+        return a;
+
+    float invSin = 1.0 / sinTheta;
+    float w0 = sin((1.0 - t) * angle) * invSin;
+    float w1 = sin(t * angle) * invSin;
+    return NormalizeQuaternion(a * w0 + b * w1);
+}
+
+float3x3 QuaternionToMatrix(float4 q)
+{
+    q = NormalizeQuaternion(q);
+    float x = q.x;
+    float y = q.y;
+    float z = q.z;
+    float w = q.w;
+
+    float xx = x * x;
+    float yy = y * y;
+    float zz = z * z;
+    float xy = x * y;
+    float xz = x * z;
+    float yz = y * z;
+    float wx = w * x;
+    float wy = w * y;
+    float wz = w * z;
+
+    return float3x3(
+        1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy),
+        2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
+        2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy));
+}
+
+float4 QuaternionFromMatrix(float3x3 m)
+{
+    float trace = m[0][0] + m[1][1] + m[2][2];
+    if (trace > 0.0)
+    {
+        float s = sqrt(trace + 1.0) * 2.0;
+        return NormalizeQuaternion(float4(
+            (m[2][1] - m[1][2]) / s,
+            (m[0][2] - m[2][0]) / s,
+            (m[1][0] - m[0][1]) / s,
+            0.25 * s));
+    }
+
+    if (m[0][0] > m[1][1] && m[0][0] > m[2][2])
+    {
+        float s = sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0;
+        return NormalizeQuaternion(float4(
+            0.25 * s,
+            (m[0][1] + m[1][0]) / s,
+            (m[0][2] + m[2][0]) / s,
+            (m[2][1] - m[1][2]) / s));
+    }
+
+    if (m[1][1] > m[2][2])
+    {
+        float s = sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0;
+        return NormalizeQuaternion(float4(
+            (m[0][1] + m[1][0]) / s,
+            0.25 * s,
+            (m[1][2] + m[2][1]) / s,
+            (m[0][2] - m[2][0]) / s));
+    }
+
+    float s = sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0;
+    return NormalizeQuaternion(float4(
+        (m[0][2] + m[2][0]) / s,
+        (m[1][2] + m[2][1]) / s,
+        0.25 * s,
+        (m[1][0] - m[0][1]) / s));
+}
+
+float3 SafeNormalize3(float3 value, float3 fallbackValue)
+{
+    float lenSq = dot(value, value);
+    if (lenSq <= 1e-8)
+        return fallbackValue;
+    return value * rsqrt(lenSq);
+}
+
+float4 LookRotationSafe(float3 forward, float3 up)
+{
+    float3 safeForward = SafeNormalize3(forward, float3(0.0, 0.0, 1.0));
+    float3 safeUp = SafeNormalize3(up, float3(0.0, 1.0, 0.0));
+    float3 right = cross(safeUp, safeForward);
+    float rightLenSq = dot(right, right);
+    if (rightLenSq <= 1e-8)
+    {
+        float3 fallbackAxis = abs(safeForward.y) < 0.999
+            ? float3(0.0, 1.0, 0.0)
+            : float3(1.0, 0.0, 0.0);
+        right = cross(fallbackAxis, safeForward);
+        rightLenSq = dot(right, right);
+        if (rightLenSq <= 1e-8)
+            return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    right *= rsqrt(rightLenSq);
+    float3 orthonormalUp = SafeNormalize3(cross(safeForward, right), float3(0.0, 1.0, 0.0));
+
+    float3x3 basis;
+    basis[0] = right;
+    basis[1] = orthonormalUp;
+    basis[2] = safeForward;
+    return QuaternionFromMatrix(basis);
+}
+
+float4 ConvertSourceToUnityRotation(float4 sourceRotation)
+{
+    float3x3 source = QuaternionToMatrix(sourceRotation);
+    float3 sourceUp = float3(source[0][2], source[2][2], source[1][2]);
+    float3 sourceForward = float3(source[0][1], source[2][1], source[1][1]);
+    return LookRotationSafe(sourceForward, sourceUp);
+}
+
+float4 ComposeSourceXyzRotation(float3 angles, int axisOrder)
+{
+    float4 x = QuaternionAxisAngle(float3(1.0, 0.0, 0.0), angles.x);
+    float4 y = QuaternionAxisAngle(float3(0.0, 1.0, 0.0), angles.y);
+    float4 z = QuaternionAxisAngle(float3(0.0, 0.0, 1.0), angles.z);
+
+    if (axisOrder == 1) return NormalizeQuaternion(QuaternionMul(QuaternionMul(x, z), y));
+    if (axisOrder == 2) return NormalizeQuaternion(QuaternionMul(QuaternionMul(y, x), z));
+    if (axisOrder == 3) return NormalizeQuaternion(QuaternionMul(QuaternionMul(y, z), x));
+    if (axisOrder == 4) return NormalizeQuaternion(QuaternionMul(QuaternionMul(z, x), y));
+    if (axisOrder == 5) return NormalizeQuaternion(QuaternionMul(QuaternionMul(z, y), x));
+    return NormalizeQuaternion(QuaternionMul(QuaternionMul(x, y), z));
+}
+
+float3 GetColumn0(ActorMatrix3x4 matrixValue)
+{
+    return float3(matrixValue.Row0.x, matrixValue.Row1.x, matrixValue.Row2.x);
+}
+
+float3 GetColumn1(ActorMatrix3x4 matrixValue)
+{
+    return float3(matrixValue.Row0.y, matrixValue.Row1.y, matrixValue.Row2.y);
+}
+
+float3 GetColumn2(ActorMatrix3x4 matrixValue)
+{
+    return float3(matrixValue.Row0.z, matrixValue.Row1.z, matrixValue.Row2.z);
+}
+
+float3 GetTranslation(ActorMatrix3x4 matrixValue)
+{
+    return float3(matrixValue.Row0.w, matrixValue.Row1.w, matrixValue.Row2.w);
+}
+
+ActorMatrix3x4 IdentityMatrix3x4()
+{
+    ActorMatrix3x4 result;
+    result.Row0 = float4(1.0, 0.0, 0.0, 0.0);
+    result.Row1 = float4(0.0, 1.0, 0.0, 0.0);
+    result.Row2 = float4(0.0, 0.0, 1.0, 0.0);
+    return result;
+}
+
+ActorMatrix3x4 MatrixFromRows(float4 r0, float4 r1, float4 r2, float4 r3)
+{
+    ActorMatrix3x4 result;
+    result.Row0 = r0;
+    result.Row1 = r1;
+    result.Row2 = r2;
+    return result;
+}
+
+ActorMatrix3x4 MatrixTRS(float3 position, float4 rotation, float scale)
+{
+    float3x3 rot = QuaternionToMatrix(rotation);
+    float3 scaledX = rot[0] * scale;
+    float3 scaledY = rot[1] * scale;
+    float3 scaledZ = rot[2] * scale;
+    ActorMatrix3x4 result;
+    result.Row0 = float4(scaledX.x, scaledY.x, scaledZ.x, position.x);
+    result.Row1 = float4(scaledX.y, scaledY.y, scaledZ.y, position.y);
+    result.Row2 = float4(scaledX.z, scaledY.z, scaledZ.z, position.z);
+    return result;
+}
+
+ActorMatrix3x4 MultiplyAffine(ActorMatrix3x4 a, ActorMatrix3x4 b)
+{
+    float3 bCol0 = GetColumn0(b);
+    float3 bCol1 = GetColumn1(b);
+    float3 bCol2 = GetColumn2(b);
+    float3 bTranslation = GetTranslation(b);
+
+    ActorMatrix3x4 result;
+    result.Row0 = float4(
+        dot(a.Row0.xyz, bCol0),
+        dot(a.Row0.xyz, bCol1),
+        dot(a.Row0.xyz, bCol2),
+        dot(a.Row0.xyz, bTranslation) + a.Row0.w);
+    result.Row1 = float4(
+        dot(a.Row1.xyz, bCol0),
+        dot(a.Row1.xyz, bCol1),
+        dot(a.Row1.xyz, bCol2),
+        dot(a.Row1.xyz, bTranslation) + a.Row1.w);
+    result.Row2 = float4(
+        dot(a.Row2.xyz, bCol0),
+        dot(a.Row2.xyz, bCol1),
+        dot(a.Row2.xyz, bCol2),
+        dot(a.Row2.xyz, bTranslation) + a.Row2.w);
+    return result;
+}
+
+float4 Hermite(GpuKey a, GpuKey b, float t, float span)
+{
+    float4 p0 = a.Value;
+    float4 p1 = b.Value;
+    float4 m0 = a.OutTangent * span;
+    float4 m1 = b.InTangent * span;
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return (2.0 * t3 - 3.0 * t2 + 1.0) * p0
+        + (t3 - 2.0 * t2 + t) * m0
+        + (-2.0 * t3 + 3.0 * t2) * p1
+        + (t3 - t2) * m1;
+}
+
+float MapTrackTime(float layerTime, GpuTrack track)
+{
+    float frequency = abs(track.Frequency) <= 1e-6 ? 1.0 : track.Frequency;
+    float time = layerTime * frequency + track.Phase;
+    if (track.TimeStop <= track.TimeStart)
+        return time;
+    if (time >= track.TimeStart && time <= track.TimeStop)
+        return time;
+
+    uint extrapolation = track.ControllerFlags & 0x6u;
+    if (extrapolation == 0x2u)
+    {
+        float duration = track.TimeStop - track.TimeStart;
+        float cycles = (time - track.TimeStart) / duration;
+        float cycleFloor = floor(cycles);
+        float remainder = (cycles - cycleFloor) * duration;
+        return (abs((int)cycleFloor) & 1) == 0
+            ? track.TimeStart + remainder
+            : track.TimeStop - remainder;
+    }
+
+    if (extrapolation != 0x4u)
+    {
+        float duration = track.TimeStop - track.TimeStart;
+        float cycles = (time - track.TimeStart) / duration;
+        return track.TimeStart + (cycles - floor(cycles)) * duration;
+    }
+
+    return time < track.TimeStart ? track.TimeStart : track.TimeStop;
+}
+
+float4 SampleValue(GpuTrack track, float time, uint keyBufferCount)
+{
+    int first = track.FirstKeyIndex;
+    int count = track.KeyCount;
+    if (count <= 0 || first < 0 || !IsInRange((uint)first, keyBufferCount))
+        return 0.0;
+
+    int last = min((int)keyBufferCount - 1, first + count - 1);
+    if (first >= last || time <= _GpuAnimationKeys[first].Time)
+        return _GpuAnimationKeys[first].Value;
+    if (time >= _GpuAnimationKeys[last].Time)
+        return _GpuAnimationKeys[last].Value;
+
+    int right = first + 1;
+    while (right <= last && _GpuAnimationKeys[right].Time < time)
+        right++;
+
+    int left = max(first, right - 1);
+    GpuKey a = _GpuAnimationKeys[left];
+    GpuKey b = _GpuAnimationKeys[right];
+    float span = max(1e-5, b.Time - a.Time);
+    float t = saturate((time - a.Time) / span);
+    if (track.Interpolation == 5)
+        return a.Value;
+    if (track.Interpolation == 2)
+        return Hermite(a, b, t, span);
+    return lerp(a.Value, b.Value, t);
+}
+
+float4 SampleSourceRotation(GpuTrack track, float time, uint keyBufferCount)
+{
+    int first = track.FirstKeyIndex;
+    int count = track.KeyCount;
+    if (count <= 0 || first < 0 || !IsInRange((uint)first, keyBufferCount))
+        return float4(0.0, 0.0, 0.0, 1.0);
+
+    int last = min((int)keyBufferCount - 1, first + count - 1);
+    if (first >= last || time <= _GpuAnimationKeys[first].Time)
+        return NormalizeQuaternion(_GpuAnimationKeys[first].Value);
+    if (time >= _GpuAnimationKeys[last].Time)
+        return NormalizeQuaternion(_GpuAnimationKeys[last].Value);
+
+    int right = first + 1;
+    while (right <= last && _GpuAnimationKeys[right].Time < time)
+        right++;
+
+    int left = max(first, right - 1);
+    GpuKey a = _GpuAnimationKeys[left];
+    GpuKey b = _GpuAnimationKeys[right];
+    if (track.Interpolation == 5)
+        return NormalizeQuaternion(a.Value);
+
+    float span = max(1e-5, b.Time - a.Time);
+    float t = saturate((time - a.Time) / span);
+    return QuaternionSlerp(a.Value, b.Value, t);
+}
+
+void WriteActorMatrix(int index, int actorMatrixStart, int actorMatrixEnd, ActorMatrix3x4 value)
+{
+    if (index >= actorMatrixStart && index < actorMatrixEnd)
+        _GpuActorBoneMatrices[index] = value;
+}
+
+void WriteIdentityRange(int offset, int count, int actorMatrixStart, int actorMatrixEnd)
+{
+    ActorMatrix3x4 identity;
+    identity.Row0 = float4(1.0, 0.0, 0.0, 0.0);
+    identity.Row1 = float4(0.0, 1.0, 0.0, 0.0);
+    identity.Row2 = float4(0.0, 0.0, 1.0, 0.0);
+    for (int i = 0; i < count; i++)
+        WriteActorMatrix(offset + i, actorMatrixStart, actorMatrixEnd, identity);
+}
+
+[numthreads(8, 1, 1)]
+void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint actorIndex = dispatchThreadId.x;
+    if (actorIndex >= (uint)_ActorCount)
+        return;
+
+    GpuActor actor = _GpuAnimationActors[actorIndex];
+    if (actor.BoneMatrixCount <= 0)
+        return;
+
+    uint outputMatrixCount = 0;
+    uint outputMatrixStride = 0;
+    _GpuActorBoneMatrices.GetDimensions(outputMatrixCount, outputMatrixStride);
+    if (actor.BoneMatrixOffset < 0 || actor.BoneMatrixOffset >= (int)outputMatrixCount)
+        return;
+
+    int actorMatrixStart = actor.BoneMatrixOffset;
+    int actorMatrixEnd = min((int)outputMatrixCount, actor.BoneMatrixOffset + actor.BoneMatrixCount);
+    if (actorMatrixEnd <= actorMatrixStart)
+        return;
+
+    if (actor.SkeletonIndex < 0)
+    {
+        WriteIdentityRange(actor.BoneMatrixOffset, actor.BoneMatrixCount, actorMatrixStart, actorMatrixEnd);
+        return;
+    }
+
+    uint skeletonBufferCount = 0;
+    uint skeletonBufferStride = 0;
+    _GpuAnimationSkeletons.GetDimensions(skeletonBufferCount, skeletonBufferStride);
+    if (!IsInRange((uint)actor.SkeletonIndex, skeletonBufferCount))
+    {
+        WriteIdentityRange(actor.BoneMatrixOffset, actor.BoneMatrixCount, actorMatrixStart, actorMatrixEnd);
+        return;
+    }
+
+    GpuSkeleton skeleton = _GpuAnimationSkeletons[actor.SkeletonIndex];
+    if (skeleton.BoneCount <= 0 || skeleton.BoneCount > MAX_GPU_BONES)
+    {
+        WriteIdentityRange(actor.BoneMatrixOffset, actor.BoneMatrixCount, actorMatrixStart, actorMatrixEnd);
+        return;
+    }
+
+    uint boneBufferCount = 0;
+    uint boneBufferStride = 0;
+    _GpuAnimationBones.GetDimensions(boneBufferCount, boneBufferStride);
+    if (skeleton.FirstBoneIndex < 0 || skeleton.FirstBoneIndex + skeleton.BoneCount > (int)boneBufferCount)
+    {
+        WriteIdentityRange(actor.BoneMatrixOffset, actor.BoneMatrixCount, actorMatrixStart, actorMatrixEnd);
+        return;
+    }
+
+    float3 localPos[MAX_GPU_BONES];
+    float4 localRot[MAX_GPU_BONES];
+    float localScale[MAX_GPU_BONES];
+    float3 sampledAxis[MAX_GPU_BONES];
+    uint sampledFlags[MAX_GPU_BONES];
+    int sampledOrder[MAX_GPU_BONES];
+    ActorMatrix3x4 localToRoot[MAX_GPU_BONES];
+    uint skinBoneBufferCount = 0;
+    uint skinBoneBufferStride = 0;
+    _GpuAnimationSkinBones.GetDimensions(skinBoneBufferCount, skinBoneBufferStride);
+    uint clipBufferCount = 0;
+    uint clipBufferStride = 0;
+    _GpuAnimationClips.GetDimensions(clipBufferCount, clipBufferStride);
+    uint trackBufferCount = 0;
+    uint trackBufferStride = 0;
+    _GpuAnimationTracks.GetDimensions(trackBufferCount, trackBufferStride);
+    uint keyBufferCount = 0;
+    uint keyBufferStride = 0;
+    _GpuAnimationKeys.GetDimensions(keyBufferCount, keyBufferStride);
+    uint skinMeshBufferCount = 0;
+    uint skinMeshBufferStride = 0;
+    _GpuAnimationSkinMeshes.GetDimensions(skinMeshBufferCount, skinMeshBufferStride);
+    uint actorSkinMeshBufferCount = 0;
+    uint actorSkinMeshBufferStride = 0;
+    _GpuAnimationActorSkinMeshes.GetDimensions(actorSkinMeshBufferCount, actorSkinMeshBufferStride);
+    uint layerBufferCount = 0;
+    uint layerBufferStride = 0;
+    _GpuAnimationLayers.GetDimensions(layerBufferCount, layerBufferStride);
+
+    [loop]
+    for (int boneIndex = 0; boneIndex < skeleton.BoneCount; boneIndex++)
+    {
+        GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+        float bindScale = bone.BindScale <= 0.0 ? 1.0 : bone.BindScale;
+        localPos[boneIndex] = bone.BindPosition;
+        localRot[boneIndex] = NormalizeQuaternion(bone.BindRotation);
+        localScale[boneIndex] = bindScale;
+        sampledAxis[boneIndex] = 0.0;
+        sampledFlags[boneIndex] = 0u;
+        sampledOrder[boneIndex] = 0;
+    }
+
+    bool hasLayer = actor.LayerCount > 0;
+    GpuLayer layer;
+    layer.ClipIndex = -1;
+    layer.Time = 0.0;
+    layer.Weight = 0.0;
+    layer.Mask = 0u;
+    GpuClip clip;
+    clip.FirstTrackIndex = 0;
+    clip.TrackCount = 0;
+    clip.Duration = 0.0;
+    clip.Padding = 0.0;
+    if (hasLayer)
+    {
+        hasLayer = IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
+    }
+
+    if (hasLayer)
+    {
+        layer = _GpuAnimationLayers[actor.FirstLayerIndex];
+        hasLayer = layer.Weight > 0.0 && IsInRange((uint)layer.ClipIndex, clipBufferCount);
+        if (hasLayer)
+        {
+            clip = _GpuAnimationClips[layer.ClipIndex];
+            hasLayer = clip.TrackCount > 0 && clip.FirstTrackIndex >= 0 && clip.FirstTrackIndex < (int)trackBufferCount;
+        }
+    }
+
+    if (hasLayer)
+    {
+        float weight = saturate(layer.Weight);
+        int trackEnd = min((int)trackBufferCount, clip.FirstTrackIndex + clip.TrackCount);
+        [loop]
+        for (int trackIndex = clip.FirstTrackIndex; trackIndex < trackEnd; trackIndex++)
+        {
+            GpuTrack track = _GpuAnimationTracks[trackIndex];
+            int boneIndex = track.TargetBoneIndex;
+            if (track.KeyCount <= 0 || track.FirstKeyIndex < 0 || boneIndex < 0 || boneIndex >= skeleton.BoneCount)
+                continue;
+
+            float trackTime = MapTrackTime(layer.Time, track);
+            if (track.Kind == 1)
+            {
+                float4 value = SampleValue(track, trackTime, keyBufferCount);
+                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+                float3 sampledPosition = float3(value.x, value.z, value.y) * (1.0 / 70.0);
+                localPos[boneIndex] = lerp(bone.BindPosition, sampledPosition, weight);
+            }
+            else if (track.Kind == 2)
+            {
+                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+                float4 sampledRotation = ConvertSourceToUnityRotation(SampleSourceRotation(track, trackTime, keyBufferCount));
+                localRot[boneIndex] = QuaternionSlerp(NormalizeQuaternion(bone.BindRotation), sampledRotation, weight);
+            }
+            else if (track.Kind == 3)
+            {
+                float4 value = SampleValue(track, trackTime, keyBufferCount);
+                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+                float bindScale = bone.BindScale <= 0.0 ? 1.0 : bone.BindScale;
+                float sampledBoneScale = value.x <= 0.0 ? 1.0 : value.x;
+                localScale[boneIndex] = lerp(bindScale, sampledBoneScale, weight);
+            }
+            else if (track.Kind == 4)
+            {
+                sampledAxis[boneIndex].x = SampleValue(track, trackTime, keyBufferCount).x;
+                sampledFlags[boneIndex] |= 1u;
+                sampledOrder[boneIndex] = track.AxisOrder;
+            }
+            else if (track.Kind == 5)
+            {
+                sampledAxis[boneIndex].y = SampleValue(track, trackTime, keyBufferCount).x;
+                sampledFlags[boneIndex] |= 2u;
+                sampledOrder[boneIndex] = track.AxisOrder;
+            }
+            else if (track.Kind == 6)
+            {
+                sampledAxis[boneIndex].z = SampleValue(track, trackTime, keyBufferCount).x;
+                sampledFlags[boneIndex] |= 4u;
+                sampledOrder[boneIndex] = track.AxisOrder;
+            }
+        }
+
+        [loop]
+        for (int sampledBoneIndex = 0; sampledBoneIndex < skeleton.BoneCount; sampledBoneIndex++)
+        {
+            if (sampledFlags[sampledBoneIndex] != 0u)
+            {
+                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + sampledBoneIndex];
+                float4 sampledRotation = ConvertSourceToUnityRotation(ComposeSourceXyzRotation(sampledAxis[sampledBoneIndex], sampledOrder[sampledBoneIndex]));
+                localRot[sampledBoneIndex] = QuaternionSlerp(NormalizeQuaternion(bone.BindRotation), sampledRotation, weight);
+            }
+        }
+    }
+
+    [loop]
+    for (int composeIndex = 0; composeIndex < skeleton.BoneCount; composeIndex++)
+    {
+        if (composeIndex == skeleton.AccumulationBoneIndex)
+        {
+            GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + composeIndex];
+            localPos[composeIndex] = bone.BindPosition;
+            localRot[composeIndex] = NormalizeQuaternion(bone.BindRotation);
+        }
+
+        GpuBone composeBone = _GpuAnimationBones[skeleton.FirstBoneIndex + composeIndex];
+        int parentIndex = composeBone.ParentIndex;
+        ActorMatrix3x4 local = MatrixTRS(localPos[composeIndex], localRot[composeIndex], max(1e-4, localScale[composeIndex]));
+        if (parentIndex >= 0 && parentIndex < composeIndex)
+            localToRoot[composeIndex] = MultiplyAffine(localToRoot[parentIndex], local);
+        else
+            localToRoot[composeIndex] = local;
+    }
+
+    [loop]
+    for (int actorSkinMeshIndex = 0; actorSkinMeshIndex < actor.SkinMeshCount; actorSkinMeshIndex++)
+    {
+        int actorSkinMeshBufferIndex = actor.FirstSkinMeshIndex + actorSkinMeshIndex;
+        if (!IsInRange((uint)actorSkinMeshBufferIndex, actorSkinMeshBufferCount))
+            continue;
+
+        GpuActorSkinMesh actorSkinMesh = _GpuAnimationActorSkinMeshes[actorSkinMeshBufferIndex];
+        if (!IsInRange((uint)actorSkinMesh.SkinMeshIndex, skinMeshBufferCount))
+            continue;
+
+        GpuSkinMesh skinMesh = _GpuAnimationSkinMeshes[actorSkinMesh.SkinMeshIndex];
+        int outputOffset = actorSkinMesh.BoneMatrixOffset;
+        if (skinMesh.IsRigid != 0)
+        {
+            int attachIndex = actorSkinMesh.AttachBoneIndex;
+            ActorMatrix3x4 attach = IdentityMatrix3x4();
+            if (attachIndex >= 0 && attachIndex < skeleton.BoneCount)
+                attach = localToRoot[attachIndex];
+
+            ActorMatrix3x4 attachOffset = MatrixTRS(skinMesh.RigidOffset, float4(0.0, 0.0, 0.0, 1.0), 1.0);
+            ActorMatrix3x4 mirror = IdentityMatrix3x4();
+            if (actorSkinMesh.RigidMirrorX != 0)
+            {
+                mirror = MatrixFromRows(
+                    float4(-1.0, 0.0, 0.0, 0.0),
+                    float4(0.0, 1.0, 0.0, 0.0),
+                    float4(0.0, 0.0, 1.0, 0.0),
+                    float4(0.0, 0.0, 0.0, 1.0));
+            }
+
+            ActorMatrix3x4 geometryToSkeleton = MatrixFromRows(skinMesh.GeometryRow0, skinMesh.GeometryRow1, skinMesh.GeometryRow2, skinMesh.GeometryRow3);
+            ActorMatrix3x4 localAttach = MultiplyAffine(MultiplyAffine(attachOffset, mirror), geometryToSkeleton);
+            WriteActorMatrix(outputOffset, actorMatrixStart, actorMatrixEnd, MultiplyAffine(attach, localAttach));
+
+            int reservedRigidCount = max(1, skinMesh.SkinBoneCount);
+            [loop]
+            for (int rigidPadIndex = 1; rigidPadIndex < reservedRigidCount; rigidPadIndex++)
+                WriteActorMatrix(outputOffset + rigidPadIndex, actorMatrixStart, actorMatrixEnd, IdentityMatrix3x4());
+            continue;
+        }
+
+        int reservedSkinBoneCount = max(1, skinMesh.SkinBoneCount);
+        int firstSkinBone = max(0, skinMesh.FirstSkinBoneIndex);
+        int availableSkinBones = max(0, (int)skinBoneBufferCount - firstSkinBone);
+        int safeSkinBoneCount = min(max(0, skinMesh.SkinBoneCount), availableSkinBones);
+
+        [loop]
+        for (int skinBoneIndex = 0; skinBoneIndex < safeSkinBoneCount; skinBoneIndex++)
+        {
+            GpuSkinBone skinBone = _GpuAnimationSkinBones[firstSkinBone + skinBoneIndex];
+            int boneIndex = skinBone.BoneIndex;
+            ActorMatrix3x4 pose = IdentityMatrix3x4();
+            if (boneIndex >= 0 && boneIndex < skeleton.BoneCount)
+                pose = localToRoot[boneIndex];
+            ActorMatrix3x4 bindPose = MatrixFromRows(skinBone.BindPoseRow0, skinBone.BindPoseRow1, skinBone.BindPoseRow2, skinBone.BindPoseRow3);
+            WriteActorMatrix(outputOffset + skinBoneIndex, actorMatrixStart, actorMatrixEnd, MultiplyAffine(pose, bindPose));
+        }
+
+        [loop]
+        for (int skinBonePadIndex = safeSkinBoneCount; skinBonePadIndex < reservedSkinBoneCount; skinBonePadIndex++)
+            WriteActorMatrix(outputOffset + skinBonePadIndex, actorMatrixStart, actorMatrixEnd, IdentityMatrix3x4());
+    }
+}

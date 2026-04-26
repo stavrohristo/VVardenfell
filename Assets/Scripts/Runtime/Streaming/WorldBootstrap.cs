@@ -31,10 +31,13 @@ namespace VVardenfell.Runtime.Streaming
         public static void Install(CacheLoader cache)
         {
             using var _ = k_Install.Auto();
-            RuntimeCoroutinePump.RunToCompletion(InstallIncremental(cache, new RuntimeLoadProgress()));
+            RuntimeCoroutinePump.RunToCompletion(InstallIncremental(cache, new RuntimeLoadProgress(), WorldBootstrapOptions.Vanilla));
         }
 
         public static IEnumerator InstallIncremental(CacheLoader cache, RuntimeLoadProgress progress)
+            => InstallIncremental(cache, progress, WorldBootstrapOptions.Vanilla);
+
+        public static IEnumerator InstallIncremental(CacheLoader cache, RuntimeLoadProgress progress, WorldBootstrapOptions options)
         {
             var installSw = Stopwatch.StartNew();
             var world = World.DefaultGameObjectInjectionWorld;
@@ -51,20 +54,29 @@ namespace VVardenfell.Runtime.Streaming
 
             try
             {
+                WorldResources.RuntimeMode = options.Mode;
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;
 
-                foreach (var step in WorldBootstrapResourceSetup.InstallMeshBounds(cache, progress))
-                    yield return step;
+                if (!options.IsSandbox)
+                {
+                    foreach (var step in WorldBootstrapResourceSetup.InstallMeshBounds(cache, progress))
+                        yield return step;
+                }
 
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
-                foreach (var step in WorldBootstrapResourceSetup.InstallRenderShardRefPrefabs(em, progress))
-                    yield return step;
+                if (!options.IsSandbox)
+                {
+                    foreach (var step in WorldBootstrapResourceSetup.InstallRenderShardRefPrefabs(em, progress))
+                        yield return step;
+                }
 
                 progress?.BeginStage("Background preload", "Scheduling cell preload and collider load", 2);
-                var preloadTask = Task.Run(() => WorldBootstrapPreloadUtility.PreloadCells(cache));
+                var preloadTask = Task.Run(() => options.IsSandbox
+                    ? WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active)
+                    : WorldBootstrapPreloadUtility.PreloadCells(cache));
                 var collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
 
                 while (!preloadTask.IsCompleted || !collisionTask.IsCompleted)
@@ -86,6 +98,9 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (!string.IsNullOrEmpty(collisionLoad.Error))
                     throw new System.IO.InvalidDataException($"collisions.bin: {collisionLoad.Error}");
+
+                if (options.IsSandbox)
+                    SandboxWorldFixtureApplier.Apply(cache, preload, options.SandboxProfile ?? SandboxWorldFixtures.Active);
 
                 progress?.Report("Background cache reads complete", 2, 2);
                 progress?.CompleteStage();
@@ -111,7 +126,7 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallColliderBlobs(collisionLoad, progress))
                     yield return step;
 
-                var defaultSpawn = DefaultPlayerSpawnPosition();
+                var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);
                 if (WorldResources.Cells.TryGetValue(defaultCameraCell, out var startCell) && startCell != null)
                 {
@@ -133,12 +148,15 @@ namespace VVardenfell.Runtime.Streaming
                     UnityEngine.Debug.LogWarning($"[VVardenfell] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player may spawn before terrain is available.");
                 }
 
-                WorldBootstrapStateUtility.QueueInitialExteriorCells(
-                    loadQueue,
-                    available,
-                    defaultCameraCell,
-                    DefaultViewRadius,
-                    DefaultMaxLoadsPerFrame);
+                if (options.QueueInitialExteriorCells)
+                {
+                    WorldBootstrapStateUtility.QueueInitialExteriorCells(
+                        loadQueue,
+                        available,
+                        defaultCameraCell,
+                        DefaultViewRadius,
+                        DefaultMaxLoadsPerFrame);
+                }
 
                 progress?.BeginStage("Create singleton state", "Publishing streaming singletons", 1);
                 WorldBootstrapStateUtility.PublishStreamingSingleton(
@@ -157,7 +175,7 @@ namespace VVardenfell.Runtime.Streaming
                 yield return null;
 
                 progress?.BeginStage("Game initialization", "Publishing game initialization payload", 1);
-                WorldBootstrapStateUtility.PublishGameInitialization(em);
+                WorldBootstrapStateUtility.PublishGameInitialization(em, options);
                 progress?.Report("Game initialization queued", 1, 1);
                 progress?.CompleteStage();
                 yield return null;

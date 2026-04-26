@@ -455,6 +455,8 @@ namespace VVardenfell.Runtime.Streaming
         {
             if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
                 return;
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab && WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox)
+                return;
 
             string key = $"{cellLabel}:{entry.PlacedRefId}:{entry.SpawnModeRaw}";
             if (!s_UnsupportedSpawnModeWarnings.Add(key))

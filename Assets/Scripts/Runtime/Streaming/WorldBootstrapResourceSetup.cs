@@ -232,47 +232,72 @@ namespace VVardenfell.Runtime.Streaming
             NativeHashSet<int2> available,
             RuntimeLoadProgress progress)
         {
-            int totalPreloadedCells = cache.Manifest.CellGrid.Length + cache.Manifest.InteriorCellCount;
+            int totalPreloadedCells = CountPreloadedCells(preload);
             progress?.BeginStage("Cell preload merge", "Installing preloaded cells", totalPreloadedCells);
             WorldResources.Cells.Clear();
-            WorldResources.Cells.EnsureCapacity(cache.Manifest.CellGrid.Length);
+            WorldResources.Cells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
             WorldResources.InteriorCells.Clear();
-            WorldResources.InteriorCells.EnsureCapacity(cache.Manifest.InteriorCellCount);
+            WorldResources.InteriorCells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
+            int installed = 0;
             for (int i = 0; i < cache.Manifest.CellGrid.Length; i++)
             {
                 k_CellPreload.Begin();
                 try
                 {
+                    var data = preload.ExteriorCells[i];
+                    if (data == null)
+                        continue;
+
                     var g = cache.Manifest.CellGrid[i];
                     var coord = new int2(g.Item1, g.Item2);
                     available.Add(coord);
-                    WorldResources.Cells[coord] = preload.ExteriorCells[i];
+                    WorldResources.Cells[coord] = data;
+                    installed++;
                 }
                 finally
                 {
                     k_CellPreload.End();
                 }
 
-                int completed = i + 1;
-                if (completed == cache.Manifest.CellGrid.Length || (completed % MergeBatchSize) == 0)
+                if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
                 {
-                    progress?.Report($"Installing preloaded cells {completed}/{totalPreloadedCells}", completed, totalPreloadedCells);
+                    progress?.Report($"Installing preloaded cells {installed}/{totalPreloadedCells}", installed, totalPreloadedCells);
                     yield return null;
                 }
             }
             for (int i = 0; i < cache.Manifest.InteriorCellCount; i++)
             {
+                var data = preload.InteriorCells[i];
+                if (data == null)
+                    continue;
+
                 string cellId = cache.Manifest.InteriorCellIds[i] ?? string.Empty;
                 if (!WorldResources.InteriorCells.ContainsKey(cellId))
-                    WorldResources.InteriorCells[cellId] = preload.InteriorCells[i];
-                int completed = cache.Manifest.CellGrid.Length + i + 1;
-                if (completed == totalPreloadedCells || (completed % MergeBatchSize) == 0)
+                    WorldResources.InteriorCells[cellId] = data;
+                installed++;
+                if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
                 {
-                    progress?.Report($"Installing preloaded cells {completed}/{totalPreloadedCells}", completed, totalPreloadedCells);
+                    progress?.Report($"Installing preloaded cells {installed}/{totalPreloadedCells}", installed, totalPreloadedCells);
                     yield return null;
                 }
             }
             progress?.CompleteStage("Preloaded cells installed");
+        }
+
+        static int CountPreloadedCells(WorldBootstrapPreloadResult preload)
+        {
+            int count = 0;
+            var exterior = preload?.ExteriorCells ?? System.Array.Empty<CellData>();
+            for (int i = 0; i < exterior.Length; i++)
+                if (exterior[i] != null)
+                    count++;
+
+            var interior = preload?.InteriorCells ?? System.Array.Empty<CellData>();
+            for (int i = 0; i < interior.Length; i++)
+                if (interior[i] != null)
+                    count++;
+
+            return count;
         }
 
         public static IEnumerable<object> InstallColliderBlobs(WorldBootstrapCollisionLoadResult collisionLoad, RuntimeLoadProgress progress)

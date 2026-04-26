@@ -85,6 +85,7 @@ namespace VVardenfell.Runtime.Components
     public struct ActorSpawnSource : IComponentData
     {
         public ActorDefHandle Definition;
+        public byte FirstPerson;
     }
 
     public struct ItemPickupAuthoring : IComponentData

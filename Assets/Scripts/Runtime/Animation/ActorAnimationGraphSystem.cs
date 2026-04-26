@@ -1,6 +1,8 @@
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Profiling;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
@@ -10,6 +12,10 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationStateResolveSystem))]
     public partial struct ActorAnimationGraphSystem : ISystem
     {
+        static readonly ProfilerMarker k_ResolveRequestedGroups = new("VV.ActorAnimationGraph.ResolveRequestedGroups");
+        static readonly ProfilerMarker k_AdvanceControllers = new("VV.ActorAnimationGraph.AdvanceControllers");
+        static readonly ProfilerMarker k_SyncLayerTimes = new("VV.ActorAnimationGraph.SyncLayerTimes");
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<ActorAnimationBlobCatalog>();
@@ -23,66 +29,140 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ref var catalog = ref catalogRef.Value;
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            foreach (var (controller, presentation, layers, entity) in
-                     SystemAPI.Query<RefRW<ActorAnimationController>, RefRO<ActorPresentation>, DynamicBuffer<ActorAnimationLayer>>()
-                         .WithAll<ActorPresentation>()
-                         .WithEntityAccess())
+            using (k_ResolveRequestedGroups.Auto())
             {
-                if (controller.ValueRO.Speed <= 0f)
-                    controller.ValueRW.Speed = 1f;
-
-                if (!controller.ValueRO.RequestedGroup.IsEmpty
-                    && (!controller.ValueRO.RequestedGroup.Equals(controller.ValueRO.CurrentGroup)
-                        || controller.ValueRO.Playing == 0))
+                state.Dependency = new ResolveRequestedGroupsJob
                 {
-                    StartGroup(
-                        ref controller.ValueRW,
-                        layers,
-                        presentation.ValueRO,
-                        ref catalog,
-                        controller.ValueRO.RequestedGroup);
-                    if (state.EntityManager.HasComponent<ActorAnimationPoseDirty>(entity))
-                        ecb.SetComponentEnabled<ActorAnimationPoseDirty>(entity, true);
-                    else
-                        ecb.AddComponent<ActorAnimationPoseDirty>(entity);
+                    Catalog = catalogRef,
+                }.ScheduleParallel(state.Dependency);
+            }
+
+            using (k_AdvanceControllers.Auto())
+            {
+                state.Dependency = new AdvanceControllersJob
+                {
+                    DeltaTime = deltaTime,
+                }.ScheduleParallel(state.Dependency);
+            }
+
+            using (k_SyncLayerTimes.Auto())
+            {
+                state.Dependency = new SyncLayerTimesJob().ScheduleParallel(state.Dependency);
+            }
+        }
+
+        [BurstCompile]
+        [WithAll(typeof(ActorPresentation))]
+        partial struct ResolveRequestedGroupsJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
+
+            void Execute(
+                ref ActorAnimationController controller,
+                in ActorPresentation presentation,
+                DynamicBuffer<ActorAnimationLayer> layers,
+                EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
+            {
+                if (!Catalog.IsCreated)
+                    return;
+
+                if (controller.Speed <= 0f)
+                    controller.Speed = 1f;
+
+                if (controller.RequestedGroup.IsEmpty
+                    || (controller.RequestedGroup.Equals(controller.CurrentGroup) && controller.Playing != 0))
+                {
+                    return;
                 }
 
-                if (controller.ValueRO.Playing == 0)
-                    continue;
+                ref var catalog = ref Catalog.Value;
+                StartGroup(
+                    ref controller,
+                    layers,
+                    presentation,
+                    ref catalog,
+                    controller.RequestedGroup);
+                poseDirty.ValueRW = true;
+            }
+        }
 
-                float previousTime = controller.ValueRO.Time;
-                float nextTime = previousTime + deltaTime * controller.ValueRO.Speed;
-                bool loop = controller.ValueRO.LoopCount > 0 && nextTime >= controller.ValueRO.LoopStopTime;
+        [BurstCompile]
+        partial struct AdvanceControllersJob : IJobEntity
+        {
+            public float DeltaTime;
+
+            void Execute(ref ActorAnimationController controller, EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
+            {
+                if (controller.Speed <= 0f)
+                    controller.Speed = 1f;
+
+                if (controller.Playing == 0)
+                    return;
+
+                float previousTime = controller.Time;
+                byte previousPlaying = controller.Playing;
+                var previousGroup = controller.CurrentGroup;
+
+                float nextTime = previousTime + DeltaTime * controller.Speed;
+                bool loop = controller.LoopCount > 0 && nextTime >= controller.LoopStopTime;
                 if (loop)
                 {
-                    if (controller.ValueRO.LoopCount != uint.MaxValue)
-                        controller.ValueRW.LoopCount--;
-                    controller.ValueRW.Time = controller.ValueRO.LoopStartTime;
+                    if (controller.LoopCount != uint.MaxValue)
+                        controller.LoopCount--;
+                    controller.Time = controller.LoopStartTime;
                 }
                 else
                 {
-                    controller.ValueRW.Time = nextTime >= controller.ValueRO.StopTime
-                        ? controller.ValueRO.StopTime
+                    controller.Time = nextTime >= controller.StopTime
+                        ? controller.StopTime
                         : nextTime;
                 }
 
-                if (!loop && controller.ValueRW.Time >= controller.ValueRO.StopTime)
+                if (!loop && controller.Time >= controller.StopTime)
                 {
-                    controller.ValueRW.Playing = 0;
-                    if (controller.ValueRO.AutoDisable != 0)
-                        controller.ValueRW.CurrentGroup = default;
+                    controller.Playing = 0;
+                    if (controller.AutoDisable != 0)
+                        controller.CurrentGroup = default;
                 }
 
-                SyncLayerTimes(layers, controller.ValueRW);
-                if (state.EntityManager.HasComponent<ActorAnimationPoseDirty>(entity))
-                    ecb.SetComponentEnabled<ActorAnimationPoseDirty>(entity, true);
-                else
-                    ecb.AddComponent<ActorAnimationPoseDirty>(entity);
+                if (!MathEquals(previousTime, controller.Time)
+                    || previousPlaying != controller.Playing
+                    || !previousGroup.Equals(controller.CurrentGroup))
+                {
+                    poseDirty.ValueRW = true;
+                }
             }
+        }
 
-            ecb.Playback(state.EntityManager);
-            ecb.Dispose();
+        [BurstCompile]
+        partial struct SyncLayerTimesJob : IJobEntity
+        {
+            void Execute(
+                in ActorAnimationController controller,
+                DynamicBuffer<ActorAnimationLayer> layers,
+                EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
+            {
+                if (layers.Length == 0)
+                    return;
+
+                bool changed = false;
+                for (int i = 0; i < layers.Length; i++)
+                {
+                    var layer = layers[i];
+                    if (!layer.Group.IsEmpty && !layer.Group.Equals(controller.CurrentGroup))
+                        continue;
+
+                    if (MathEquals(layer.Time, controller.Time))
+                        continue;
+
+                    layer.Time = controller.Time;
+                    layers[i] = layer;
+                    changed = true;
+                }
+
+                if (changed)
+                    poseDirty.ValueRW = true;
+            }
         }
 
         static void StartGroup(
@@ -280,20 +360,35 @@ namespace VVardenfell.Runtime.Animation
 
         static bool IsLooping(FixedString64Bytes group)
         {
-            return group.Equals(new FixedString64Bytes("idle"))
-                || group.Equals(new FixedString64Bytes("idlesneak"))
-                || group.Equals(new FixedString64Bytes("walkforward"))
-                || group.Equals(new FixedString64Bytes("walkback"))
-                || group.Equals(new FixedString64Bytes("walkleft"))
-                || group.Equals(new FixedString64Bytes("walkright"))
-                || group.Equals(new FixedString64Bytes("runforward"))
-                || group.Equals(new FixedString64Bytes("runback"))
-                || group.Equals(new FixedString64Bytes("runleft"))
-                || group.Equals(new FixedString64Bytes("runright"))
-                || group.Equals(new FixedString64Bytes("sneakforward"))
-                || group.Equals(new FixedString64Bytes("sneakback"))
-                || group.Equals(new FixedString64Bytes("sneakleft"))
-                || group.Equals(new FixedString64Bytes("sneakright"));
+            ulong hash = HashGroup(group);
+            return hash == 11428733724764909075UL
+                || hash == 2840003338041434093UL
+                || hash == 13126534554455935837UL
+                || hash == 15293321721980343883UL
+                || hash == 17455567770838934929UL
+                || hash == 8077834754628661618UL
+                || hash == 10777559574499982535UL
+                || hash == 14915820621887690617UL
+                || hash == 3639883521381160167UL
+                || hash == 13144730594257661592UL
+                || hash == 3390669506715992788UL
+                || hash == 9999511677273344816UL
+                || hash == 14103176270394171182UL
+                || hash == 17999522183465603107UL;
+        }
+
+        static ulong HashGroup(FixedString64Bytes value)
+        {
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offset;
+            for (int i = 0; i < value.Length; i++)
+            {
+                hash ^= ToLowerAscii(value[i]);
+                hash *= prime;
+            }
+
+            return hash;
         }
 
         static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
@@ -315,5 +410,8 @@ namespace VVardenfell.Runtime.Animation
             => value >= (byte)'A' && value <= (byte)'Z'
                 ? (byte)(value + 32)
                 : value;
+
+        static bool MathEquals(float left, float right)
+            => math.abs(left - right) <= 0.0001f;
     }
 }

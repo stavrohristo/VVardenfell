@@ -112,6 +112,93 @@ namespace VVardenfell.Core.Cache
         public int Int1;
     }
 
+    public enum ItemEquipmentKind : byte
+    {
+        None = 0,
+        Weapon = 1,
+        Armor = 2,
+        Clothing = 3,
+    }
+
+    public enum ItemEquipmentSlot : byte
+    {
+        None = 0,
+        Weapon = 1,
+        Helmet = 2,
+        Cuirass = 3,
+        LeftPauldron = 4,
+        RightPauldron = 5,
+        Greaves = 6,
+        Boots = 7,
+        LeftHand = 8,
+        RightHand = 9,
+        Shield = 10,
+        Pants = 11,
+        Shoes = 12,
+        Shirt = 13,
+        Belt = 14,
+        Robe = 15,
+        Skirt = 16,
+        Ring = 17,
+        Amulet = 18,
+    }
+
+    public enum ItemEquipmentPartReference : byte
+    {
+        Head = 0,
+        Hair = 1,
+        Neck = 2,
+        Cuirass = 3,
+        Groin = 4,
+        Skirt = 5,
+        RightHand = 6,
+        LeftHand = 7,
+        RightWrist = 8,
+        LeftWrist = 9,
+        Shield = 10,
+        RightForearm = 11,
+        LeftForearm = 12,
+        RightUpperarm = 13,
+        LeftUpperarm = 14,
+        RightFoot = 15,
+        LeftFoot = 16,
+        RightAnkle = 17,
+        LeftAnkle = 18,
+        RightKnee = 19,
+        LeftKnee = 20,
+        RightLeg = 21,
+        LeftLeg = 22,
+        RightPauldron = 23,
+        LeftPauldron = 24,
+        Weapon = 25,
+        Tail = 26,
+    }
+
+    public struct ItemEquipmentDef
+    {
+        public ItemDefHandle Item;
+        public ItemEquipmentKind Kind;
+        public ItemEquipmentSlot Slot;
+        public int Type;
+        public int Value;
+        public float Weight;
+        public int Health;
+        public int Armor;
+        public int EnchantCapacity;
+        public int DamageMin;
+        public int DamageMax;
+        public int FirstBodyPartIndex;
+        public int BodyPartCount;
+    }
+
+    public struct ItemEquipmentBodyPartDef
+    {
+        public ItemDefHandle Item;
+        public ItemEquipmentPartReference Part;
+        public string MaleBodyPartId;
+        public string FemaleBodyPartId;
+    }
+
     public struct GenericRecordDef
     {
         public ContentId ContentId;
@@ -661,6 +748,8 @@ namespace VVardenfell.Core.Cache
         public ContainerContentRangeDef[] ContainerContentRanges = Array.Empty<ContainerContentRangeDef>();
         public ContainerItemDef[] ContainerItems = Array.Empty<ContainerItemDef>();
         public BaseDef[] Items = Array.Empty<BaseDef>();
+        public ItemEquipmentDef[] ItemEquipment = Array.Empty<ItemEquipmentDef>();
+        public ItemEquipmentBodyPartDef[] ItemEquipmentBodyParts = Array.Empty<ItemEquipmentBodyPartDef>();
         public LightDef[] Lights = Array.Empty<LightDef>();
         public ItemLeveledListDef[] ItemLeveledLists = Array.Empty<ItemLeveledListDef>();
         public ItemLeveledListEntryDef[] ItemLeveledListEntries = Array.Empty<ItemLeveledListEntryDef>();
@@ -726,6 +815,8 @@ namespace VVardenfell.Core.Cache
             WriteContainerContentRangeArray(w, data?.ContainerContentRanges);
             WriteContainerItemArray(w, data?.ContainerItems);
             WriteBaseDefArray(w, data?.Items);
+            WriteItemEquipmentArray(w, data?.ItemEquipment);
+            WriteItemEquipmentBodyPartArray(w, data?.ItemEquipmentBodyParts);
             WriteLightArray(w, data?.Lights);
             WriteItemLeveledListArray(w, data?.ItemLeveledLists);
             WriteItemLeveledListEntryArray(w, data?.ItemLeveledListEntries);
@@ -796,6 +887,8 @@ namespace VVardenfell.Core.Cache
                 ContainerContentRanges = ReadContainerContentRangeArray(r),
                 ContainerItems = ReadContainerItemArray(r),
                 Items = ReadBaseDefArray(r),
+                ItemEquipment = ReadItemEquipmentArray(r),
+                ItemEquipmentBodyParts = ReadItemEquipmentBodyPartArray(r),
                 Lights = ReadLightArray(r),
                 ItemLeveledLists = ReadItemLeveledListArray(r),
                 ItemLeveledListEntries = ReadItemLeveledListEntryArray(r),
@@ -878,6 +971,62 @@ namespace VVardenfell.Core.Cache
                 Float0 = r.ReadSingle(),
                 Int0 = r.ReadInt32(),
                 Int1 = r.ReadInt32(),
+            };
+        }
+
+        static void WriteItemEquipment(BinaryWriter w, ItemEquipmentDef value)
+        {
+            w.Write(value.Item.Value);
+            w.Write((byte)value.Kind);
+            w.Write((byte)value.Slot);
+            w.Write(value.Type);
+            w.Write(value.Value);
+            w.Write(value.Weight);
+            w.Write(value.Health);
+            w.Write(value.Armor);
+            w.Write(value.EnchantCapacity);
+            w.Write(value.DamageMin);
+            w.Write(value.DamageMax);
+            w.Write(value.FirstBodyPartIndex);
+            w.Write(value.BodyPartCount);
+        }
+
+        static ItemEquipmentDef ReadItemEquipment(BinaryReader r)
+        {
+            return new ItemEquipmentDef
+            {
+                Item = new ItemDefHandle { Value = r.ReadInt32() },
+                Kind = (ItemEquipmentKind)r.ReadByte(),
+                Slot = (ItemEquipmentSlot)r.ReadByte(),
+                Type = r.ReadInt32(),
+                Value = r.ReadInt32(),
+                Weight = r.ReadSingle(),
+                Health = r.ReadInt32(),
+                Armor = r.ReadInt32(),
+                EnchantCapacity = r.ReadInt32(),
+                DamageMin = r.ReadInt32(),
+                DamageMax = r.ReadInt32(),
+                FirstBodyPartIndex = r.ReadInt32(),
+                BodyPartCount = r.ReadInt32(),
+            };
+        }
+
+        static void WriteItemEquipmentBodyPart(BinaryWriter w, ItemEquipmentBodyPartDef value)
+        {
+            w.Write(value.Item.Value);
+            w.Write((byte)value.Part);
+            WriteString(w, value.MaleBodyPartId);
+            WriteString(w, value.FemaleBodyPartId);
+        }
+
+        static ItemEquipmentBodyPartDef ReadItemEquipmentBodyPart(BinaryReader r)
+        {
+            return new ItemEquipmentBodyPartDef
+            {
+                Item = new ItemDefHandle { Value = r.ReadInt32() },
+                Part = (ItemEquipmentPartReference)r.ReadByte(),
+                MaleBodyPartId = ReadString(r),
+                FemaleBodyPartId = ReadString(r),
             };
         }
 
@@ -2081,6 +2230,40 @@ namespace VVardenfell.Core.Cache
             var values = new BaseDef[count];
             for (int i = 0; i < count; i++)
                 values[i] = ReadBaseDef(r);
+            return values;
+        }
+
+        static void WriteItemEquipmentArray(BinaryWriter w, ItemEquipmentDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteItemEquipment(w, values[i]);
+        }
+
+        static ItemEquipmentDef[] ReadItemEquipmentArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ItemEquipmentDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadItemEquipment(r);
+            return values;
+        }
+
+        static void WriteItemEquipmentBodyPartArray(BinaryWriter w, ItemEquipmentBodyPartDef[] values)
+        {
+            int count = values?.Length ?? 0;
+            w.Write(count);
+            for (int i = 0; i < count; i++)
+                WriteItemEquipmentBodyPart(w, values[i]);
+        }
+
+        static ItemEquipmentBodyPartDef[] ReadItemEquipmentBodyPartArray(BinaryReader r)
+        {
+            int count = r.ReadInt32();
+            var values = new ItemEquipmentBodyPartDef[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadItemEquipmentBodyPart(r);
             return values;
         }
 

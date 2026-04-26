@@ -44,6 +44,7 @@ namespace VVardenfell.Runtime.AI
         public int PathGridIndex;
         public int GridX;
         public int GridY;
+        public uint InteriorCellHash;
         public byte IsResolved;
         public byte IsInterior;
     }
@@ -118,13 +119,10 @@ namespace VVardenfell.Runtime.AI
     [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
     public partial class ActorAiNavigationAnchorSyncSystem : SystemBase
     {
-        EntityQuery _query;
-
         protected override void OnCreate()
         {
-            _query = GetEntityQuery(
-                ComponentType.ReadOnly<ActorAiState>(),
-                ComponentType.ReadWrite<ActorAiNavigationAnchor>());
+            RequireForUpdate<ActorAiState>();
+            RequireForUpdate<ActorAiNavigationAnchor>();
         }
 
         protected override void OnUpdate()
@@ -133,68 +131,85 @@ namespace VVardenfell.Runtime.AI
             if (contentDb == null)
                 return;
 
-            using var entities = _query.ToEntityArray(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (anchor, cellLink) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>, RefRO<CellLink>>())
             {
-                Entity entity = entities[i];
-                var anchor = EntityManager.GetComponentData<ActorAiNavigationAnchor>(entity);
-                var next = ResolveAnchor(contentDb, entity, anchor);
-                if (next.PathGridIndex != anchor.PathGridIndex ||
-                    next.IsResolved != anchor.IsResolved ||
-                    next.IsInterior != anchor.IsInterior ||
-                    next.GridX != anchor.GridX ||
-                    next.GridY != anchor.GridY)
+                SyncExteriorAnchor(contentDb, cellLink.ValueRO.Value, anchor);
+            }
+
+            foreach (var (anchor, location) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>, RefRO<LogicalRefLocation>>().WithNone<CellLink>())
+            {
+                if (location.ValueRO.IsInterior != 0)
                 {
-                    EntityManager.SetComponentData(entity, next);
+                    SyncInteriorAnchor(contentDb, location.ValueRO.InteriorCellId, anchor);
+                }
+                else
+                {
+                    SyncExteriorAnchor(contentDb, location.ValueRO.ExteriorCell, anchor);
                 }
             }
         }
 
-        ActorAiNavigationAnchor ResolveAnchor(RuntimeContentDatabase contentDb, Entity entity, ActorAiNavigationAnchor previous)
+        static void SyncExteriorAnchor(RuntimeContentDatabase contentDb, int2 coord, RefRW<ActorAiNavigationAnchor> anchor)
         {
-            var anchor = new ActorAiNavigationAnchor { PathGridIndex = -1 };
-            if (EntityManager.HasComponent<CellLink>(entity))
+            ref var current = ref anchor.ValueRW;
+            if (current.IsInterior == 0 &&
+                current.GridX == coord.x &&
+                current.GridY == coord.y)
             {
-                int2 coord = EntityManager.GetComponentData<CellLink>(entity).Value;
-                anchor.GridX = coord.x;
-                anchor.GridY = coord.y;
-                if (contentDb.TryGetExteriorPathGridHandle(coord.x, coord.y, out var handle) && handle.IsValid)
-                {
-                    anchor.PathGridIndex = handle.Index;
-                    anchor.IsResolved = 1;
-                }
-                return anchor;
+                return;
             }
 
-            if (EntityManager.HasComponent<LogicalRefLocation>(entity))
+            var next = new ActorAiNavigationAnchor
             {
-                var location = EntityManager.GetComponentData<LogicalRefLocation>(entity);
-                if (location.IsInterior != 0)
-                {
-                    anchor.IsInterior = 1;
-                    if (contentDb.TryGetInteriorPathGridHandle(location.InteriorCellId.ToString(), out var handle) && handle.IsValid)
-                    {
-                        anchor.PathGridIndex = handle.Index;
-                        anchor.IsResolved = 1;
-                    }
-                }
-                else
-                {
-                    anchor.GridX = location.ExteriorCell.x;
-                    anchor.GridY = location.ExteriorCell.y;
-                    if (contentDb.TryGetExteriorPathGridHandle(location.ExteriorCell.x, location.ExteriorCell.y, out var handle) && handle.IsValid)
-                    {
-                        anchor.PathGridIndex = handle.Index;
-                        anchor.IsResolved = 1;
-                    }
-                }
-            }
-            else
+                PathGridIndex = -1,
+                GridX = coord.x,
+                GridY = coord.y,
+                InteriorCellHash = 0u,
+                IsInterior = 0,
+            };
+            if (contentDb.TryGetExteriorPathGridHandle(coord.x, coord.y, out var handle) && handle.IsValid)
             {
-                anchor = previous;
+                next.PathGridIndex = handle.Index;
+                next.IsResolved = 1;
             }
 
-            return anchor;
+            current = next;
+        }
+
+        static void SyncInteriorAnchor(RuntimeContentDatabase contentDb, FixedString128Bytes interiorCellId, RefRW<ActorAiNavigationAnchor> anchor)
+        {
+            uint interiorCellHash = HashInteriorCellId(interiorCellId);
+            ref var current = ref anchor.ValueRW;
+            if (current.IsInterior != 0 && current.InteriorCellHash == interiorCellHash)
+            {
+                return;
+            }
+
+            var next = new ActorAiNavigationAnchor
+            {
+                PathGridIndex = -1,
+                InteriorCellHash = interiorCellHash,
+                IsInterior = 1,
+            };
+            if (contentDb.TryGetInteriorPathGridHandle(interiorCellId.ToString(), out var handle) && handle.IsValid)
+            {
+                next.PathGridIndex = handle.Index;
+                next.IsResolved = 1;
+            }
+
+            current = next;
+        }
+
+        static uint HashInteriorCellId(FixedString128Bytes interiorCellId)
+        {
+            uint hash = 2166136261u;
+            for (int i = 0; i < interiorCellId.Length; i++)
+            {
+                hash ^= interiorCellId[i];
+                hash *= 16777619u;
+            }
+
+            return hash == 0u ? 1u : hash;
         }
     }
 
@@ -206,23 +221,32 @@ namespace VVardenfell.Runtime.AI
         ComponentTypeHandle<ActorAiState> _aiStateHandle;
         ComponentTypeHandle<ActorAiNavigationAnchor> _anchorHandle;
         ComponentTypeHandle<PathGridTraversalState> _traversalStateHandle;
-        ComponentTypeHandle<PathGridTraversalRequest> _traversalRequestHandle;
+        ComponentTypeHandle<PathGridTraversalPendingRequest> _traversalPendingRequestHandle;
+        ComponentTypeHandle<PathGridTraversalAwaitingResult> _traversalAwaitingResultHandle;
         BufferTypeHandle<ActorAiPackageRuntime> _packageHandle;
 
         public void OnCreate(ref SystemState state)
         {
-            _query = state.GetEntityQuery(
-                ComponentType.ReadOnly<LocalTransform>(),
-                ComponentType.ReadWrite<ActorAiState>(),
-                ComponentType.ReadOnly<ActorAiNavigationAnchor>(),
-                ComponentType.ReadWrite<PathGridTraversalState>(),
-                ComponentType.ReadWrite<PathGridTraversalRequest>(),
-                ComponentType.ReadOnly<ActorAiPackageRuntime>());
+            _query = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<LocalTransform>(),
+                    ComponentType.ReadWrite<ActorAiState>(),
+                    ComponentType.ReadOnly<ActorAiNavigationAnchor>(),
+                    ComponentType.ReadWrite<PathGridTraversalState>(),
+                    ComponentType.ReadWrite<PathGridTraversalPendingRequest>(),
+                    ComponentType.ReadWrite<PathGridTraversalAwaitingResult>(),
+                    ComponentType.ReadOnly<ActorAiPackageRuntime>(),
+                },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
+            });
             _transformHandle = state.GetComponentTypeHandle<LocalTransform>(isReadOnly: true);
             _aiStateHandle = state.GetComponentTypeHandle<ActorAiState>(isReadOnly: false);
             _anchorHandle = state.GetComponentTypeHandle<ActorAiNavigationAnchor>(isReadOnly: true);
             _traversalStateHandle = state.GetComponentTypeHandle<PathGridTraversalState>(isReadOnly: false);
-            _traversalRequestHandle = state.GetComponentTypeHandle<PathGridTraversalRequest>(isReadOnly: false);
+            _traversalPendingRequestHandle = state.GetComponentTypeHandle<PathGridTraversalPendingRequest>(isReadOnly: false);
+            _traversalAwaitingResultHandle = state.GetComponentTypeHandle<PathGridTraversalAwaitingResult>(isReadOnly: false);
             _packageHandle = state.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: true);
         }
 
@@ -236,7 +260,8 @@ namespace VVardenfell.Runtime.AI
             _aiStateHandle.Update(ref state);
             _anchorHandle.Update(ref state);
             _traversalStateHandle.Update(ref state);
-            _traversalRequestHandle.Update(ref state);
+            _traversalPendingRequestHandle.Update(ref state);
+            _traversalAwaitingResultHandle.Update(ref state);
             _packageHandle.Update(ref state);
 
             state.Dependency = new ActorAiPlannerJob
@@ -247,7 +272,8 @@ namespace VVardenfell.Runtime.AI
                 AiStateHandle = _aiStateHandle,
                 AnchorHandle = _anchorHandle,
                 TraversalStateHandle = _traversalStateHandle,
-                TraversalRequestHandle = _traversalRequestHandle,
+                TraversalPendingRequestHandle = _traversalPendingRequestHandle,
+                TraversalAwaitingResultHandle = _traversalAwaitingResultHandle,
                 PackageHandle = _packageHandle,
             }.ScheduleParallel(_query, state.Dependency);
         }
@@ -262,7 +288,8 @@ namespace VVardenfell.Runtime.AI
         public ComponentTypeHandle<ActorAiState> AiStateHandle;
         [ReadOnly] public ComponentTypeHandle<ActorAiNavigationAnchor> AnchorHandle;
         public ComponentTypeHandle<PathGridTraversalState> TraversalStateHandle;
-        public ComponentTypeHandle<PathGridTraversalRequest> TraversalRequestHandle;
+        public ComponentTypeHandle<PathGridTraversalPendingRequest> TraversalPendingRequestHandle;
+        public ComponentTypeHandle<PathGridTraversalAwaitingResult> TraversalAwaitingResultHandle;
         [ReadOnly] public BufferTypeHandle<ActorAiPackageRuntime> PackageHandle;
 
         public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
@@ -271,7 +298,7 @@ namespace VVardenfell.Runtime.AI
             var aiStates = chunk.GetNativeArray(ref AiStateHandle);
             var anchors = chunk.GetNativeArray(ref AnchorHandle);
             var traversalStates = chunk.GetNativeArray(ref TraversalStateHandle);
-            var traversalRequests = chunk.GetNativeArray(ref TraversalRequestHandle);
+            var traversalPendingRequests = chunk.GetNativeArray(ref TraversalPendingRequestHandle);
             var packages = chunk.GetBufferAccessor(ref PackageHandle);
 
             int count = chunk.Count;
@@ -280,20 +307,25 @@ namespace VVardenfell.Runtime.AI
                 var aiState = aiStates[i];
                 var anchor = anchors[i];
                 var traversalState = traversalStates[i];
-                var traversalRequest = traversalRequests[i];
+                var traversalPendingRequest = traversalPendingRequests[i];
+                bool hasPendingRequest = chunk.IsComponentEnabled(ref TraversalPendingRequestHandle, i);
+                bool awaitingResult = chunk.IsComponentEnabled(ref TraversalAwaitingResultHandle, i);
                 var packageBuffer = packages[i];
 
                 PlanActor(
                     transforms[i].Position,
                     anchor,
                     packageBuffer,
+                    ref hasPendingRequest,
+                    awaitingResult,
                     ref aiState,
                     ref traversalState,
-                    ref traversalRequest);
+                    ref traversalPendingRequest);
 
                 aiStates[i] = aiState;
                 traversalStates[i] = traversalState;
-                traversalRequests[i] = traversalRequest;
+                traversalPendingRequests[i] = traversalPendingRequest;
+                chunk.SetComponentEnabled(ref TraversalPendingRequestHandle, i, hasPendingRequest);
             }
         }
 
@@ -301,9 +333,11 @@ namespace VVardenfell.Runtime.AI
             float3 actorPosition,
             in ActorAiNavigationAnchor anchor,
             DynamicBuffer<ActorAiPackageRuntime> packages,
+            ref bool hasPendingRequest,
+            bool awaitingResult,
             ref ActorAiState aiState,
             ref PathGridTraversalState traversalState,
-            ref PathGridTraversalRequest traversalRequest)
+            ref PathGridTraversalPendingRequest traversalRequest)
         {
             if (packages.Length == 0)
             {
@@ -317,7 +351,8 @@ namespace VVardenfell.Runtime.AI
                 return;
             }
 
-            if (traversalRequest.Pending != 0 ||
+            if (hasPendingRequest ||
+                awaitingResult ||
                 traversalState.ActivePathRequestId > 0 ||
                 traversalState.Status == (byte)PathGridTraversalStatus.RequestingPath ||
                 traversalState.Status == (byte)PathGridTraversalStatus.Traversing)
@@ -356,6 +391,7 @@ namespace VVardenfell.Runtime.AI
             {
                 aiState.CurrentNodeIndex = startNode;
                 aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
+                hasPendingRequest = true;
             }
             else
             {
@@ -367,7 +403,7 @@ namespace VVardenfell.Runtime.AI
             in ActorAiPackageRuntime package,
             int startNode,
             ref ActorAiState aiState,
-            ref PathGridTraversalRequest traversalRequest)
+            ref PathGridTraversalPendingRequest traversalRequest)
         {
             int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
             if (!TryResolveNearestNode(pathGridIndex, package.TargetPosition, out int goalNode))
@@ -384,7 +420,7 @@ namespace VVardenfell.Runtime.AI
             int startNode,
             float3 actorPosition,
             ref ActorAiState aiState,
-            ref PathGridTraversalRequest traversalRequest)
+            ref PathGridTraversalPendingRequest traversalRequest)
         {
             if (!TryChooseWanderNode(pathGridIndex, startNode, actorPosition, package.WanderRadius, ref aiState.RandomSeed, out int goalNode))
                 return false;
@@ -417,16 +453,15 @@ namespace VVardenfell.Runtime.AI
                 aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
         }
 
-        void WriteTraversalRequest(int startNode, int goalNode, byte allowPartial, ref PathGridTraversalRequest traversalRequest)
+        void WriteTraversalRequest(int startNode, int goalNode, byte allowPartial, ref PathGridTraversalPendingRequest traversalRequest)
         {
-            traversalRequest = new PathGridTraversalRequest
+            traversalRequest = new PathGridTraversalPendingRequest
             {
                 StartNodeIndex = startNode,
                 GoalNodeIndex = goalNode,
                 AllowPartial = allowPartial,
                 MaxFineIterations = 4096,
                 MaxAbstractIterations = 4096,
-                Pending = 1,
             };
         }
 

@@ -39,20 +39,7 @@ namespace VVardenfell.Runtime.Streaming
         public static void BuildRuntimeSpawnPrefabLookups(CacheLoader cache)
         {
             var modelDefs = cache?.ModelPrefabCatalog?.Records ?? System.Array.Empty<ModelPrefabDef>();
-            var modelLookup = new Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor>(modelDefs.Length, System.StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < modelDefs.Length; i++)
-            {
-                var def = modelDefs[i];
-                if (def == null || string.IsNullOrWhiteSpace(def.ModelPath))
-                    continue;
-
-                modelLookup[def.ModelPath] = new WorldResources.RuntimeSpawnPrefabDescriptor
-                {
-                    ModelPrefabIndex = i,
-                    CollisionIndex = def.CollisionIndex,
-                    Supported = 1,
-                };
-            }
+            var modelLookup = BuildModelDescriptorLookup(modelDefs);
 
             var contentDb = cache?.ContentDatabase;
             if (contentDb == null)
@@ -70,26 +57,60 @@ namespace VVardenfell.Runtime.Streaming
                 if (actor.Kind != ActorDefKind.Creature)
                     continue;
 
-                creatures[i] = ResolveSpawnDescriptor(modelLookup, actor.Model);
+                creatures[i] = ResolveModelDescriptor(modelLookup, actor.Model);
             }
 
             var items = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.ItemCount];
             for (int i = 0; i < items.Length; i++)
             {
                 ref readonly var item = ref contentDb.Get(ItemDefHandle.FromIndex(i));
-                items[i] = ResolveSpawnDescriptor(modelLookup, item.Model);
+                items[i] = ResolveModelDescriptor(modelLookup, item.Model);
             }
 
             var lights = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.LightCount];
             for (int i = 0; i < lights.Length; i++)
             {
                 ref readonly var light = ref contentDb.Get(LightDefHandle.FromIndex(i));
-                lights[i] = ResolveSpawnDescriptor(modelLookup, light.Model);
+                lights[i] = ResolveModelDescriptor(modelLookup, light.Model);
             }
 
             WorldResources.SpawnableCreaturePrefabs = creatures;
             WorldResources.SpawnableItemPrefabs = items;
             WorldResources.SpawnableLightPrefabs = lights;
+        }
+
+        internal static Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor> BuildModelDescriptorLookup(ModelPrefabDef[] modelDefs)
+        {
+            var lookup = new Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor>(
+                modelDefs?.Length ?? 0,
+                System.StringComparer.OrdinalIgnoreCase);
+            if (modelDefs == null)
+                return lookup;
+
+            for (int i = 0; i < modelDefs.Length; i++)
+            {
+                var def = modelDefs[i];
+                if (def == null || string.IsNullOrWhiteSpace(def.ModelPath))
+                    continue;
+
+                lookup[NormalizeContentModelPath(def.ModelPath)] = new WorldResources.RuntimeSpawnPrefabDescriptor
+                {
+                    ModelPrefabIndex = i,
+                    CollisionIndex = def.CollisionIndex,
+                    Supported = 1,
+                };
+            }
+
+            return lookup;
+        }
+
+        internal static bool TryResolveModelDescriptor(
+            Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor> modelLookup,
+            string modelPath,
+            out WorldResources.RuntimeSpawnPrefabDescriptor descriptor)
+        {
+            descriptor = ResolveModelDescriptor(modelLookup, modelPath);
+            return descriptor.IsSupported;
         }
 
         static Entity BuildModelPrefabEntityGraph(
@@ -197,7 +218,7 @@ namespace VVardenfell.Runtime.Streaming
             return rma;
         }
 
-        static WorldResources.RuntimeSpawnPrefabDescriptor ResolveSpawnDescriptor(
+        static WorldResources.RuntimeSpawnPrefabDescriptor ResolveModelDescriptor(
             Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor> modelLookup,
             string modelPath)
         {
@@ -208,12 +229,14 @@ namespace VVardenfell.Runtime.Streaming
             return modelLookup.TryGetValue(normalizedPath, out var descriptor) ? descriptor : default;
         }
 
-        static string NormalizeContentModelPath(string modelPath)
+        internal static string NormalizeContentModelPath(string modelPath)
         {
             if (string.IsNullOrWhiteSpace(modelPath))
                 return string.Empty;
 
-            string trimmed = modelPath.Trim();
+            string trimmed = modelPath.Trim().Replace('/', '\\');
+            while (trimmed.Contains("\\\\"))
+                trimmed = trimmed.Replace("\\\\", "\\");
             if (trimmed.StartsWith("meshes\\", System.StringComparison.OrdinalIgnoreCase))
                 return trimmed;
 

@@ -3,6 +3,8 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Profiling;
+using Unity.Jobs;
 using Unity.Transforms;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Streaming;
@@ -13,18 +15,25 @@ namespace VVardenfell.Runtime.Rendering
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class ActorProceduralRenderUploadSystem : SystemBase
     {
+        static readonly ProfilerMarker k_EnsureStaticResources = new("VV.ActorProcedural.Upload.EnsureStaticResources");
+        static readonly ProfilerMarker k_EstimateCounts = new("VV.ActorProcedural.Upload.EstimateCounts");
+        static readonly ProfilerMarker k_SchedulePackJob = new("VV.ActorProcedural.Upload.SchedulePackJob");
+        static readonly ProfilerMarker k_CompletePackJob = new("VV.ActorProcedural.Upload.CompletePackJob");
+        static readonly ProfilerMarker k_SortAndBuildBatches = new("VV.ActorProcedural.Upload.SortAndBuildBatches");
+        static readonly ProfilerMarker k_GroupDraws = new("VV.ActorProcedural.Upload.GroupDraws");
+        static readonly ProfilerMarker k_BuildBatches = new("VV.ActorProcedural.Upload.BuildBatches");
+        static readonly ProfilerMarker k_UploadFrame = new("VV.ActorProcedural.Upload.FrameBuffers");
+
         EntityQuery _uploadQuery;
 
         protected override void OnCreate()
         {
             RequireForUpdate<ActorAnimationBlobCatalog>();
             RequireForUpdate<ActorSkinMesh>();
-            RequireForUpdate<ActorProceduralDraw>();
-            _uploadQuery = GetEntityQuery(
-                ComponentType.ReadWrite<ActorProceduralRenderState>(),
-                ComponentType.ReadOnly<LocalToWorld>(),
-                ComponentType.ReadOnly<ActorBone>(),
-                ComponentType.ReadOnly<ActorProceduralDraw>());
+            _uploadQuery = SystemAPI.QueryBuilder()
+                .WithAll<ActorRenderVisible, LocalToWorld, ActorGpuAnimationState, ActorBone, ActorSkinMesh>()
+                .WithPresent<GPUAnimation>()
+                .Build();
         }
 
         protected override void OnUpdate()
@@ -33,6 +42,38 @@ namespace VVardenfell.Runtime.Rendering
             if (!catalogRef.IsCreated)
                 return;
 
+            Dependency.Complete();
+
+            int entityCount = _uploadQuery.CalculateEntityCount();
+            if (entityCount <= 0)
+            {
+                var emptyResources = WorldResources.ActorProceduralRenderer;
+                if (emptyResources == null)
+                {
+                    emptyResources = new ActorProceduralRenderResources();
+                    WorldResources.ActorProceduralRenderer = emptyResources;
+                }
+
+                ref var emptyCatalog = ref catalogRef.Value;
+                using (k_EnsureStaticResources.Auto())
+                {
+                    emptyResources.EnsureStaticResources(ref emptyCatalog);
+                }
+
+                emptyResources.BeginFrame();
+                using (k_UploadFrame.Auto())
+                {
+                    emptyResources.UploadFrame();
+                }
+                return;
+            }
+
+            using var offsets = new NativeArray<int2>(entityCount, Allocator.TempJob);
+            using var drawCounts = new NativeArray<int>(entityCount, Allocator.TempJob);
+            using var boneCounts = new NativeArray<int>(entityCount, Allocator.TempJob);
+            using var totalCounts = new NativeReference<int2>(Allocator.TempJob);
+
+            JobHandle countHandle;
             var resources = WorldResources.ActorProceduralRenderer;
             if (resources == null)
             {
@@ -40,54 +81,83 @@ namespace VVardenfell.Runtime.Rendering
                 WorldResources.ActorProceduralRenderer = resources;
             }
 
-            Dependency.Complete();
-            ref var catalog = ref catalogRef.Value;
-            resources.EnsureStaticResources(ref catalog);
-            resources.BeginFrame();
+            using (k_EstimateCounts.Auto())
+            {
+                countHandle = new CountActorProceduralWorkJob
+                {
+                    Catalog = catalogRef,
+                    DrawCounts = drawCounts,
+                    BoneCounts = boneCounts,
+                }.ScheduleParallel(_uploadQuery, default);
+            }
 
-            int entityCount = _uploadQuery.CalculateEntityCount();
-            if (entityCount <= 0)
+            ref var catalog = ref catalogRef.Value;
+            using (k_EnsureStaticResources.Auto())
+            {
+                resources.EnsureStaticResources(ref catalog);
+            }
+
+            using (k_EstimateCounts.Auto())
+            {
+                var offsetsHandle = new BuildActorProceduralOffsetsJob
+                {
+                    DrawCounts = drawCounts,
+                    BoneCounts = boneCounts,
+                    Offsets = offsets,
+                    Totals = totalCounts,
+                }.Schedule(countHandle);
+                offsetsHandle.Complete();
+            }
+
+            resources.BeginFrame();
+            int2 totals = totalCounts.Value;
+            resources.PrepareFrameData(totals.x, totals.y);
+
+            using (k_SchedulePackJob.Auto())
+            {
+                Dependency = new PackActorProceduralGpuJob
+                {
+                    Catalog = catalogRef,
+                    EntityOffsets = offsets,
+                    SkinMeshRuntimeInfos = resources.SkinMeshRuntimeInfos,
+                    InvalidBatchTypeId = resources.InvalidBatchTypeId,
+                    PackedDraws = resources.PackedDraws,
+                    PackedBatchTypeIds = resources.PackedBatchTypeIds,
+                    BoneMatrices = resources.BoneMatrices.AsArray(),
+                }.ScheduleParallel(_uploadQuery, Dependency);
+            }
+
+            using (k_CompletePackJob.Auto())
+            {
+                Dependency.Complete();
+            }
+
+            using var batchCount = new NativeArray<int>(1, Allocator.TempJob);
+            using (k_SortAndBuildBatches.Auto())
+            {
+                using (k_GroupDraws.Auto())
+                {
+                    var buildHandle = new BuildSortedDrawBatchesJob
+                    {
+                        PackedDraws = resources.PackedDraws,
+                        PackedBatchTypeIds = resources.PackedBatchTypeIds,
+                        BatchTypeInfos = resources.BatchTypeInfos,
+                        BatchTypeCounts = resources.BatchTypeCounts,
+                        BatchTypeOffsets = resources.BatchTypeOffsets,
+                        BatchTypeWriteHeads = resources.BatchTypeWriteHeads,
+                        Draws = resources.Draws.AsArray(),
+                        BatchScratch = resources.BatchScratch,
+                        BatchCount = batchCount,
+                    }.Schedule();
+                    buildHandle.Complete();
+                }
+            }
+            resources.FinalizeBatchCount(batchCount[0]);
+
+            using (k_UploadFrame.Auto())
             {
                 resources.UploadFrame();
-                return;
             }
-
-            int estimatedDraws = 0;
-            int estimatedBoneMatrices = 0;
-            int entityIndex = 0;
-            var offsets = new NativeArray<int2>(entityCount, Allocator.TempJob);
-            foreach (var (_, _, bones, draws) in
-                     SystemAPI.Query<RefRO<ActorProceduralRenderState>, RefRO<LocalToWorld>, DynamicBuffer<ActorBone>, DynamicBuffer<ActorProceduralDraw>>())
-            {
-                if (bones.Length == 0 || draws.Length == 0)
-                {
-                    offsets[entityIndex++] = new int2(estimatedDraws, estimatedBoneMatrices);
-                    continue;
-                }
-
-                offsets[entityIndex++] = new int2(estimatedDraws, estimatedBoneMatrices);
-                estimatedDraws += draws.Length;
-                for (int i = 0; i < draws.Length; i++)
-                    estimatedBoneMatrices += math.max(1, draws[i].BoneMatrixCount);
-            }
-            resources.PrepareFrameData(estimatedDraws, estimatedBoneMatrices);
-
-            Dependency = new PackActorProceduralGpuJob
-            {
-                Catalog = catalogRef,
-                EntityOffsets = offsets,
-                TextureBucketInfo = WorldResources.TexBucketInfo,
-                FallbackBucketSlice = WorldResources.FallbackBucketSlice,
-                BlendVariantCount = WorldResources.BlendVariantCount,
-                Draws = resources.Draws.AsArray(),
-                BoneMatrices = resources.BoneMatrices.AsArray(),
-                BatchScratch = resources.Batches.AsArray(),
-            }.ScheduleParallel(_uploadQuery, Dependency);
-            Dependency.Complete();
-            offsets.Dispose();
-
-            resources.CompactBatches();
-            resources.UploadFrame();
         }
 
         protected override void OnDestroy()
@@ -96,87 +166,183 @@ namespace VVardenfell.Runtime.Rendering
             WorldResources.ActorProceduralRenderer = null;
         }
 
+        static bool IsValidGpuState(in ActorGpuAnimationState gpuState, int expectedSkinMeshCount, ref ActorAnimationCatalogBlob catalog)
+        {
+            if ((uint)gpuState.SkeletonIndex >= (uint)catalog.Skeletons.Length)
+                return false;
+            if (gpuState.SkinMeshCount != expectedSkinMeshCount)
+                return false;
+            if (gpuState.BoneMatrixCount <= 0 || gpuState.BoneMatrixOffset < 0)
+                return false;
+            return true;
+        }
+
+        [BurstCompile]
+        partial struct CountActorProceduralWorkJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
+            [NativeDisableParallelForRestriction] public NativeArray<int> DrawCounts;
+            [NativeDisableParallelForRestriction] public NativeArray<int> BoneCounts;
+
+            void Execute(
+                [EntityIndexInQuery] int entityIndex,
+                EnabledRefRO<GPUAnimation> gpuAnimation,
+                in ActorGpuAnimationState gpuState,
+                [ReadOnly] DynamicBuffer<ActorBone> bones,
+                [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
+            {
+                if (!Catalog.IsCreated || skinMeshes.Length == 0)
+                {
+                    DrawCounts[entityIndex] = 0;
+                    BoneCounts[entityIndex] = 0;
+                    return;
+                }
+
+                if (gpuAnimation.ValueRO)
+                {
+                    if (!ActorProceduralRenderUploadSystem.IsValidGpuState(gpuState, skinMeshes.Length, ref Catalog.Value))
+                    {
+                        DrawCounts[entityIndex] = 0;
+                        BoneCounts[entityIndex] = 0;
+                        return;
+                    }
+
+                    DrawCounts[entityIndex] = skinMeshes.Length;
+                    BoneCounts[entityIndex] = 0;
+                    return;
+                }
+
+                if (bones.Length == 0)
+                {
+                    DrawCounts[entityIndex] = 0;
+                    BoneCounts[entityIndex] = 0;
+                    return;
+                }
+
+                ref var catalog = ref Catalog.Value;
+                int drawCount = skinMeshes.Length;
+                int boneCount = 0;
+                for (int i = 0; i < drawCount; i++)
+                {
+                    int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                    if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                        boneCount += 1;
+                    else
+                        boneCount += math.max(1, catalog.SkinMeshes[skinMeshIndex].SkinBoneCount);
+                }
+
+                DrawCounts[entityIndex] = drawCount;
+                BoneCounts[entityIndex] = boneCount;
+            }
+        }
+
+        [BurstCompile]
+        struct BuildActorProceduralOffsetsJob : IJob
+        {
+            [ReadOnly] public NativeArray<int> DrawCounts;
+            [ReadOnly] public NativeArray<int> BoneCounts;
+            [NativeDisableParallelForRestriction] public NativeArray<int2> Offsets;
+            [NativeDisableParallelForRestriction] public NativeReference<int2> Totals;
+
+            public void Execute()
+            {
+                int totalDraws = 0;
+                int totalBones = 0;
+                for (int i = 0; i < Offsets.Length; i++)
+                {
+                    Offsets[i] = new int2(totalDraws, totalBones);
+                    totalDraws += DrawCounts[i];
+                    totalBones += BoneCounts[i];
+                }
+
+                Totals.Value = new int2(totalDraws, totalBones);
+            }
+        }
+
         [BurstCompile]
         partial struct PackActorProceduralGpuJob : IJobEntity
         {
             [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
             [ReadOnly] public NativeArray<int2> EntityOffsets;
-            [ReadOnly] public NativeArray<int2> TextureBucketInfo;
-            public int2 FallbackBucketSlice;
-            public int BlendVariantCount;
-            [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralDrawGpu> Draws;
+            [ReadOnly] public NativeArray<ActorProceduralSkinMeshRuntimeInfo> SkinMeshRuntimeInfos;
+            public int InvalidBatchTypeId;
+            [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralDrawGpu> PackedDraws;
+            [NativeDisableParallelForRestriction] public NativeArray<int> PackedBatchTypeIds;
             [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralMatrixGpu> BoneMatrices;
-            [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralDrawBatch> BatchScratch;
 
             void Execute(
                 [EntityIndexInQuery] int entityIndex,
-                ref ActorProceduralRenderState renderState,
+                EnabledRefRO<GPUAnimation> gpuAnimation,
                 in LocalToWorld localToWorld,
-                DynamicBuffer<ActorBone> bones,
-                DynamicBuffer<ActorProceduralDraw> actorDraws)
+                in ActorGpuAnimationState gpuState,
+                [ReadOnly] DynamicBuffer<ActorBone> bones,
+                [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
             {
                 int2 offsets = EntityOffsets[entityIndex];
                 int drawCursor = offsets.x;
                 int boneCursor = offsets.y;
-                renderState.BoneMatrixOffset = boneCursor;
-                renderState.DrawStart = drawCursor;
-                renderState.BoneMatrixCount = 0;
-                renderState.DrawCount = 0;
 
-                if (!Catalog.IsCreated || bones.Length == 0 || actorDraws.Length == 0)
+                if (!Catalog.IsCreated || skinMeshes.Length == 0)
                     return;
 
                 ref var catalog = ref Catalog.Value;
                 float4x4 actorLocalToWorld = localToWorld.Value;
-                for (int i = 0; i < actorDraws.Length; i++)
+                int gpuBoneCursor = gpuState.BoneMatrixOffset;
+                bool gpuAnimationEnabled = gpuAnimation.ValueRO;
+                bool useGpuAnimation = gpuAnimationEnabled && ActorProceduralRenderUploadSystem.IsValidGpuState(gpuState, skinMeshes.Length, ref catalog);
+                if (gpuAnimationEnabled && !useGpuAnimation)
+                    return;
+
+                for (int i = 0; i < skinMeshes.Length; i++)
                 {
-                    var draw = actorDraws[i];
-                    if ((uint)draw.SkinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    var skinMeshRef = skinMeshes[i];
+                    if ((uint)skinMeshRef.SkinMeshIndex >= (uint)catalog.SkinMeshes.Length)
                     {
-                        Draws[drawCursor] = default;
-                        BatchScratch[drawCursor] = new ActorProceduralDrawBatch
-                        {
-                            BucketIndex = FallbackBucketSlice.x,
-                            MaterialIndex = 0,
-                            DrawBase = drawCursor,
-                            DrawCount = 1,
-                            IndexCount = 0,
-                        };
+                        PackedDraws[drawCursor] = default;
+                        PackedBatchTypeIds[drawCursor] = InvalidBatchTypeId;
                         drawCursor++;
                         continue;
                     }
 
-                    var skinMesh = catalog.SkinMeshes[draw.SkinMeshIndex];
-                    int boneMatrixOffset = boneCursor;
-                    AddSkinBoneMatrices(ref catalog, skinMesh, bones, draw.AttachBoneIndex, draw.RigidMirrorX, ref boneCursor);
-                    ResolveTexture(draw.TextureIndex, TextureBucketInfo, FallbackBucketSlice, out int bucketIndex, out int textureSlice);
-                    int materialIndex = math.clamp(draw.MaterialIndex, 0, math.max(0, BlendVariantCount - 1));
-
-                    Draws[drawCursor] = new ActorProceduralDrawGpu
+                    var skinMesh = catalog.SkinMeshes[skinMeshRef.SkinMeshIndex];
+                    var runtimeInfo = (uint)skinMeshRef.SkinMeshIndex < (uint)SkinMeshRuntimeInfos.Length
+                        ? SkinMeshRuntimeInfos[skinMeshRef.SkinMeshIndex]
+                        : default;
+                    int boneMatrixOffset;
+                    int boneMatrixSource;
+                    if (gpuAnimationEnabled)
                     {
-                        FirstIndex = skinMesh.FirstIndexIndex,
-                        IndexCount = skinMesh.IndexCount,
-                        FirstVertex = skinMesh.FirstVertexIndex,
+                        if (gpuBoneCursor + runtimeInfo.BoneMatrixCount > gpuState.BoneMatrixOffset + gpuState.BoneMatrixCount)
+                        {
+                            PackedDraws[drawCursor] = default;
+                            PackedBatchTypeIds[drawCursor] = InvalidBatchTypeId;
+                            drawCursor++;
+                            continue;
+                        }
+
+                        boneMatrixOffset = gpuBoneCursor;
+                        gpuBoneCursor += runtimeInfo.BoneMatrixCount;
+                        boneMatrixSource = 1;
+                    }
+                    else
+                    {
+                        boneMatrixOffset = boneCursor;
+                        AddSkinBoneMatrices(ref catalog, skinMesh, bones, skinMeshRef.AttachBoneIndex, skinMeshRef.RigidMirrorX, ref boneCursor);
+                        boneMatrixSource = 0;
+                    }
+
+                    PackedDraws[drawCursor] = new ActorProceduralDrawGpu
+                    {
+                        FirstIndex = runtimeInfo.FirstIndex,
+                        FirstVertex = runtimeInfo.FirstVertex,
                         BoneMatrixOffset = boneMatrixOffset,
-                        TextureSlice = textureSlice,
-                        Padding0 = 0,
-                        Padding1 = 0,
-                        Padding2 = 0,
+                        BoneMatrixSource = boneMatrixSource,
+                        TextureSlice = runtimeInfo.TextureSlice,
                         LocalToWorld = ToGpuMatrix(actorLocalToWorld),
                     };
-                    BatchScratch[drawCursor] = new ActorProceduralDrawBatch
-                    {
-                        BucketIndex = bucketIndex,
-                        MaterialIndex = materialIndex,
-                        DrawBase = drawCursor,
-                        DrawCount = 1,
-                        IndexCount = skinMesh.IndexCount,
-                    };
+                    PackedBatchTypeIds[drawCursor] = runtimeInfo.BatchTypeId;
                     drawCursor++;
                 }
-
-                renderState.BoneMatrixCount = boneCursor - offsets.y;
-                renderState.DrawCount = drawCursor - offsets.x;
             }
 
             void AddSkinBoneMatrices(
@@ -225,27 +391,6 @@ namespace VVardenfell.Runtime.Rendering
                     BoneMatrices[boneCursor++] = ToGpuMatrix(float4x4.identity);
             }
 
-            static void ResolveTexture(
-                int textureIndex,
-                NativeArray<int2> textureBucketInfo,
-                int2 fallbackBucketSlice,
-                out int bucketIndex,
-                out int textureSlice)
-            {
-                if (textureIndex >= 0
-                    && textureBucketInfo.IsCreated
-                    && textureIndex < textureBucketInfo.Length)
-                {
-                    int2 bucketSlice = textureBucketInfo[textureIndex];
-                    bucketIndex = bucketSlice.x;
-                    textureSlice = bucketSlice.y;
-                    return;
-                }
-
-                bucketIndex = fallbackBucketSlice.x;
-                textureSlice = fallbackBucketSlice.y;
-            }
-
             static ActorProceduralMatrixGpu ToGpuMatrix(float4x4 matrix)
             {
                 return new ActorProceduralMatrixGpu
@@ -254,6 +399,81 @@ namespace VVardenfell.Runtime.Rendering
                     Row1 = new float4(matrix.c0.y, matrix.c1.y, matrix.c2.y, matrix.c3.y),
                     Row2 = new float4(matrix.c0.z, matrix.c1.z, matrix.c2.z, matrix.c3.z),
                 };
+            }
+        }
+
+        [BurstCompile]
+        struct BuildSortedDrawBatchesJob : IJob
+        {
+            [ReadOnly] public NativeArray<ActorProceduralDrawGpu> PackedDraws;
+            [ReadOnly] public NativeArray<int> PackedBatchTypeIds;
+            [ReadOnly] public NativeArray<ActorProceduralBatchTypeInfo> BatchTypeInfos;
+            [NativeDisableParallelForRestriction] public NativeArray<int> BatchTypeCounts;
+            [NativeDisableParallelForRestriction] public NativeArray<int> BatchTypeOffsets;
+            [NativeDisableParallelForRestriction] public NativeArray<int> BatchTypeWriteHeads;
+            [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralDrawGpu> Draws;
+            [NativeDisableParallelForRestriction] public NativeArray<ActorProceduralDrawBatch> BatchScratch;
+            [NativeDisableParallelForRestriction] public NativeArray<int> BatchCount;
+
+            public void Execute()
+            {
+                if (PackedDraws.Length == 0)
+                {
+                    BatchCount[0] = 0;
+                    return;
+                }
+
+                for (int i = 0; i < BatchTypeCounts.Length; i++)
+                    BatchTypeCounts[i] = 0;
+
+                for (int i = 0; i < PackedBatchTypeIds.Length; i++)
+                {
+                    int batchTypeId = PackedBatchTypeIds[i];
+                    if ((uint)batchTypeId >= (uint)BatchTypeCounts.Length)
+                        continue;
+
+                    BatchTypeCounts[batchTypeId]++;
+                }
+
+                int prefix = 0;
+                int batchWrite = 0;
+                for (int batchTypeId = 0; batchTypeId < BatchTypeCounts.Length; batchTypeId++)
+                {
+                    int count = BatchTypeCounts[batchTypeId];
+                    BatchTypeOffsets[batchTypeId] = prefix;
+                    BatchTypeWriteHeads[batchTypeId] = prefix;
+
+                    if (count > 0)
+                    {
+                        var batchType = BatchTypeInfos[batchTypeId];
+                        if (batchType.IndexCount > 0)
+                        {
+                            BatchScratch[batchWrite++] = new ActorProceduralDrawBatch
+                            {
+                                BucketIndex = batchType.BucketIndex,
+                                MaterialIndex = batchType.MaterialIndex,
+                                DrawBase = prefix,
+                                DrawCount = count,
+                                IndexCount = batchType.IndexCount,
+                            };
+                        }
+                    }
+
+                    prefix += count;
+                }
+
+                for (int i = 0; i < PackedDraws.Length; i++)
+                {
+                    int batchTypeId = PackedBatchTypeIds[i];
+                    if ((uint)batchTypeId >= (uint)BatchTypeWriteHeads.Length)
+                        continue;
+
+                    int writeIndex = BatchTypeWriteHeads[batchTypeId];
+                    Draws[writeIndex] = PackedDraws[i];
+                    BatchTypeWriteHeads[batchTypeId] = writeIndex + 1;
+                }
+
+                BatchCount[0] = batchWrite;
             }
         }
     }

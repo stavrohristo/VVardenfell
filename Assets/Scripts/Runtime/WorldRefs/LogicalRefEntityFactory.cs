@@ -82,6 +82,7 @@ namespace VVardenfell.Runtime.WorldRefs
                 descriptor.IsInterior,
                 descriptor.ExteriorCell,
                 descriptor.InteriorCellId,
+                descriptor.PlacedRefId,
                 descriptor.AttachDoorInteractable,
                 descriptor.DoorInteractable);
             return logicalEntity;

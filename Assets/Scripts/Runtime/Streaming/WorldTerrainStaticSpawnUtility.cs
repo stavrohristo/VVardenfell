@@ -87,6 +87,31 @@ namespace VVardenfell.Runtime.Streaming
             return staticEntity;
         }
 
+        internal static bool TrySampleTerrainHeight(CellData data, float localX, float localZ, out float height)
+        {
+            const int N = 65;
+            height = 0f;
+            if (data?.Heights == null || data.Heights.Length < N * N)
+                return false;
+
+            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            float sampleX = math.clamp(localX / cellMeters * (N - 1), 0f, N - 1);
+            float sampleZ = math.clamp(localZ / cellMeters * (N - 1), 0f, N - 1);
+            int x0 = (int)math.floor(sampleX);
+            int z0 = (int)math.floor(sampleZ);
+            int x1 = math.min(x0 + 1, N - 1);
+            int z1 = math.min(z0 + 1, N - 1);
+            float tx = sampleX - x0;
+            float tz = sampleZ - z0;
+
+            float h00 = data.Heights[z0 * N + x0];
+            float h10 = data.Heights[z0 * N + x1];
+            float h01 = data.Heights[z1 * N + x0];
+            float h11 = data.Heights[z1 * N + x1];
+            height = math.lerp(math.lerp(h00, h10, tx), math.lerp(h01, h11, tx), tz);
+            return true;
+        }
+
         static Entity CreateTerrainEntity(EntityManager em, int2 coord, WorldResources.PerCellManaged managed)
         {
             Entity terrainEntity = em.CreateEntity();

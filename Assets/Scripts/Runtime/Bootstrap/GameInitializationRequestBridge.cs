@@ -49,10 +49,28 @@ namespace VVardenfell.Runtime.Bootstrap
             => TryRequest<NewGameInitializationSingleton>("VVardenfell.NewGameInitialization", out error);
 
         public static bool TryRequestContinue(out string error)
-            => TryRequest<ContinueGameInitializationSingleton>("VVardenfell.ContinueInitialization", out error);
+        {
+            var availability = GetContinueAvailability();
+            if (!availability.Available)
+            {
+                error = availability.Reason;
+                return false;
+            }
+
+            return TryRequest<ContinueGameInitializationSingleton>("VVardenfell.ContinueInitialization", out error);
+        }
 
         public static bool TryRequestLoadGame(string slotId, out string error)
-            => TryRequestLoad(slotId, out error);
+        {
+            var availability = GetLoadGameAvailability();
+            if (!availability.Available)
+            {
+                error = availability.Reason;
+                return false;
+            }
+
+            return TryRequestLoad(slotId, out error);
+        }
 
         public static RequestAvailability GetNewGameAvailability()
         {
@@ -63,6 +81,9 @@ namespace VVardenfell.Runtime.Bootstrap
 
         public static RequestAvailability GetContinueAvailability()
         {
+            if (TryGetInitializationPayload(out var payload, out _) && payload.RuntimeMode == (byte)BootstrapRuntimeMode.Sandbox)
+                return new RequestAvailability(false, "Continue is unavailable in sandbox mode.");
+
             if (!WorldSaveStorage.TryGetContinueAvailability(out string saveError))
                 return new RequestAvailability(false, saveError);
 
@@ -71,6 +92,9 @@ namespace VVardenfell.Runtime.Bootstrap
 
         public static RequestAvailability GetLoadGameAvailability()
         {
+            if (TryGetInitializationPayload(out var payload, out _) && payload.RuntimeMode == (byte)BootstrapRuntimeMode.Sandbox)
+                return new RequestAvailability(false, "Load Game is unavailable in sandbox mode.");
+
             var slots = WorldSaveStorage.EnumerateSlots();
             for (int i = 0; i < slots.Length; i++)
             {
@@ -192,6 +216,8 @@ namespace VVardenfell.Runtime.Bootstrap
                 PlayerPosition = WorldBootstrap.DefaultPlayerSpawnPosition(),
                 PlayerRotation = quaternion.identity,
                 PlayerPitchDegrees = 0f,
+                RuntimeMode = (byte)BootstrapController.CurrentRuntimeMode,
+                SpawnLocalPlayer = (byte)(ShouldSpawnLocalPlayerForCurrentMode() ? 1 : 0),
                 HasSerializedSavePayload = hasSerializedSavePayload,
                 SerializedSavePayloadStatus = ToFixed128(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });
@@ -199,6 +225,14 @@ namespace VVardenfell.Runtime.Bootstrap
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
             error = null;
             return true;
+        }
+
+        static bool ShouldSpawnLocalPlayerForCurrentMode()
+        {
+            if (BootstrapController.CurrentRuntimeMode != BootstrapRuntimeMode.Sandbox)
+                return true;
+
+            return SandboxWorldFixtures.Active?.SpawnLocalPlayer ?? true;
         }
 
         static void ResolveInitialPlayerData(

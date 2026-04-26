@@ -41,6 +41,8 @@ namespace VVardenfell.Runtime.Player
         public float3 PlayerPosition;
         public quaternion PlayerRotation;
         public float PlayerPitchDegrees;
+        public byte RuntimeMode;
+        public byte SpawnLocalPlayer;
 
         public bool HasSerializedSavePayload;
         public FixedString128Bytes SerializedSavePayloadStatus;
@@ -83,6 +85,13 @@ namespace VVardenfell.Runtime.Player
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
             WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
+            if (init.SpawnLocalPlayer == 0)
+            {
+                ConfigureStreamingAfterInitialization(em, init);
+                ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+                return;
+            }
+
             if (hasNewGameRequest)
                 SeedInitialPlayerInventory(em, initEntity);
 
@@ -216,6 +225,13 @@ namespace VVardenfell.Runtime.Player
                 Debug.LogWarning("[VVardenfell] Camera.main missing - player camera sync will have no target.");
             }
 
+            ConfigureStreamingAfterInitialization(em, init);
+
+            ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+        }
+
+        void ConfigureStreamingAfterInitialization(EntityManager em, in GameInitializationSingleton init)
+        {
             Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
             var streamingConfig = em.GetComponentData<StreamingConfig>(streamingEntity);
             streamingConfig.CameraCell = WorldBootstrap.WorldPositionToCell(init.PlayerPosition);
@@ -229,14 +245,21 @@ namespace VVardenfell.Runtime.Player
                 streamingConfig.ExteriorStreamingPaused = false;
             }
             em.SetComponentData(streamingEntity, streamingConfig);
+        }
 
+        void ClearInitializationRequests(
+            bool hasNewGameRequest,
+            bool hasContinueRequest,
+            bool hasLoadRequest,
+            Entity initEntity)
+        {
             if (hasNewGameRequest)
-                em.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
+                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
             if (hasContinueRequest)
-                em.DestroyEntity(SystemAPI.GetSingletonEntity<ContinueGameInitializationSingleton>());
+                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<ContinueGameInitializationSingleton>());
             if (hasLoadRequest)
-                em.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
-            em.DestroyEntity(initEntity);
+                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
+            EntityManager.DestroyEntity(initEntity);
         }
 
         void RestoreAliveRefsForCurrentWorld(EntityManager entityManager)

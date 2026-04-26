@@ -64,6 +64,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint AiEscortTag = EsmFourCC.Make('A', 'I', '_', 'E');
         static readonly uint AiFollowTag = EsmFourCC.Make('A', 'I', '_', 'F');
         static readonly uint AiActivateTag = EsmFourCC.Make('A', 'I', '_', 'A');
+        static readonly uint AodtTag = EsmFourCC.Make('A', 'O', 'D', 'T');
         static readonly uint AvfxTag = EsmFourCC.Make('A', 'V', 'F', 'X');
         static readonly uint BnamTag = EsmFourCC.Make('B', 'N', 'A', 'M');
         static readonly uint BsndTag = EsmFourCC.Make('B', 'S', 'N', 'D');
@@ -72,6 +73,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint CnamTag = EsmFourCC.Make('C', 'N', 'A', 'M');
         static readonly uint CldtTag = EsmFourCC.Make('C', 'L', 'D', 'T');
         static readonly uint CndtTag = EsmFourCC.Make('C', 'N', 'D', 'T');
+        static readonly uint CtdtTag = EsmFourCC.Make('C', 'T', 'D', 'T');
         static readonly uint CsndTag = EsmFourCC.Make('C', 'S', 'N', 'D');
         static readonly uint CvfxTag = EsmFourCC.Make('C', 'V', 'F', 'X');
         static readonly uint DescTag = EsmFourCC.Make('D', 'E', 'S', 'C');
@@ -111,6 +113,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint SpdtTag = EsmFourCC.Make('S', 'P', 'D', 'T');
         static readonly uint StrvTag = EsmFourCC.Make('S', 'T', 'R', 'V');
         static readonly uint WdatTag = EsmFourCC.Make('W', 'E', 'A', 'T');
+        static readonly uint WpdtTag = EsmFourCC.Make('W', 'P', 'D', 'T');
         static readonly uint XsclTag = EsmFourCC.Make('X', 'S', 'C', 'L');
 
         static readonly HashSet<uint> ItemTags = new()
@@ -151,6 +154,12 @@ namespace VVardenfell.Importer.Bake
         {
             public ItemLeveledListDef Def;
             public readonly List<ItemLeveledListEntryDef> Entries = new();
+        }
+
+        sealed class ItemEquipmentAccumulator
+        {
+            public ItemEquipmentDef Def;
+            public readonly List<ItemEquipmentBodyPartDef> BodyParts = new();
         }
 
         sealed class ActorAccumulator
@@ -243,6 +252,7 @@ namespace VVardenfell.Importer.Bake
             public readonly Dictionary<string, BaseDef> Containers = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, List<ContainerItemDef>> ContainerItems = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Items = new(StringComparer.OrdinalIgnoreCase);
+            public readonly Dictionary<string, ItemEquipmentAccumulator> ItemEquipment = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, LightDef> Lights = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, ItemLeveledListAccumulator> ItemLeveledLists = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, ItemLeveledListAccumulator> CreatureLeveledLists = new(StringComparer.OrdinalIgnoreCase);
@@ -399,7 +409,7 @@ namespace VVardenfell.Importer.Bake
                         ParseBaseDefRecord(esm, rec.Tag, state.Containers, isContainer: true, containerItems: state.ContainerItems);
                         break;
                     case var tag when ItemTags.Contains(tag):
-                        ParseBaseDefRecord(esm, rec.Tag, state.Items);
+                        ParseBaseDefRecord(esm, rec.Tag, state.Items, itemEquipment: state.ItemEquipment);
                         break;
                     case var tag when tag == LighTag:
                         ParseLightRecord(esm, state.Lights);
@@ -452,10 +462,13 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, BaseDef> target,
             bool isDoor = false,
             bool isContainer = false,
-            Dictionary<string, List<ContainerItemDef>> containerItems = null)
+            Dictionary<string, List<ContainerItemDef>> containerItems = null,
+            Dictionary<string, ItemEquipmentAccumulator> itemEquipment = null)
         {
             var def = new BaseDef { RecordTag = recordTag };
             var parsedContainerItems = isContainer ? new List<ContainerItemDef>() : null;
+            ItemEquipmentAccumulator equipment = CreateItemEquipmentAccumulator(recordTag);
+            int pendingEquipmentPartIndex = -1;
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -489,6 +502,14 @@ namespace VVardenfell.Importer.Bake
                     case var tag when tag == EsmFourCC.DATA:
                         if (isContainer && sub.Size >= 4)
                             def.Float0 = ReadSingle(esm.ReadSubrecordBytes(), 0);
+                        else if (equipment != null)
+                            ParseEquipmentData(recordTag, esm.ReadSubrecordBytes(), equipment);
+                        else
+                            esm.SkipSubrecord();
+                        break;
+                    case var tag when tag == AodtTag || tag == CtdtTag || tag == WpdtTag:
+                        if (equipment != null)
+                            ParseEquipmentData(recordTag, esm.ReadSubrecordBytes(), equipment);
                         else
                             esm.SkipSubrecord();
                         break;
@@ -507,6 +528,30 @@ namespace VVardenfell.Importer.Bake
                     case var tag when tag == EnamTag:
                         def.EnchantId = esm.ReadSubrecordString();
                         break;
+                    case var tag when tag == IndxTag:
+                    {
+                        if (equipment == null || !IsEquipmentBodyPartRecord(recordTag))
+                        {
+                            esm.SkipSubrecord();
+                            break;
+                        }
+
+                        int rawPart = ReadEquipmentPartIndex(esm.ReadSubrecordBytes());
+                        pendingEquipmentPartIndex = AddEquipmentBodyPartPlaceholder(equipment, rawPart);
+                        break;
+                    }
+                    case var tag when tag == BnamTag:
+                    {
+                        if (equipment == null || !TryReadEquipmentBodyPartId(esm, equipment, pendingEquipmentPartIndex, female: false))
+                            esm.SkipSubrecord();
+                        break;
+                    }
+                    case var tag when tag == CnamTag:
+                    {
+                        if (equipment == null || !TryReadEquipmentBodyPartId(esm, equipment, pendingEquipmentPartIndex, female: true))
+                            esm.SkipSubrecord();
+                        break;
+                    }
                     case var tag when tag == EsmFourCC.DELE:
                         esm.SkipSubrecord();
                         deleted = true;
@@ -525,6 +570,8 @@ namespace VVardenfell.Importer.Bake
                 target.Remove(def.Id);
                 if (isContainer && containerItems != null)
                     containerItems.Remove(def.Id);
+                if (itemEquipment != null)
+                    itemEquipment.Remove(def.Id);
                 return;
             }
 
@@ -532,6 +579,188 @@ namespace VVardenfell.Importer.Bake
             target[def.Id] = def;
             if (isContainer && containerItems != null)
                 containerItems[def.Id] = parsedContainerItems ?? new List<ContainerItemDef>();
+            if (itemEquipment != null)
+            {
+                if (equipment != null)
+                    itemEquipment[def.Id] = equipment;
+                else
+                    itemEquipment.Remove(def.Id);
+            }
+        }
+
+        static ItemEquipmentAccumulator CreateItemEquipmentAccumulator(uint recordTag)
+        {
+            if (recordTag == WeapTag)
+                return new ItemEquipmentAccumulator
+                {
+                    Def = new ItemEquipmentDef
+                    {
+                        Kind = ItemEquipmentKind.Weapon,
+                        Slot = ItemEquipmentSlot.Weapon,
+                        FirstBodyPartIndex = -1,
+                    }
+                };
+
+            if (recordTag == ArmoTag)
+                return new ItemEquipmentAccumulator
+                {
+                    Def = new ItemEquipmentDef
+                    {
+                        Kind = ItemEquipmentKind.Armor,
+                        FirstBodyPartIndex = -1,
+                    }
+                };
+
+            if (recordTag == ClotTag)
+                return new ItemEquipmentAccumulator
+                {
+                    Def = new ItemEquipmentDef
+                    {
+                        Kind = ItemEquipmentKind.Clothing,
+                        FirstBodyPartIndex = -1,
+                    }
+                };
+
+            return null;
+        }
+
+        static bool IsEquipmentBodyPartRecord(uint recordTag) => recordTag == ArmoTag || recordTag == ClotTag;
+
+        static int ReadEquipmentPartIndex(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+                return -1;
+            if (bytes.Length >= 4)
+                return ReadInt32(bytes, 0);
+            if (bytes.Length >= 2)
+                return ReadInt16(bytes, 0);
+            return bytes[0];
+        }
+
+        static int AddEquipmentBodyPartPlaceholder(ItemEquipmentAccumulator equipment, int rawPart)
+        {
+            if (equipment == null || rawPart < 0 || rawPart > (int)ItemEquipmentPartReference.Tail)
+                return -1;
+
+            equipment.BodyParts.Add(new ItemEquipmentBodyPartDef
+            {
+                Part = (ItemEquipmentPartReference)rawPart,
+            });
+            return equipment.BodyParts.Count - 1;
+        }
+
+        static bool TryReadEquipmentBodyPartId(EsmReader esm, ItemEquipmentAccumulator equipment, int index, bool female)
+        {
+            if (equipment == null || index < 0 || index >= equipment.BodyParts.Count)
+                return false;
+
+            string bodyPartId = esm.ReadSubrecordString();
+            var bodyPart = equipment.BodyParts[index];
+            if (female)
+                bodyPart.FemaleBodyPartId = bodyPartId;
+            else
+                bodyPart.MaleBodyPartId = bodyPartId;
+            equipment.BodyParts[index] = bodyPart;
+            return true;
+        }
+
+        static void ParseEquipmentData(uint recordTag, byte[] bytes, ItemEquipmentAccumulator equipment)
+        {
+            if (bytes == null || equipment == null)
+                return;
+
+            var def = equipment.Def;
+            if (recordTag == ArmoTag)
+            {
+                if (bytes.Length >= 4)
+                    def.Type = ReadInt32(bytes, 0);
+                if (bytes.Length >= 8)
+                    def.Weight = ReadSingle(bytes, 4);
+                if (bytes.Length >= 12)
+                    def.Value = ReadInt32(bytes, 8);
+                if (bytes.Length >= 16)
+                    def.Health = ReadInt32(bytes, 12);
+                if (bytes.Length >= 20)
+                    def.EnchantCapacity = ReadInt32(bytes, 16);
+                if (bytes.Length >= 24)
+                    def.Armor = ReadInt32(bytes, 20);
+                def.Slot = MapArmorTypeToSlot(def.Type);
+            }
+            else if (recordTag == ClotTag)
+            {
+                if (bytes.Length >= 4)
+                    def.Type = ReadInt32(bytes, 0);
+                if (bytes.Length >= 8)
+                    def.Weight = ReadSingle(bytes, 4);
+                if (bytes.Length >= 10)
+                    def.Value = ReadInt16(bytes, 8);
+                if (bytes.Length >= 12)
+                    def.EnchantCapacity = ReadInt16(bytes, 10);
+                if (bytes.Length >= 16)
+                    def.Value = ReadInt32(bytes, 8);
+                def.Slot = MapClothingTypeToSlot(def.Type);
+            }
+            else if (recordTag == WeapTag)
+            {
+                if (bytes.Length >= 4)
+                    def.Weight = ReadSingle(bytes, 0);
+                if (bytes.Length >= 8)
+                    def.Value = ReadInt32(bytes, 4);
+                if (bytes.Length >= 10)
+                    def.Type = ReadInt16(bytes, 8);
+                if (bytes.Length >= 12)
+                    def.Health = ReadInt16(bytes, 10);
+                if (bytes.Length >= 22)
+                    def.EnchantCapacity = ReadInt16(bytes, 20);
+                if (bytes.Length >= 28)
+                {
+                    int chopMax = bytes[23];
+                    int slashMax = bytes[25];
+                    int thrustMax = bytes[27];
+                    def.DamageMax = Math.Max(chopMax, Math.Max(slashMax, thrustMax));
+                    def.DamageMin = Math.Min(bytes[22], Math.Min(bytes[24], bytes[26]));
+                }
+                def.Slot = ItemEquipmentSlot.Weapon;
+            }
+
+            equipment.Def = def;
+        }
+
+        static ItemEquipmentSlot MapArmorTypeToSlot(int type)
+        {
+            return type switch
+            {
+                0 => ItemEquipmentSlot.Helmet,
+                1 => ItemEquipmentSlot.Cuirass,
+                2 => ItemEquipmentSlot.LeftPauldron,
+                3 => ItemEquipmentSlot.RightPauldron,
+                4 => ItemEquipmentSlot.Greaves,
+                5 => ItemEquipmentSlot.Boots,
+                6 => ItemEquipmentSlot.LeftHand,
+                7 => ItemEquipmentSlot.RightHand,
+                8 => ItemEquipmentSlot.Shield,
+                9 => ItemEquipmentSlot.LeftHand,
+                10 => ItemEquipmentSlot.RightHand,
+                _ => ItemEquipmentSlot.None,
+            };
+        }
+
+        static ItemEquipmentSlot MapClothingTypeToSlot(int type)
+        {
+            return type switch
+            {
+                0 => ItemEquipmentSlot.Pants,
+                1 => ItemEquipmentSlot.Shoes,
+                2 => ItemEquipmentSlot.Shirt,
+                3 => ItemEquipmentSlot.Belt,
+                4 => ItemEquipmentSlot.Robe,
+                5 => ItemEquipmentSlot.RightHand,
+                6 => ItemEquipmentSlot.LeftHand,
+                7 => ItemEquipmentSlot.Skirt,
+                8 => ItemEquipmentSlot.Ring,
+                9 => ItemEquipmentSlot.Amulet,
+                _ => ItemEquipmentSlot.None,
+            };
         }
 
         static void ParseContainerItemSubrecord(EsmReader esm, List<ContainerItemDef> items)
@@ -2138,6 +2367,7 @@ namespace VVardenfell.Importer.Bake
                 out data.PathGridNavigationNeighbors);
             BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
             BuildContainerContentArrays(data.Containers, state.ContainerItems, out data.ContainerContentRanges, out data.ContainerItems);
+            BuildItemEquipmentArrays(data.Items, state.ItemEquipment, out data.ItemEquipment, out data.ItemEquipmentBodyParts);
             BuildItemLeveledListArrays(state.ItemLeveledLists, out data.ItemLeveledLists, out data.ItemLeveledListEntries);
             BuildItemLeveledListArrays(state.CreatureLeveledLists, out data.CreatureLeveledLists, out data.CreatureLeveledListEntries);
             BuildSpellArrays(state.Spells, s_SpellEffects, out data.Spells, ref data.MagicEffectInstances);
@@ -2877,6 +3107,45 @@ namespace VVardenfell.Importer.Bake
             }
 
             items = flatItems.ToArray();
+        }
+
+        static void BuildItemEquipmentArrays(
+            BaseDef[] items,
+            Dictionary<string, ItemEquipmentAccumulator> equipmentMap,
+            out ItemEquipmentDef[] equipmentDefs,
+            out ItemEquipmentBodyPartDef[] bodyPartDefs)
+        {
+            var defs = new List<ItemEquipmentDef>();
+            var flatBodyParts = new List<ItemEquipmentBodyPartDef>();
+            if (items == null || equipmentMap == null || equipmentMap.Count == 0)
+            {
+                equipmentDefs = Array.Empty<ItemEquipmentDef>();
+                bodyPartDefs = Array.Empty<ItemEquipmentBodyPartDef>();
+                return;
+            }
+
+            for (int i = 0; i < items.Length; i++)
+            {
+                string id = items[i].Id ?? string.Empty;
+                if (!equipmentMap.TryGetValue(id, out var equipment) || equipment == null)
+                    continue;
+
+                var def = equipment.Def;
+                def.Item = ItemDefHandle.FromIndex(i);
+                def.FirstBodyPartIndex = equipment.BodyParts.Count > 0 ? flatBodyParts.Count : -1;
+                def.BodyPartCount = equipment.BodyParts.Count;
+                defs.Add(def);
+
+                for (int partIndex = 0; partIndex < equipment.BodyParts.Count; partIndex++)
+                {
+                    var bodyPart = equipment.BodyParts[partIndex];
+                    bodyPart.Item = def.Item;
+                    flatBodyParts.Add(bodyPart);
+                }
+            }
+
+            equipmentDefs = defs.ToArray();
+            bodyPartDefs = flatBodyParts.ToArray();
         }
 
         static void BuildItemLeveledListArrays(

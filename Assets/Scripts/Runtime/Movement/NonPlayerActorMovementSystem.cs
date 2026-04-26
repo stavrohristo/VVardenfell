@@ -15,6 +15,8 @@ namespace VVardenfell.Runtime.Movement
     [UpdateAfter(typeof(PathGridTraversalSteeringSystem))]
     public partial struct NonPlayerActorMovementSystem : ISystem
     {
+        static readonly bool s_EnableNonPlayerActorMovement = false;
+
         EntityQuery _query;
         ComponentTypeHandle<LocalTransform> _transformHandle;
         ComponentTypeHandle<LocalToWorld> _localToWorldHandle;
@@ -62,6 +64,9 @@ namespace VVardenfell.Runtime.Movement
 
         public void OnUpdate(ref SystemState state)
         {
+            if (!s_EnableNonPlayerActorMovement)
+                return;
+
             float dt = SystemAPI.Time.DeltaTime;
             if (dt <= 0f)
                 return;

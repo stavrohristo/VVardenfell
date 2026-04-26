@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
+using UnityEngine;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -43,14 +44,17 @@ namespace VVardenfell.Runtime.Pathfinding
         };
     }
 
-    public struct PathGridTraversalRequest : IComponentData
+    public struct PathGridTraversalPendingRequest : IComponentData, IEnableableComponent
     {
         public int StartNodeIndex;
         public int GoalNodeIndex;
         public int MaxFineIterations;
         public int MaxAbstractIterations;
         public byte AllowPartial;
-        public byte Pending;
+    }
+
+    public struct PathGridTraversalAwaitingResult : IComponentData, IEnableableComponent
+    {
     }
 
     public struct PathGridTraversalState : IComponentData
@@ -114,15 +118,16 @@ namespace VVardenfell.Runtime.Pathfinding
                 settings.MaxAbstractIterations = maxAbstractIterations;
             entityManager.SetComponentData(owner, settings);
 
-            entityManager.SetComponentData(owner, new PathGridTraversalRequest
+            entityManager.SetComponentData(owner, new PathGridTraversalPendingRequest
             {
                 StartNodeIndex = startNodeIndex,
                 GoalNodeIndex = goalNodeIndex,
                 MaxFineIterations = maxFineIterations,
                 MaxAbstractIterations = maxAbstractIterations,
                 AllowPartial = allowPartial ? (byte)1 : (byte)0,
-                Pending = 1,
             });
+            entityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(owner, true);
+            entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(owner, false);
 
             var state = entityManager.GetComponentData<PathGridTraversalState>(owner);
             if (state.ActivePathRequestId > 0)
@@ -202,8 +207,13 @@ namespace VVardenfell.Runtime.Pathfinding
             state.CurrentNodeOffset = 0;
             state.PathNodeCount = 0;
             entityManager.SetComponentData(owner, state);
-            if (entityManager.HasComponent<PathGridTraversalRequest>(owner))
-                entityManager.SetComponentData(owner, new PathGridTraversalRequest());
+            if (entityManager.HasComponent<PathGridTraversalPendingRequest>(owner))
+            {
+                entityManager.SetComponentData(owner, default(PathGridTraversalPendingRequest));
+                entityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(owner, false);
+            }
+            if (entityManager.HasComponent<PathGridTraversalAwaitingResult>(owner))
+                entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(owner, false);
             if (entityManager.HasComponent<PathGridTraversalNode>(owner))
                 entityManager.GetBuffer<PathGridTraversalNode>(owner).Clear();
 
@@ -219,8 +229,16 @@ namespace VVardenfell.Runtime.Pathfinding
                 entityManager.AddComponentData(owner, new PathGridTraversalState());
             if (!entityManager.HasBuffer<PathGridTraversalNode>(owner))
                 entityManager.AddBuffer<PathGridTraversalNode>(owner);
-            if (!entityManager.HasComponent<PathGridTraversalRequest>(owner))
-                entityManager.AddComponentData(owner, new PathGridTraversalRequest());
+            if (!entityManager.HasComponent<PathGridTraversalPendingRequest>(owner))
+            {
+                entityManager.AddComponentData(owner, new PathGridTraversalPendingRequest());
+                entityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(owner, false);
+            }
+            if (!entityManager.HasComponent<PathGridTraversalAwaitingResult>(owner))
+            {
+                entityManager.AddComponentData(owner, new PathGridTraversalAwaitingResult());
+                entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(owner, false);
+            }
         }
 
         static bool TryGetWorld(out EntityManager entityManager, out string error)
@@ -244,52 +262,77 @@ namespace VVardenfell.Runtime.Pathfinding
     public partial class PathGridTraversalRequestSystem : SystemBase
     {
         EntityQuery _query;
+        EntityQuery _pathfindingQuery;
 
         protected override void OnCreate()
         {
-            _query = GetEntityQuery(
-                ComponentType.ReadWrite<PathGridTraversalState>(),
-                ComponentType.ReadWrite<PathGridTraversalRequest>());
+            _query = SystemAPI.QueryBuilder()
+                .WithAll<PathGridTraversalState, PathGridTraversalPendingRequest>()
+                .WithPresent<PathGridTraversalAwaitingResult>()
+                .Build();
+            _pathfindingQuery = GetEntityQuery(
+                ComponentType.ReadWrite<PathGridPathfindingState>(),
+                ComponentType.ReadWrite<PendingPathGridPathRequest>());
         }
 
         protected override void OnUpdate()
         {
+            if (_pathfindingQuery.IsEmptyIgnoreFilter)
+                return;
+
+            Entity pathfindingEntity = _pathfindingQuery.GetSingletonEntity();
+            var pathfindingState = EntityManager.GetComponentData<PathGridPathfindingState>(pathfindingEntity);
+            var pendingRequests = EntityManager.GetBuffer<PendingPathGridPathRequest>(pathfindingEntity);
+
             using var entities = _query.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
                 Entity entity = entities[i];
                 var state = EntityManager.GetComponentData<PathGridTraversalState>(entity);
-                var request = EntityManager.GetComponentData<PathGridTraversalRequest>(entity);
-                if (request.Pending == 0 || state.ActivePathRequestId > 0)
-                    continue;
-
-                if (!PathGridPathfindingRequestBridge.TryRequestPath(
-                        request.StartNodeIndex,
-                        request.GoalNodeIndex,
-                        out int requestId,
-                        out _,
-                        entity,
-                        request.AllowPartial != 0,
-                        request.MaxFineIterations,
-                        request.MaxAbstractIterations))
+                var request = EntityManager.GetComponentData<PathGridTraversalPendingRequest>(entity);
+                if (state.ActivePathRequestId > 0)
                 {
-                    state.Status = (byte)PathGridTraversalStatus.Failed;
-                    request.Pending = 0;
-                    EntityManager.SetComponentData(entity, state);
-                    EntityManager.SetComponentData(entity, request);
+                    SystemAPI.SetComponentEnabled<PathGridTraversalPendingRequest>(entity, false);
                     continue;
                 }
 
-                state.ActivePathRequestId = requestId;
-                state.CurrentNodeOffset = 0;
-                state.PathNodeCount = 0;
-                state.LastStartNodeIndex = request.StartNodeIndex;
-                state.LastGoalNodeIndex = request.GoalNodeIndex;
-                state.Status = (byte)PathGridTraversalStatus.RequestingPath;
-                request.Pending = 0;
-                EntityManager.SetComponentData(entity, state);
-                EntityManager.SetComponentData(entity, request);
+                if (request.StartNodeIndex < 0 || request.GoalNodeIndex < 0)
+                {
+                    var failedState = state;
+                    failedState.Status = (byte)PathGridTraversalStatus.Failed;
+                    EntityManager.SetComponentData(entity, failedState);
+                    SystemAPI.SetComponentEnabled<PathGridTraversalPendingRequest>(entity, false);
+                    SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, false);
+                    continue;
+                }
+
+                int requestId = pathfindingState.NextRequestId++;
+                pathfindingState.TotalSubmitted++;
+                pendingRequests.Add(new PendingPathGridPathRequest
+                {
+                    RequestId = requestId,
+                    Owner = entity,
+                    StartNodeIndex = request.StartNodeIndex,
+                    GoalNodeIndex = request.GoalNodeIndex,
+                    AllowPartial = request.AllowPartial,
+                    MaxFineIterations = request.MaxFineIterations,
+                    MaxAbstractIterations = request.MaxAbstractIterations,
+                    RequestedAt = UnityEngine.Time.realtimeSinceStartupAsDouble,
+                });
+
+                var nextState = state;
+                nextState.ActivePathRequestId = requestId;
+                nextState.CurrentNodeOffset = 0;
+                nextState.PathNodeCount = 0;
+                nextState.LastStartNodeIndex = request.StartNodeIndex;
+                nextState.LastGoalNodeIndex = request.GoalNodeIndex;
+                nextState.Status = (byte)PathGridTraversalStatus.RequestingPath;
+                EntityManager.SetComponentData(entity, nextState);
+                SystemAPI.SetComponentEnabled<PathGridTraversalPendingRequest>(entity, false);
+                SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, true);
             }
+
+            EntityManager.SetComponentData(pathfindingEntity, pathfindingState);
         }
     }
 
@@ -298,66 +341,85 @@ namespace VVardenfell.Runtime.Pathfinding
     public partial class PathGridTraversalResultSystem : SystemBase
     {
         EntityQuery _query;
+        EntityQuery _pathfindingQuery;
 
         protected override void OnCreate()
         {
-            _query = GetEntityQuery(
-                ComponentType.ReadWrite<PathGridTraversalState>(),
-                ComponentType.ReadWrite<PathGridTraversalNode>());
+            _query = SystemAPI.QueryBuilder()
+                .WithAll<PathGridTraversalState, PathGridTraversalAwaitingResult, PathGridTraversalNode>()
+                .Build();
+            _pathfindingQuery = GetEntityQuery(
+                ComponentType.ReadWrite<CompletedPathGridPath>(),
+                ComponentType.ReadWrite<CompletedPathGridPathNode>());
         }
 
         protected override void OnUpdate()
         {
+            if (_pathfindingQuery.IsEmptyIgnoreFilter)
+                return;
+
+            Entity pathfindingEntity = _pathfindingQuery.GetSingletonEntity();
+            var completed = EntityManager.GetBuffer<CompletedPathGridPath>(pathfindingEntity);
+            var completedNodes = EntityManager.GetBuffer<CompletedPathGridPathNode>(pathfindingEntity);
+            if (completed.Length <= 0)
+                return;
+
+            using var completedLookup = new NativeParallelHashMap<int, int>(completed.Length, Allocator.Temp);
+            for (int i = 0; i < completed.Length; i++)
+                completedLookup.TryAdd(completed[i].RequestId, i);
+
+            var consumedCompletedIndices = new NativeList<int>(Allocator.Temp);
             using var entities = _query.ToEntityArray(Allocator.Temp);
-            for (int entityIndex = 0; entityIndex < entities.Length; entityIndex++)
+            for (int i = 0; i < entities.Length; i++)
             {
-                Entity entity = entities[entityIndex];
+                Entity entity = entities[i];
                 var state = EntityManager.GetComponentData<PathGridTraversalState>(entity);
                 if (state.Status != (byte)PathGridTraversalStatus.RequestingPath || state.ActivePathRequestId <= 0)
                     continue;
 
-                if (!PathGridPathfindingRequestBridge.TryHasResult(state.ActivePathRequestId, out bool hasResult, out _) || !hasResult)
+                if (!completedLookup.TryGetValue(state.ActivePathRequestId, out int completedIndex))
                     continue;
 
-                if (!PathGridPathfindingRequestBridge.TryConsumeResult(
-                        state.ActivePathRequestId,
-                        out var result,
-                        out var nodeIndices,
-                        out _))
-                {
-                    state.Status = (byte)PathGridTraversalStatus.Failed;
-                    state.ActivePathRequestId = 0;
-                    EntityManager.SetComponentData(entity, state);
-                    continue;
-                }
-
+                var result = completed[completedIndex];
                 var pathNodes = EntityManager.GetBuffer<PathGridTraversalNode>(entity);
                 pathNodes.Clear();
-                for (int i = 0; i < nodeIndices.Length; i++)
-                    pathNodes.Add(new PathGridTraversalNode { NodeIndex = nodeIndices[i] });
-
-                state.ActivePathRequestId = 0;
-                state.PathCost = result.Cost;
-                state.PathNodeCount = nodeIndices.Length;
-                state.UsedAbstractRoute = result.UsedAbstractRoute;
-                state.ReachedGoal = result.ReachedGoal;
-                if ((PathGridPathStatus)result.Status == PathGridPathStatus.Failed || nodeIndices.Length == 0)
+                if (result.FirstNodeIndex >= 0 && result.NodeCount > 0)
                 {
-                    state.Status = (byte)PathGridTraversalStatus.Failed;
-                    EntityManager.SetComponentData(entity, state);
-                    if (EntityManager.HasComponent<PathGridTraversalRequest>(entity))
-                        EntityManager.SetComponentData(entity, new PathGridTraversalRequest());
+                    for (int nodeOffset = 0; nodeOffset < result.NodeCount; nodeOffset++)
+                        pathNodes.Add(new PathGridTraversalNode { NodeIndex = completedNodes[result.FirstNodeIndex + nodeOffset].NodeIndex });
+                }
+
+                var nextState = state;
+                nextState.ActivePathRequestId = 0;
+                nextState.PathCost = result.Cost;
+                nextState.PathNodeCount = result.NodeCount;
+                nextState.UsedAbstractRoute = result.UsedAbstractRoute;
+                nextState.ReachedGoal = result.ReachedGoal;
+                if ((PathGridPathStatus)result.Status == PathGridPathStatus.Failed || result.NodeCount == 0)
+                {
+                    nextState.Status = (byte)PathGridTraversalStatus.Failed;
+                    EntityManager.SetComponentData(entity, nextState);
+                    SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, false);
+                    consumedCompletedIndices.Add(completedIndex);
                     continue;
                 }
 
-                state.CurrentNodeOffset = nodeIndices.Length > 1 ? 1 : 0;
-                state.Status = state.CurrentNodeOffset >= nodeIndices.Length
+                nextState.CurrentNodeOffset = result.NodeCount > 1 ? 1 : 0;
+                nextState.Status = nextState.CurrentNodeOffset >= result.NodeCount
                     ? (byte)PathGridTraversalStatus.Reached
                     : (byte)PathGridTraversalStatus.Traversing;
-                EntityManager.SetComponentData(entity, state);
-                if (EntityManager.HasComponent<PathGridTraversalRequest>(entity))
-                    EntityManager.SetComponentData(entity, new PathGridTraversalRequest());
+                EntityManager.SetComponentData(entity, nextState);
+                SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, false);
+                consumedCompletedIndices.Add(completedIndex);
             }
+
+            if (consumedCompletedIndices.Length > 1)
+                consumedCompletedIndices.Sort();
+
+            for (int i = consumedCompletedIndices.Length - 1; i >= 0; i--)
+                PathGridPathfindingSystem.RemoveCompletedAt(completed, completedNodes, consumedCompletedIndices[i]);
+
+            consumedCompletedIndices.Dispose();
         }
     }
 

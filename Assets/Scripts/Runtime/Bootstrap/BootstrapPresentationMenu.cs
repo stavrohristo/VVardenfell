@@ -73,14 +73,15 @@ namespace VVardenfell.Runtime.Bootstrap
             if (!VVardenfell.Core.Config.ConfigStorage.TryLoad(out _config) || _config == null)
                 _config = new VVardenfell.Core.Config.MorrowindConfig();
 
+            var cam = Camera.main;
             _menuOptionsView = new OptionsWindowView(
                 _menuRoot,
                 _theme,
                 _config,
-                BuildMenuOptionsCallbacks());
+                BuildMenuOptionsCallbacks(cam));
         }
 
-        OptionsWindowView.Callbacks BuildMenuOptionsCallbacks()
+        OptionsWindowView.Callbacks BuildMenuOptionsCallbacks(Camera camera)
         {
             return new OptionsWindowView.Callbacks
             {
@@ -95,7 +96,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 ShowSubtitles = v => HudUserPreferences.ShowSubtitles = v,
                 MenuTransparency = null,
                 Difficulty = null,
-                Fov = v => { if (Camera.main != null) Camera.main.fieldOfView = v; },
+                Fov = v => { camera.fieldOfView = v; },
                 Gamma = v => Screen.brightness = v,
                 Resolution = (w, h, refresh) =>
                 {
@@ -114,7 +115,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 {
                     if (_config == null) return;
                     _config.ResetPlayerSettingsToDefaults();
-                    ApplyMenuConfigValuesLive();
+                    ApplyMenuConfigValuesLive(camera);
                     _menuOptionsView.SyncFromConfig();
                 },
             };
@@ -138,7 +139,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 Debug.LogWarning($"[VVardenfell][Bootstrap] failed saving config: {error}");
         }
 
-        void ApplyMenuConfigValuesLive()
+        void ApplyMenuConfigValuesLive(Camera camera)
         {
             if (_config == null) return;
             RuntimeUiScaleSettings.GlobalScale = _config.UiScale;
@@ -148,7 +149,7 @@ namespace VVardenfell.Runtime.Bootstrap
             RuntimeAudioService.Active?.SetEffectsVolume(_config.EffectsVolume);
             HudUserPreferences.ShowCrosshair = _config.ShowCrosshair;
             HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
-            if (Camera.main != null) Camera.main.fieldOfView = _config.Fov;
+            camera.fieldOfView = _config.Fov;
             Screen.brightness = _config.Gamma;
             QualitySettings.vSyncCount = Mathf.Clamp(_config.VSync, 0, 2);
             Screen.fullScreenMode = _config.WindowMode switch
