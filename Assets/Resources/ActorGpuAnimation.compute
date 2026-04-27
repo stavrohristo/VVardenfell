@@ -603,7 +603,9 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         sampledOrder[boneIndex] = 0;
     }
 
-    bool hasLayer = false;
+    bool hasLayer = actor.LayerCount > 0
+        && actor.FirstLayerIndex >= 0
+        && IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
     GpuLayer layer;
     layer.ClipIndex = -1;
     layer.Time = 0.0;
@@ -614,11 +616,6 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     clip.TrackCount = 0;
     clip.Duration = 0.0;
     clip.Padding = 0.0;
-    if (hasLayer)
-    {
-        hasLayer = IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
-    }
-
     if (hasLayer)
     {
         layer = _GpuAnimationLayers[actor.FirstLayerIndex];
@@ -716,30 +713,20 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         GpuBone composeBone = _GpuAnimationBones[skeleton.FirstBoneIndex + composeIndex];
         int parentIndex = composeBone.ParentIndex;
-        ActorMatrix3x4 local;
+        ActorMatrix3x4 sourceLocal;
         if (localTouched[composeIndex] == 0u)
-            local = MatrixFromRows(
+            sourceLocal = MatrixFromRows(
                 composeBone.BindLocalRow0,
                 composeBone.BindLocalRow1,
                 composeBone.BindLocalRow2,
                 float4(0.0, 0.0, 0.0, 1.0));
         else
-            local = MatrixTRS(localPos[composeIndex], localRot[composeIndex], max(1e-4, localScale[composeIndex]));
+            sourceLocal = MatrixTRS(localPos[composeIndex], localRot[composeIndex], max(1e-4, localScale[composeIndex]));
 
-        if (localTouched[composeIndex] == 0u)
-        {
-            localToRoot[composeIndex] = ConvertSourceAffineToUnity(MatrixFromRows(
-                composeBone.BindRootRow0,
-                composeBone.BindRootRow1,
-                composeBone.BindRootRow2,
-                float4(0.0, 0.0, 0.0, 1.0)));
-        }
-        else
-        {
-            localToRoot[composeIndex] = ConvertSourceAffineToUnity(local);
-            if (parentIndex >= 0 && parentIndex < composeIndex)
-                localToRoot[composeIndex] = MultiplyAffine(localToRoot[parentIndex], localToRoot[composeIndex]);
-        }
+        ActorMatrix3x4 unityLocal = ConvertSourceAffineToUnity(sourceLocal);
+        localToRoot[composeIndex] = unityLocal;
+        if (parentIndex >= 0 && parentIndex < composeIndex)
+            localToRoot[composeIndex] = MultiplyAffine(localToRoot[parentIndex], unityLocal);
     }
 
     [loop]

@@ -23,6 +23,7 @@ namespace VVardenfell.Runtime.Streaming
         const int RefGatherBatchSize = 512;
 
         static readonly HashSet<string> s_UnsupportedSpawnModeWarnings = new();
+        static readonly HashSet<string> s_ActorPrefabVisualWarnings = new();
 
         static readonly ProfilerMarker k_LogicalRefs = new("VV.Spawn.LogicalRefs");
         static readonly ProfilerMarker k_LogicalRefCreate = new("VV.Spawn.LogicalRefs.Create");
@@ -129,6 +130,7 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefLink.Begin();
                     try
                     {
+                        DisableActorModelPrefabChildren(em, ref ecb, contentReference, childSnapshots[i]);
                         LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
                     }
                     finally
@@ -222,6 +224,7 @@ namespace VVardenfell.Runtime.Streaming
                     k_LogicalRefLink.Begin();
                     try
                     {
+                        DisableActorModelPrefabChildren(em, ref ecb, contentReference, childSnapshots[i]);
                         LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
                     }
                     finally
@@ -235,6 +238,48 @@ namespace VVardenfell.Runtime.Streaming
             ecb.Dispose();
             ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, spawnedEntities);
             return logicalRefCount;
+        }
+
+        static void DisableActorModelPrefabChildren(
+            EntityManager em,
+            ref EntityCommandBuffer ecb,
+            ContentReference contentReference,
+            Entity[] children)
+        {
+            if (contentReference.Kind != ContentReferenceKind.Actor || children == null)
+                return;
+
+            int enabledRenderChildren = 0;
+            for (int i = 0; i < children.Length; i++)
+            {
+                Entity child = children[i];
+                if (child == Entity.Null || !em.Exists(child))
+                    continue;
+
+                if (em.HasComponent<MaterialMeshInfo>(child))
+                {
+                    if (WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox
+                        && em.IsComponentEnabled<MaterialMeshInfo>(child))
+                    {
+                        enabledRenderChildren++;
+                    }
+
+                    ecb.SetComponentEnabled<MaterialMeshInfo>(child, false);
+                }
+
+                RuntimeColliderAttachmentUtility.QueueDisablePhysics(em, ref ecb, child);
+            }
+
+            if (enabledRenderChildren > 0 && WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox)
+            {
+                string key = $"{contentReference.Kind}:{contentReference.HandleValue}:{enabledRenderChildren}";
+                if (s_ActorPrefabVisualWarnings.Add(key))
+                {
+                    Debug.LogWarning(
+                        $"[VVardenfell][ActorDuplicateVisualGuard] actor content handle {contentReference.HandleValue} " +
+                        $"had {enabledRenderChildren} enabled model-prefab render children; suppressing them so procedural actor rendering is the only visual path.");
+                }
+            }
         }
 
         static void ResolveQueuedLogicalRefs(

@@ -100,17 +100,22 @@ namespace VVardenfell.Importer.Bake
                 int meshIndex = -1;
                 int materialIndex = -1;
                 int textureIndex = -1;
-                if (node.Kind == ModelPrefabNodeKind.RenderLeaf)
+                bool renderableLeaf = node.Kind == ModelPrefabNodeKind.RenderLeaf
+                                      && node.RenderLeaf.VertexCount > 0
+                                      && node.RenderLeaf.HasNormals
+                                      && node.RenderLeaf.Indices != null
+                                      && node.RenderLeaf.Indices.Length > 0;
+                if (renderableLeaf)
                 {
                     meshIndex = meshes.AddOrGet($"{modelPath}#{i}", node.RenderLeaf);
                     materialIndex = materials.AddOrGet(node.MaterialFlags);
                     textureIndex = textures.AddOrGet(node.TexturePath);
                 }
 
-                var bounds = node.RenderLeaf.VertexCount > 0 ? node.RenderLeaf.LocalBounds : default;
+                var bounds = renderableLeaf ? node.RenderLeaf.LocalBounds : default;
                 nodes[i] = new ModelPrefabNodeDef
                 {
-                    Kind = node.Kind,
+                    Kind = renderableLeaf ? node.Kind : ModelPrefabNodeKind.Transform,
                     Name = node.Name ?? string.Empty,
                     ParentIndex = node.ParentIndex,
                     FirstChildIndex = node.FirstChildIndex,

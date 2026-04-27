@@ -18,6 +18,7 @@ namespace VVardenfell.Importer.Nif
         public ModelPrefabNodeKind Kind;
         public string Name;
         public int ParentIndex = -1;
+        public int SourceRecordIndex = -1;
         public int FirstChildIndex = -1;
         public int ChildCount;
         public int SelectedChildIndex = -1;
@@ -30,6 +31,7 @@ namespace VVardenfell.Importer.Nif
         public uint MaterialFlags;
         public string TexturePath;
         public string SkinRootName;
+        public int SkinRootSourceRecordIndex = -1;
         public string[] SkinBoneNames = System.Array.Empty<string>();
         public BoneWeight[] SkinBoneWeights;
         public Matrix4x4[] SkinBindPoses;
@@ -62,7 +64,7 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[rootIndex] is not NiAVObject av)
                     continue;
 
-                int child = BuildNode(nif, av, syntheticRoot, state);
+                int child = BuildNode(nif, rootIndex, av, syntheticRoot, state);
                 if (child >= 0)
                     state.PendingChildren[syntheticRoot].Add(child);
             }
@@ -77,31 +79,28 @@ namespace VVardenfell.Importer.Nif
             };
         }
 
-        static int BuildNode(NifFile nif, NiAVObject obj, int parentIndex, BuildState state)
+        static int BuildNode(NifFile nif, int recordIndex, NiAVObject obj, int parentIndex, BuildState state)
         {
-            if ((obj.Flags & 0x0001) != 0)
-                return -1;
-
             var kind = ResolveKind(obj);
             if (kind == ModelPrefabNodeKind.RootCollision || kind == ModelPrefabNodeKind.Avoid)
             {
-                int metadataNode = AddTransformNode(state, obj, parentIndex, kind);
+                int metadataNode = AddTransformNode(state, recordIndex, obj, parentIndex, kind);
                 return metadataNode;
             }
 
             if (kind == ModelPrefabNodeKind.CollisionSwitch && (obj.Flags & 0x0020) == 0)
             {
-                int switchNode = AddTransformNode(state, obj, parentIndex, kind);
+                int switchNode = AddTransformNode(state, recordIndex, obj, parentIndex, kind);
                 return switchNode;
             }
 
             if (obj is NiGeometry geometry && TryResolveRenderableGeometry(nif, geometry, out _))
-                return AddRenderLeaf(nif, geometry, parentIndex, state);
+                return AddRenderLeaf(nif, recordIndex, geometry, parentIndex, state);
 
             if (obj is not NiNode node)
-                return AddTransformNode(state, obj, parentIndex, kind);
+                return AddTransformNode(state, recordIndex, obj, parentIndex, kind);
 
-            int nodeIndex = AddTransformNode(state, obj, parentIndex, kind);
+            int nodeIndex = AddTransformNode(state, recordIndex, obj, parentIndex, kind);
             var pendingChildren = state.PendingChildren[nodeIndex];
             if (node.Children == null || node.Children.Length == 0)
                 return nodeIndex;
@@ -118,7 +117,7 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[childIndex] is not NiAVObject child)
                     continue;
 
-                int builtChild = BuildNode(nif, child, nodeIndex, state);
+                int builtChild = BuildNode(nif, childIndex, child, nodeIndex, state);
                 if (builtChild >= 0)
                     pendingChildren.Add(builtChild);
             }
@@ -127,7 +126,7 @@ namespace VVardenfell.Importer.Nif
             return nodeIndex;
         }
 
-        static int AddRenderLeaf(NifFile nif, NiGeometry geometry, int parentIndex, BuildState state)
+        static int AddRenderLeaf(NifFile nif, int recordIndex, NiGeometry geometry, int parentIndex, BuildState state)
         {
             if (!TryResolveRenderableGeometry(nif, geometry, out var data))
                 return -1;
@@ -140,7 +139,7 @@ namespace VVardenfell.Importer.Nif
                 materialFlags |= CacheFormat.MatFlagAlphaClip;
             materialFlags = CacheFormat.PackAlphaThreshold(materialFlags, alphaThreshold);
 
-            var node = CreateBaseNode(geometry, parentIndex, ResolveKind(geometry));
+            var node = CreateBaseNode(geometry, recordIndex, parentIndex, ResolveKind(geometry));
             node.MaterialFlags = materialFlags;
             node.TexturePath = FindTexture(nif, geometry, out int uvSet);
             node.RenderLeaf = BuildLocalRawMesh(geometry, data, uvSet, node.TexturePath, alphaFlags, alphaThreshold);
@@ -179,6 +178,7 @@ namespace VVardenfell.Importer.Nif
 
             NormalizeBoneWeights(boneWeights);
             node.SkinRootName = Resolve<NiAVObject>(nif, skinInstance.Root)?.Name ?? string.Empty;
+            node.SkinRootSourceRecordIndex = skinInstance.Root;
             node.SkinBoneNames = boneNames;
             node.SkinBoneWeights = boneWeights;
             node.SkinBindPoses = BuildUnitySkinBindPoses(skinData);
@@ -374,7 +374,7 @@ namespace VVardenfell.Importer.Nif
             }
         }
 
-        static ModelPrefabSourceNode CreateBaseNode(NiAVObject obj, int parentIndex, ModelPrefabNodeKind kind)
+        static ModelPrefabSourceNode CreateBaseNode(NiAVObject obj, int recordIndex, int parentIndex, ModelPrefabNodeKind kind)
         {
             ConvertLocalTransform(obj, out Vector3 position, out Quaternion rotation, out float scale);
             return new ModelPrefabSourceNode
@@ -382,6 +382,7 @@ namespace VVardenfell.Importer.Nif
                 Kind = kind,
                 Name = string.IsNullOrWhiteSpace(obj.Name) ? string.Empty : obj.Name,
                 ParentIndex = parentIndex,
+                SourceRecordIndex = recordIndex,
                 Flags = obj.Flags,
                 LocalPosition = position,
                 LocalRotation = rotation,
@@ -390,8 +391,8 @@ namespace VVardenfell.Importer.Nif
             };
         }
 
-        static int AddTransformNode(BuildState state, NiAVObject obj, int parentIndex, ModelPrefabNodeKind kind)
-            => AddNode(state, CreateBaseNode(obj, parentIndex, kind));
+        static int AddTransformNode(BuildState state, int recordIndex, NiAVObject obj, int parentIndex, ModelPrefabNodeKind kind)
+            => AddNode(state, CreateBaseNode(obj, recordIndex, parentIndex, kind));
 
         static int AddNode(BuildState state, ModelPrefabSourceNode node)
         {
@@ -606,6 +607,10 @@ namespace VVardenfell.Importer.Nif
             data = null;
             if (geometry == null)
                 return false;
+            if ((geometry.Flags & 0x0001) != 0)
+                return false;
+            if (IsOpenMwCreatureHelperGeometry(geometry.Name))
+                return false;
 
             data = geometry switch
             {
@@ -616,9 +621,15 @@ namespace VVardenfell.Importer.Nif
 
             return data != null
                 && data.Vertices != null
+                && data.Normals != null
                 && data.NumVertices > 0
+                && data.Normals.Length == data.NumVertices
                 && BuildTriangleIndices(geometry, data).Length > 0;
         }
+
+        static bool IsOpenMwCreatureHelperGeometry(string name)
+            => !string.IsNullOrWhiteSpace(name)
+               && name.TrimStart().StartsWith("tri bip", System.StringComparison.OrdinalIgnoreCase);
 
         static Vector2[] ResolveUvSet(NiGeometryData data, int uvSet, int vertexCount)
         {

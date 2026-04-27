@@ -25,6 +25,68 @@ namespace VVardenfell.Importer.Nif
             };
         }
 
+        public static ActorSkeletonDef ExtractSkeleton(ModelPrefabSource prefabSource)
+        {
+            var nodes = prefabSource?.Nodes ?? Array.Empty<ModelPrefabSourceNode>();
+            var bones = new List<ActorSkeletonBoneDef>(nodes.Length);
+            var graphToBone = new int[nodes.Length];
+            for (int i = 0; i < graphToBone.Length; i++)
+                graphToBone[i] = -1;
+
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                var node = nodes[i];
+                if (node == null || node.Kind == ModelPrefabNodeKind.SyntheticRoot)
+                    continue;
+
+                int parentBoneIndex = -1;
+                int parentGraphIndex = node.ParentIndex;
+                int guard = 0;
+                while ((uint)parentGraphIndex < (uint)nodes.Length && guard++ < nodes.Length)
+                {
+                    parentBoneIndex = graphToBone[parentGraphIndex];
+                    if (parentBoneIndex >= 0)
+                        break;
+
+                    parentGraphIndex = nodes[parentGraphIndex]?.ParentIndex ?? -1;
+                }
+
+                int boneIndex = bones.Count;
+                graphToBone[i] = boneIndex;
+                Matrix4x4 bindLocal = node.SourceLocalMatrix;
+                Matrix4x4 parentBindLocalToRoot = parentBoneIndex >= 0
+                    ? UnpackMatrix(bones[parentBoneIndex].BindLocalToRootMatrix, 0, Matrix4x4.identity)
+                    : Matrix4x4.identity;
+                Matrix4x4 bindLocalToRoot = parentBoneIndex >= 0
+                    ? parentBindLocalToRoot * bindLocal
+                    : bindLocal;
+                DecomposeSourceLocalMatrix(bindLocal, out Vector3 position, out Quaternion rotation, out float scale);
+                bones.Add(new ActorSkeletonBoneDef
+                {
+                    Name = node.Name ?? string.Empty,
+                    ParentIndex = parentBoneIndex,
+                    SourceRecordIndex = node.SourceRecordIndex,
+                    PosX = position.x,
+                    PosY = position.y,
+                    PosZ = position.z,
+                    RotX = rotation.x,
+                    RotY = rotation.y,
+                    RotZ = rotation.z,
+                    RotW = rotation.w,
+                    Scale = scale,
+                    BindLocalMatrix = PackMatrix(bindLocal),
+                    BindLocalToRootMatrix = PackMatrix(bindLocalToRoot),
+                });
+            }
+
+            return new ActorSkeletonDef
+            {
+                ModelPath = prefabSource?.ModelPath ?? string.Empty,
+                AccumulationBoneIndex = FindAccumulationBone(bones),
+                Bones = bones.ToArray(),
+            };
+        }
+
         public static ActorAnimationClipDef[] ExtractClips(
             NifFile nif,
             List<ActorAnimationTrackDef> tracks,
@@ -91,7 +153,8 @@ namespace VVardenfell.Importer.Nif
 
             for (int i = 0; i < nif.Records.Length; i++)
             {
-                if (nif.Records[i] is not NiGeometry geometry || !TryResolveRenderableGeometry(nif, geometry, out _))
+                if (nif.Records[i] is not NiGeometry geometry
+                    || !TryResolveRenderableGeometry(nif, geometry, out var geometryData))
                     continue;
 
                 if (Resolve<NiSkinInstance>(nif, geometry.Skin) is not NiSkinInstance skinInstance
@@ -101,13 +164,15 @@ namespace VVardenfell.Importer.Nif
                     {
                         ModelPath = nif.Path,
                         NodeName = geometry.Name ?? string.Empty,
-                        MeshIndex = skinMeshes.Count,
+                        SourceRecordIndex = i,
+                        MeshIndex = -1,
                         SkeletonIndex = skeletonIndex,
                         IsRigid = 1,
                         FirstWeightIndex = -1,
                         WeightCount = 0,
                         BoneIndices = new[] { -1 },
                         BoneNames = new[] { string.Empty },
+                        BoneSourceRecordIndices = new[] { -1 },
                         BindPoseMatrices = PackMatrix(Matrix4x4.identity),
                         GeometryToSkeletonMatrix = BuildGeometryToSkeletonMatrix(skeleton, geometry.Name),
                     });
@@ -118,14 +183,19 @@ namespace VVardenfell.Importer.Nif
                 var sourceBones = skinData.Bones ?? Array.Empty<NiSkinData.BoneInfo>();
                 var boneIndices = new int[sourceBones.Length];
                 var boneNames = new string[sourceBones.Length];
+                var boneSourceRecordIndices = new int[sourceBones.Length];
                 for (int b = 0; b < sourceBones.Length; b++)
                 {
                     boneNames[b] = ResolveSkinBoneName(nif, skinInstance.Bones, b);
+                    boneSourceRecordIndices[b] = ResolveSkinBoneRecordIndex(skinInstance.Bones, b);
                     int skeletonBoneIndex = ResolveSkeletonBoneIndex(nif, skinInstance.Bones, b, boneLookup, boneRecordLookup);
                     boneIndices[b] = skeletonBoneIndex;
                     var sourceWeights = sourceBones[b]?.Weights ?? Array.Empty<NiSkinData.VertexWeight>();
                     for (int w = 0; w < sourceWeights.Length; w++)
                     {
+                        if (sourceWeights[w].Vertex >= geometryData.NumVertices)
+                            continue;
+
                         weights.Add(new ActorSkinWeightDef
                         {
                             VertexIndex = sourceWeights[w].Vertex,
@@ -139,13 +209,16 @@ namespace VVardenfell.Importer.Nif
                 {
                     ModelPath = nif.Path,
                     NodeName = geometry.Name ?? string.Empty,
-                    MeshIndex = skinMeshes.Count,
+                    SourceRecordIndex = i,
+                    MeshIndex = -1,
                     SkeletonIndex = skeletonIndex,
                     FirstWeightIndex = firstWeight,
                     WeightCount = weights.Count - firstWeight,
                     BoneIndices = boneIndices,
                     BoneNames = boneNames,
+                    BoneSourceRecordIndices = boneSourceRecordIndices,
                     SkinRootName = ResolveSkinRootName(nif, skinInstance.Root),
+                    SkinRootSourceRecordIndex = skinInstance.Root,
                     BindPoseMatrices = BuildBindPoseMatrices(skinData, sourceBones),
                     GeometryToSkeletonMatrix = PackMatrix(Matrix4x4.identity),
                 });
@@ -565,6 +638,11 @@ namespace VVardenfell.Importer.Nif
             return string.Empty;
         }
 
+        static int ResolveSkinBoneRecordIndex(int[] skinBones, int skinBoneIndex)
+            => skinBones != null && (uint)skinBoneIndex < (uint)skinBones.Length
+                ? skinBones[skinBoneIndex]
+                : -1;
+
         static string ResolveSkinRootName(NifFile nif, int skinRoot)
         {
             return Resolve<NiAVObject>(nif, skinRoot)?.Name ?? string.Empty;
@@ -745,7 +823,7 @@ namespace VVardenfell.Importer.Nif
 
         static bool TryResolveRenderableGeometry(NifFile nif, NiGeometry geometry, out NiGeometryData data)
         {
-            if (geometry == null || (geometry.Flags & 0x0001) != 0)
+            if (geometry == null || (geometry.Flags & 0x0001) != 0 || IsOpenMwCreatureHelperGeometry(geometry.Name))
             {
                 data = null;
                 return false;
@@ -763,6 +841,10 @@ namespace VVardenfell.Importer.Nif
                 && data.NumVertices > 0
                 && HasRenderableTriangles(data);
         }
+
+        static bool IsOpenMwCreatureHelperGeometry(string name)
+            => !string.IsNullOrWhiteSpace(name)
+               && name.TrimStart().StartsWith("tri bip", StringComparison.OrdinalIgnoreCase);
 
         static bool HasRenderableTriangles(NiGeometryData data)
         {
@@ -797,6 +879,24 @@ namespace VVardenfell.Importer.Nif
                 ? Quaternion.identity
                 : Quaternion.LookRotation(forward.normalized, up.normalized);
             scale = obj.Scale;
+        }
+
+        static void DecomposeSourceLocalMatrix(Matrix4x4 matrix, out Vector3 position, out Quaternion rotation, out float scale)
+        {
+            position = new Vector3(matrix.m03, matrix.m13, matrix.m23);
+            float sx = new Vector3(matrix.m00, matrix.m10, matrix.m20).magnitude;
+            float sy = new Vector3(matrix.m01, matrix.m11, matrix.m21).magnitude;
+            float sz = new Vector3(matrix.m02, matrix.m12, matrix.m22).magnitude;
+            scale = (sx + sy + sz) / 3f;
+            if (scale <= 0.000001f)
+                scale = 1f;
+
+            float invScale = 1f / scale;
+            Vector3 up = new(matrix.m01 * invScale, matrix.m11 * invScale, matrix.m21 * invScale);
+            Vector3 forward = new(matrix.m02 * invScale, matrix.m12 * invScale, matrix.m22 * invScale);
+            rotation = up.sqrMagnitude <= 0f || forward.sqrMagnitude <= 0f
+                ? Quaternion.identity
+                : Quaternion.LookRotation(forward.normalized, up.normalized);
         }
 
         static T Resolve<T>(NifFile nif, int link) where T : NifRecord

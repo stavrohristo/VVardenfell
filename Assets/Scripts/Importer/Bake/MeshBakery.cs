@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Nif;
 
@@ -216,6 +217,10 @@ namespace VVardenfell.Importer.Bake
             bool hasNormals = bm.HasNormals;
             bool hasUVs = bm.HasUvs;
             bool index32 = bm.VertexCount > 65535;
+            Vector3[] normals = hasNormals
+                ? bm.Normals
+                : BuildFallbackNormals(bm.Vertices, bm.Indices);
+            hasNormals = normals != null && normals.Length == bm.VertexCount;
 
             if (!hasNormals)
                 throw new InvalidDataException($"Baked mesh '{bm.Name}' is missing normals.");
@@ -257,9 +262,9 @@ namespace VVardenfell.Importer.Bake
                 WriteSingle(payload, ref offset, bm.Vertices[i].z);
                 if (hasNormals)
                 {
-                    WriteSingle(payload, ref offset, bm.Normals[i].x);
-                    WriteSingle(payload, ref offset, bm.Normals[i].y);
-                    WriteSingle(payload, ref offset, bm.Normals[i].z);
+                    WriteSingle(payload, ref offset, normals[i].x);
+                    WriteSingle(payload, ref offset, normals[i].y);
+                    WriteSingle(payload, ref offset, normals[i].z);
                 }
                 if (hasUVs)
                 {
@@ -280,6 +285,46 @@ namespace VVardenfell.Importer.Bake
             }
 
             return payload;
+        }
+
+        static Vector3[] BuildFallbackNormals(Vector3[] vertices, int[] indices)
+        {
+            if (vertices == null || vertices.Length == 0 || indices == null || indices.Length < 3)
+                return null;
+
+            var normals = new Vector3[vertices.Length];
+            for (int i = 0; i + 2 < indices.Length; i += 3)
+            {
+                int i0 = indices[i + 0];
+                int i1 = indices[i + 1];
+                int i2 = indices[i + 2];
+                if ((uint)i0 >= (uint)vertices.Length
+                    || (uint)i1 >= (uint)vertices.Length
+                    || (uint)i2 >= (uint)vertices.Length)
+                {
+                    continue;
+                }
+
+                Vector3 edgeA = vertices[i1] - vertices[i0];
+                Vector3 edgeB = vertices[i2] - vertices[i0];
+                Vector3 normal = Vector3.Cross(edgeA, edgeB);
+                if (normal.sqrMagnitude <= 0.00000001f)
+                    continue;
+
+                normals[i0] += normal;
+                normals[i1] += normal;
+                normals[i2] += normal;
+            }
+
+            for (int i = 0; i < normals.Length; i++)
+            {
+                if (normals[i].sqrMagnitude <= 0.00000001f)
+                    normals[i] = Vector3.up;
+                else
+                    normals[i].Normalize();
+            }
+
+            return normals;
         }
 
         public static string ComputePayloadHash(byte[] payload)

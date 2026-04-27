@@ -87,6 +87,18 @@ namespace VVardenfell.Core.Cache
         public ActorSkeletonBoneDef[] Bones = Array.Empty<ActorSkeletonBoneDef>();
     }
 
+    public sealed class ActorModelGraphNodeDef
+    {
+        public string Name;
+        public int ParentIndex = -1;
+        public int SourceRecordIndex = -1;
+        public ModelPrefabNodeKind Kind;
+        public ushort Flags;
+        public float[] LocalMatrix = Array.Empty<float>();
+        public float[] LocalToRootMatrix = Array.Empty<float>();
+        public float[] SourceLocalToRootMatrix = Array.Empty<float>();
+    }
+
     public struct ActorSkinWeightDef
     {
         public ushort VertexIndex;
@@ -94,10 +106,19 @@ namespace VVardenfell.Core.Cache
         public float Weight;
     }
 
+    public enum ActorRigAssemblyKind : byte
+    {
+        Unknown = 0,
+        FullModel = 1,
+        CopiedRig = 2,
+        RigidAttachment = 3,
+    }
+
     public sealed class ActorSkinMeshDef
     {
         public string ModelPath;
         public string NodeName;
+        public int SourceRecordIndex = -1;
         public int MeshIndex;
         public int MaterialIndex = -1;
         public int TextureIndex = -1;
@@ -113,7 +134,18 @@ namespace VVardenfell.Core.Cache
         public float BoundsExtentsZ;
         public int[] BoneIndices = Array.Empty<int>();
         public string[] BoneNames = Array.Empty<string>();
+        public int[] BoneSourceRecordIndices = Array.Empty<int>();
         public string SkinRootName;
+        public int SkinRootSourceRecordIndex = -1;
+        public ActorRigAssemblyKind RigAssemblyKind = ActorRigAssemblyKind.Unknown;
+        public int SourceGraphNodeIndex = -1;
+        public int SkinRootGraphNodeIndex = -1;
+        public int CopiedRigRootGraphNodeIndex = -1;
+        public int InsertedParentGraphNodeIndex = -1;
+        public int CancelledTransformGraphNodeIndex = -1;
+        public int SourceSkeletonRootGraphNodeIndex = -1;
+        public int TargetBoneIndex = -1;
+        public byte AssemblyMirrorX;
         public float[] BindPoseMatrices = Array.Empty<float>();
         public float[] GeometryToSkeletonMatrix = Array.Empty<float>();
         public float RigidOffsetX;
@@ -194,6 +226,7 @@ namespace VVardenfell.Core.Cache
         public ActorVisualRecipeEntryDef[] ActorVisualRecipeEntries = Array.Empty<ActorVisualRecipeEntryDef>();
         public ActorEquipmentVisualDef[] EquipmentVisuals = Array.Empty<ActorEquipmentVisualDef>();
         public ActorEquipmentVisualEntryDef[] EquipmentVisualEntries = Array.Empty<ActorEquipmentVisualEntryDef>();
+        public ActorModelGraphNodeDef[] GraphNodes = Array.Empty<ActorModelGraphNodeDef>();
         public ActorSkeletonDef[] Skeletons = Array.Empty<ActorSkeletonDef>();
         public ActorSkinMeshDef[] SkinMeshes = Array.Empty<ActorSkinMeshDef>();
         public ActorSkinWeightDef[] SkinWeights = Array.Empty<ActorSkinWeightDef>();
@@ -269,6 +302,8 @@ namespace VVardenfell.Core.Cache
         public int RigFamilyIndex = -1;
         public int FirstSkinMeshIndex = -1;
         public int SkinMeshCount;
+        public int FirstGraphNodeIndex = -1;
+        public int GraphNodeCount;
     }
 
     public sealed class ActorVisualRecipeDef
@@ -314,7 +349,7 @@ namespace VVardenfell.Core.Cache
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 52u;
+        const uint Version = 63u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {
@@ -372,6 +407,7 @@ namespace VVardenfell.Core.Cache
                 ActorVisualRecipeEntries = ReadArray(r, ReadActorVisualRecipeEntry),
                 EquipmentVisuals = ReadArray(r, ReadEquipmentVisual),
                 EquipmentVisualEntries = ReadArray(r, ReadEquipmentVisualEntry),
+                GraphNodes = ReadArray(r, ReadGraphNode),
                 Skeletons = ReadArray(r, ReadSkeleton),
                 SkinMeshes = ReadArray(r, ReadSkinMesh),
                 SkinWeights = ReadArray(r, ReadSkinWeight),
@@ -397,6 +433,7 @@ namespace VVardenfell.Core.Cache
             WriteArray(w, data?.ActorVisualRecipeEntries, WriteActorVisualRecipeEntry);
             WriteArray(w, data?.EquipmentVisuals, WriteEquipmentVisual);
             WriteArray(w, data?.EquipmentVisualEntries, WriteEquipmentVisualEntry);
+            WriteArray(w, data?.GraphNodes, WriteGraphNode);
             WriteArray(w, data?.Skeletons, WriteSkeleton);
             WriteArray(w, data?.SkinMeshes, WriteSkinMesh);
             WriteArray(w, data?.SkinWeights, WriteSkinWeight);
@@ -432,6 +469,8 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.RigFamilyIndex ?? -1);
             w.Write(value?.FirstSkinMeshIndex ?? -1);
             w.Write(value?.SkinMeshCount ?? 0);
+            w.Write(value?.FirstGraphNodeIndex ?? -1);
+            w.Write(value?.GraphNodeCount ?? 0);
         }
 
         static ActorSkinBindingDef ReadSkinBinding(BinaryReader r)
@@ -441,6 +480,33 @@ namespace VVardenfell.Core.Cache
                 RigFamilyIndex = r.ReadInt32(),
                 FirstSkinMeshIndex = r.ReadInt32(),
                 SkinMeshCount = r.ReadInt32(),
+                FirstGraphNodeIndex = r.ReadInt32(),
+                GraphNodeCount = r.ReadInt32(),
+            };
+
+        static void WriteGraphNode(BinaryWriter w, ActorModelGraphNodeDef value)
+        {
+            w.Write(value?.Name ?? string.Empty);
+            w.Write(value?.ParentIndex ?? -1);
+            w.Write(value?.SourceRecordIndex ?? -1);
+            w.Write((byte)(value?.Kind ?? ModelPrefabNodeKind.None));
+            w.Write(value?.Flags ?? 0);
+            WriteFloatArray(w, value?.LocalMatrix);
+            WriteFloatArray(w, value?.LocalToRootMatrix);
+            WriteFloatArray(w, value?.SourceLocalToRootMatrix);
+        }
+
+        static ActorModelGraphNodeDef ReadGraphNode(BinaryReader r)
+            => new()
+            {
+                Name = r.ReadString(),
+                ParentIndex = r.ReadInt32(),
+                SourceRecordIndex = r.ReadInt32(),
+                Kind = (ModelPrefabNodeKind)r.ReadByte(),
+                Flags = r.ReadUInt16(),
+                LocalMatrix = ReadFloatArray(r),
+                LocalToRootMatrix = ReadFloatArray(r),
+                SourceLocalToRootMatrix = ReadFloatArray(r),
             };
 
         static void WriteActorVisualRecipe(BinaryWriter w, ActorVisualRecipeDef value)
@@ -546,6 +612,7 @@ namespace VVardenfell.Core.Cache
         {
             w.Write(value.Name ?? string.Empty);
             w.Write(value.ParentIndex);
+            w.Write(value.SourceRecordIndex);
             w.Write(value.PosX); w.Write(value.PosY); w.Write(value.PosZ);
             w.Write(value.RotX); w.Write(value.RotY); w.Write(value.RotZ); w.Write(value.RotW);
             w.Write(value.Scale);
@@ -558,6 +625,7 @@ namespace VVardenfell.Core.Cache
             {
                 Name = r.ReadString(),
                 ParentIndex = r.ReadInt32(),
+                SourceRecordIndex = r.ReadInt32(),
                 PosX = r.ReadSingle(),
                 PosY = r.ReadSingle(),
                 PosZ = r.ReadSingle(),
@@ -574,6 +642,7 @@ namespace VVardenfell.Core.Cache
         {
             w.Write(value?.ModelPath ?? string.Empty);
             w.Write(value?.NodeName ?? string.Empty);
+            w.Write(value?.SourceRecordIndex ?? -1);
             w.Write(value?.MeshIndex ?? -1);
             w.Write(value?.MaterialIndex ?? -1);
             w.Write(value?.TextureIndex ?? -1);
@@ -589,7 +658,18 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.BoundsExtentsZ ?? 0f);
             WriteIntArray(w, value?.BoneIndices);
             WriteStringArray(w, value?.BoneNames);
+            WriteIntArray(w, value?.BoneSourceRecordIndices);
             w.Write(value?.SkinRootName ?? string.Empty);
+            w.Write(value?.SkinRootSourceRecordIndex ?? -1);
+            w.Write((byte)(value?.RigAssemblyKind ?? ActorRigAssemblyKind.Unknown));
+            w.Write(value?.SourceGraphNodeIndex ?? -1);
+            w.Write(value?.SkinRootGraphNodeIndex ?? -1);
+            w.Write(value?.CopiedRigRootGraphNodeIndex ?? -1);
+            w.Write(value?.InsertedParentGraphNodeIndex ?? -1);
+            w.Write(value?.CancelledTransformGraphNodeIndex ?? -1);
+            w.Write(value?.SourceSkeletonRootGraphNodeIndex ?? -1);
+            w.Write(value?.TargetBoneIndex ?? -1);
+            w.Write(value?.AssemblyMirrorX ?? 0);
             WriteFloatArray(w, value?.BindPoseMatrices);
             WriteFloatArray(w, value?.GeometryToSkeletonMatrix);
             w.Write(value?.RigidOffsetX ?? 0f);
@@ -606,6 +686,7 @@ namespace VVardenfell.Core.Cache
             {
                 ModelPath = r.ReadString(),
                 NodeName = r.ReadString(),
+                SourceRecordIndex = r.ReadInt32(),
                 MeshIndex = r.ReadInt32(),
                 MaterialIndex = r.ReadInt32(),
                 TextureIndex = r.ReadInt32(),
@@ -621,7 +702,18 @@ namespace VVardenfell.Core.Cache
                 BoundsExtentsZ = r.ReadSingle(),
                 BoneIndices = ReadIntArray(r),
                 BoneNames = ReadStringArray(r),
+                BoneSourceRecordIndices = ReadIntArray(r),
                 SkinRootName = r.ReadString(),
+                SkinRootSourceRecordIndex = r.ReadInt32(),
+                RigAssemblyKind = (ActorRigAssemblyKind)r.ReadByte(),
+                SourceGraphNodeIndex = r.ReadInt32(),
+                SkinRootGraphNodeIndex = r.ReadInt32(),
+                CopiedRigRootGraphNodeIndex = r.ReadInt32(),
+                InsertedParentGraphNodeIndex = r.ReadInt32(),
+                CancelledTransformGraphNodeIndex = r.ReadInt32(),
+                SourceSkeletonRootGraphNodeIndex = r.ReadInt32(),
+                TargetBoneIndex = r.ReadInt32(),
+                AssemblyMirrorX = r.ReadByte(),
                 BindPoseMatrices = ReadFloatArray(r),
                 GeometryToSkeletonMatrix = ReadFloatArray(r),
                 RigidOffsetX = r.ReadSingle(),

@@ -19,6 +19,7 @@ namespace VVardenfell.Runtime.Animation
         public BlobArray<ActorVisualRecipeEntryBlob> ActorVisualRecipeEntries;
         public BlobArray<ActorEquipmentVisualBlob> EquipmentVisuals;
         public BlobArray<ActorEquipmentVisualEntryBlob> EquipmentVisualEntries;
+        public BlobArray<ActorModelGraphNodeBlob> GraphNodes;
         public BlobArray<ActorSkeletonBlob> Skeletons;
         public BlobArray<ActorSkeletonBoneBlob> Bones;
         public BlobArray<ActorSkinMeshBlob> SkinMeshes;
@@ -48,6 +49,8 @@ namespace VVardenfell.Runtime.Animation
         public int RigFamilyIndex;
         public int FirstSkinMeshIndex;
         public int SkinMeshCount;
+        public int FirstGraphNodeIndex;
+        public int GraphNodeCount;
     }
 
     public struct ActorVisualRecipeBlob
@@ -103,6 +106,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public FixedString64Bytes Name;
         public int ParentIndex;
+        public int SourceRecordIndex;
         public float3 BindPosition;
         public quaternion BindRotation;
         public float BindScale;
@@ -114,6 +118,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public FixedString128Bytes ModelPath;
         public FixedString64Bytes NodeName;
+        public int SourceRecordIndex;
         public int MeshIndex;
         public int MaterialIndex;
         public int TextureIndex;
@@ -125,6 +130,16 @@ namespace VVardenfell.Runtime.Animation
         public int VertexCount;
         public int FirstIndexIndex;
         public int IndexCount;
+        public ActorRigAssemblyKind RigAssemblyKind;
+        public int SourceGraphNodeIndex;
+        public int SkinRootSourceRecordIndex;
+        public int SkinRootGraphNodeIndex;
+        public int CopiedRigRootGraphNodeIndex;
+        public int InsertedParentGraphNodeIndex;
+        public int CancelledTransformGraphNodeIndex;
+        public int SourceSkeletonRootGraphNodeIndex;
+        public int TargetBoneIndex;
+        public byte AssemblyMirrorX;
         public float3 BoundsCenter;
         public float3 BoundsExtents;
         public float4x4 GeometryToSkeleton;
@@ -135,7 +150,20 @@ namespace VVardenfell.Runtime.Animation
     {
         public FixedString64Bytes Name;
         public int BoneIndex;
+        public int SourceRecordIndex;
         public float4x4 BindPose;
+    }
+
+    public struct ActorModelGraphNodeBlob
+    {
+        public FixedString64Bytes Name;
+        public int ParentIndex;
+        public int SourceRecordIndex;
+        public ModelPrefabNodeKind Kind;
+        public ushort Flags;
+        public float4x4 LocalMatrix;
+        public float4x4 LocalToRootMatrix;
+        public float4x4 SourceLocalToRootMatrix;
     }
 
     public struct ActorSkinVertexBlob
@@ -286,6 +314,7 @@ namespace VVardenfell.Runtime.Animation
             BuildActorVisualRecipeEntries(source, ref builder, ref root);
             BuildEquipmentVisuals(source, ref builder, ref root);
             BuildEquipmentVisualEntries(source, ref builder, ref root);
+            BuildGraphNodes(source, ref builder, ref root);
             BuildSkeletons(source, ref builder, ref root);
             BuildSkinMeshes(source, ref builder, ref root, vertexCount, indexCount, skinBoneCount);
             BuildClips(source, clipRigFamilyIndices, ref builder, ref root);
@@ -337,6 +366,32 @@ namespace VVardenfell.Runtime.Animation
                     RigFamilyIndex = value?.RigFamilyIndex ?? -1,
                     FirstSkinMeshIndex = value?.FirstSkinMeshIndex ?? -1,
                     SkinMeshCount = value?.SkinMeshCount ?? 0,
+                    FirstGraphNodeIndex = value?.FirstGraphNodeIndex ?? -1,
+                    GraphNodeCount = value?.GraphNodeCount ?? 0,
+                };
+            }
+        }
+
+        static void BuildGraphNodes(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.GraphNodes ?? Array.Empty<ActorModelGraphNodeDef>();
+            BlobBuilderArray<ActorModelGraphNodeBlob> dst = builder.Allocate(ref root.GraphNodes, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                var value = values[i];
+                dst[i] = new ActorModelGraphNodeBlob
+                {
+                    Name = Fixed64(NormalizeNodeName(value?.Name)),
+                    ParentIndex = value?.ParentIndex ?? -1,
+                    SourceRecordIndex = value?.SourceRecordIndex ?? -1,
+                    Kind = value?.Kind ?? ModelPrefabNodeKind.None,
+                    Flags = value?.Flags ?? 0,
+                    LocalMatrix = ReadMatrix(value?.LocalMatrix, 0),
+                    LocalToRootMatrix = ReadMatrix(value?.LocalToRootMatrix, 0),
+                    SourceLocalToRootMatrix = ReadMatrix(value?.SourceLocalToRootMatrix, 0),
                 };
             }
         }
@@ -465,6 +520,7 @@ namespace VVardenfell.Runtime.Animation
                     {
                         Name = Fixed64(NormalizeNodeName(bone.Name)),
                         ParentIndex = bone.ParentIndex,
+                        SourceRecordIndex = bone.SourceRecordIndex,
                         BindPosition = new float3(bone.PosX, bone.PosY, bone.PosZ),
                         BindRotation = math.normalize(rotation),
                         BindScale = bone.Scale <= 0f ? 1f : bone.Scale,
@@ -504,6 +560,7 @@ namespace VVardenfell.Runtime.Animation
                 {
                     ModelPath = Fixed128(ActorAnimationHash.NormalizePath(mesh?.ModelPath)),
                     NodeName = Fixed64(NormalizeNodeName(mesh?.NodeName)),
+                    SourceRecordIndex = mesh?.SourceRecordIndex ?? -1,
                     MeshIndex = mesh?.MeshIndex ?? -1,
                     MaterialIndex = mesh?.MaterialIndex ?? -1,
                     TextureIndex = mesh?.TextureIndex ?? -1,
@@ -515,6 +572,16 @@ namespace VVardenfell.Runtime.Animation
                     VertexCount = meshVertexCount,
                     FirstIndexIndex = indexCursor,
                     IndexCount = meshIndexCount,
+                    RigAssemblyKind = mesh?.RigAssemblyKind ?? ActorRigAssemblyKind.Unknown,
+                    SourceGraphNodeIndex = mesh?.SourceGraphNodeIndex ?? -1,
+                    SkinRootSourceRecordIndex = mesh?.SkinRootSourceRecordIndex ?? -1,
+                    SkinRootGraphNodeIndex = mesh?.SkinRootGraphNodeIndex ?? -1,
+                    CopiedRigRootGraphNodeIndex = mesh?.CopiedRigRootGraphNodeIndex ?? -1,
+                    InsertedParentGraphNodeIndex = mesh?.InsertedParentGraphNodeIndex ?? -1,
+                    CancelledTransformGraphNodeIndex = mesh?.CancelledTransformGraphNodeIndex ?? -1,
+                    SourceSkeletonRootGraphNodeIndex = mesh?.SourceSkeletonRootGraphNodeIndex ?? -1,
+                    TargetBoneIndex = mesh?.TargetBoneIndex ?? -1,
+                    AssemblyMirrorX = mesh?.AssemblyMirrorX ?? 0,
                     BoundsCenter = new float3(mesh?.BoundsCenterX ?? 0f, mesh?.BoundsCenterY ?? 0f, mesh?.BoundsCenterZ ?? 0f),
                     BoundsExtents = new float3(mesh?.BoundsExtentsX ?? 0f, mesh?.BoundsExtentsY ?? 0f, mesh?.BoundsExtentsZ ?? 0f),
                     GeometryToSkeleton = ReadMatrix(mesh?.GeometryToSkeletonMatrix, 0),
@@ -527,6 +594,7 @@ namespace VVardenfell.Runtime.Animation
                     {
                         Name = Fixed64(NormalizeNodeName(ReadBoneName(mesh, i))),
                         BoneIndex = mesh.BoneIndices[i],
+                        SourceRecordIndex = ReadBoneSourceRecordIndex(mesh, i),
                         BindPose = ReadMatrix(mesh.BindPoseMatrices, i * 16),
                     };
                 }
@@ -719,13 +787,6 @@ namespace VVardenfell.Runtime.Animation
                 {
                     var track = source.Tracks[trackIndex];
                     int boneIndex = FindBoneIndex(bones, track?.TargetName);
-                    if (boneIndex < 0 && IsPoseTrack(track))
-                    {
-                        throw new InvalidOperationException(
-                            $"Actor animation clip '{clip.Name}' in '{clip.SourcePath}' could not resolve pose track target '{track.TargetName}' " +
-                            $"against skeleton '{source.Skeletons[skeletonIndex]?.ModelPath ?? "<unknown>"}'.");
-                    }
-
                     result[trackIndex] = boneIndex;
                 }
             }
@@ -891,6 +952,13 @@ namespace VVardenfell.Runtime.Animation
             return mesh?.BoneNames != null && (uint)boneIndex < (uint)mesh.BoneNames.Length
                 ? mesh.BoneNames[boneIndex]
                 : string.Empty;
+        }
+
+        static int ReadBoneSourceRecordIndex(ActorSkinMeshDef mesh, int boneIndex)
+        {
+            return mesh?.BoneSourceRecordIndices != null && (uint)boneIndex < (uint)mesh.BoneSourceRecordIndices.Length
+                ? mesh.BoneSourceRecordIndices[boneIndex]
+                : -1;
         }
 
         static void InsertInfluence(int[,] boneIndices, float[,] weights, int vertex, int boneIndex, float weight)
