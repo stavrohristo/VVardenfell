@@ -18,6 +18,10 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationBlobCatalogSystem))]
     public partial class ActorPresentationSpawnSystem : SystemBase
     {
+        const bool LogRobeSkirtDiagnostics = true;
+        const int MaxRobeSkirtDiagnosticLogs = 64;
+        const int RaceFlagBeast = 0x02;
+
         static readonly bool s_SpawnWeaponsDrawnOnPresentation = false;
         static readonly ItemEquipmentSlot[] s_NpcEquipmentSlotOrder =
         {
@@ -37,6 +41,8 @@ namespace VVardenfell.Runtime.Animation
             ItemEquipmentSlot.Shield,
         };
         static readonly System.Collections.Generic.HashSet<int> s_RigidEquipmentPrefabBuildSet = new();
+        static readonly System.Collections.Generic.HashSet<string> s_RobeSkirtDiagnosticKeys = new(StringComparer.OrdinalIgnoreCase);
+        static int s_RobeSkirtDiagnosticLogCount;
 
         protected override void OnUpdate()
         {
@@ -131,6 +137,7 @@ namespace VVardenfell.Runtime.Animation
                 DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
                     : default;
+                bool isBeast = isNpc && IsBeastRace(contentDb, actor.RaceId);
                 PopulateSkinMeshBuffer(
                     skinMeshBuffer,
                     rigidEquipmentBuffer,
@@ -140,6 +147,7 @@ namespace VVardenfell.Runtime.Animation
                     contentDb,
                     actor,
                     isNpc,
+                    isBeast,
                     firstPerson,
                     recipe,
                     hasEquipment,
@@ -156,7 +164,7 @@ namespace VVardenfell.Runtime.Animation
                 PopulateAttachmentBoneBuffer(attachmentBoneBuffer, bones: boneBuffer, rigidEquipment: rigidEquipmentBuffer);
                 ecb.AddComponent(entity, BuildLocalBounds(skinMeshBuffer, ref catalog));
                 ecb.SetComponentEnabled<GPUAnimation>(entity, false);
-                ecb.SetComponentEnabled<CPUAnimation>(entity, false);
+                ecb.SetComponentEnabled<CPUAnimation>(entity, true);
                 ecb.SetComponentEnabled<ActorAttachmentBoneAnimation>(entity, false);
 
                 var layerBuffer = ecb.AddBuffer<ActorAnimationLayer>(entity);
@@ -348,6 +356,7 @@ namespace VVardenfell.Runtime.Animation
             RuntimeContentDatabase contentDb,
             in ActorDef actor,
             bool isNpc,
+            bool isBeast,
             bool firstPerson,
             ActorVisualRecipeDef recipe,
             bool hasEquipment,
@@ -366,6 +375,8 @@ namespace VVardenfell.Runtime.Animation
                     cache,
                     contentDb,
                     recipe,
+                    actor,
+                    isBeast,
                     firstPerson,
                     equipment,
                     ref coveredParts);
@@ -381,6 +392,8 @@ namespace VVardenfell.Runtime.Animation
             CacheLoader cache,
             RuntimeContentDatabase contentDb,
             ActorVisualRecipeDef actorRecipe,
+            in ActorDef actor,
+            bool isBeast,
             bool firstPerson,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             ref uint coveredParts)
@@ -398,15 +411,20 @@ namespace VVardenfell.Runtime.Animation
                     continue;
 
                 ref readonly var item = ref contentDb.Get(itemHandle);
-                if (!cache.TryGetEquipmentVisual(
+                bool hasVisual = cache.TryGetEquipmentVisual(
                         item.ContentId,
                         actorRecipe.RigFamilyIndex,
                         firstPerson,
                         actorRecipe.BodyVariant,
-                        out var visual)
-                    || visual == null
-                    || visual.IsValid == 0)
+                        out var visual);
+
+                bool shouldLogTarget = slot.Slot == ItemEquipmentSlot.Skirt
+                    || (slot.Slot == ItemEquipmentSlot.Robe && isBeast);
+
+                if (!hasVisual || visual == null || visual.IsValid == 0)
                 {
+                    if (shouldLogTarget)
+                        LogRobeSkirtVisualDiagnostic(actor, isBeast, slot.Slot, item, visual, hasVisual);
                     continue;
                 }
 
@@ -422,6 +440,9 @@ namespace VVardenfell.Runtime.Animation
                     if ((coveredParts & mask) != 0)
                         continue;
 
+                    if (shouldLogTarget && IsSuspiciousRobeSkirtEntry(slot.Slot, isBeast, ref catalog, entry, out string reason))
+                        LogRobeSkirtEntryDiagnostic(contentDb, actor, isBeast, slot.Slot, itemHandle, item, actorRecipe, ref catalog, entry, reason);
+
                     visualEntryParts |= mask;
                     if (AddBakedSkinEntry(buffer, ref catalog, entry.SkinMeshIndex, entry.AttachBoneIndex, entry.RigidMirrorX))
                         added++;
@@ -432,6 +453,238 @@ namespace VVardenfell.Runtime.Animation
 
             return added;
         }
+
+        static bool IsBeastRace(RuntimeContentDatabase contentDb, string raceId)
+        {
+            if (contentDb == null || string.IsNullOrWhiteSpace(raceId))
+                return false;
+
+            if (!contentDb.TryGetRaceHandle(raceId, out var raceHandle))
+                return false;
+
+            ref readonly var race = ref contentDb.GetRace(raceHandle);
+            return (race.Flags & RaceFlagBeast) != 0;
+        }
+
+        static void LogRobeSkirtVisualDiagnostic(
+            in ActorDef actor,
+            bool isBeast,
+            ItemEquipmentSlot slot,
+            in BaseDef item,
+            ActorEquipmentVisualDef visual,
+            bool hasVisual)
+        {
+            if (!LogRobeSkirtDiagnostics || s_RobeSkirtDiagnosticLogCount >= MaxRobeSkirtDiagnosticLogs)
+                return;
+
+            string key = $"visual|{actor.Id}|{actor.RaceId}|{slot}|{item.Id}";
+            if (!s_RobeSkirtDiagnosticKeys.Add(key))
+                return;
+
+            s_RobeSkirtDiagnosticLogCount++;
+            Debug.Log(
+                $"[VVardenfell][RobeSkirtVisualDiag] actor='{actor.Id}' race='{actor.RaceId}' beast={(isBeast ? 1 : 0)} " +
+                $"slot={slot} item='{item.Id}' hasVisual={(hasVisual ? 1 : 0)} valid={(visual?.IsValid ?? 0)} " +
+                $"coverage=0x{(visual?.CoverageMask ?? 0u):X8} entries={(visual?.EntryCount ?? 0)} firstEntry={(visual?.FirstEntryIndex ?? -1)}");
+        }
+
+        static void LogRobeSkirtEntryDiagnostic(
+            RuntimeContentDatabase contentDb,
+            in ActorDef actor,
+            bool isBeast,
+            ItemEquipmentSlot slot,
+            ItemDefHandle itemHandle,
+            in BaseDef item,
+            ActorVisualRecipeDef recipe,
+            ref ActorAnimationCatalogBlob catalog,
+            ActorEquipmentVisualEntryDef entry,
+            string reason)
+        {
+            if (!LogRobeSkirtDiagnostics || s_RobeSkirtDiagnosticLogCount >= MaxRobeSkirtDiagnosticLogs)
+                return;
+
+            string key = $"entry|{reason}|{slot}|{item.Id}|{recipe.RigFamilyIndex}|{entry.SkinMeshIndex}";
+            if (!s_RobeSkirtDiagnosticKeys.Add(key))
+                return;
+
+            ActorSkinMeshBlob mesh = default;
+            bool hasMesh = (uint)entry.SkinMeshIndex < (uint)catalog.SkinMeshes.Length;
+            if (hasMesh)
+                mesh = catalog.SkinMeshes[entry.SkinMeshIndex];
+
+            string attachBone = ResolveDiagnosticAttachBoneName(ref catalog, recipe.RigFamilyIndex, entry.AttachBoneIndex);
+            string skinBones = hasMesh ? BuildDiagnosticSkinBoneList(ref catalog, mesh) : string.Empty;
+            string bodyPartInfo = BuildDiagnosticEquipmentPartInfo(contentDb, itemHandle, recipe.BodyVariant, entry.PartReference);
+            BasisLengths(mesh.GeometryToSkeleton, out float basisX, out float basisY, out float basisZ);
+
+            s_RobeSkirtDiagnosticLogCount++;
+            Debug.Log(
+                $"[VVardenfell][RobeSkirtEntryDiag] sampleActor='{actor.Id}' race='{actor.RaceId}' beast={(isBeast ? 1 : 0)} " +
+                $"female={(((actor.Flags & 0x1u) != 0) ? 1 : 0)} variant={recipe.BodyVariant} slot={slot} reason='{reason}' item='{item.Id}' " +
+                $"{bodyPartInfo} part={entry.PartReference} skinMesh={entry.SkinMeshIndex} hasMesh={(hasMesh ? 1 : 0)} " +
+                $"model='{mesh.ModelPath}' node='{mesh.NodeName}' rigid={mesh.IsRigid} attachBone={entry.AttachBoneIndex} attachName='{attachBone}' " +
+                $"bones={mesh.SkinBoneCount} firstBone={mesh.FirstSkinBoneIndex} verts={mesh.VertexCount} indices={mesh.IndexCount} " +
+                $"boundsCenter={FormatFloat3(mesh.BoundsCenter)} boundsExtents={FormatFloat3(mesh.BoundsExtents)} " +
+                $"gBasis=({basisX:0.###},{basisY:0.###},{basisZ:0.###}) skinBones='{skinBones}'");
+        }
+
+        static string BuildDiagnosticEquipmentPartInfo(
+            RuntimeContentDatabase contentDb,
+            ItemDefHandle itemHandle,
+            ActorVisualBodyVariant variant,
+            ItemEquipmentPartReference targetPart)
+        {
+            if (contentDb == null || !contentDb.TryGetItemEquipment(itemHandle, out var equipment))
+                return "equipPart='missing-equipment'";
+
+            ReadOnlySpan<ItemEquipmentBodyPartDef> parts = contentDb.GetItemEquipmentBodyParts(equipment);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                if (part.Part != targetPart)
+                    continue;
+
+                string selectedId = variant == ActorVisualBodyVariant.Female && !string.IsNullOrWhiteSpace(part.FemaleBodyPartId)
+                    ? part.FemaleBodyPartId
+                    : part.MaleBodyPartId;
+                string selectedModel = string.Empty;
+                string selectedType = string.Empty;
+                string selectedMeshPart = string.Empty;
+                int selectedFemale = -1;
+                if (!string.IsNullOrWhiteSpace(selectedId)
+                    && contentDb.TryGetActorBodyPartHandle(ContentId.NormalizeId(selectedId), out var bodyPartHandle))
+                {
+                    ref readonly var bodyPart = ref contentDb.GetActorBodyPart(bodyPartHandle);
+                    selectedModel = bodyPart.Model ?? string.Empty;
+                    selectedType = bodyPart.Type.ToString();
+                    selectedMeshPart = bodyPart.Part.ToString();
+                    selectedFemale = bodyPart.Female;
+                }
+
+                return $"equipPartMale='{part.MaleBodyPartId}' equipPartFemale='{part.FemaleBodyPartId}' " +
+                       $"selectedPart='{selectedId}' selectedModel='{selectedModel}' selectedType='{selectedType}' " +
+                       $"selectedMeshPart='{selectedMeshPart}' selectedFemale={selectedFemale}";
+            }
+
+            return $"equipPart='missing-{targetPart}'";
+        }
+
+        static bool IsSuspiciousRobeSkirtEntry(
+            ItemEquipmentSlot slot,
+            bool isBeast,
+            ref ActorAnimationCatalogBlob catalog,
+            ActorEquipmentVisualEntryDef entry,
+            out string reason)
+        {
+            reason = string.Empty;
+            if ((uint)entry.SkinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+            {
+                reason = "missing-mesh";
+                return true;
+            }
+
+            var mesh = catalog.SkinMeshes[entry.SkinMeshIndex];
+            if (slot == ItemEquipmentSlot.Skirt)
+            {
+                bool sidewaysCenter = math.abs(mesh.BoundsCenter.x) > 0.2f && math.abs(mesh.BoundsCenter.y) < 0.2f;
+                bool sidewaysExtents = mesh.BoundsExtents.x > mesh.BoundsExtents.y * 1.25f;
+                if (sidewaysCenter || sidewaysExtents)
+                {
+                    reason = sidewaysCenter ? "sideways-bounds-center" : "sideways-bounds-extents";
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (slot == ItemEquipmentSlot.Robe && isBeast)
+            {
+                if (mesh.IsRigid != 0)
+                {
+                    reason = "beast-robe-rigid-mesh";
+                    return true;
+                }
+
+                bool largeSingleBoneWeighted = mesh.SkinBoneCount <= 1 && math.cmax(mesh.BoundsExtents) > 0.25f;
+                if (largeSingleBoneWeighted)
+                {
+                    reason = "beast-robe-large-single-bone";
+                    return true;
+                }
+
+                if (HasInvalidSkinBone(ref catalog, mesh))
+                {
+                    reason = "beast-robe-invalid-skin-bone";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool HasInvalidSkinBone(ref ActorAnimationCatalogBlob catalog, ActorSkinMeshBlob mesh)
+        {
+            if (mesh.SkinBoneCount <= 0 || mesh.FirstSkinBoneIndex < 0)
+                return mesh.IsRigid == 0;
+
+            int end = math.min(catalog.SkinBones.Length, mesh.FirstSkinBoneIndex + mesh.SkinBoneCount);
+            for (int i = mesh.FirstSkinBoneIndex; i < end; i++)
+                if (catalog.SkinBones[i].BoneIndex < 0)
+                    return true;
+
+            return end < mesh.FirstSkinBoneIndex + mesh.SkinBoneCount;
+        }
+
+        static string ResolveDiagnosticAttachBoneName(ref ActorAnimationCatalogBlob catalog, int rigFamilyIndex, int attachBoneIndex)
+        {
+            if ((uint)rigFamilyIndex >= (uint)catalog.RigFamilies.Length || attachBoneIndex < 0)
+                return string.Empty;
+
+            var rig = catalog.RigFamilies[rigFamilyIndex];
+            if ((uint)rig.SkeletonIndex >= (uint)catalog.Skeletons.Length)
+                return string.Empty;
+
+            var skeleton = catalog.Skeletons[rig.SkeletonIndex];
+            int boneIndex = skeleton.FirstBoneIndex + attachBoneIndex;
+            if ((uint)boneIndex >= (uint)catalog.Bones.Length)
+                return string.Empty;
+
+            return catalog.Bones[boneIndex].Name.ToString();
+        }
+
+        static string BuildDiagnosticSkinBoneList(ref ActorAnimationCatalogBlob catalog, ActorSkinMeshBlob mesh)
+        {
+            if (mesh.SkinBoneCount <= 0 || mesh.FirstSkinBoneIndex < 0)
+                return string.Empty;
+
+            int count = math.min(mesh.SkinBoneCount, 8);
+            var result = string.Empty;
+            for (int i = 0; i < count; i++)
+            {
+                int index = mesh.FirstSkinBoneIndex + i;
+                if ((uint)index >= (uint)catalog.SkinBones.Length)
+                    break;
+
+                if (result.Length > 0)
+                    result += "|";
+                var bone = catalog.SkinBones[index];
+                result += $"{bone.BoneIndex}:{bone.Name}";
+            }
+
+            if (mesh.SkinBoneCount > count)
+                result += "|...";
+            return result;
+        }
+
+        static void BasisLengths(float4x4 matrix, out float x, out float y, out float z)
+        {
+            x = math.length(new float3(matrix.c0.x, matrix.c0.y, matrix.c0.z));
+            y = math.length(new float3(matrix.c1.x, matrix.c1.y, matrix.c1.z));
+            z = math.length(new float3(matrix.c2.x, matrix.c2.y, matrix.c2.z));
+        }
+
+        static string FormatFloat3(float3 value)
+            => $"({value.x:0.###},{value.y:0.###},{value.z:0.###})";
 
         static int AddBakedActorVisualRecipe(
             DynamicBuffer<ActorSkinMesh> buffer,

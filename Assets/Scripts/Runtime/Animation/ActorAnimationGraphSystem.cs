@@ -91,7 +91,11 @@ namespace VVardenfell.Runtime.Animation
         {
             public float DeltaTime;
 
-            void Execute(ref ActorAnimationController controller, EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
+            void Execute(
+                ref ActorAnimationController controller,
+                in ActorPresentation presentation,
+                DynamicBuffer<ActorAnimationLayer> layers,
+                EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
             {
                 if (controller.Speed <= 0f)
                     controller.Speed = 1f;
@@ -360,6 +364,9 @@ namespace VVardenfell.Runtime.Animation
 
         static bool IsLooping(FixedString64Bytes group)
         {
+            if (EqualsIdle(group))
+                return true;
+
             ulong hash = HashGroup(group);
             return hash == 11428733724764909075UL
                 || hash == 2840003338041434093UL
@@ -390,6 +397,13 @@ namespace VVardenfell.Runtime.Animation
 
             return hash;
         }
+
+        static bool EqualsIdle(FixedString64Bytes group)
+            => group.Length == 4
+               && ToLowerAscii(group[0]) == (byte)'i'
+               && ToLowerAscii(group[1]) == (byte)'d'
+               && ToLowerAscii(group[2]) == (byte)'l'
+               && ToLowerAscii(group[3]) == (byte)'e';
 
         static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
         {

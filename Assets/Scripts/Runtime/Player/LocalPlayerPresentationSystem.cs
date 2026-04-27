@@ -6,6 +6,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -135,7 +136,8 @@ namespace VVardenfell.Runtime.Player
 
             var actorInventory = ecb.AddBuffer<ActorInventoryItem>(visual);
             var equipment = ecb.AddBuffer<ActorEquipmentSlot>(visual);
-            HydratePlayerVisualEquipment(contentDb, inventory, actorInventory, equipment);
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            HydratePlayerVisualEquipment(contentDb, actor, inventory, actorInventory, equipment);
             return visual;
         }
 
@@ -161,20 +163,13 @@ namespace VVardenfell.Runtime.Player
 
         static void HydratePlayerVisualEquipment(
             RuntimeContentDatabase contentDb,
+            in ActorDef actor,
             DynamicBuffer<PlayerInventoryItem> playerInventory,
             DynamicBuffer<ActorInventoryItem> actorInventory,
             DynamicBuffer<ActorEquipmentSlot> equipment)
         {
             if (contentDb == null)
                 return;
-            const int SlotCapacity = 32;
-            var bestScores = new long[SlotCapacity];
-            var bestInventoryIndices = new int[SlotCapacity];
-            for (int i = 0; i < SlotCapacity; i++)
-            {
-                bestScores[i] = long.MinValue;
-                bestInventoryIndices[i] = -1;
-            }
 
             for (int i = 0; i < playerInventory.Length; i++)
             {
@@ -192,62 +187,9 @@ namespace VVardenfell.Runtime.Player
 
                 if (item.Content.Kind != ContentReferenceKind.Item)
                     continue;
-
-                var itemHandle = new ItemDefHandle { Value = item.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
-                    continue;
-                int slot = (int)itemEquipment.Slot;
-                if ((uint)slot >= SlotCapacity || slot == (int)ItemEquipmentSlot.None)
-                    continue;
-
-                long score = ScoreInitialEquipment(itemEquipment, i);
-                if (score <= bestScores[slot])
-                    continue;
-
-                bestScores[slot] = score;
-                bestInventoryIndices[slot] = inventoryIndex;
             }
 
-            for (int slot = 0; slot < SlotCapacity; slot++)
-            {
-                int inventoryIndex = bestInventoryIndices[slot];
-                if (inventoryIndex < 0 || inventoryIndex >= actorInventory.Length)
-                    continue;
-
-                var item = actorInventory[inventoryIndex];
-                var itemHandle = new ItemDefHandle { Value = item.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
-                    continue;
-
-                equipment.Add(new ActorEquipmentSlot
-                {
-                    Slot = (ItemEquipmentSlot)slot,
-                    Content = item.Content,
-                    InventoryIndex = inventoryIndex,
-                    VisualMode = ResolveEquipmentVisualMode(itemEquipment),
-                });
-            }
-        }
-
-        static long ScoreInitialEquipment(in ItemEquipmentDef equipment, int authoredOrder)
-        {
-            long tieBreaker = 1000 - System.Math.Min(999, authoredOrder);
-            return equipment.Kind switch
-            {
-                ItemEquipmentKind.Weapon => 3_000_000_000L + equipment.DamageMax * 1_000_000L + equipment.Value * 100L + tieBreaker,
-                ItemEquipmentKind.Armor => 2_000_000_000L + equipment.Armor * 1_000_000L + equipment.Value * 100L + tieBreaker,
-                ItemEquipmentKind.Clothing => 1_000_000_000L + equipment.Value * 100L + tieBreaker,
-                _ => tieBreaker,
-            };
-        }
-
-        static byte ResolveEquipmentVisualMode(in ItemEquipmentDef equipment)
-        {
-            if (equipment.Kind == ItemEquipmentKind.Weapon || equipment.Slot == ItemEquipmentSlot.Shield)
-                return 2;
-            if (equipment.Kind == ItemEquipmentKind.Armor || equipment.Kind == ItemEquipmentKind.Clothing)
-                return 1;
-            return 0;
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, actorInventory, equipment);
         }
     }
 

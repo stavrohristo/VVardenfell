@@ -14,7 +14,7 @@ namespace VVardenfell.Importer.Nif
             foreach (int root in nif.Roots)
             {
                 if (Resolve<NiAVObject>(nif, root) is NiAVObject av && IsActorSkeletonNode(av))
-                    CollectBones(nif, av, -1, Matrix4x4.identity, bones);
+                    CollectBones(nif, root, av, -1, Matrix4x4.identity, bones);
             }
 
             return new ActorSkeletonDef
@@ -87,6 +87,7 @@ namespace VVardenfell.Importer.Nif
         {
             var skinMeshes = new List<ActorSkinMeshDef>();
             var boneLookup = BuildBoneLookup(skeleton);
+            var boneRecordLookup = BuildBoneRecordLookup(skeleton);
 
             for (int i = 0; i < nif.Records.Length; i++)
             {
@@ -120,7 +121,7 @@ namespace VVardenfell.Importer.Nif
                 for (int b = 0; b < sourceBones.Length; b++)
                 {
                     boneNames[b] = ResolveSkinBoneName(nif, skinInstance.Bones, b);
-                    int skeletonBoneIndex = ResolveSkeletonBoneIndex(nif, skinInstance.Bones, b, boneLookup);
+                    int skeletonBoneIndex = ResolveSkeletonBoneIndex(nif, skinInstance.Bones, b, boneLookup, boneRecordLookup);
                     boneIndices[b] = skeletonBoneIndex;
                     var sourceWeights = sourceBones[b]?.Weights ?? Array.Empty<NiSkinData.VertexWeight>();
                     for (int w = 0; w < sourceWeights.Length; w++)
@@ -145,7 +146,7 @@ namespace VVardenfell.Importer.Nif
                     BoneIndices = boneIndices,
                     BoneNames = boneNames,
                     SkinRootName = ResolveSkinRootName(nif, skinInstance.Root),
-                    BindPoseMatrices = BuildCombinedBindPoseMatrices(skinData.Transform, sourceBones),
+                    BindPoseMatrices = BuildBindPoseMatrices(skinData, sourceBones),
                     GeometryToSkeletonMatrix = PackMatrix(Matrix4x4.identity),
                 });
             }
@@ -155,6 +156,7 @@ namespace VVardenfell.Importer.Nif
 
         static void CollectBones(
             NifFile nif,
+            int recordIndex,
             NiAVObject obj,
             int parentIndex,
             Matrix4x4 parentBindLocalToRoot,
@@ -170,6 +172,7 @@ namespace VVardenfell.Importer.Nif
             {
                 Name = obj.Name ?? string.Empty,
                 ParentIndex = parentIndex,
+                SourceRecordIndex = recordIndex,
                 PosX = position.x,
                 PosY = position.y,
                 PosZ = position.z,
@@ -187,8 +190,9 @@ namespace VVardenfell.Importer.Nif
 
             for (int i = 0; i < node.Children.Length; i++)
             {
-                if (Resolve<NiAVObject>(nif, node.Children[i]) is NiAVObject child && IsActorSkeletonNode(child))
-                    CollectBones(nif, child, index, bindLocalToRoot, bones);
+                int childIndex = node.Children[i];
+                if (Resolve<NiAVObject>(nif, childIndex) is NiAVObject child && IsActorSkeletonNode(child))
+                    CollectBones(nif, childIndex, child, index, bindLocalToRoot, bones);
             }
         }
 
@@ -511,15 +515,35 @@ namespace VVardenfell.Importer.Nif
             return lookup;
         }
 
+        static Dictionary<int, int> BuildBoneRecordLookup(ActorSkeletonDef skeleton)
+        {
+            var lookup = new Dictionary<int, int>();
+            var bones = skeleton?.Bones ?? Array.Empty<ActorSkeletonBoneDef>();
+            for (int i = 0; i < bones.Length; i++)
+            {
+                int recordIndex = bones[i].SourceRecordIndex;
+                if (recordIndex >= 0 && !lookup.ContainsKey(recordIndex))
+                    lookup[recordIndex] = i;
+            }
+            return lookup;
+        }
+
         static int ResolveSkeletonBoneIndex(
             NifFile nif,
             int[] skinBones,
             int skinBoneIndex,
-            Dictionary<string, int> boneLookup)
+            Dictionary<string, int> boneLookup,
+            Dictionary<int, int> boneRecordLookup)
         {
+            int skinBoneRecordIndex = skinBones != null && (uint)skinBoneIndex < (uint)skinBones.Length
+                ? skinBones[skinBoneIndex]
+                : -1;
+            if (skinBoneRecordIndex >= 0 && boneRecordLookup != null && boneRecordLookup.TryGetValue(skinBoneRecordIndex, out int recordBoneIndex))
+                return recordBoneIndex;
+
             if (skinBones != null
                 && (uint)skinBoneIndex < (uint)skinBones.Length
-                && Resolve<NiAVObject>(nif, skinBones[skinBoneIndex]) is NiAVObject bone
+                && Resolve<NiAVObject>(nif, skinBoneRecordIndex) is NiAVObject bone
                 && !string.IsNullOrEmpty(bone.Name)
                 && boneLookup.TryGetValue(bone.Name, out int skeletonBoneIndex))
             {
@@ -546,14 +570,14 @@ namespace VVardenfell.Importer.Nif
             return Resolve<NiAVObject>(nif, skinRoot)?.Name ?? string.Empty;
         }
 
-        static float[] BuildCombinedBindPoseMatrices(NiSkinData.SkinTransform skinTransform, NiSkinData.BoneInfo[] bones)
+        static float[] BuildBindPoseMatrices(NiSkinData skinData, NiSkinData.BoneInfo[] bones)
         {
             bones ??= Array.Empty<NiSkinData.BoneInfo>();
             var matrices = new float[bones.Length * 16];
-            Matrix4x4 skin = ToSourceMatrix(skinTransform);
+            Matrix4x4 skinTransform = ToSourceMatrix(skinData.Transform);
             for (int i = 0; i < bones.Length; i++)
             {
-                Matrix4x4 m = skin * ToSourceMatrix(bones[i].Transform);
+                Matrix4x4 m = skinTransform * ToSourceMatrix(bones[i].Transform);
                 int o = i * 16;
                 matrices[o + 0] = m.m00; matrices[o + 1] = m.m01; matrices[o + 2] = m.m02; matrices[o + 3] = m.m03;
                 matrices[o + 4] = m.m10; matrices[o + 5] = m.m11; matrices[o + 6] = m.m12; matrices[o + 7] = m.m13;
@@ -721,6 +745,12 @@ namespace VVardenfell.Importer.Nif
 
         static bool TryResolveRenderableGeometry(NifFile nif, NiGeometry geometry, out NiGeometryData data)
         {
+            if (geometry == null || (geometry.Flags & 0x0001) != 0)
+            {
+                data = null;
+                return false;
+            }
+
             data = geometry switch
             {
                 NiTriShape => Resolve<NiTriShapeData>(nif, geometry.Data),
@@ -728,7 +758,34 @@ namespace VVardenfell.Importer.Nif
                 _ => null,
             };
 
-            return data != null && data.Vertices != null && data.NumVertices > 0;
+            return data != null
+                && data.Vertices != null
+                && data.NumVertices > 0
+                && HasRenderableTriangles(data);
+        }
+
+        static bool HasRenderableTriangles(NiGeometryData data)
+        {
+            return data switch
+            {
+                NiTriShapeData triShape => triShape.Triangles != null && triShape.Triangles.Length >= 3,
+                NiTriStripsData strips => HasRenderableStrip(strips.Strips),
+                _ => false,
+            };
+        }
+
+        static bool HasRenderableStrip(ushort[][] strips)
+        {
+            if (strips == null)
+                return false;
+
+            for (int i = 0; i < strips.Length; i++)
+            {
+                if (strips[i] != null && strips[i].Length >= 3)
+                    return true;
+            }
+
+            return false;
         }
 
         static void ExtractSourceLocalTransform(NiAVObject obj, out Vector3 position, out Quaternion rotation, out float scale)

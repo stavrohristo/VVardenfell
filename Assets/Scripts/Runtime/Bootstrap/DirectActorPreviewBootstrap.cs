@@ -8,6 +8,7 @@ using UnityEngine.InputSystem;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
+using VVardenfell.Importer.Bake;
 using VVardenfell.Importer.Bsa;
 using VVardenfell.Importer.Esm;
 using VVardenfell.Importer.Nif;
@@ -20,10 +21,11 @@ namespace VVardenfell.Runtime.Bootstrap
 {
     static class DirectActorPreviewBootstrap
     {
-        const string PreviewActorId = "player";
+        const string PreviewActorId = "netch_betty";
         const bool PreviewFirstPerson = false;
         const float PreviewGroundY = 0f;
         const float PreviewActorSeparation = 0.85f;
+        const float PreviewActorBoundsPadding = 0.25f;
         const int MaxPreviewSkinInfluences = 8;
 
         static readonly ActorVisualPartReference[] PreviewBodyParts =
@@ -62,27 +64,56 @@ namespace VVardenfell.Runtime.Bootstrap
 
             Cleanup();
 
-            progress.BeginStage("Direct Actor Preview", "Reading actor records", 5);
+            progress.BeginStage("Direct Actor Preview", "Reading actor records", 6);
             var records = LoadPreviewRecords(config.InstallPath, PreviewActorId);
-            progress.Report($"Loaded actor '{records.Actor.Id}'", 1, 5);
+            progress.Report($"Loaded actor '{records.Actor.Id}'", 1, 6);
             yield return null;
 
-            progress.Report("Opening model archive", 2, 5);
+            progress.Report("Opening model archive", 2, 6);
             using var assets = new PreviewAssetResolver(config.InstallPath, previewMaterial);
             yield return null;
 
-            progress.Report("Loading baked actor cache", 3, 5);
+            progress.Report("Checking baked actor cache", 3, 6);
+            var cacheBake = EnsureActorAnimationCacheCurrent(config, progress);
+            while (cacheBake.MoveNext())
+                yield return cacheBake.Current;
+
+            progress.Report("Loading baked actor cache", 4, 6);
             var cache = new CacheLoader();
             var cacheLoad = cache.LoadIncremental(progress);
             while (cacheLoad.MoveNext())
                 yield return cacheLoad.Current;
 
-            progress.Report("Building live preview", 4, 5);
+            progress.Report("Building live preview", 5, 6);
             s_Root = BuildPreviewScene(records, assets, cache);
             yield return null;
 
             progress.CompleteStage("Preview scene ready");
             progress.Complete("Ready", $"Direct preview ready for '{records.Actor.Id}'");
+        }
+
+        static IEnumerator EnsureActorAnimationCacheCurrent(MorrowindConfig config, RuntimeLoadProgress progress)
+        {
+            if (ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
+                yield break;
+
+            Debug.Log("[VVardenfell][ActorPreview] actor animation cache is missing or stale; running cache bake before preview load.");
+            var bakeProgress = new BakeProgress();
+            IEnumerator bake = BakeCoordinator.Bake(config, bakeProgress);
+            while (bake.MoveNext())
+            {
+                string label = !string.IsNullOrWhiteSpace(bakeProgress.Label)
+                    ? $"{bakeProgress.Stage}: {bakeProgress.Label}"
+                    : "Rebaking actor cache";
+                progress.Report(label, 3, 6);
+                yield return bake.Current;
+            }
+
+            if (!string.IsNullOrEmpty(bakeProgress.Error))
+                throw new InvalidOperationException($"Actor preview cache bake failed: {bakeProgress.Error}");
+
+            if (!ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
+                throw new InvalidOperationException($"Actor preview cache bake completed, but '{CachePaths.ActorAnimations}' is still missing or version-mismatched.");
         }
 
         static void Cleanup()
@@ -99,6 +130,9 @@ namespace VVardenfell.Runtime.Bootstrap
 
         static GameObject BuildPreviewScene(PreviewRecords records, PreviewAssetResolver assets, CacheLoader cache)
         {
+            if (records.Actor.Kind == ActorDefKind.Creature)
+                return BuildCreaturePreviewScene(records, assets, cache);
+
             var root = new GameObject("VVardenfell.DirectActorPreview");
             UnityEngine.Object.DontDestroyOnLoad(root);
 
@@ -155,11 +189,49 @@ namespace VVardenfell.Runtime.Bootstrap
                 AttachBodyPart(records, assets, actorRoot, skeletonNodes, bodyPart, reference, gpuLeaves, ref totalRenderers);
             }
 
+            LayoutPreviewRootsFromRenderBounds(actorRoot, gpuActorRoot, bakedActorRoot);
             BuildProceduralGpuPreview(actorRoot, gpuActorRoot, bakedActorRoot, gpuLeaves, cache, records.Actor.Id);
             CreateGround(root.transform);
-            CreateLight(root.transform);
-            var boundsTarget = CreateBoundsTarget(root.transform, actorRoot.gameObject);
+            var boundsTarget = CreateBoundsTarget(root.transform, actorRoot, gpuActorRoot, bakedActorRoot);
             CreateOrAttachCamera(root.transform, boundsTarget, skeletonNodes);
+            return root;
+        }
+
+        static GameObject BuildCreaturePreviewScene(PreviewRecords records, PreviewAssetResolver assets, CacheLoader cache)
+        {
+            var root = new GameObject("VVardenfell.DirectCreaturePreview");
+            UnityEngine.Object.DontDestroyOnLoad(root);
+
+            Transform actorRoot = new GameObject($"PreviewCreature.{records.Actor.Id}").transform;
+            actorRoot.SetParent(root.transform, false);
+            actorRoot.localPosition = new Vector3(-PreviewActorSeparation, PreviewGroundY, 0f);
+
+            Transform gpuActorRoot = new GameObject($"PreviewCreatureGpu.{records.Actor.Id}").transform;
+            gpuActorRoot.SetParent(root.transform, false);
+            gpuActorRoot.localPosition = new Vector3(0f, PreviewGroundY, 0f);
+
+            Transform bakedActorRoot = new GameObject($"PreviewCreatureBakedGpu.{records.Actor.Id}").transform;
+            bakedActorRoot.SetParent(root.transform, false);
+            bakedActorRoot.localPosition = new Vector3(PreviewActorSeparation, PreviewGroundY, 0f);
+
+            string modelPath = ResolveCreaturePreviewModelPath(records.Actor, assets);
+            var source = assets.LoadModelSource(modelPath);
+            var gpuLeaves = new List<DirectActorGpuPreviewLeaf>();
+            InstantiateModelSource(
+                source,
+                actorRoot,
+                includeRenderLeaf: _ => true,
+                resolveMaterial: _ => assets.GetMaterial(ActorVisualPartReference.Cuirass),
+                mergeByName: null,
+                out _,
+                gpuLeaves,
+                modelPath);
+
+            LayoutPreviewRootsFromRenderBounds(actorRoot, gpuActorRoot, bakedActorRoot);
+            BuildProceduralGpuPreview(actorRoot, gpuActorRoot, bakedActorRoot, gpuLeaves, cache, records.Actor.Id);
+            CreateGround(root.transform);
+            var boundsTarget = CreateBoundsTarget(root.transform, actorRoot, gpuActorRoot, bakedActorRoot);
+            CreateOrAttachCamera(root.transform, boundsTarget, null);
             return root;
         }
 
@@ -527,7 +599,9 @@ namespace VVardenfell.Runtime.Bootstrap
             AppendBakedCachePreviewActor(
                 cache,
                 actorId,
+                referenceActorRoot,
                 bakedActorRoot,
+                leaves,
                 vertices,
                 indices,
                 boneMatrices,
@@ -553,7 +627,9 @@ namespace VVardenfell.Runtime.Bootstrap
         static void AppendBakedCachePreviewActor(
             CacheLoader cache,
             string actorId,
+            Transform referenceActorRoot,
             Transform bakedActorRoot,
+            List<DirectActorGpuPreviewLeaf> directLeaves,
             List<ActorProceduralVertexGpu> vertices,
             List<int> indices,
             List<ActorProceduralMatrixGpu> boneMatrices,
@@ -598,9 +674,23 @@ namespace VVardenfell.Runtime.Bootstrap
             Matrix4x4[] bindLocalToRoot = BuildBakedBindLocalToRoot(skeletons[skeletonIndex]?.Bones);
             var entries = catalog.ActorVisualRecipeEntries ?? Array.Empty<ActorVisualRecipeEntryDef>();
             int entryEnd = Math.Min(entries.Length, recipe.FirstEntryIndex + recipe.EntryCount);
+            bool logNetchDiagnostics = string.Equals(actorId, "netch_betty", StringComparison.OrdinalIgnoreCase);
 
             for (int entryIndex = recipe.FirstEntryIndex; entryIndex >= 0 && entryIndex < entryEnd; entryIndex++)
-                AppendBakedSkinMesh(catalog, entries[entryIndex], bakedActorRoot, bindLocalToRoot, vertices, indices, boneMatrices, draws, batches);
+            {
+                AppendBakedSkinMesh(
+                    catalog,
+                    entries[entryIndex],
+                    bakedActorRoot,
+                    bindLocalToRoot,
+                    logNetchDiagnostics ? referenceActorRoot : null,
+                    logNetchDiagnostics ? directLeaves : null,
+                    vertices,
+                    indices,
+                    boneMatrices,
+                    draws,
+                    batches);
+            }
         }
 
         static void AppendBakedSkinMesh(
@@ -608,6 +698,8 @@ namespace VVardenfell.Runtime.Bootstrap
             ActorVisualRecipeEntryDef entry,
             Transform bakedActorRoot,
             Matrix4x4[] bindLocalToRoot,
+            Transform referenceActorRoot,
+            List<DirectActorGpuPreviewLeaf> directLeaves,
             List<ActorProceduralVertexGpu> vertices,
             List<int> indices,
             List<ActorProceduralMatrixGpu> boneMatrices,
@@ -627,6 +719,7 @@ namespace VVardenfell.Runtime.Bootstrap
             int firstVertex = vertices.Count;
             int firstIndex = indices.Count;
             int boneMatrixOffset = boneMatrices.Count;
+            LogNetchBakedEntryDiagnostic(referenceActorRoot, directLeaves, entry, mesh, bindLocalToRoot);
             AppendBakedVertices(mesh, catalog.SkinWeights ?? Array.Empty<ActorSkinWeightDef>(), vertices);
             for (int i = 0; i < indexCount; i++)
                 indices.Add(mesh.Indices[i]);
@@ -647,6 +740,9 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 Matrix4x4 geometryToSkeleton = SourceAffineToUnity(ReadPackedMatrix(mesh.GeometryToSkeletonMatrix, 0, Matrix4x4.identity));
                 int boneCount = mesh.BoneIndices?.Length ?? 0;
+                Matrix4x4[] bakedSkinMatrices = referenceActorRoot != null && directLeaves != null
+                    ? new Matrix4x4[boneCount]
+                    : null;
                 for (int i = 0; i < boneCount; i++)
                 {
                     int actorBoneIndex = mesh.BoneIndices[i];
@@ -654,11 +750,17 @@ namespace VVardenfell.Runtime.Bootstrap
                         ? bindLocalToRoot[actorBoneIndex]
                         : Matrix4x4.identity;
                     Matrix4x4 bindPose = SourceAffineToUnity(ReadPackedMatrix(mesh.BindPoseMatrices, i * 16, Matrix4x4.identity));
-                    boneMatrices.Add(ToProceduralGpuMatrix(geometryToSkeleton * pose * bindPose));
+                    Matrix4x4 skinMatrix = geometryToSkeleton * pose * bindPose;
+                    if (bakedSkinMatrices != null)
+                        bakedSkinMatrices[i] = skinMatrix;
+                    boneMatrices.Add(ToProceduralGpuMatrix(skinMatrix));
                 }
 
                 if (boneCount <= 0)
                     boneMatrices.Add(ToProceduralGpuMatrix(Matrix4x4.identity));
+
+                if (bakedSkinMatrices != null)
+                    LogNetchDirectBakedSkinDiagnostic(referenceActorRoot, directLeaves, mesh, bakedSkinMatrices);
             }
 
             int drawIndex = draws.Count;
@@ -809,6 +911,176 @@ namespace VVardenfell.Runtime.Bootstrap
                 if (weights[vertex, i] <= 0f)
                     boneIndices[vertex, i] = -1;
             }
+        }
+
+        static void LogNetchDirectBakedSkinDiagnostic(
+            Transform referenceActorRoot,
+            List<DirectActorGpuPreviewLeaf> directLeaves,
+            ActorSkinMeshDef bakedMesh,
+            Matrix4x4[] bakedSkinMatrices)
+        {
+            if (referenceActorRoot == null || directLeaves == null || bakedMesh == null || bakedMesh.IsRigid != 0)
+                return;
+
+            DirectActorGpuPreviewLeaf direct = FindDirectLeaf(directLeaves, bakedMesh, requireSkinned: true);
+
+            int directBones = direct?.Bones?.Length ?? 0;
+            int bakedBones = bakedSkinMatrices?.Length ?? 0;
+            if (direct == null || directBones == 0 || bakedBones == 0)
+            {
+                Debug.LogWarning(
+                    $"[VVardenfell][NetchSkinDiag] missing-direct model='{bakedMesh.ModelPath}' node='{bakedMesh.NodeName}' " +
+                    $"bakedBones={bakedBones} directLeaves={directLeaves.Count}");
+                return;
+            }
+
+            Matrix4x4 referenceWorldToLocal = referenceActorRoot.worldToLocalMatrix;
+            float maxDelta = 0f;
+            int maxSlot = -1;
+            int slotCount = Mathf.Min(directBones, bakedBones);
+            for (int i = 0; i < slotCount; i++)
+            {
+                Matrix4x4 directSkin = referenceWorldToLocal * direct.Bones[i].localToWorldMatrix * direct.Node.SkinBindPoses[i];
+                float delta = MatrixDelta(directSkin, bakedSkinMatrices[i]);
+                if (delta > maxDelta)
+                {
+                    maxDelta = delta;
+                    maxSlot = i;
+                }
+            }
+
+            if (maxDelta <= 0.0005f && directBones == bakedBones)
+                return;
+
+            string directBoneName = maxSlot >= 0 && direct.Node.SkinBoneNames != null && maxSlot < direct.Node.SkinBoneNames.Length
+                ? direct.Node.SkinBoneNames[maxSlot]
+                : string.Empty;
+            string bakedBoneName = maxSlot >= 0 && bakedMesh.BoneNames != null && maxSlot < bakedMesh.BoneNames.Length
+                ? bakedMesh.BoneNames[maxSlot]
+                : string.Empty;
+            int bakedTargetBone = maxSlot >= 0 && bakedMesh.BoneIndices != null && maxSlot < bakedMesh.BoneIndices.Length
+                ? bakedMesh.BoneIndices[maxSlot]
+                : -1;
+
+            Debug.LogWarning(
+                $"[VVardenfell][NetchSkinDiag] model='{bakedMesh.ModelPath}' node='{bakedMesh.NodeName}' " +
+                $"directBones={directBones} bakedBones={bakedBones} maxSkinMatrixDelta={maxDelta:0.00000000} slot={maxSlot} " +
+                $"directBone='{directBoneName}' bakedBone='{bakedBoneName}' bakedTargetBone={bakedTargetBone} " +
+                $"vertices={bakedMesh.VertexPositions?.Length / 3 ?? 0} indices={bakedMesh.Indices?.Length ?? 0}");
+        }
+
+        static void LogNetchBakedEntryDiagnostic(
+            Transform referenceActorRoot,
+            List<DirectActorGpuPreviewLeaf> directLeaves,
+            ActorVisualRecipeEntryDef entry,
+            ActorSkinMeshDef bakedMesh,
+            Matrix4x4[] bindLocalToRoot)
+        {
+            if (referenceActorRoot == null || directLeaves == null || bakedMesh == null)
+                return;
+
+            DirectActorGpuPreviewLeaf directAny = FindDirectLeaf(directLeaves, bakedMesh, requireSkinned: false);
+            bool directSkinned = directAny?.Bones != null
+                && directAny.Bones.Length > 0
+                && directAny.Node?.SkinBindPoses != null
+                && directAny.Node.SkinBindPoses.Length == directAny.Bones.Length;
+
+            float rigidDelta = 0f;
+            if (bakedMesh.IsRigid != 0 && directAny != null)
+            {
+                Matrix4x4 directLocal = referenceActorRoot.worldToLocalMatrix * directAny.Transform.localToWorldMatrix;
+                Matrix4x4 attach = (uint)entry.AttachBoneIndex < (uint)(bindLocalToRoot?.Length ?? 0)
+                    ? bindLocalToRoot[entry.AttachBoneIndex]
+                    : Matrix4x4.identity;
+                Matrix4x4 mirror = entry.RigidMirrorX != 0
+                    ? Matrix4x4.Scale(new Vector3(-1f, 1f, 1f))
+                    : Matrix4x4.identity;
+                Matrix4x4 gts = SourceAffineToUnity(ReadPackedMatrix(bakedMesh.GeometryToSkeletonMatrix, 0, Matrix4x4.identity));
+                rigidDelta = MatrixDelta(directLocal, attach * mirror * gts);
+            }
+
+            Debug.LogWarning(
+                $"[VVardenfell][NetchEntryDiag] model='{bakedMesh.ModelPath}' node='{bakedMesh.NodeName}' " +
+                $"matchedDirect={(directAny != null ? 1 : 0)} directSkinned={(directSkinned ? 1 : 0)} rigid={bakedMesh.IsRigid} " +
+                $"attachBone={entry.AttachBoneIndex} mirror={entry.RigidMirrorX} bones={bakedMesh.BoneIndices?.Length ?? 0} " +
+                $"firstBone={FirstBoneIndex(bakedMesh)} rigidMatrixDelta={rigidDelta:0.00000000} " +
+                $"verts={bakedMesh.VertexPositions?.Length / 3 ?? 0} indices={bakedMesh.Indices?.Length ?? 0} " +
+                $"boundsCenter=({bakedMesh.BoundsCenterX:0.###},{bakedMesh.BoundsCenterY:0.###},{bakedMesh.BoundsCenterZ:0.###}) " +
+                $"boundsExtents=({bakedMesh.BoundsExtentsX:0.###},{bakedMesh.BoundsExtentsY:0.###},{bakedMesh.BoundsExtentsZ:0.###})");
+        }
+
+        static DirectActorGpuPreviewLeaf FindDirectLeaf(
+            List<DirectActorGpuPreviewLeaf> directLeaves,
+            ActorSkinMeshDef bakedMesh,
+            bool requireSkinned)
+        {
+            if (directLeaves == null || bakedMesh == null)
+                return null;
+
+            for (int i = 0; i < directLeaves.Count; i++)
+            {
+                var leaf = directLeaves[i];
+                if (leaf?.Node == null)
+                    continue;
+
+                if (requireSkinned
+                    && (leaf.Bones == null
+                        || leaf.Bones.Length == 0
+                        || leaf.Node.SkinBindPoses == null
+                        || leaf.Node.SkinBindPoses.Length != leaf.Bones.Length))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(NormalizeModelPath(leaf.ModelPath), NormalizeModelPath(bakedMesh.ModelPath), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (string.Equals(leaf.Node.Name, bakedMesh.NodeName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(CanonicalDiagnosticName(leaf.Node.Name), CanonicalDiagnosticName(bakedMesh.NodeName), StringComparison.OrdinalIgnoreCase))
+                {
+                    return leaf;
+                }
+            }
+
+            return null;
+        }
+
+        static int FirstBoneIndex(ActorSkinMeshDef bakedMesh)
+            => bakedMesh?.BoneIndices != null && bakedMesh.BoneIndices.Length > 0
+                ? bakedMesh.BoneIndices[0]
+                : -1;
+
+        static string CanonicalDiagnosticName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            value = value.Trim().ToLowerInvariant();
+            while (value.Contains("  ", StringComparison.Ordinal))
+                value = value.Replace("  ", " ");
+            return value;
+        }
+
+        static float MatrixDelta(Matrix4x4 a, Matrix4x4 b)
+        {
+            float max = 0f;
+            max = Mathf.Max(max, Mathf.Abs(a.m00 - b.m00));
+            max = Mathf.Max(max, Mathf.Abs(a.m01 - b.m01));
+            max = Mathf.Max(max, Mathf.Abs(a.m02 - b.m02));
+            max = Mathf.Max(max, Mathf.Abs(a.m03 - b.m03));
+            max = Mathf.Max(max, Mathf.Abs(a.m10 - b.m10));
+            max = Mathf.Max(max, Mathf.Abs(a.m11 - b.m11));
+            max = Mathf.Max(max, Mathf.Abs(a.m12 - b.m12));
+            max = Mathf.Max(max, Mathf.Abs(a.m13 - b.m13));
+            max = Mathf.Max(max, Mathf.Abs(a.m20 - b.m20));
+            max = Mathf.Max(max, Mathf.Abs(a.m21 - b.m21));
+            max = Mathf.Max(max, Mathf.Abs(a.m22 - b.m22));
+            max = Mathf.Max(max, Mathf.Abs(a.m23 - b.m23));
+            max = Mathf.Max(max, Mathf.Abs(a.m30 - b.m30));
+            max = Mathf.Max(max, Mathf.Abs(a.m31 - b.m31));
+            max = Mathf.Max(max, Mathf.Abs(a.m32 - b.m32));
+            max = Mathf.Max(max, Mathf.Abs(a.m33 - b.m33));
+            return max;
         }
 
         static Matrix4x4 ReadPackedMatrix(float[] values, int start, Matrix4x4 fallback)
@@ -1050,36 +1322,32 @@ namespace VVardenfell.Runtime.Bootstrap
             ground.transform.localScale = new Vector3(1.2f, 1f, 1.2f);
         }
 
-        static void CreateLight(Transform parent)
+        static void LayoutPreviewRootsFromRenderBounds(Transform actorRoot, Transform gpuActorRoot, Transform bakedActorRoot)
         {
-            var go = new GameObject("PreviewLight");
-            go.transform.SetParent(parent, false);
-            go.transform.position = new Vector3(2.5f, 4f, -3f);
-            go.transform.rotation = Quaternion.Euler(45f, -35f, 0f);
-            var light = go.AddComponent<Light>();
-            light.type = LightType.Directional;
-            light.intensity = 1.45f;
-            light.color = new Color(1f, 0.96f, 0.9f);
-        }
-
-        static PreviewBoundsTarget CreateBoundsTarget(Transform parent, GameObject actorRoot)
-        {
-            var renderers = actorRoot != null ? actorRoot.GetComponentsInChildren<Renderer>(true) : null;
-            if (renderers == null || renderers.Length == 0)
+            float spacing = PreviewActorSeparation;
+            if (TryGetRendererBounds(actorRoot, out var bounds))
             {
-                var fallback = new GameObject("PreviewBoundsTarget").transform;
-                fallback.SetParent(parent, false);
-                fallback.localPosition = new Vector3(0f, 1.2f, 0f);
-                return new PreviewBoundsTarget
-                {
-                    Target = fallback,
-                    Center = fallback.position,
-                    Size = Vector3.one,
-                };
+                float width = Mathf.Max(bounds.size.x, 0.1f);
+                float padding = Mathf.Max(PreviewActorBoundsPadding, width * 0.15f);
+                spacing = Mathf.Max(PreviewActorSeparation, width + padding);
             }
 
+            if (actorRoot != null)
+                actorRoot.localPosition = new Vector3(-spacing, PreviewGroundY, 0f);
+            if (gpuActorRoot != null)
+                gpuActorRoot.localPosition = new Vector3(0f, PreviewGroundY, 0f);
+            if (bakedActorRoot != null)
+                bakedActorRoot.localPosition = new Vector3(spacing, PreviewGroundY, 0f);
+        }
+
+        static bool TryGetRendererBounds(Transform root, out Bounds bounds)
+        {
+            bounds = default;
+            if (root == null)
+                return false;
+
+            var renderers = root.GetComponentsInChildren<Renderer>(true);
             bool hasBounds = false;
-            Bounds combined = default;
             for (int i = 0; i < renderers.Length; i++)
             {
                 var renderer = renderers[i];
@@ -1088,16 +1356,21 @@ namespace VVardenfell.Runtime.Bootstrap
 
                 if (!hasBounds)
                 {
-                    combined = renderer.bounds;
+                    bounds = renderer.bounds;
                     hasBounds = true;
                 }
                 else
                 {
-                    combined.Encapsulate(renderer.bounds);
+                    bounds.Encapsulate(renderer.bounds);
                 }
             }
 
-            if (!hasBounds)
+            return hasBounds;
+        }
+
+        static PreviewBoundsTarget CreateBoundsTarget(Transform parent, Transform actorRoot, Transform gpuActorRoot, Transform bakedActorRoot)
+        {
+            if (!TryGetRendererBounds(actorRoot, out var combined))
             {
                 var fallback = new GameObject("PreviewBoundsTarget").transform;
                 fallback.SetParent(parent, false);
@@ -1110,12 +1383,10 @@ namespace VVardenfell.Runtime.Bootstrap
                 };
             }
 
-            Bounds gpuBounds = combined;
-            gpuBounds.center += new Vector3(PreviewActorSeparation, 0f, 0f);
-            combined.Encapsulate(gpuBounds);
-            Bounds bakedGpuBounds = gpuBounds;
-            bakedGpuBounds.center += new Vector3(PreviewActorSeparation, 0f, 0f);
-            combined.Encapsulate(bakedGpuBounds);
+            Bounds directBounds = combined;
+            Vector3 actorPosition = actorRoot != null ? actorRoot.position : Vector3.zero;
+            EncapsulateCopyBounds(ref combined, directBounds, actorPosition, gpuActorRoot);
+            EncapsulateCopyBounds(ref combined, directBounds, actorPosition, bakedActorRoot);
 
             var target = new GameObject("PreviewBoundsTarget").transform;
             target.SetParent(parent, false);
@@ -1126,6 +1397,16 @@ namespace VVardenfell.Runtime.Bootstrap
                 Center = combined.center,
                 Size = combined.size,
             };
+        }
+
+        static void EncapsulateCopyBounds(ref Bounds combined, Bounds sourceBounds, Vector3 actorPosition, Transform copyRoot)
+        {
+            if (copyRoot == null)
+                return;
+
+            Bounds copyBounds = sourceBounds;
+            copyBounds.center += copyRoot.position - actorPosition;
+            combined.Encapsulate(copyBounds);
         }
 
         static void CreateOrAttachCamera(Transform parent, PreviewBoundsTarget boundsTarget, Dictionary<string, Transform> skeletonNodes)
@@ -1150,7 +1431,6 @@ namespace VVardenfell.Runtime.Bootstrap
             if (camera != null)
             {
                 go = camera.gameObject;
-                go.name = "PreviewCamera";
             }
             else
             {
@@ -1372,6 +1652,39 @@ namespace VVardenfell.Runtime.Bootstrap
                     : "meshes\\base_anim.nif");
         }
 
+        static string ResolveCreaturePreviewModelPath(ActorDef actor, PreviewAssetResolver assets)
+        {
+            string model = NormalizeModelPath(actor.Model);
+            if (string.IsNullOrEmpty(model) || assets == null)
+                return model;
+
+            string corrected = BuildPrefixedCreatureModelPath(model);
+            string correctedKf = BuildCompanionKfPath(corrected);
+            return assets.HasAsset(correctedKf) && assets.HasAsset(corrected)
+                ? corrected
+                : model;
+        }
+
+        static string BuildPrefixedCreatureModelPath(string modelPath)
+        {
+            string normalized = NormalizeModelPath(modelPath);
+            int slash = normalized.LastIndexOf('\\');
+            return slash >= 0
+                ? normalized.Substring(0, slash + 1) + "x" + normalized.Substring(slash + 1)
+                : "x" + normalized;
+        }
+
+        static string BuildCompanionKfPath(string modelPath)
+        {
+            if (string.IsNullOrEmpty(modelPath))
+                return string.Empty;
+
+            int dot = modelPath.LastIndexOf('.');
+            return dot < 0
+                ? modelPath + ".kf"
+                : modelPath.Substring(0, dot) + ".kf";
+        }
+
         static string NormalizeModelPath(string modelPath)
         {
             if (string.IsNullOrWhiteSpace(modelPath))
@@ -1497,6 +1810,9 @@ namespace VVardenfell.Runtime.Bootstrap
                         case var tag when tag == EsmFourCC.Make('N', 'P', 'C', '_'):
                             ParseNpcRecord(esm, actorsById);
                             break;
+                        case var tag when tag == EsmFourCC.Make('C', 'R', 'E', 'A'):
+                            ParseCreatureRecord(esm, actorsById);
+                            break;
                         default:
                             esm.SkipRecord();
                             break;
@@ -1514,9 +1830,10 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             if (string.IsNullOrWhiteSpace(actor.Id))
-                throw new InvalidOperationException($"NPC actor '{actorId}' was not found in the installed content sources.");
+                throw new InvalidOperationException($"Actor '{actorId}' was not found in the installed content sources.");
 
-            if (!races.TryGetValue(actor.RaceId ?? string.Empty, out var race))
+            RaceDef race = default;
+            if (actor.Kind == ActorDefKind.Npc && !races.TryGetValue(actor.RaceId ?? string.Empty, out race))
                 throw new InvalidOperationException($"Race '{actor.RaceId}' for actor '{actor.Id}' was not found.");
 
             return new PreviewRecords
@@ -1703,6 +2020,62 @@ namespace VVardenfell.Runtime.Bootstrap
             target[actor.Id] = actor;
         }
 
+        static void ParseCreatureRecord(EsmReader esm, Dictionary<string, ActorDef> target)
+        {
+            var actor = new ActorDef
+            {
+                Kind = ActorDefKind.Creature,
+                RecordTag = EsmFourCC.Make('C', 'R', 'E', 'A'),
+                Scale = 1f,
+            };
+            bool deleted = false;
+
+            while (esm.ReadSubrecordHeader(out var sub))
+            {
+                switch (sub.Tag)
+                {
+                    case var tag when tag == EsmFourCC.NAME:
+                        actor.Id = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.FNAM:
+                        actor.Name = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.MODL:
+                        actor.Model = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.Make('C', 'N', 'A', 'M'):
+                        actor.OriginalId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.Make('F', 'L', 'A', 'G'):
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            actor.Flags = ReadUInt32(bytes, 0);
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DELE:
+                        esm.SkipSubrecord();
+                        deleted = true;
+                        break;
+                    default:
+                        esm.SkipSubrecord();
+                        break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(actor.Id))
+                return;
+
+            if (deleted)
+            {
+                target.Remove(actor.Id);
+                return;
+            }
+
+            actor.ContentId = ContentId.FromTagAndId(EsmFourCC.Make('C', 'R', 'E', 'A'), actor.Id);
+            target[actor.Id] = actor;
+        }
+
         static ushort ReadUInt16(byte[] bytes, int offset)
             => (ushort)(bytes[offset] | (bytes[offset + 1] << 8));
 
@@ -1758,6 +2131,13 @@ namespace VVardenfell.Runtime.Bootstrap
             public Material GetMaterial(ActorVisualPartReference reference)
             {
                 return _previewMaterial;
+            }
+
+            public bool HasAsset(string modelPath)
+            {
+                string normalized = NormalizeModelPath(modelPath);
+                return File.Exists(Path.Combine(_dataFilesPath, normalized))
+                    || _entries.ContainsKey(normalized);
             }
 
             byte[] ReadAssetBytes(string normalizedPath)

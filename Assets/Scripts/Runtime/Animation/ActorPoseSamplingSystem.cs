@@ -58,8 +58,24 @@ namespace VVardenfell.Runtime.Animation
                 EnsureSampledLength(sampled, bones.Length);
                 ResetToBindPose(bones);
 
-                // [DEBUG] Force bind pose: skip animation sampling so all bones stay at BindLocal*.
                 bool anyLayer = false;
+                for (int layerIndex = 0; layerIndex < layers.Length; layerIndex++)
+                {
+                    var layer = layers[layerIndex];
+                    float weight = math.clamp(layer.Weight, 0f, 1f);
+                    if (weight <= 0f || (uint)layer.ClipIndex >= (uint)catalog.Clips.Length)
+                        continue;
+
+                    var clip = catalog.Clips[layer.ClipIndex];
+                    if (clip.TrackCount <= 0 || clip.FirstTrackIndex < 0)
+                        continue;
+
+                    CopyBindPose(bones, sampled);
+                    SampleClipTracks(ref catalog, clip, layer.Time, sampled);
+                    ApplyXyzRotations(sampled);
+                    BlendLayerIntoBones(bones, sampled, weight, anyLayer);
+                    anyLayer = true;
+                }
 
                 if ((uint)skeleton.AccumulationBoneIndex >= (uint)bones.Length)
                     ResetRootMotion(ref rootMotion);

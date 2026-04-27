@@ -72,6 +72,7 @@ namespace VVardenfell.Core.Cache
     {
         public string Name;
         public int ParentIndex;
+        public int SourceRecordIndex;
         public float PosX, PosY, PosZ;
         public float RotX, RotY, RotZ, RotW;
         public float Scale;
@@ -313,7 +314,7 @@ namespace VVardenfell.Core.Cache
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 45u;
+        const uint Version = 52u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Bsa;
 using VVardenfell.Importer.Nif;
@@ -72,6 +73,7 @@ namespace VVardenfell.Importer.Bake
         readonly List<ActorAnimationKeyDef> _keys = new();
         readonly List<ActorAnimationTextKeyDef> _textKeys = new();
         readonly List<ActorAnimationTextMarkerDef> _textMarkers = new();
+        readonly HashSet<string> _creatureActorModels = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _bipedalCreatureActorModels = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _requiredCompanionKfActorModels = new(StringComparer.OrdinalIgnoreCase);
         public bool Modified { get; private set; }
@@ -85,6 +87,7 @@ namespace VVardenfell.Importer.Bake
 
         public void ConfigureCreatureAnimationSources(GameplayContentData gameplayContent, Dictionary<string, BsaEntry> bsaByName)
         {
+            _creatureActorModels.Clear();
             _bipedalCreatureActorModels.Clear();
             _requiredCompanionKfActorModels.Clear();
 
@@ -100,6 +103,7 @@ namespace VVardenfell.Importer.Bake
                     continue;
 
                 string actorModel = ResolveCreatureActorModelPath(actor, bsaByName);
+                _creatureActorModels.Add(actorModel);
                 if ((actor.Flags & CreatureFlagBipedal) != 0)
                     _bipedalCreatureActorModels.Add(actorModel);
 
@@ -141,12 +145,15 @@ namespace VVardenfell.Importer.Bake
 
             int firstSkinMesh = _skinMeshes.Count;
             var skinMeshes = NifActorAnimationExtractor.ExtractSkinMeshes(modelNif, skeleton, skeletonIndex, _skinWeights);
+            bool remapSkinBonesToReferenceSkeleton = skinBindReferenceSkeleton != null
+                && !ReferenceEquals(skinBindReferenceSkeleton, skeleton);
             AttachRenderData(
                 modelPath,
                 skinMeshes,
                 prefabSource,
                 skeleton,
                 skinBindReferenceSkeleton ?? skeleton,
+                remapSkinBonesToReferenceSkeleton,
                 meshes,
                 materials,
                 textures);
@@ -547,11 +554,19 @@ namespace VVardenfell.Importer.Bake
             if (!TryReservePart(reference, ref usedParts))
                 return;
 
-            string bodyPartId = variant == ActorVisualBodyVariant.Female && !string.IsNullOrWhiteSpace(bodyPartRef.FemaleBodyPartId)
-                ? bodyPartRef.FemaleBodyPartId
-                : bodyPartRef.MaleBodyPartId;
-            if (string.IsNullOrWhiteSpace(bodyPartId))
-                bodyPartId = bodyPartRef.FemaleBodyPartId;
+            string bodyPartId;
+            if (variant == ActorVisualBodyVariant.Female)
+            {
+                bodyPartId = !string.IsNullOrWhiteSpace(bodyPartRef.FemaleBodyPartId)
+                    ? bodyPartRef.FemaleBodyPartId
+                    : bodyPartRef.MaleBodyPartId;
+            }
+            else
+            {
+                // OpenMW only falls back female -> male. Male actors do not render female-only equipment parts.
+                bodyPartId = bodyPartRef.MaleBodyPartId;
+            }
+
             if (string.IsNullOrWhiteSpace(bodyPartId))
                 return;
 
@@ -1681,6 +1696,7 @@ namespace VVardenfell.Importer.Bake
             ModelPrefabSource prefabSource,
             ActorSkeletonDef skeleton,
             ActorSkeletonDef bindReferenceSkeleton,
+            bool remapSkinBonesToReferenceSkeleton,
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures)
@@ -1731,14 +1747,15 @@ namespace VVardenfell.Importer.Bake
                     : Array.Empty<int>();
                 if (skinMeshes[i].IsRigid != 0)
                 {
-                    skinMeshes[i].GeometryToSkeletonMatrix = PackMatrix(ComputeLocalToRoot(prefabSource, nodeIndex));
+                    skinMeshes[i].GeometryToSkeletonMatrix = PackMatrix(ComputeReferenceStyleSourceLocalToRoot(prefabSource, nodeIndex));
                     skinMeshes[i].RigidOffsetX = 0f;
                     skinMeshes[i].RigidOffsetY = 0f;
                     skinMeshes[i].RigidOffsetZ = 0f;
                 }
                 else
                 {
-                    RemapWeightedSkinBoneIndices(skinMeshes[i], bindReferenceSkeleton ?? skeleton);
+                    if (remapSkinBonesToReferenceSkeleton)
+                        RemapWeightedSkinBoneIndices(skinMeshes[i], bindReferenceSkeleton ?? skeleton);
                     ValidateWeightedSkinMeshBake(
                         skinMeshes[i],
                         bindReferenceSkeleton ?? skeleton,
@@ -1896,27 +1913,23 @@ namespace VVardenfell.Importer.Bake
         static bool IsFinite(float value)
             => !float.IsNaN(value) && !float.IsInfinity(value);
 
-        static float MatrixDelta(Matrix4x4 a, Matrix4x4 b)
-        {
-            float max = 0f;
-            max = Math.Max(max, Math.Abs(a.m00 - b.m00));
-            max = Math.Max(max, Math.Abs(a.m01 - b.m01));
-            max = Math.Max(max, Math.Abs(a.m02 - b.m02));
-            max = Math.Max(max, Math.Abs(a.m03 - b.m03));
-            max = Math.Max(max, Math.Abs(a.m10 - b.m10));
-            max = Math.Max(max, Math.Abs(a.m11 - b.m11));
-            max = Math.Max(max, Math.Abs(a.m12 - b.m12));
-            max = Math.Max(max, Math.Abs(a.m13 - b.m13));
-            max = Math.Max(max, Math.Abs(a.m20 - b.m20));
-            max = Math.Max(max, Math.Abs(a.m21 - b.m21));
-            max = Math.Max(max, Math.Abs(a.m22 - b.m22));
-            max = Math.Max(max, Math.Abs(a.m23 - b.m23));
-            max = Math.Max(max, Math.Abs(a.m30 - b.m30));
-            max = Math.Max(max, Math.Abs(a.m31 - b.m31));
-            max = Math.Max(max, Math.Abs(a.m32 - b.m32));
-            max = Math.Max(max, Math.Abs(a.m33 - b.m33));
-            return max;
-        }
+        static bool IsIdentityMatrix(Matrix4x4 m)
+            => Math.Abs(m.m00 - 1f) <= 0.000001f
+               && Math.Abs(m.m11 - 1f) <= 0.000001f
+               && Math.Abs(m.m22 - 1f) <= 0.000001f
+               && Math.Abs(m.m33 - 1f) <= 0.000001f
+               && Math.Abs(m.m01) <= 0.000001f
+               && Math.Abs(m.m02) <= 0.000001f
+               && Math.Abs(m.m03) <= 0.000001f
+               && Math.Abs(m.m10) <= 0.000001f
+               && Math.Abs(m.m12) <= 0.000001f
+               && Math.Abs(m.m13) <= 0.000001f
+               && Math.Abs(m.m20) <= 0.000001f
+               && Math.Abs(m.m21) <= 0.000001f
+               && Math.Abs(m.m23) <= 0.000001f
+               && Math.Abs(m.m30) <= 0.000001f
+               && Math.Abs(m.m31) <= 0.000001f
+               && Math.Abs(m.m32) <= 0.000001f;
 
         static NifMeshBuilder.RawBuiltMesh TransformRenderLeaf(
             in NifMeshBuilder.RawBuiltMesh source,
@@ -1979,6 +1992,131 @@ namespace VVardenfell.Importer.Bake
             }
 
             return matrix;
+        }
+
+        static Matrix4x4 ComputeReferenceStyleSourceLocalToRoot(ModelPrefabSource prefabSource, int nodeIndex)
+        {
+            if (prefabSource?.Nodes == null || (uint)nodeIndex >= (uint)prefabSource.Nodes.Length)
+                return Matrix4x4.identity;
+
+            Matrix4x4 unityMatrix = Matrix4x4.identity;
+            int current = nodeIndex;
+            int guard = 0;
+            while ((uint)current < (uint)prefabSource.Nodes.Length && guard++ < prefabSource.Nodes.Length)
+            {
+                var node = prefabSource.Nodes[current];
+                Matrix4x4 local = BuildReferenceStyleUnityMatrix(node.SourceLocalMatrix);
+                unityMatrix = local * unityMatrix;
+                current = node.ParentIndex;
+            }
+
+            return UnityAffineToSource(unityMatrix);
+        }
+
+        static Matrix4x4 BuildReferenceStyleUnityMatrix(Matrix4x4 sourceLocalMatrix)
+        {
+            DecomposeReferenceStyle(sourceLocalMatrix, out Vector3 position, out Quaternion rotation, out Vector3 scale);
+            return Matrix4x4.TRS(position, rotation, scale);
+        }
+
+        static void DecomposeReferenceStyle(Matrix4x4 source, out Vector3 position, out Quaternion rotation, out Vector3 scale)
+        {
+            position = new Vector3(source.m03, source.m23, source.m13) * WorldScale.MwUnitsToMeters;
+
+            float sx = new Vector3(source.m00, source.m10, source.m20).magnitude;
+            float sy = new Vector3(source.m01, source.m11, source.m21).magnitude;
+            float sz = new Vector3(source.m02, source.m12, source.m22).magnitude;
+            float uniformScale = (sx + sy + sz) / 3f;
+            if (uniformScale <= 0.000001f)
+                uniformScale = 1f;
+            scale = new Vector3(uniformScale, uniformScale, uniformScale);
+
+            float invScale = 1f / uniformScale;
+            float m00 = source.m00 * invScale;
+            float m02 = source.m01 * invScale;
+            float m01 = source.m02 * invScale;
+            float m20 = source.m10 * invScale;
+            float m22 = source.m11 * invScale;
+            float m21 = source.m12 * invScale;
+            float m10 = source.m20 * invScale;
+            float m12 = source.m21 * invScale;
+            float m11 = source.m22 * invScale;
+
+            float trace = m00 + m11 + m22;
+            if (trace > 0f)
+            {
+                float s = Mathf.Sqrt(trace + 1f);
+                float recip = 0.5f / s;
+                rotation = new Quaternion
+                {
+                    w = 0.5f * s,
+                    x = (m21 - m12) * recip,
+                    y = (m02 - m20) * recip,
+                    z = (m10 - m01) * recip,
+                };
+            }
+            else if (m00 > m11 && m00 > m22)
+            {
+                float s = Mathf.Sqrt(1f + m00 - m11 - m22);
+                float recip = 0.5f / s;
+                rotation = new Quaternion
+                {
+                    w = (m21 - m12) * recip,
+                    x = 0.5f * s,
+                    y = (m01 + m10) * recip,
+                    z = (m02 + m20) * recip,
+                };
+            }
+            else if (m11 > m22)
+            {
+                float s = Mathf.Sqrt(1f + m11 - m00 - m22);
+                float recip = 0.5f / s;
+                rotation = new Quaternion
+                {
+                    w = (m02 - m20) * recip,
+                    x = (m01 + m10) * recip,
+                    y = 0.5f * s,
+                    z = (m12 + m21) * recip,
+                };
+            }
+            else
+            {
+                float s = Mathf.Sqrt(1f + m22 - m00 - m11);
+                float recip = 0.5f / s;
+                rotation = new Quaternion
+                {
+                    w = (m10 - m01) * recip,
+                    x = (m02 + m20) * recip,
+                    y = (m12 + m21) * recip,
+                    z = 0.5f * s,
+                };
+            }
+
+            float rotationLengthSq = rotation.x * rotation.x
+                + rotation.y * rotation.y
+                + rotation.z * rotation.z
+                + rotation.w * rotation.w;
+            rotation = rotationLengthSq > 0.000001f
+                ? rotation.normalized
+                : Quaternion.identity;
+        }
+
+        static Matrix4x4 UnityAffineToSource(Matrix4x4 unity)
+        {
+            var source = Matrix4x4.identity;
+            source.m00 = unity.m00;
+            source.m01 = unity.m02;
+            source.m02 = unity.m01;
+            source.m10 = unity.m20;
+            source.m11 = unity.m22;
+            source.m12 = unity.m21;
+            source.m20 = unity.m10;
+            source.m21 = unity.m12;
+            source.m22 = unity.m11;
+            source.m03 = unity.m03 / WorldScale.MwUnitsToMeters;
+            source.m13 = unity.m23 / WorldScale.MwUnitsToMeters;
+            source.m23 = unity.m13 / WorldScale.MwUnitsToMeters;
+            return source;
         }
 
         static float[] PackMatrix(Matrix4x4 m)
@@ -2097,9 +2235,8 @@ namespace VVardenfell.Importer.Bake
             Matrix4x4 geometryToSkeleton = UnpackMatrix(skinMesh.GeometryToSkeletonMatrix, 0);
             if (!IsFiniteMatrix(geometryToSkeleton))
                 throw new InvalidOperationException($"Actor weighted skin '{label}' has a non-finite geometry-to-skeleton matrix.");
-
-            if (MatrixDelta(geometryToSkeleton, Matrix4x4.identity) > 0.000001f)
-                throw new InvalidOperationException($"Actor weighted skin '{label}' must bake identity GeometryToSkeletonMatrix after bind-pose rewrite.");
+            if (!IsIdentityMatrix(geometryToSkeleton))
+                throw new InvalidOperationException($"Actor weighted skin '{label}' must bake identity GeometryToSkeletonMatrix.");
 
             var bones = referenceSkeleton?.Bones ?? Array.Empty<ActorSkeletonBoneDef>();
             if (bones.Length == 0)

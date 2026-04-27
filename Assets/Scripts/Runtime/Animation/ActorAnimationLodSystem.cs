@@ -92,9 +92,9 @@ namespace VVardenfell.Runtime.Animation
                 int count = chunk.Count;
                 for (int i = 0; i < count; i++)
                 {
-                    bool targetGpuEnabled = SupportsComputeShaders != 0 && chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
-                    chunk.SetComponentEnabled(ref CpuAnimationHandle, i, false);
-                    chunk.SetComponentEnabled(ref GpuAnimationHandle, i, targetGpuEnabled);
+                    bool targetCpuEnabled = chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
+                    chunk.SetComponentEnabled(ref CpuAnimationHandle, i, targetCpuEnabled);
+                    chunk.SetComponentEnabled(ref GpuAnimationHandle, i, false);
                     chunk.SetComponentEnabled(ref AttachmentAnimationHandle, i, false);
                 }
             }
