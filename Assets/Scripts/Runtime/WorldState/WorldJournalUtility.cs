@@ -10,15 +10,14 @@ namespace VVardenfell.Runtime.WorldState
     {
         public static bool TryGetJournalEntity(EntityManager entityManager, out Entity journalEntity)
         {
-            journalEntity = Entity.Null;
-            using var query = entityManager.CreateEntityQuery(
+            return WorldStateEntityQueryUtility.TryGetExactlyOne(
+                entityManager,
+                out journalEntity,
+                out _,
+                "world journal",
+                null,
                 ComponentType.ReadOnly<WorldJournalState>(),
                 ComponentType.ReadWrite<WorldJournalEntry>());
-            if (query.IsEmptyIgnoreFilter)
-                return false;
-
-            journalEntity = query.GetSingletonEntity();
-            return true;
         }
 
         public static uint AppendLooseItemRemoved(EntityManager entityManager, uint placedRefId, ContentReference content)

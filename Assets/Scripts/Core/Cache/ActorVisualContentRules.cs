@@ -60,7 +60,16 @@ namespace VVardenfell.Core.Cache
             => !string.IsNullOrWhiteSpace(raceId)
                && races != null
                && races.TryGetValue(raceId, out var race)
-               && (race.Flags & BeastRaceFlag) != 0;
+               && IsBeastRaceFlags(race.Flags);
+
+        public static bool IsBeastRaceFlags(int raceFlags)
+            => (raceFlags & BeastRaceFlag) != 0;
+
+        public static uint PartMask(ActorVisualPartReference reference)
+        {
+            int bit = (int)reference;
+            return (uint)bit < 32u ? 1u << bit : 0u;
+        }
 
         public static bool IsPlayerActor(ActorDef actor)
             => actor.Kind == ActorDefKind.Npc

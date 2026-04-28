@@ -53,16 +53,21 @@ namespace VVardenfell.Runtime.Streaming
                 _previousSkybox = RenderSettings.skybox;
                 _capturedPreviousSkybox = true;
             }
-            _rig.Apply(SystemAPI.GetSingleton<ActiveSkyWeatherState>(), camera);
+            MorrowindDayCycleState settings = SystemAPI.HasSingleton<MorrowindDayCycleState>()
+                ? SystemAPI.GetSingleton<MorrowindDayCycleState>()
+                : LightingBootstrapSystem.CreateDefaultDayCycle();
+            _rig.Apply(SystemAPI.GetSingleton<ActiveSkyWeatherState>(), settings, camera);
         }
 
         sealed class SkyWeatherRig
         {
             const float MinimumSkyDistance = 64f;
-            const float MoonScale = 0.55f;
-            const float MoonAngularDegreesScale = 0.18f;
+            const float MoonScale = 1.1f;
+            const float MoonAngularDegreesScale = 0.36f;
             const float MinimumCloudOpacity = 0.12f;
-            const float MinimumMoonOpacity = 0.12f;
+            const float MinimumMoonOpacity = 0.03f;
+            const float DefaultMoonBrightness = 2.75f;
+            const float DefaultMoonEmission = 1.35f;
 
             readonly Shader _shader;
             readonly Shader _skyboxShader;
@@ -70,9 +75,10 @@ namespace VVardenfell.Runtime.Streaming
             readonly Texture2D _whiteTexture;
             Texture2D _sunTexture;
             Texture2D _sunGlareTexture;
-            Texture2D _cloudTexture;
             Texture2D _starTexture;
             Texture2D _rainTexture;
+            Texture2D _masserMaskTexture;
+            Texture2D _secundaMaskTexture;
             Texture2D[] _masserPhaseTextures;
             Texture2D[] _secundaPhaseTextures;
             Texture2D[] _cloudTextures;
@@ -115,11 +121,15 @@ namespace VVardenfell.Runtime.Streaming
             static readonly int k_SkyboxSunGlareTexId = Shader.PropertyToID("_SunGlareTex");
             static readonly int k_SkyboxMasserTexId = Shader.PropertyToID("_MasserTex");
             static readonly int k_SkyboxSecundaTexId = Shader.PropertyToID("_SecundaTex");
+            static readonly int k_SkyboxMasserMaskTexId = Shader.PropertyToID("_MasserMaskTex");
+            static readonly int k_SkyboxSecundaMaskTexId = Shader.PropertyToID("_SecundaMaskTex");
             static readonly int k_SkyboxCloudTexId = Shader.PropertyToID("_CloudTex");
+            static readonly int k_SkyboxNextCloudTexId = Shader.PropertyToID("_NextCloudTex");
             static readonly int k_SkyboxSunDirectionId = Shader.PropertyToID("_SunDirection");
             static readonly int k_SkyboxMasserDirectionId = Shader.PropertyToID("_MasserDirection");
             static readonly int k_SkyboxSecundaDirectionId = Shader.PropertyToID("_SecundaDirection");
             static readonly int k_SkyboxMoonWeatherId = Shader.PropertyToID("_MoonWeather");
+            static readonly int k_SkyboxMoonPresentationId = Shader.PropertyToID("_MoonPresentation");
             static readonly int k_SkyboxCloudWeatherId = Shader.PropertyToID("_CloudWeather");
             static readonly int k_SkyboxWeatherId = Shader.PropertyToID("_SkyWeather");
 
@@ -130,9 +140,10 @@ namespace VVardenfell.Runtime.Streaming
                 _whiteTexture = Own(CreateSolidTexture(new Color(1f, 1f, 1f, 1f)));
                 _sunTexture = Own(CreateSunTexture(128));
                 _sunGlareTexture = _sunTexture;
-                _cloudTexture = Own(CreateCloudTexture(256));
                 _starTexture = Own(CreateStarTexture(512));
                 _rainTexture = Own(CreateRainTexture(32));
+                _masserMaskTexture = null;
+                _secundaMaskTexture = null;
                 _masserPhaseTextures = Array.Empty<Texture2D>();
                 _secundaPhaseTextures = Array.Empty<Texture2D>();
                 _cloudTextures = Array.Empty<Texture2D>();
@@ -146,7 +157,7 @@ namespace VVardenfell.Runtime.Streaming
 
             public bool IsCurrentSkybox => RenderSettings.skybox == _skyboxMaterial;
 
-            public void Apply(in ActiveSkyWeatherState sky, Camera camera)
+            public void Apply(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, Camera camera)
             {
                 if (!EnsureBakedTexturesLoaded())
                     return;
@@ -154,7 +165,7 @@ namespace VVardenfell.Runtime.Streaming
                 EnsureRig();
 
                 bool exterior = sky.IsInterior == 0;
-                ApplySkybox(sky, exterior);
+                ApplySkybox(sky, settings, exterior);
                 _root.SetActive(exterior);
                 if (!exterior)
                     return;
@@ -196,7 +207,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 _skyMaterial = CreateMaterial(_whiteTexture, (int)RenderQueue.Background);
                 _starMaterial = CreateMaterial(_starTexture, (int)RenderQueue.Background + 10);
-                _cloudMaterial = CreateMaterial(_cloudTexture, (int)RenderQueue.Background + 20);
+                _cloudMaterial = CreateMaterial(_whiteTexture, (int)RenderQueue.Background + 20);
                 _sunMaterial = CreateMaterial(_sunTexture, (int)RenderQueue.Background + 30);
                 _glareMaterial = CreateMaterial(_sunGlareTexture, (int)RenderQueue.Background + 31);
                 _masserMaterial = CreateMaterial(_masserPhaseTextures[0], (int)RenderQueue.Background + 32);
@@ -246,7 +257,7 @@ namespace VVardenfell.Runtime.Streaming
                     _secundaRenderer.enabled = enabled;
             }
 
-            void ApplySkybox(in ActiveSkyWeatherState sky, bool exterior)
+            void ApplySkybox(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, bool exterior)
             {
                 if (_skyboxMaterial == null)
                     return;
@@ -254,12 +265,15 @@ namespace VVardenfell.Runtime.Streaming
                 if (RenderSettings.skybox != _skyboxMaterial)
                     RenderSettings.skybox = _skyboxMaterial;
 
-                Texture2D cloudTexture = ResolveCloudTexture(sky.CurrentCloudTextureIndex, sky.NextCloudTextureIndex, sky.WeatherTransition);
+                Texture2D cloudTexture = ResolveCloudTexture(sky.CurrentCloudTextureIndex);
+                Texture2D nextCloudTexture = ResolveNextCloudTexture(sky.CurrentCloudTextureIndex, sky.NextCloudTextureIndex, sky.WeatherTransition, cloudTexture);
                 int masserPhase = math.clamp(sky.MasserPhase, 0, _masserPhaseTextures.Length - 1);
                 int secundaPhase = math.clamp(sky.SecundaPhase, 0, _secundaPhaseTextures.Length - 1);
                 float cloudOpacity = exterior && sky.CloudOpacity > 0.001f ? math.max(MinimumCloudOpacity, math.saturate(sky.CloudOpacity)) : 0f;
                 float masserOpacity = exterior && sky.MasserOpacity > 0.001f ? math.max(MinimumMoonOpacity, math.saturate(sky.MasserOpacity)) : 0f;
                 float secundaOpacity = exterior && sky.SecundaOpacity > 0.001f ? math.max(MinimumMoonOpacity, math.saturate(sky.SecundaOpacity)) : 0f;
+                float moonBrightness = settings.MoonBrightnessScale > 0f ? settings.MoonBrightnessScale : DefaultMoonBrightness;
+                float moonEmission = settings.MoonEmissionScale > 0f ? settings.MoonEmissionScale : DefaultMoonEmission;
 
                 _skyboxMaterial.SetColor(k_SkyboxSkyColorId, ToColor(sky.SkyColorRgb));
                 _skyboxMaterial.SetColor(k_SkyboxSunDiscColorId, ToColor(sky.SunDiscColorRgb));
@@ -267,11 +281,15 @@ namespace VVardenfell.Runtime.Streaming
                 _skyboxMaterial.SetTexture(k_SkyboxSunGlareTexId, _sunGlareTexture);
                 _skyboxMaterial.SetTexture(k_SkyboxMasserTexId, _masserPhaseTextures[masserPhase]);
                 _skyboxMaterial.SetTexture(k_SkyboxSecundaTexId, _secundaPhaseTextures[secundaPhase]);
+                _skyboxMaterial.SetTexture(k_SkyboxMasserMaskTexId, _masserMaskTexture);
+                _skyboxMaterial.SetTexture(k_SkyboxSecundaMaskTexId, _secundaMaskTexture);
                 _skyboxMaterial.SetTexture(k_SkyboxCloudTexId, cloudTexture);
+                _skyboxMaterial.SetTexture(k_SkyboxNextCloudTexId, nextCloudTexture);
                 _skyboxMaterial.SetVector(k_SkyboxSunDirectionId, ToVector4(math.normalizesafe(sky.SkySunWorldDirection, math.up()), sky.Glare));
                 _skyboxMaterial.SetVector(k_SkyboxMasserDirectionId, ToVector4(math.normalizesafe(sky.MasserWorldDirection, math.up()), math.radians(math.max(1.4f, sky.MasserSize * MoonAngularDegreesScale))));
                 _skyboxMaterial.SetVector(k_SkyboxSecundaDirectionId, ToVector4(math.normalizesafe(sky.SecundaWorldDirection, math.up()), math.radians(math.max(1.1f, sky.SecundaSize * MoonAngularDegreesScale))));
                 _skyboxMaterial.SetVector(k_SkyboxMoonWeatherId, new Vector4(masserOpacity, secundaOpacity, sky.MasserShadowBlend, sky.SecundaShadowBlend));
+                _skyboxMaterial.SetVector(k_SkyboxMoonPresentationId, new Vector4(moonBrightness, moonEmission, 0f, 0f));
                 _skyboxMaterial.SetVector(k_SkyboxCloudWeatherId, new Vector4(cloudOpacity, sky.CloudUvOffset, sky.CloudSpeed, sky.WeatherTransition));
                 _skyboxMaterial.SetVector(k_SkyboxWeatherId, new Vector4(sky.StarRotationDegrees, exterior ? sky.StarOpacity : 0f, exterior ? sky.SunDiscOpacity : 0f, sky.LightningBrightness));
             }
@@ -369,7 +387,7 @@ namespace VVardenfell.Runtime.Streaming
                 int phaseIndex = math.clamp(phase, 0, phases.Length - 1);
                 Color color = Color.Lerp(skyColor, Color.white, math.saturate(shadowBlend));
                 float presentationAlpha = alpha > 0.001f ? math.max(MinimumMoonOpacity, math.saturate(alpha)) : 0f;
-                ApplyBillboard(transform, renderer, material, camera, direction, math.max(6f, size * MoonScale), phases[phaseIndex], color, presentationAlpha);
+                ApplyBillboard(transform, renderer, material, camera, direction, math.max(12f, size * MoonScale), phases[phaseIndex], color, presentationAlpha);
             }
 
             void ApplyPrecipitation(in ActiveSkyWeatherState sky, Camera camera)
@@ -439,26 +457,6 @@ namespace VVardenfell.Runtime.Streaming
                 return texture;
             }
 
-            static Texture2D CreateCloudTexture(int size)
-            {
-                var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "VV.CloudLayer", wrapMode = TextureWrapMode.Repeat };
-                var pixels = new Color[size * size];
-                for (int y = 0; y < size; y++)
-                {
-                    for (int x = 0; x < size; x++)
-                    {
-                        float n = math.frac(math.sin((x * 12.9898f + y * 78.233f) * 0.017f) * 43758.5453f);
-                        float band = math.sin((x + y * 0.7f) * 0.045f) * 0.5f + 0.5f;
-                        float alpha = math.saturate((n * 0.55f + band * 0.65f - 0.48f) * 1.8f);
-                        pixels[y * size + x] = new Color(1f, 1f, 1f, alpha * 0.38f);
-                    }
-                }
-
-                texture.SetPixels(pixels);
-                texture.Apply(false, true);
-                return texture;
-            }
-
             static Texture2D CreateStarTexture(int size)
             {
                 var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "VV.Stars", wrapMode = TextureWrapMode.Repeat };
@@ -499,25 +497,31 @@ namespace VVardenfell.Runtime.Streaming
                 return texture;
             }
 
-            Texture2D ResolveCloudTexture(int currentWeather, int nextWeather, float transition)
+            Texture2D ResolveCloudTexture(int weatherIndex)
             {
                 if (_cloudTextures == null || _cloudTextures.Length == 0)
                     throw new InvalidOperationException("[VVardenfell][SkyWeather] No baked cloud texture table is loaded.");
 
-                int index = transition < 0.5f ? currentWeather : nextWeather;
-                if ((uint)index < (uint)_cloudTextures.Length && _cloudTextures[index] != null)
-                    return _cloudTextures[index];
+                if ((uint)weatherIndex < (uint)_cloudTextures.Length && _cloudTextures[weatherIndex] != null)
+                    return _cloudTextures[weatherIndex];
 
-                string weatherId = (uint)index < (uint)(_cloudWeatherIds?.Length ?? 0)
-                    ? _cloudWeatherIds[index]
+                string weatherId = (uint)weatherIndex < (uint)(_cloudWeatherIds?.Length ?? 0)
+                    ? _cloudWeatherIds[weatherIndex]
                     : "<unknown>";
-                string path = (uint)index < (uint)(_cloudTexturePaths?.Length ?? 0)
-                    ? _cloudTexturePaths[index]
+                string path = (uint)weatherIndex < (uint)(_cloudTexturePaths?.Length ?? 0)
+                    ? _cloudTexturePaths[weatherIndex]
                     : string.Empty;
                 throw new InvalidOperationException(
                     string.IsNullOrWhiteSpace(path)
-                        ? $"[VVardenfell][SkyWeather] Weather '{weatherId}' at index {index} has no cloud texture path."
-                        : $"[VVardenfell][SkyWeather] Missing baked cloud texture for weather '{weatherId}' at index {index}: {path}. Rebake with data that contains this texture or prevent this weather from being selected.");
+                        ? $"[VVardenfell][SkyWeather] Weather '{weatherId}' at index {weatherIndex} has no cloud texture path."
+                        : $"[VVardenfell][SkyWeather] Missing baked cloud texture for weather '{weatherId}' at index {weatherIndex}: {path}. Rebake with data that contains this texture or prevent this weather from being selected.");
+            }
+
+            Texture2D ResolveNextCloudTexture(int currentWeather, int nextWeather, float transition, Texture2D currentTexture)
+            {
+                if (nextWeather == currentWeather || transition <= 0.001f)
+                    return currentTexture;
+                return ResolveCloudTexture(nextWeather);
             }
 
             void LoadBakedTexturesOrThrow(VVardenfell.Runtime.Cache.CacheLoader cache, GameplayContentData content)
@@ -528,6 +532,8 @@ namespace VVardenfell.Runtime.Streaming
                 _sunTexture = LoadRequiredTexture(cache, visual.SunTexture, "sun disc", missing);
                 _sunGlareTexture = LoadRequiredTexture(cache, visual.SunGlareTexture, "sun glare", missing);
                 _rainTexture = LoadRequiredTexture(cache, visual.RainDropTexture, "rain drop", missing);
+                _masserMaskTexture = LoadRequiredTexture(cache, visual.MasserShadowTexture, "Masser mask", missing);
+                _secundaMaskTexture = LoadRequiredTexture(cache, visual.SecundaShadowTexture, "Secunda mask", missing);
                 _masserPhaseTextures = LoadRequiredTextureSet(cache, visual.MasserPhaseTextures, "Masser phase", 8, missing);
                 _secundaPhaseTextures = LoadRequiredTextureSet(cache, visual.SecundaPhaseTextures, "Secunda phase", 8, missing);
                 _cloudTextures = LoadCloudTextures(cache, content.WeatherDefinitions);

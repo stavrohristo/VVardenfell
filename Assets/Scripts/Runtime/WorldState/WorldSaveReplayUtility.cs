@@ -87,7 +87,8 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             RestoreAliveRefsForCurrentWorld(entityManager);
-            if (!HasExactlyOne<PlayerTag>(entityManager) || !HasExactlyOne<PlayerViewComponent>(entityManager))
+            if (!WorldStateEntityQueryUtility.HasExactlyOne<PlayerTag>(entityManager)
+                || !WorldStateEntityQueryUtility.HasExactlyOne<PlayerViewComponent>(entityManager))
             {
                 error = "Save replay produced an invalid player entity count.";
                 return false;
@@ -109,14 +110,14 @@ namespace VVardenfell.Runtime.WorldState
                 return;
             }
 
-            PlaybackAndDispose(entityManager, ref createEcb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref createEcb);
 
             var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
             RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
                 entityManager,
                 ref materializeEcb,
                 ref projection);
-            PlaybackAndDispose(entityManager, ref materializeEcb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref materializeEcb);
             RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(entityManager, projection);
         }
 
@@ -126,7 +127,7 @@ namespace VVardenfell.Runtime.WorldState
             QueueDestroySingletonEntities<PlayerViewComponent>(entityManager, ref ecb);
             QueueDestroySingletonEntities<PlayerTag>(entityManager, ref ecb);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
-            PlaybackAndDispose(entityManager, ref ecb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
@@ -221,7 +222,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 ecb.AddBuffer<ActorActiveMagicEffect>(playerEntity);
-                PlaybackAndDispose(entityManager, ref ecb);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             }
             if (entityManager.HasBuffer<ActorActiveMagicEffect>(playerEntity))
             {
@@ -306,11 +307,26 @@ namespace VVardenfell.Runtime.WorldState
         static bool TryValidateWorldRestorePrereqs(EntityManager entityManager, out string error)
         {
             error = null;
-            if (!TryGetExactlyOne<LogicalRefLookup>(entityManager, out Entity streamingEntity, out error, "streaming lookup"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<LogicalRefLookup>(
+                    entityManager,
+                    out Entity streamingEntity,
+                    out error,
+                    "streaming lookup",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOne<InteriorTransitionState>(entityManager, out _, out error, "interior transition"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<InteriorTransitionState>(
+                    entityManager,
+                    out _,
+                    out error,
+                    "interior transition",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOne<InteractionRuntimeState>(entityManager, out _, out error, "interaction runtime"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<InteractionRuntimeState>(
+                    entityManager,
+                    out _,
+                    out error,
+                    "interaction runtime",
+                    "for save replay"))
                 return false;
 
             if (!entityManager.HasComponent<StreamingConfig>(streamingEntity)
@@ -340,62 +356,42 @@ namespace VVardenfell.Runtime.WorldState
             viewEntity = Entity.Null;
             error = null;
 
-            if (!TryGetExactlyOne<WorldJournalState>(entityManager, out journalEntity, out error, "world journal"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<WorldJournalState>(
+                    entityManager,
+                    out journalEntity,
+                    out error,
+                    "world journal",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOneBufferOwner<PlayerInventoryItem>(entityManager, out runtimeEntity, out error, "runtime inventory"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOneBufferOwner<PlayerInventoryItem>(
+                    entityManager,
+                    out runtimeEntity,
+                    out error,
+                    "runtime inventory",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOne<RuntimeSpawnState>(entityManager, out spawnEntity, out error, "runtime spawn state"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<RuntimeSpawnState>(
+                    entityManager,
+                    out spawnEntity,
+                    out error,
+                    "runtime spawn state",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOne<PlayerTag>(entityManager, out playerEntity, out error, "player"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<PlayerTag>(
+                    entityManager,
+                    out playerEntity,
+                    out error,
+                    "player",
+                    "for save replay"))
                 return false;
-            if (!TryGetExactlyOne<PlayerViewComponent>(entityManager, out viewEntity, out error, "player view"))
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<PlayerViewComponent>(
+                    entityManager,
+                    out viewEntity,
+                    out error,
+                    "player view",
+                    "for save replay"))
                 return false;
 
-            return true;
-        }
-
-        static bool HasExactlyOne<T>(EntityManager entityManager)
-            where T : unmanaged, IComponentData
-        {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
-            return query.CalculateEntityCount() == 1;
-        }
-
-        static bool TryGetExactlyOne<T>(EntityManager entityManager, out Entity entity, out string error, string label)
-            where T : unmanaged, IComponentData
-        {
-            entity = Entity.Null;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
-            int count = query.CalculateEntityCount();
-            if (count != 1)
-            {
-                error = count == 0
-                    ? $"Runtime {label} state is not ready for save replay."
-                    : $"Runtime {label} state has {count} entities; expected exactly one.";
-                return false;
-            }
-
-            entity = query.GetSingletonEntity();
-            error = null;
-            return true;
-        }
-
-        static bool TryGetExactlyOneBufferOwner<T>(EntityManager entityManager, out Entity entity, out string error, string label)
-            where T : unmanaged, IBufferElementData
-        {
-            entity = Entity.Null;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
-            int count = query.CalculateEntityCount();
-            if (count != 1)
-            {
-                error = count == 0
-                    ? $"Runtime {label} state is not ready for save replay."
-                    : $"Runtime {label} state has {count} entities; expected exactly one.";
-                return false;
-            }
-
-            entity = query.GetSingletonEntity();
-            error = null;
             return true;
         }
 
@@ -409,7 +405,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 ecb.AddBuffer<PlayerKnownSpell>(initEntity);
-                PlaybackAndDispose(entityManager, ref ecb);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             }
 
             DynamicBuffer<PlayerKnownSpell> buffer = entityManager.GetBuffer<PlayerKnownSpell>(initEntity);
@@ -434,7 +430,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 ecb.AddBuffer<ActorActiveMagicEffect>(initEntity);
-                PlaybackAndDispose(entityManager, ref ecb);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             }
 
             DynamicBuffer<ActorActiveMagicEffect> buffer = entityManager.GetBuffer<ActorActiveMagicEffect>(initEntity);
@@ -454,7 +450,7 @@ namespace VVardenfell.Runtime.WorldState
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: false);
             QueueRestoreMapDiscoveryPayload(entityManager, ref ecb, payload.ExteriorMapDiscovery);
-            PlaybackAndDispose(entityManager, ref ecb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
             GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
         }
@@ -551,7 +547,7 @@ namespace VVardenfell.Runtime.WorldState
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
-            PlaybackAndDispose(entityManager, ref ecb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
             entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
             entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
@@ -578,7 +574,7 @@ namespace VVardenfell.Runtime.WorldState
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             QueueRestoreMapDiscoveryPayload(entityManager, ref ecb, payload.ExteriorMapDiscovery);
-            PlaybackAndDispose(entityManager, ref ecb);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
             GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
 
@@ -641,7 +637,7 @@ namespace VVardenfell.Runtime.WorldState
                 ecb.SetName(entity, new FixedString64Bytes("VVardenfell.TimeState"));
                 ecb.AddComponent(entity, time);
                 ecb.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
-                PlaybackAndDispose(entityManager, ref ecb);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
                 return;
             }
 
@@ -679,17 +675,11 @@ namespace VVardenfell.Runtime.WorldState
                 entity = ecb.CreateEntity();
                 ecb.SetName(entity, new FixedString64Bytes("VVardenfell.WeatherState"));
                 ecb.AddComponent(entity, weather);
-                PlaybackAndDispose(entityManager, ref ecb);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
                 return;
             }
 
             entityManager.SetComponentData(entity, weather);
-        }
-
-        static void PlaybackAndDispose(EntityManager entityManager, ref EntityCommandBuffer ecb)
-        {
-            ecb.Playback(entityManager);
-            ecb.Dispose();
         }
     }
 }

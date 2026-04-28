@@ -40,6 +40,71 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
+    [UpdateBefore(typeof(LocalPlayerVisualTransformSyncSystem))]
+    public partial class LocalPlayerPresentationPoseSmoothSystem : SystemBase
+    {
+        const float PositionResponsiveness = 30f;
+        const float SnapDistanceSq = 4f;
+
+        EntityQuery _playerQuery;
+        EntityQuery _viewQuery;
+
+        protected override void OnCreate()
+        {
+            _playerQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<LocalTransform>(),
+                ComponentType.ReadWrite<LocalPlayerPresentationPose>());
+            _viewQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerViewComponent>());
+
+            RequireForUpdate(_playerQuery);
+            RequireForUpdate(_viewQuery);
+        }
+
+        protected override void OnUpdate()
+        {
+            Entity player = _playerQuery.GetSingletonEntity();
+            LocalTransform playerTransform = _playerQuery.GetSingleton<LocalTransform>();
+            PlayerViewComponent view = _viewQuery.GetSingleton<PlayerViewComponent>();
+            if (view.ControlledCharacter != player)
+                return;
+
+            float3 targetBodyPosition = playerTransform.Position;
+            quaternion targetBodyRotation = playerTransform.Rotation;
+            float3 targetViewPosition = targetBodyPosition + math.rotate(targetBodyRotation, view.LocalEyeOffset);
+            quaternion targetViewRotation = math.normalize(math.mul(targetBodyRotation, view.LocalViewRotation));
+
+            float dt = SystemAPI.Time.DeltaTime;
+            float alpha = dt > 0f
+                ? 1f - math.exp(-PositionResponsiveness * dt)
+                : 1f;
+
+            var poseRef = _playerQuery.GetSingletonRW<LocalPlayerPresentationPose>();
+            ref var pose = ref poseRef.ValueRW;
+            bool snap = pose.Initialized == 0
+                || math.lengthsq(pose.BodyPosition - targetBodyPosition) > SnapDistanceSq
+                || math.lengthsq(pose.ViewPosition - targetViewPosition) > SnapDistanceSq;
+
+            if (snap)
+            {
+                pose.BodyPosition = targetBodyPosition;
+                pose.ViewPosition = targetViewPosition;
+                pose.Initialized = 1;
+            }
+            else
+            {
+                pose.BodyPosition = math.lerp(pose.BodyPosition, targetBodyPosition, alpha);
+                pose.ViewPosition = math.lerp(pose.ViewPosition, targetViewPosition, alpha);
+            }
+
+            pose.BodyRotation = targetBodyRotation;
+            pose.ViewRotation = targetViewRotation;
+        }
+    }
+
+    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateBefore(typeof(ActorAnimationControllerSystem))]
     public partial class LocalPlayerVisualTransformSyncSystem : SystemBase
     {
         EntityQuery _playerQuery;
@@ -49,7 +114,8 @@ namespace VVardenfell.Runtime.Player
         {
             _playerQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<LocalTransform>());
+                ComponentType.ReadOnly<LocalTransform>(),
+                ComponentType.ReadOnly<LocalPlayerPresentationPose>());
             _viewQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>());
 
@@ -62,12 +128,10 @@ namespace VVardenfell.Runtime.Player
         {
             Entity player = _playerQuery.GetSingletonEntity();
             LocalTransform playerTransform = _playerQuery.GetSingleton<LocalTransform>();
+            LocalPlayerPresentationPose pose = _playerQuery.GetSingleton<LocalPlayerPresentationPose>();
             PlayerViewComponent view = _viewQuery.GetSingleton<PlayerViewComponent>();
-            if (view.ControlledCharacter != player)
+            if (view.ControlledCharacter != player || pose.Initialized == 0)
                 return;
-
-            float3 viewPosition = playerTransform.Position + math.rotate(playerTransform.Rotation, view.LocalEyeOffset);
-            quaternion viewRotation = math.normalize(math.mul(playerTransform.Rotation, view.LocalViewRotation));
 
             foreach (var (visual, transform, localToWorld) in
                      SystemAPI.Query<RefRO<LocalPlayerVisual>, RefRW<LocalTransform>, RefRW<LocalToWorld>>())
@@ -76,8 +140,8 @@ namespace VVardenfell.Runtime.Player
                     continue;
 
                 bool firstPerson = visual.ValueRO.FirstPerson != 0;
-                float3 position = firstPerson ? viewPosition : playerTransform.Position;
-                quaternion rotation = firstPerson ? viewRotation : playerTransform.Rotation;
+                float3 position = firstPerson ? pose.ViewPosition : pose.BodyPosition;
+                quaternion rotation = firstPerson ? pose.ViewRotation : pose.BodyRotation;
                 transform.ValueRW = LocalTransform.FromPositionRotationScale(position, rotation, playerTransform.Scale);
                 localToWorld.ValueRW = new LocalToWorld
                 {

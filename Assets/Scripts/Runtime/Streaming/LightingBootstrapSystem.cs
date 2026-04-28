@@ -128,6 +128,8 @@ namespace VVardenfell.Runtime.Streaming
                 SkySunPitchOffsetDegrees = 0f,
                 MainLightIntensityScale = 1f,
                 MoonMaxOpacity = 1f,
+                MoonBrightnessScale = 2.75f,
+                MoonEmissionScale = 1.35f,
                 StarMaxOpacity = 1f,
                 PrecipitationIntensityScale = 1f,
                 LightningIntensityScale = 1f,

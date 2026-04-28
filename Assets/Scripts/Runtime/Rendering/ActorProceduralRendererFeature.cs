@@ -12,6 +12,7 @@ namespace VVardenfell.Runtime.Rendering
     {
         const int ForwardPassIndex = 0;
         const int ShadowPassIndex = 1;
+        const int DepthOnlyPassIndex = 2;
         const int MaxMainLightShadowSlices = 4;
         const int MaxAdditionalShadowRequests = 256;
 
@@ -32,6 +33,7 @@ namespace VVardenfell.Runtime.Rendering
 
         ActorProceduralForwardPass _forwardPass;
         ActorProceduralShadowPass _shadowPass;
+        ActorProceduralDepthPass _depthPass;
         GlobalKeyword _castingPunctualShadowKeyword;
         bool _hasCastingPunctualShadowKeyword;
 
@@ -50,6 +52,10 @@ namespace VVardenfell.Runtime.Rendering
             _shadowPass = new ActorProceduralShadowPass
             {
                 renderPassEvent = RenderPassEvent.AfterRenderingShadows,
+            };
+            _depthPass = new ActorProceduralDepthPass
+            {
+                renderPassEvent = RenderPassEvent.AfterRenderingPrePasses,
             };
         }
 
@@ -88,6 +94,9 @@ namespace VVardenfell.Runtime.Rendering
 
             if (resources.IsReadyForDraw)
             {
+                _depthPass.Setup(resources);
+                renderer.EnqueuePass(_depthPass);
+
                 _forwardPass.Setup(resources, renderingLayer);
                 renderer.EnqueuePass(_forwardPass);
             }
@@ -159,6 +168,63 @@ namespace VVardenfell.Runtime.Rendering
 
                 using var submitBatchScope = k_SubmitBatchDraws.Auto();
                 resources.DrawBatches(context.cmd, properties, ForwardPassIndex, ActorProceduralRenderSet.Forward);
+            }
+        }
+
+        sealed class ActorProceduralDepthPass : ScriptableRenderPass
+        {
+            static readonly ProfilerMarker k_ExecutePass = new("VV.ActorProcedural.Depth.ExecutePass");
+            static readonly ProfilerMarker k_BindResources = new("VV.ActorProcedural.Depth.BindResources");
+            static readonly ProfilerMarker k_SubmitBatchDraws = new("VV.ActorProcedural.Depth.SubmitBatchDraws");
+
+            sealed class PassData
+            {
+                public ActorProceduralRenderResources Resources;
+                public MaterialPropertyBlock Properties;
+            }
+
+            readonly MaterialPropertyBlock _properties = new();
+            ActorProceduralRenderResources _resources;
+
+            public void Setup(ActorProceduralRenderResources resources)
+            {
+                _resources = resources;
+            }
+
+            public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+            {
+                if (_resources == null || !_resources.IsReadyForDraw)
+                    return;
+
+                UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
+                TextureHandle cameraDepthTexture = resourceData.cameraDepthTexture;
+                if (!cameraDepthTexture.IsValid())
+                    return;
+
+                using var builder = renderGraph.AddRasterRenderPass<PassData>("VV Actor Procedural Depth", out var passData);
+                builder.SetRenderAttachmentDepth(cameraDepthTexture, AccessFlags.ReadWrite);
+                builder.AllowPassCulling(false);
+
+                passData.Resources = _resources;
+                passData.Properties = _properties;
+                builder.SetRenderFunc(static (PassData data, RasterGraphContext context) => ExecutePass(data, context));
+            }
+
+            static void ExecutePass(PassData data, RasterGraphContext context)
+            {
+                using var executeScope = k_ExecutePass.Auto();
+                var resources = data.Resources;
+                if (resources == null || !resources.IsReadyForDraw)
+                    return;
+
+                MaterialPropertyBlock properties = data.Properties;
+                using (k_BindResources.Auto())
+                {
+                    resources.Bind(properties, ActorProceduralRenderSet.Forward);
+                }
+
+                using var submitBatchScope = k_SubmitBatchDraws.Auto();
+                resources.DrawBatches(context.cmd, properties, DepthOnlyPassIndex, ActorProceduralRenderSet.Forward);
             }
         }
 

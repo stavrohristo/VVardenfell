@@ -192,19 +192,15 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(
+            return WorldStateEntityQueryUtility.TryGetExactlyOne(
+                entityManager,
+                out spawnEntity,
+                out error,
+                "spawn",
+                null,
                 ComponentType.ReadOnly<RuntimeSpawnState>(),
                 ComponentType.ReadOnly<RuntimeSpawnResult>(),
                 ComponentType.ReadWrite<RuntimeSpawnRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Runtime spawn state is not ready.";
-                return false;
-            }
-
-            spawnEntity = query.GetSingletonEntity();
-            error = null;
-            return true;
         }
     }
 }

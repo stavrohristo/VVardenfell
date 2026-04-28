@@ -27,8 +27,7 @@ namespace VVardenfell.Runtime.WorldState
             }, ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnRequest>(EntityManager, runtimeEntity, ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnedRef>(EntityManager, runtimeEntity, ref ecb, created);
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
+            WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
             Enabled = false;
         }
     }

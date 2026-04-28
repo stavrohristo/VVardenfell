@@ -85,6 +85,8 @@ namespace VVardenfell.Runtime.Components
         public float SkySunPitchOffsetDegrees;
         public float MainLightIntensityScale;
         public float MoonMaxOpacity;
+        public float MoonBrightnessScale;
+        public float MoonEmissionScale;
         public float StarMaxOpacity;
         public float PrecipitationIntensityScale;
         public float LightningIntensityScale;

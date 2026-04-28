@@ -73,6 +73,15 @@ namespace VVardenfell.Runtime.Player
         public ActorDefHandle Actor;
     }
 
+    public struct LocalPlayerPresentationPose : IComponentData
+    {
+        public float3 BodyPosition;
+        public quaternion BodyRotation;
+        public float3 ViewPosition;
+        public quaternion ViewRotation;
+        public byte Initialized;
+    }
+
     public struct LocalPlayerVisual : IComponentData
     {
         public Entity Player;

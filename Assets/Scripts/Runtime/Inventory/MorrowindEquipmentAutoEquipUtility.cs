@@ -10,7 +10,6 @@ namespace VVardenfell.Runtime.Inventory
     public static class MorrowindEquipmentAutoEquipUtility
     {
         const int SlotCapacity = 32;
-        const uint RaceFlagBeast = 0x02;
 
         public static void SelectInitialEquipment(
             RuntimeContentDatabase contentDb,
@@ -50,7 +49,8 @@ namespace VVardenfell.Runtime.Inventory
             for (int i = 0; i < SlotCapacity; i++)
                 bestInventoryIndices[i] = -1;
 
-            bool isBeastNpc = actor.Kind == ActorDefKind.Npc && IsBeastRace(contentDb, actor.RaceId);
+            bool isBeastNpc = actor.Kind == ActorDefKind.Npc
+                               && ActorEquipmentRuntimeUtility.IsBeastRace(contentDb, actor.RaceId);
             for (int i = 0; i < inventoryLength; i++)
             {
                 var inventoryItem = inventory[i];
@@ -94,7 +94,7 @@ namespace VVardenfell.Runtime.Inventory
                     Slot = itemEquipment.Slot,
                     Content = inventoryItem.Content,
                     InventoryIndex = inventoryIndex,
-                    VisualMode = ResolveEquipmentVisualMode(itemEquipment),
+                    VisualMode = ActorEquipmentRuntimeUtility.ResolveEquipmentVisualMode(itemEquipment),
                 });
             }
         }
@@ -169,24 +169,6 @@ namespace VVardenfell.Runtime.Inventory
                 return candidate.Armor > existing.Armor;
 
             return existing.Type >= candidate.Type;
-        }
-
-        static bool IsBeastRace(RuntimeContentDatabase contentDb, string raceId)
-        {
-            if (string.IsNullOrWhiteSpace(raceId) || !contentDb.TryGetRaceHandle(raceId, out var raceHandle))
-                return false;
-
-            ref readonly var race = ref contentDb.GetRace(raceHandle);
-            return (race.Flags & RaceFlagBeast) != 0;
-        }
-
-        static byte ResolveEquipmentVisualMode(in ItemEquipmentDef equipment)
-        {
-            if (equipment.Kind == ItemEquipmentKind.Weapon || equipment.Slot == ItemEquipmentSlot.Shield)
-                return 2;
-            if (equipment.Kind == ItemEquipmentKind.Armor || equipment.Kind == ItemEquipmentKind.Clothing)
-                return 1;
-            return 0;
         }
 
         interface IActorInventorySource

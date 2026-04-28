@@ -118,12 +118,16 @@ namespace VVardenfell.Runtime.Player
     public partial class PlayerCameraSyncSystem : SystemBase
     {
         EntityQuery _viewQuery;
+        EntityQuery _presentationQuery;
 
         protected override void OnCreate()
         {
             _viewQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>(),
                 ComponentType.ReadOnly<LocalToWorld>());
+            _presentationQuery = GetEntityQuery(
+                ComponentType.ReadOnly<LocalPlayerPresentationState>(),
+                ComponentType.ReadOnly<LocalPlayerPresentationPose>());
             RequireForUpdate(_viewQuery);
         }
 
@@ -132,6 +136,32 @@ namespace VVardenfell.Runtime.Player
             var cam = Camera.main;
             if (cam == null || _viewQuery.IsEmptyIgnoreFilter)
                 return;
+
+            if (!_presentationQuery.IsEmptyIgnoreFilter)
+            {
+                EntityManager.CompleteDependencyBeforeRO<LocalPlayerPresentationPose>();
+                var pose = _presentationQuery.GetSingleton<LocalPlayerPresentationPose>();
+                if (pose.Initialized != 0)
+                {
+                    var presentation = _presentationQuery.GetSingleton<LocalPlayerPresentationState>();
+                    float3 smoothedCameraPosition = pose.ViewPosition;
+                    quaternion cameraRotation = pose.ViewRotation;
+                    if (presentation.Mode == PlayerViewMode.ThirdPerson)
+                    {
+                        float distance = math.max(0.25f, presentation.ThirdPersonDistance);
+                        float3 forward = math.rotate(cameraRotation, new float3(0f, 0f, 1f));
+                        smoothedCameraPosition -= forward * distance;
+                    }
+
+                    cam.transform.position = smoothedCameraPosition;
+                    cam.transform.rotation = new Quaternion(
+                        cameraRotation.value.x,
+                        cameraRotation.value.y,
+                        cameraRotation.value.z,
+                        cameraRotation.value.w);
+                    return;
+                }
+            }
 
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             var localToWorld = _viewQuery.GetSingleton<LocalToWorld>();

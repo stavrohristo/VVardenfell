@@ -100,6 +100,7 @@ namespace VVardenfell.Runtime.Player
                 ThirdPersonVisual = thirdPersonVisual,
                 Actor = actorHandle,
             });
+            ecb.AddComponent(player, new LocalPlayerPresentationPose());
             ecb.Playback(EntityManager);
             ecb.Dispose();
         }

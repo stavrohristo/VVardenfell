@@ -17,26 +17,7 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationBlobCatalogSystem))]
     public partial class ActorPresentationSpawnSystem : SystemBase
     {
-        const int RaceFlagBeast = 0x02;
-
         static readonly bool s_SpawnWeaponsDrawnOnPresentation = false;
-        static readonly ItemEquipmentSlot[] s_NpcEquipmentSlotOrder =
-        {
-            ItemEquipmentSlot.Robe,
-            ItemEquipmentSlot.Skirt,
-            ItemEquipmentSlot.Helmet,
-            ItemEquipmentSlot.Cuirass,
-            ItemEquipmentSlot.Greaves,
-            ItemEquipmentSlot.LeftPauldron,
-            ItemEquipmentSlot.RightPauldron,
-            ItemEquipmentSlot.Boots,
-            ItemEquipmentSlot.Shoes,
-            ItemEquipmentSlot.LeftHand,
-            ItemEquipmentSlot.RightHand,
-            ItemEquipmentSlot.Shirt,
-            ItemEquipmentSlot.Pants,
-            ItemEquipmentSlot.Shield,
-        };
         static readonly System.Collections.Generic.HashSet<int> s_RigidEquipmentPrefabBuildSet = new();
         static int s_RobeSkirtDiagnosticLogCount;
 
@@ -115,7 +96,7 @@ namespace VVardenfell.Runtime.Animation
                 DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
                     : default;
-                bool isBeast = isNpc && IsBeastRace(contentDb, actor.RaceId);
+                bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(contentDb, actor.RaceId);
                 PopulateSkinMeshBuffer(
                     skinMeshBuffer,
                     ref catalog,
@@ -344,9 +325,10 @@ namespace VVardenfell.Runtime.Animation
             ref uint coveredParts)
         {
             int added = 0;
-            for (int slotIndex = 0; slotIndex < s_NpcEquipmentSlotOrder.Length; slotIndex++)
+            ReadOnlySpan<ItemEquipmentSlot> slotOrder = ActorEquipmentRuntimeUtility.NpcEquipmentVisualSlotOrder;
+            for (int slotIndex = 0; slotIndex < slotOrder.Length; slotIndex++)
             {
-                if (!TryGetEquipmentInSlot(equipment, s_NpcEquipmentSlotOrder[slotIndex], out var slot))
+                if (!ActorEquipmentRuntimeUtility.TryGetEquipmentInSlot(equipment, slotOrder[slotIndex], out var slot))
                     continue;
                 if (slot.Content.Kind != ContentReferenceKind.Item)
                     continue;
@@ -376,7 +358,7 @@ namespace VVardenfell.Runtime.Animation
                 {
                     var entry = cache.ActorAnimationCatalog.EquipmentVisualEntries[entryIndex];
                     var part = (ActorVisualPartReference)(byte)entry.PartReference;
-                    uint mask = PartMask(part);
+                    uint mask = ActorVisualContentRules.PartMask(part);
                     if ((coveredParts & mask) != 0)
                         continue;
 
@@ -394,19 +376,6 @@ namespace VVardenfell.Runtime.Animation
             return added;
         }
 
-        static bool IsBeastRace(RuntimeContentDatabase contentDb, string raceId)
-        {
-            if (contentDb == null || string.IsNullOrWhiteSpace(raceId))
-                return false;
-
-            if (!contentDb.TryGetRaceHandle(raceId, out var raceHandle))
-                return false;
-
-            ref readonly var race = ref contentDb.GetRace(raceHandle);
-            return (race.Flags & RaceFlagBeast) != 0;
-        }
-
-
         static int AddBakedActorVisualRecipe(
             DynamicBuffer<ActorSkinMesh> buffer,
             ref ActorAnimationCatalogBlob catalog,
@@ -421,7 +390,7 @@ namespace VVardenfell.Runtime.Animation
             for (int entryIndex = recipe.FirstEntryIndex; entryIndex >= 0 && entryIndex < entryEnd; entryIndex++)
             {
                 var entry = cache.ActorAnimationCatalog.ActorVisualRecipeEntries[entryIndex];
-                uint mask = PartMask(entry.PartReference);
+                uint mask = ActorVisualContentRules.PartMask(entry.PartReference);
                 if ((coveredParts & mask) != 0)
                     continue;
 
@@ -453,31 +422,6 @@ namespace VVardenfell.Runtime.Animation
                 RigidMirrorX = skinMesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
             });
             return true;
-        }
-
-        static uint PartMask(ActorVisualPartReference reference)
-        {
-            int bit = (int)reference;
-            return (uint)bit < 32u ? 1u << bit : 0u;
-        }
-
-        static bool TryGetEquipmentInSlot(
-            DynamicBuffer<ActorEquipmentSlot> equipment,
-            ItemEquipmentSlot target,
-            out ActorEquipmentSlot result)
-        {
-            for (int i = 0; i < equipment.Length; i++)
-            {
-                var slot = equipment[i];
-                if (slot.Slot == target)
-                {
-                    result = slot;
-                    return true;
-                }
-            }
-
-            result = default;
-            return false;
         }
 
         void PrebuildRigidEquipmentPrefabs(RuntimeContentDatabase contentDb)
@@ -571,7 +515,10 @@ namespace VVardenfell.Runtime.Animation
                 if (prefab == Entity.Null || !EntityManager.Exists(prefab))
                     continue;
 
-                int attachBoneIndex = ResolveRigidEquipmentAttachBone(ref catalog, skeletonIndex, itemEquipment);
+                int attachBoneIndex = ActorPresentationEquipmentUtility.ResolveRigidEquipmentAttachBone(
+                    ref catalog,
+                    skeletonIndex,
+                    itemEquipment);
                 if (attachBoneIndex < 0)
                     continue;
 
@@ -606,63 +553,6 @@ namespace VVardenfell.Runtime.Animation
             // Vanilla keeps equipped weapons sheathed/invisible until the actor is in a drawn weapon state.
             // Keep the data equipped now; a later combat/draw-state pass can spawn or enable this visual.
             return equipment.Kind == ItemEquipmentKind.Weapon && s_SpawnWeaponsDrawnOnPresentation;
-        }
-
-        static int ResolveRigidEquipmentAttachBone(
-            ref ActorAnimationCatalogBlob catalog,
-            int skeletonIndex,
-            in ItemEquipmentDef equipment)
-        {
-            if (equipment.Kind == ItemEquipmentKind.Weapon)
-            {
-                if (equipment.Type == 9)
-                {
-                    int leftWeaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone left"));
-                    if (leftWeaponBone >= 0)
-                        return leftWeaponBone;
-                }
-
-                int weaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone"));
-                return weaponBone >= 0
-                    ? weaponBone
-                    : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 r hand"));
-            }
-
-            int shieldBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("shield bone"));
-            return shieldBone >= 0
-                ? shieldBone
-                : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 l forearm"));
-        }
-
-        static int ResolveAttachBoneIndex(
-            ref ActorAnimationCatalogBlob catalog,
-            int skeletonIndex,
-            FixedString64Bytes name)
-        {
-            if (name.IsEmpty)
-                return -1;
-
-            var skeleton = new ActorSkeleton
-            {
-                SkeletonIndex = skeletonIndex,
-                BoneCount = ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex),
-            };
-            for (int i = 0; i < skeleton.BoneCount; i++)
-            {
-                var boneName = ActorAnimationCatalogRuntimeUtility.ResolveBoneName(ref catalog, skeleton, i);
-                if (FixedStringEqualsIgnoreCase(boneName, name))
-                    return i;
-            }
-
-            return -1;
-        }
-
-        static bool FixedStringEqualsIgnoreCase(FixedString64Bytes a, FixedString64Bytes b)
-        {
-            if (a.Length != b.Length)
-                return false;
-
-            return string.Equals(a.ToString(), b.ToString(), System.StringComparison.OrdinalIgnoreCase);
         }
 
     }

@@ -54,6 +54,7 @@ Shader "VVardenfell/MwRef"
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
             #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #pragma multi_compile_fragment _ _LIGHT_COOKIES
             #pragma multi_compile _ _LIGHT_LAYERS
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
@@ -163,6 +164,79 @@ Shader "VVardenfell/MwRef"
                 #else
                 return half4(lit, 1.0);
                 #endif
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex depthVert
+            #pragma fragment depthFrag
+            #pragma target 4.5
+            #pragma shader_feature_local_fragment _ALPHATEST_ON
+            #pragma multi_compile_instancing
+            #pragma multi_compile _ DOTS_INSTANCING_ON
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            TEXTURE2D_ARRAY(_BaseArray); SAMPLER(sampler_BaseArray);
+
+            CBUFFER_START(UnityPerMaterial)
+                float _Cutoff;
+                float _SrcBlend;
+                float _DstBlend;
+                float _ZWrite;
+                float _Slice;
+            CBUFFER_END
+
+            #if defined(DOTS_INSTANCING_ON)
+            UNITY_DOTS_INSTANCING_START(MaterialPropertyMetadata)
+                UNITY_DOTS_INSTANCED_PROP(float, _Slice)
+            UNITY_DOTS_INSTANCING_END(MaterialPropertyMetadata)
+            #define _Slice UNITY_ACCESS_DOTS_INSTANCED_PROP_WITH_DEFAULT(float, _Slice)
+            #endif
+
+            struct DepthAttributes
+            {
+                float3 positionOS : POSITION;
+                float2 uv         : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float2 uv         : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            DepthVaryings depthVert(DepthAttributes IN)
+            {
+                DepthVaryings OUT;
+                UNITY_SETUP_INSTANCE_ID(IN);
+                UNITY_TRANSFER_INSTANCE_ID(IN, OUT);
+                OUT.positionCS = TransformObjectToHClip(IN.positionOS);
+                OUT.uv = IN.uv;
+                return OUT;
+            }
+
+            half4 depthFrag(DepthVaryings IN) : SV_Target
+            {
+                UNITY_SETUP_INSTANCE_ID(IN);
+                #ifdef _ALPHATEST_ON
+                half alpha = SAMPLE_TEXTURE2D_ARRAY(_BaseArray, sampler_BaseArray, IN.uv, _Slice).a;
+                clip(alpha - _Cutoff);
+                #endif
+                return 0;
             }
             ENDHLSL
         }

@@ -26,8 +26,7 @@ namespace VVardenfell.Runtime.WorldState
 
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new WorldJournalState(), ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<WorldJournalEntry>(EntityManager, runtimeEntity, ref ecb, created);
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
+            WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
             Enabled = false;
         }
     }
