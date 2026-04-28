@@ -29,10 +29,18 @@ namespace VVardenfell.Runtime.Audio
             ref var audio = ref SystemAPI.GetSingletonRW<WeatherAudioState>().ValueRW;
             ref var region = ref SystemAPI.GetSingletonRW<RegionAmbientState>().ValueRW;
 
-            WeatherDefinitionDef dominant = ResolveWeather(contentDb, sky.WeatherTransition < 0.5f ? weather.CurrentWeather : weather.NextWeather);
-            audio.ResolvedLoopSound = ResolveLoopSound(contentDb, dominant);
+            bool interior = sky.IsInterior != 0;
+            WeatherDefinitionDef current = ResolveWeather(contentDb, weather.CurrentWeather);
+            WeatherDefinitionDef next = weather.NextWeather >= 0 ? ResolveWeather(contentDb, weather.NextWeather) : current;
+            float blend = weather.NextWeather >= 0 ? Unity.Mathematics.math.saturate(weather.Transition) : 0f;
+            WeatherDefinitionDef dominant = blend < 0.5f ? current : next;
 
-            if (sky.ThunderSequence != 0 && sky.ThunderSequence != audio.LastThunderSequence)
+            audio.ResolvedLoopSound = interior ? default : ResolveLoopSound(contentDb, current);
+            audio.ResolvedNextLoopSound = !interior && weather.NextWeather >= 0 ? ResolveLoopSound(contentDb, next) : default;
+            audio.CurrentLoopVolume = interior ? 0f : 1f - blend;
+            audio.NextLoopVolume = interior ? 0f : blend;
+
+            if (!interior && sky.ThunderSequence != 0 && sky.ThunderSequence != audio.LastThunderSequence)
             {
                 string soundId = ResolveThunderSoundId(dominant, sky.ThunderSoundIndex);
                 if (!string.IsNullOrWhiteSpace(soundId) && contentDb.TryGetSoundHandle(soundId, out var thunderSound) && thunderSound.IsValid)

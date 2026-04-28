@@ -243,7 +243,7 @@ namespace VVardenfell.Runtime.Interactions
             EntityManager.SetComponentData(transitionEntity, transition);
 
             if (goesToInterior)
-                RestoreAliveRefsForCurrentWorld();
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager, RuntimeContentDatabase.Active);
 
             ClearFocus();
             transition.TransitionInProgress = 0;
@@ -344,32 +344,6 @@ namespace VVardenfell.Runtime.Interactions
             ecb.Playback(EntityManager);
             ecb.Dispose();
             EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity).Clear();
-        }
-
-        void RestoreAliveRefsForCurrentWorld()
-        {
-            var createEcb = new EntityCommandBuffer(Allocator.Temp);
-            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
-                    EntityManager,
-                    RuntimeContentDatabase.Active,
-                    ref createEcb,
-                    out var projection))
-            {
-                createEcb.Dispose();
-                return;
-            }
-
-            createEcb.Playback(EntityManager);
-            createEcb.Dispose();
-
-            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
-            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
-                EntityManager,
-                ref materializeEcb,
-                ref projection);
-            materializeEcb.Playback(EntityManager);
-            materializeEcb.Dispose();
-            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(EntityManager, projection);
         }
 
         void ClearFocus()

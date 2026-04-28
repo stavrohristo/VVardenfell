@@ -131,6 +131,8 @@ namespace VVardenfell.Runtime.Streaming
                 MoonBrightnessScale = 2.75f,
                 MoonEmissionScale = 1.35f,
                 StarMaxOpacity = 1f,
+                StarBrightnessScale = 1.6f,
+                StarTextureOpacityScale = 1f,
                 PrecipitationIntensityScale = 1f,
                 LightningIntensityScale = 1f,
             };
@@ -165,6 +167,7 @@ namespace VVardenfell.Runtime.Streaming
                 NextCloudTextureIndex = (int)WeatherKind.Clear,
                 WindSpeed = 0f,
                 StormDirection = math.normalize(new float3(1f, 0f, 0.35f)),
+                PrecipitationKind = (int)WeatherKind.Clear,
                 WeatherKind = (int)WeatherKind.Clear,
                 NextWeatherKind = (int)WeatherKind.Clear,
             };

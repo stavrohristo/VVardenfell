@@ -1,21 +1,23 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Rendering;
 
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class ModelBillboardSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<MainCameraSingleton>();
+        }
+
         protected override void OnUpdate()
         {
-            var cam = Camera.main;
-            if (cam == null)
-                return;
-
+            var cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             float3 cameraPosition = cam.transform.position;
             var entityManager = EntityManager;
             entityManager.CompleteDependencyBeforeRO<LocalToWorld>();

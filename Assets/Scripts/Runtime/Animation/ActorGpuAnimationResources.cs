@@ -412,41 +412,72 @@ namespace VVardenfell.Runtime.Animation
 
         static ActorAnimationBlendMask ComputeBoneMask(FixedString64Bytes name)
         {
-            string lower = name.ToString().ToLowerInvariant();
-            if (lower.Contains("head") || lower.Contains("neck"))
+            if (ContainsAsciiIgnoreCase(name, "head") || ContainsAsciiIgnoreCase(name, "neck"))
                 return ActorAnimationBlendMask.Torso;
-            if (lower.Contains("l clavicle")
-                || lower.Contains("l upperarm")
-                || lower.Contains("l forearm")
-                || lower.Contains("l hand")
-                || lower.Contains("weapon bone left")
-                || lower.Contains("shield bone"))
+            if (ContainsAsciiIgnoreCase(name, "l clavicle")
+                || ContainsAsciiIgnoreCase(name, "l upperarm")
+                || ContainsAsciiIgnoreCase(name, "l forearm")
+                || ContainsAsciiIgnoreCase(name, "l hand")
+                || ContainsAsciiIgnoreCase(name, "weapon bone left")
+                || ContainsAsciiIgnoreCase(name, "shield bone"))
             {
                 return ActorAnimationBlendMask.LeftArm;
             }
-            if (lower.Contains("r clavicle")
-                || lower.Contains("r upperarm")
-                || lower.Contains("r forearm")
-                || lower.Contains("r hand")
-                || lower.Contains("weapon bone"))
+            if (ContainsAsciiIgnoreCase(name, "r clavicle")
+                || ContainsAsciiIgnoreCase(name, "r upperarm")
+                || ContainsAsciiIgnoreCase(name, "r forearm")
+                || ContainsAsciiIgnoreCase(name, "r hand")
+                || ContainsAsciiIgnoreCase(name, "weapon bone"))
             {
                 return ActorAnimationBlendMask.RightArm;
             }
-            if (lower.Contains("pelvis")
-                || lower.Contains("groin")
-                || lower.Contains("thigh")
-                || lower.Contains("calf")
-                || lower.Contains("ankle")
-                || lower.Contains("foot")
-                || lower.Contains("toe")
-                || lower.Contains("knee")
-                || lower.Contains("leg")
-                || lower.Contains("tail"))
+            if (ContainsAsciiIgnoreCase(name, "pelvis")
+                || ContainsAsciiIgnoreCase(name, "groin")
+                || ContainsAsciiIgnoreCase(name, "thigh")
+                || ContainsAsciiIgnoreCase(name, "calf")
+                || ContainsAsciiIgnoreCase(name, "ankle")
+                || ContainsAsciiIgnoreCase(name, "foot")
+                || ContainsAsciiIgnoreCase(name, "toe")
+                || ContainsAsciiIgnoreCase(name, "knee")
+                || ContainsAsciiIgnoreCase(name, "leg")
+                || ContainsAsciiIgnoreCase(name, "tail"))
             {
                 return ActorAnimationBlendMask.LowerBody;
             }
 
             return ActorAnimationBlendMask.Torso;
+        }
+
+        static bool ContainsAsciiIgnoreCase(FixedString64Bytes value, string needle)
+        {
+            if (string.IsNullOrEmpty(needle) || needle.Length > value.Length)
+                return false;
+
+            int maxStart = value.Length - needle.Length;
+            for (int start = 0; start <= maxStart; start++)
+            {
+                bool matches = true;
+                for (int i = 0; i < needle.Length; i++)
+                {
+                    if (ToAsciiLower(value[start + i]) != ToAsciiLower((byte)needle[i]))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static byte ToAsciiLower(byte value)
+        {
+            return value >= (byte)'A' && value <= (byte)'Z'
+                ? (byte)(value + 32)
+                : value;
         }
 
         static ulong BuildCatalogSignature(ref ActorAnimationCatalogBlob catalog)

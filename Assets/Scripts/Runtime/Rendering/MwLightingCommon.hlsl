@@ -42,10 +42,17 @@ half3 MwEvaluateMainLightDiffuse(
 half3 MwEvaluateAdditionalLightsDiffuse(
     float3 positionWS,
     half3 normalWS,
+    float4 positionCS,
     half4 shadowMask,
     half directAmbientOcclusion)
 {
     half3 result = half3(0.0h, 0.0h, 0.0h);
+
+    #if defined(_ADDITIONAL_LIGHTS) || defined(_CLUSTER_LIGHT_LOOP)
+        InputData inputData = (InputData)0;
+        inputData.positionWS = positionWS;
+        inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(positionCS);
+    #endif
 
     #if defined(_ADDITIONAL_LIGHTS)
         uint lightCount = GetAdditionalLightsCount();
@@ -79,6 +86,7 @@ half3 MwEvaluateDiffuseLighting(float3 positionWS, float4 positionCS, half3 norm
     half3 additionalLights = MwEvaluateAdditionalLightsDiffuse(
         positionWS,
         normalWS,
+        positionCS,
         k_MwDefaultShadowMask,
         directAmbientOcclusion);
     return environment + mainLight + additionalLights;

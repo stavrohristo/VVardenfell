@@ -145,11 +145,7 @@ namespace VVardenfell.Runtime.UI.Shell
                     var r = _resolutions[i];
                     _config.ResolutionWidth = r.width;
                     _config.ResolutionHeight = r.height;
-#if UNITY_2022_2_OR_NEWER
-                    _config.RefreshRate = Mathf.RoundToInt((float)r.refreshRateRatio.value);
-#else
-                    _config.RefreshRate = r.refreshRate;
-#endif
+                    _config.RefreshRate = RuntimeScreenResolutionUtility.ToWholeHertz(r);
                     _callbacks.Resolution?.Invoke(r.width, r.height, _config.RefreshRate);
                 });
             y += RowHeight + RowSpacing;

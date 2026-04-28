@@ -30,6 +30,19 @@ namespace VVardenfell.Runtime.Streaming
                 Entity entity = EntityManager.CreateEntity();
                 EntityManager.SetName(entity, "VVardenfell.WeatherState");
                 EntityManager.AddComponentData(entity, CreateDefaultWeather());
+                EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+                EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
+                EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+            }
+            else
+            {
+                Entity entity = SystemAPI.GetSingletonEntity<MorrowindWeatherState>();
+                if (!EntityManager.HasBuffer<MorrowindWeatherChangeRequest>(entity))
+                    EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+                if (!EntityManager.HasBuffer<MorrowindWeatherForceRequest>(entity))
+                    EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
+                if (!EntityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
+                    EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
             }
         }
 
@@ -57,10 +70,13 @@ namespace VVardenfell.Runtime.Streaming
             return new MorrowindWeatherState
             {
                 CurrentWeather = 0,
-                NextWeather = 0,
+                NextWeather = -1,
+                QueuedWeather = -1,
                 Transition = 0f,
+                TransitionFactor = 0f,
                 TransitionDelta = 0.015f,
                 HoursUntilNextChange = 20f,
+                WeatherUpdateHoursRemaining = 20f,
                 RandomState = 0x6E624EB7u,
                 ForcedWeather = -1,
             };

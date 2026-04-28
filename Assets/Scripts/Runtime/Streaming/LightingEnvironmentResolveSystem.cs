@@ -146,13 +146,13 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             var current = ResolveWeather(contentDb, weather.CurrentWeather);
-            var next = ResolveWeather(contentDb, weather.NextWeather);
+            int nextIndex = weather.NextWeather >= 0 ? weather.NextWeather : -1;
+            var next = nextIndex >= 0 ? ResolveWeather(contentDb, nextIndex) : current;
             var weatherSettings = contentDb?.Data?.WeatherSettings ?? MorrowindDayCycleUtility.CreateFallbackWeatherSettings(dayCycle);
-            var currentEval = MorrowindDayCycleUtility.EvaluateWeather(dayCycle, weatherSettings, current, time.GameHour);
-            var nextEval = MorrowindDayCycleUtility.EvaluateWeather(dayCycle, weatherSettings, next, time.GameHour);
-            var day = MorrowindDayCycleUtility.Lerp(currentEval, nextEval, weather.Transition);
+            var blend = MorrowindWeatherEvaluationUtility.Evaluate(dayCycle, weatherSettings, current, weather.CurrentWeather, next, nextIndex, weather.Transition, time.GameHour);
+            var day = blend.Evaluation;
 
-            float windDimmer = math.saturate(math.lerp(current.WindSpeed, next.WindSpeed, weather.Transition));
+            float windDimmer = math.saturate(blend.WindSpeed / 70f);
             float sunDimmer = math.lerp(1f, 0.35f, windDimmer);
             float directionalIntensity = day.SunPercent
                 * math.max(0f, dayCycle.ExteriorSunIntensityScale)

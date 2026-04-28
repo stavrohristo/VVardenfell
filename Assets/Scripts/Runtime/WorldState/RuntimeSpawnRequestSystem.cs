@@ -219,8 +219,6 @@ namespace VVardenfell.Runtime.WorldState
             spawnResult.LogicalEntity = logicalEntity;
             spawnResult.Status = (byte)RuntimeSpawnResultStatus.Success;
             spawnResult.Message = new FixedString128Bytes($"Spawned runtime ref 0x{runtimeRefId:X8}.");
-
-            string label = request.Content.Kind.ToString().ToLowerInvariant();
         }
 
         static bool IsExteriorCellActiveNow(in StreamingConfig config, int2 exteriorCell)

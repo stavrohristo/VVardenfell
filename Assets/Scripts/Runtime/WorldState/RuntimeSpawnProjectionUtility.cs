@@ -37,6 +37,33 @@ namespace VVardenfell.Runtime.WorldState
             public bool ExteriorActive;
         }
 
+        public static bool TryRestoreAliveRefsForCurrentWorld(
+            EntityManager entityManager,
+            RuntimeContentDatabase contentDb)
+        {
+            var createEcb = new EntityCommandBuffer(Allocator.Temp);
+            if (!TryQueueRestoreAliveRefsCreatePhase(
+                    entityManager,
+                    contentDb,
+                    ref createEcb,
+                    out var projection))
+            {
+                createEcb.Dispose();
+                return false;
+            }
+
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref createEcb);
+
+            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
+            QueueRestoreAliveRefsMaterializePhase(
+                entityManager,
+                ref materializeEcb,
+                ref projection);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref materializeEcb);
+            ApplyRestoreAliveRefsProjection(entityManager, projection);
+            return true;
+        }
+
         public static void MarkUnloaded(EntityManager entityManager, uint runtimeRefId)
         {
             if (!RuntimeSpawnRegistryUtility.IsRuntimeRefId(runtimeRefId))

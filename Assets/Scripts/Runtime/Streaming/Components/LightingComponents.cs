@@ -88,6 +88,8 @@ namespace VVardenfell.Runtime.Components
         public float MoonBrightnessScale;
         public float MoonEmissionScale;
         public float StarMaxOpacity;
+        public float StarBrightnessScale;
+        public float StarTextureOpacityScale;
         public float PrecipitationIntensityScale;
         public float LightningIntensityScale;
     }
@@ -125,9 +127,12 @@ namespace VVardenfell.Runtime.Components
     {
         public int CurrentWeather;
         public int NextWeather;
+        public int QueuedWeather;
         public float Transition;
+        public float TransitionFactor;
         public float TransitionDelta;
         public float HoursUntilNextChange;
+        public float WeatherUpdateHoursRemaining;
         public int RegionHandleValue;
         public uint RandomState;
         public int ForcedWeather;
@@ -137,6 +142,24 @@ namespace VVardenfell.Runtime.Components
         public int LastThunderSoundIndex;
         public byte Initialized;
         public byte Transitioning;
+    }
+
+    public struct MorrowindWeatherChangeRequest : IBufferElementData
+    {
+        public int RegionHandleValue;
+        public int Weather;
+    }
+
+    public struct MorrowindWeatherForceRequest : IBufferElementData
+    {
+        public int Weather;
+        public byte Clear;
+    }
+
+    public struct MorrowindRegionWeatherCacheEntry : IBufferElementData
+    {
+        public int RegionHandleValue;
+        public int Weather;
     }
 
     public struct ActiveSkyWeatherState : IComponentData
@@ -167,10 +190,13 @@ namespace VVardenfell.Runtime.Components
         public float WindSpeed;
         public float3 StormDirection;
         public float PrecipitationIntensity;
+        public float PrecipitationAlpha;
+        public int PrecipitationKind;
         public float RainSpeed;
         public float RainDiameter;
         public float RainMinHeight;
         public float RainMaxHeight;
+        public int RainMaxRaindrops;
         public float Glare;
         public float LightningBrightness;
         public uint ThunderSequence;

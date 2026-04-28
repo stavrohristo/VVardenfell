@@ -120,7 +120,21 @@ namespace VVardenfell.Runtime.WorldState
             if (entity == Entity.Null)
                 return ToPayload(MorrowindTimeBootstrapSystem.CreateDefaultWeather());
 
-            return ToPayload(entityManager.GetComponentData<MorrowindWeatherState>(entity));
+            var payload = ToPayload(entityManager.GetComponentData<MorrowindWeatherState>(entity));
+            if (entityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
+            {
+                var cache = entityManager.GetBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                payload.RegionWeather = new MorrowindRegionWeatherCacheSavePayload[cache.Length];
+                for (int i = 0; i < cache.Length; i++)
+                {
+                    payload.RegionWeather[i] = new MorrowindRegionWeatherCacheSavePayload
+                    {
+                        RegionHandleValue = cache[i].RegionHandleValue,
+                        Weather = cache[i].Weather,
+                    };
+                }
+            }
+            return payload;
         }
 
         static MorrowindTimeSavePayload ToPayload(MorrowindTimeState time)
@@ -143,9 +157,12 @@ namespace VVardenfell.Runtime.WorldState
             {
                 CurrentWeather = weather.CurrentWeather,
                 NextWeather = weather.NextWeather,
+                QueuedWeather = weather.QueuedWeather,
                 Transition = weather.Transition,
+                TransitionFactor = weather.TransitionFactor,
                 TransitionDelta = weather.TransitionDelta,
                 HoursUntilNextChange = weather.HoursUntilNextChange,
+                WeatherUpdateHoursRemaining = weather.WeatherUpdateHoursRemaining,
                 RegionHandleValue = weather.RegionHandleValue,
                 RandomState = weather.RandomState,
                 ForcedWeather = weather.ForcedWeather,
@@ -155,6 +172,7 @@ namespace VVardenfell.Runtime.WorldState
                 LastThunderSoundIndex = weather.LastThunderSoundIndex,
                 Initialized = weather.Initialized,
                 Transitioning = weather.Transitioning,
+                RegionWeather = Array.Empty<MorrowindRegionWeatherCacheSavePayload>(),
             };
         }
 

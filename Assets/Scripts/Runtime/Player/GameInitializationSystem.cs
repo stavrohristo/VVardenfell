@@ -13,6 +13,7 @@ using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
@@ -71,6 +72,7 @@ namespace VVardenfell.Runtime.Player
             RequireForUpdate<LogicalRefLookup>();
             RequireForUpdate<LoadedCellsMap>();
             RequireForUpdate<AvailableCells>();
+            RequireForUpdate<MainCameraSingleton>();
         }
 
         protected override void OnUpdate()
@@ -113,7 +115,7 @@ namespace VVardenfell.Runtime.Player
                     if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
                         Debug.LogWarning($"[VVardenfell][Save] load slot location restore failed; starting from default bootstrap state instead. {locationError}");
                     else
-                        RestoreAliveRefsForCurrentWorld(em);
+                        RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em, RuntimeContentDatabase.Active);
                 }
                 else
                 {
@@ -222,15 +224,8 @@ namespace VVardenfell.Runtime.Player
                 Rotation = init.PlayerRotation,
             });
 
-            var cam = Camera.main;
-            if (cam != null)
-            {
-                cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
-            }
-            else
-            {
-                Debug.LogWarning("[VVardenfell] Camera.main missing - player camera sync will have no target.");
-            }
+            Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
+            cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
 
             ConfigureStreamingAfterInitialization(em, init);
 
@@ -267,32 +262,6 @@ namespace VVardenfell.Runtime.Player
             if (hasLoadRequest)
                 EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
             EntityManager.DestroyEntity(initEntity);
-        }
-
-        void RestoreAliveRefsForCurrentWorld(EntityManager entityManager)
-        {
-            var createEcb = new EntityCommandBuffer(Allocator.Temp);
-            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
-                    entityManager,
-                    RuntimeContentDatabase.Active,
-                    ref createEcb,
-                    out var projection))
-            {
-                createEcb.Dispose();
-                return;
-            }
-
-            createEcb.Playback(entityManager);
-            createEcb.Dispose();
-
-            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
-            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
-                entityManager,
-                ref materializeEcb,
-                ref projection);
-            materializeEcb.Playback(entityManager);
-            materializeEcb.Dispose();
-            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(entityManager, projection);
         }
 
         static void SeedInitialPlayerInventory(EntityManager em, Entity initEntity)

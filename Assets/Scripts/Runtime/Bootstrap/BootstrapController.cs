@@ -186,17 +186,17 @@ namespace VVardenfell.Runtime.Bootstrap
 
             if (config.ResolutionWidth > 0 && config.ResolutionHeight > 0)
             {
-                int refresh = config.RefreshRate > 0 ? config.RefreshRate : Screen.currentResolution.refreshRate;
-                Screen.SetResolution(
+                VVardenfell.Runtime.UI.Shell.RuntimeScreenResolutionUtility.SetResolution(
                     config.ResolutionWidth,
                     config.ResolutionHeight,
                     Screen.fullScreenMode,
-                    refresh);
+                    config.RefreshRate);
             }
 
-            // FOV can't apply yet â€” Camera.main doesn't exist until the world
-            // scene loads. RuntimeHudShellView reapplies this when the HUD comes
-            // up, and the Options window itself writes FOV live when moved.
+            // FOV can't apply yet because MainCameraSingleton is not registered
+            // until the world scene camera authoring component has loaded.
+            // RuntimeHudShellView reapplies this when the HUD comes up, and the
+            // Options window itself writes FOV live when moved.
         }
 
         public static BootstrapRuntimeMode CurrentRuntimeMode

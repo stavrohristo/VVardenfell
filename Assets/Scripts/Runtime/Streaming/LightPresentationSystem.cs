@@ -128,8 +128,8 @@ namespace VVardenfell.Runtime.Streaming
             using var flags = _lightQuery.ToComponentDataArray<LightInstanceFlags>(Unity.Collections.Allocator.Temp);
             using var locations = _lightQuery.ToComponentDataArray<LogicalRefLocation>(Unity.Collections.Allocator.Temp);
 
-            var camSingleton = SystemAPI.GetSingleton<MainCameraSingleton>();
-            float3 cameraPosition = camSingleton.Ref.Value.transform.position;
+            Camera camera = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
+            float3 cameraPosition = camera.transform.position;
 
             for (int i = 0; i < entities.Length; i++)
             {

@@ -13,7 +13,8 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 10;
+        const int PayloadVersion = 11;
+        const int PreviousPayloadVersion = 10;
         const int LegacyPayloadVersion = 9;
 
         static void ValidatePayloadHeader(BinaryReader r)
@@ -23,7 +24,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != LegacyPayloadVersion)
+            if (version != PayloadVersion && version != PreviousPayloadVersion && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
         }
 
@@ -112,7 +113,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != LegacyPayloadVersion)
+            if (version != PayloadVersion && version != PreviousPayloadVersion && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
 
             var payload = new WorldSavePayload
@@ -157,10 +158,10 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < journalCount; i++)
                 payload.JournalEntries[i] = ReadJournalEntry(r);
 
-            if (version >= PayloadVersion)
+            if (version >= PreviousPayloadVersion)
             {
                 payload.Time = ReadTimePayload(r);
-                payload.Weather = ReadWeatherPayload(r);
+                payload.Weather = ReadWeatherPayload(r, version);
             }
             else
             {
@@ -200,9 +201,12 @@ namespace VVardenfell.Runtime.WorldState
         {
             w.Write(value.CurrentWeather);
             w.Write(value.NextWeather);
+            w.Write(value.QueuedWeather);
             w.Write(value.Transition);
+            w.Write(value.TransitionFactor);
             w.Write(value.TransitionDelta);
             w.Write(value.HoursUntilNextChange);
+            w.Write(value.WeatherUpdateHoursRemaining);
             w.Write(value.RegionHandleValue);
             w.Write(value.RandomState);
             w.Write(value.ForcedWeather);
@@ -212,17 +216,55 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.LastThunderSoundIndex);
             w.Write(value.Initialized);
             w.Write(value.Transitioning);
+            w.Write(value.RegionWeather?.Length ?? 0);
+            if (value.RegionWeather != null)
+            {
+                for (int i = 0; i < value.RegionWeather.Length; i++)
+                {
+                    w.Write(value.RegionWeather[i].RegionHandleValue);
+                    w.Write(value.RegionWeather[i].Weather);
+                }
+            }
         }
 
-        static MorrowindWeatherSavePayload ReadWeatherPayload(BinaryReader r)
+        static MorrowindWeatherSavePayload ReadWeatherPayload(BinaryReader r, int version)
         {
-            return new MorrowindWeatherSavePayload
+            if (version == PreviousPayloadVersion)
+            {
+                var legacy = new MorrowindWeatherSavePayload
+                {
+                    CurrentWeather = r.ReadInt32(),
+                    NextWeather = r.ReadInt32(),
+                    Transition = r.ReadSingle(),
+                    TransitionDelta = r.ReadSingle(),
+                    HoursUntilNextChange = r.ReadSingle(),
+                    RegionHandleValue = r.ReadInt32(),
+                    RandomState = r.ReadUInt32(),
+                    ForcedWeather = r.ReadInt32(),
+                    SecondsUntilThunder = r.ReadSingle(),
+                    LightningBrightness = r.ReadSingle(),
+                    ThunderSequence = r.ReadUInt32(),
+                    LastThunderSoundIndex = r.ReadInt32(),
+                    Initialized = r.ReadByte(),
+                    Transitioning = r.ReadByte(),
+                };
+                legacy.QueuedWeather = -1;
+                legacy.TransitionFactor = legacy.Transitioning != 0 ? 1f - legacy.Transition : 0f;
+                legacy.WeatherUpdateHoursRemaining = legacy.HoursUntilNextChange;
+                legacy.RegionWeather = System.Array.Empty<MorrowindRegionWeatherCacheSavePayload>();
+                return legacy;
+            }
+
+            var payload = new MorrowindWeatherSavePayload
             {
                 CurrentWeather = r.ReadInt32(),
                 NextWeather = r.ReadInt32(),
+                QueuedWeather = r.ReadInt32(),
                 Transition = r.ReadSingle(),
+                TransitionFactor = r.ReadSingle(),
                 TransitionDelta = r.ReadSingle(),
                 HoursUntilNextChange = r.ReadSingle(),
+                WeatherUpdateHoursRemaining = r.ReadSingle(),
                 RegionHandleValue = r.ReadInt32(),
                 RandomState = r.ReadUInt32(),
                 ForcedWeather = r.ReadInt32(),
@@ -233,6 +275,17 @@ namespace VVardenfell.Runtime.WorldState
                 Initialized = r.ReadByte(),
                 Transitioning = r.ReadByte(),
             };
+            int count = ReadCount(r, "region weather cache");
+            payload.RegionWeather = new MorrowindRegionWeatherCacheSavePayload[count];
+            for (int i = 0; i < count; i++)
+            {
+                payload.RegionWeather[i] = new MorrowindRegionWeatherCacheSavePayload
+                {
+                    RegionHandleValue = r.ReadInt32(),
+                    Weather = r.ReadInt32(),
+                };
+            }
+            return payload;
         }
 
         static MorrowindTimeSavePayload ToSavePayload(MorrowindTimeState time)
@@ -255,9 +308,12 @@ namespace VVardenfell.Runtime.WorldState
             {
                 CurrentWeather = weather.CurrentWeather,
                 NextWeather = weather.NextWeather,
+                QueuedWeather = weather.QueuedWeather,
                 Transition = weather.Transition,
+                TransitionFactor = weather.TransitionFactor,
                 TransitionDelta = weather.TransitionDelta,
                 HoursUntilNextChange = weather.HoursUntilNextChange,
+                WeatherUpdateHoursRemaining = weather.WeatherUpdateHoursRemaining,
                 RegionHandleValue = weather.RegionHandleValue,
                 RandomState = weather.RandomState,
                 ForcedWeather = weather.ForcedWeather,
@@ -267,6 +323,7 @@ namespace VVardenfell.Runtime.WorldState
                 LastThunderSoundIndex = weather.LastThunderSoundIndex,
                 Initialized = weather.Initialized,
                 Transitioning = weather.Transitioning,
+                RegionWeather = System.Array.Empty<MorrowindRegionWeatherCacheSavePayload>(),
             };
         }
 

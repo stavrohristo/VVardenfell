@@ -642,12 +642,14 @@ namespace VVardenfell.Core.Cache
         {
             WriteString(w, value.SunTexture);
             WriteString(w, value.SunGlareTexture);
+            WriteString(w, value.StarTexture);
             WriteString(w, value.MasserShadowTexture);
             WriteString(w, value.SecundaShadowTexture);
             WriteString(w, value.RainDropTexture);
             WriteStringArray(w, value.MasserPhaseTextures);
             WriteStringArray(w, value.SecundaPhaseTextures);
             WriteStringArray(w, value.CloudTextures);
+            WriteStringArray(w, value.PrecipitationTextures);
             WriteStringArray(w, value.PrecipitationEffectModels);
         }
 
@@ -658,12 +660,14 @@ namespace VVardenfell.Core.Cache
             {
                 SunTexture = ReadString(r),
                 SunGlareTexture = ReadString(r),
+                StarTexture = ReadString(r),
                 MasserShadowTexture = ReadString(r),
                 SecundaShadowTexture = ReadString(r),
                 RainDropTexture = ReadString(r),
                 MasserPhaseTextures = ReadStringArray(r),
                 SecundaPhaseTextures = ReadStringArray(r),
                 CloudTextures = ReadStringArray(r),
+                PrecipitationTextures = ReadStringArray(r),
                 PrecipitationEffectModels = ReadStringArray(r),
             };
         }

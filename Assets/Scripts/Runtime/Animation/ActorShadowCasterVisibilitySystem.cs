@@ -52,10 +52,7 @@ namespace VVardenfell.Runtime.Animation
         {
             using var _ = k_Update.Auto();
 
-            var camera = SystemAPI.GetSingleton<MainCameraSingleton>().Camera;
-            if (camera == null)
-                return;
-
+            var camera = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             float3 cameraPosition = camera.transform.position;
             float shadowDistance = math.max(0f, WorldResources.ActorShadowCasterDistance);
             float padding = math.max(0f, WorldResources.ActorShadowCasterPadding);

@@ -6,6 +6,7 @@ using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -129,12 +130,13 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<LocalPlayerPresentationState>(),
                 ComponentType.ReadOnly<LocalPlayerPresentationPose>());
             RequireForUpdate(_viewQuery);
+            RequireForUpdate<MainCameraSingleton>();
         }
 
         protected override void OnUpdate()
         {
-            var cam = Camera.main;
-            if (cam == null || _viewQuery.IsEmptyIgnoreFilter)
+            Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
+            if (_viewQuery.IsEmptyIgnoreFilter)
                 return;
 
             if (!_presentationQuery.IsEmptyIgnoreFilter)

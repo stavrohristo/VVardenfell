@@ -4,6 +4,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 
@@ -764,15 +765,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 Difficulty = null,
                 Fov = v =>
                 {
-                    if (Camera.main != null)
-                        Camera.main.fieldOfView = v;
+                    MainCameraUtility.GetRequiredCamera().fieldOfView = v;
                 },
                 Gamma = v => Screen.brightness = v,
                 Resolution = (w, h, refresh) =>
                 {
-                    if (w <= 0 || h <= 0)
-                        return;
-                    Screen.SetResolution(w, h, Screen.fullScreenMode, refresh > 0 ? refresh : Screen.currentResolution.refreshRate);
+                    RuntimeScreenResolutionUtility.SetResolution(w, h, Screen.fullScreenMode, refresh);
                 },
                 WindowMode = mode => Screen.fullScreenMode = mode switch
                 {
@@ -810,8 +808,7 @@ namespace VVardenfell.Runtime.UI.Shell
             HudUserPreferences.ShowCrosshair = _config.ShowCrosshair;
             HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
 
-            if (Camera.main != null)
-                Camera.main.fieldOfView = _config.Fov;
+            MainCameraUtility.GetRequiredCamera().fieldOfView = _config.Fov;
             Screen.brightness = _config.Gamma;
             QualitySettings.vSyncCount = Mathf.Clamp(_config.VSync, 0, 2);
             Screen.fullScreenMode = _config.WindowMode switch
@@ -822,11 +819,11 @@ namespace VVardenfell.Runtime.UI.Shell
             };
             if (_config.ResolutionWidth > 0 && _config.ResolutionHeight > 0)
             {
-                Screen.SetResolution(
+                RuntimeScreenResolutionUtility.SetResolution(
                     _config.ResolutionWidth,
                     _config.ResolutionHeight,
                     Screen.fullScreenMode,
-                    _config.RefreshRate > 0 ? _config.RefreshRate : Screen.currentResolution.refreshRate);
+                    _config.RefreshRate);
             }
         }
 

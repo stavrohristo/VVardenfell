@@ -21,8 +21,12 @@ namespace VVardenfell.Runtime.Streaming
         protected override void OnUpdate()
         {
             var contentDb = RuntimeContentDatabase.Active;
+            Entity weatherEntity = SystemAPI.GetSingletonEntity<MorrowindWeatherState>();
             ref var weather = ref SystemAPI.GetSingletonRW<MorrowindWeatherState>().ValueRW;
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
+            DynamicBuffer<MorrowindWeatherChangeRequest> changeRequests = SystemAPI.GetBuffer<MorrowindWeatherChangeRequest>(weatherEntity);
+            DynamicBuffer<MorrowindWeatherForceRequest> forceRequests = SystemAPI.GetBuffer<MorrowindWeatherForceRequest>(weatherEntity);
+            DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather = SystemAPI.GetBuffer<MorrowindRegionWeatherCacheEntry>(weatherEntity);
 
             bool interiorActive = SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0;
             int regionHandleValue = ResolveCurrentRegionHandle(contentDb);
@@ -32,30 +36,41 @@ namespace VVardenfell.Runtime.Streaming
 
             if (weather.Initialized == 0)
             {
-                weather.CurrentWeather = ClampWeatherIndex(SampleWeather(contentDb, regionHandleValue, ref random), contentDb);
-                weather.NextWeather = weather.CurrentWeather;
+                weather.CurrentWeather = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, ref random), contentDb);
+                weather.NextWeather = -1;
+                weather.QueuedWeather = -1;
                 weather.Transition = 0f;
+                weather.TransitionFactor = 0f;
                 weather.HoursUntilNextChange = hoursBetweenChanges;
+                weather.WeatherUpdateHoursRemaining = hoursBetweenChanges;
                 weather.RegionHandleValue = regionHandleValue;
                 weather.RandomState = random.state;
                 weather.Initialized = 1;
             }
 
+            ProcessForceRequests(ref weather, forceRequests, contentDb);
             if (weather.ForcedWeather >= 0)
             {
                 int forced = ClampWeatherIndex(weather.ForcedWeather, contentDb);
                 weather.CurrentWeather = forced;
-                weather.NextWeather = forced;
+                weather.NextWeather = -1;
+                weather.QueuedWeather = -1;
                 weather.Transition = 0f;
+                weather.TransitionFactor = 0f;
                 weather.Transitioning = 0;
                 weather.HoursUntilNextChange = hoursBetweenChanges;
+                weather.WeatherUpdateHoursRemaining = hoursBetweenChanges;
                 weather.RegionHandleValue = regionHandleValue;
+                weather.RandomState = random.state;
                 return;
             }
 
+            ProcessChangeRequests(ref weather, changeRequests, regionWeather, contentDb, regionHandleValue);
+
             if (interiorActive)
             {
-                weather.HoursUntilNextChange = math.max(0f, weather.HoursUntilNextChange - math.max(0f, time.LastAdvancedHours));
+                AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
+                AdvanceTransition(ref weather, contentDb, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
                 weather.RandomState = random.state;
                 return;
             }
@@ -63,36 +78,17 @@ namespace VVardenfell.Runtime.Streaming
             bool regionChanged = regionHandleValue != weather.RegionHandleValue;
             weather.RegionHandleValue = regionHandleValue;
 
+            bool expiredWeather = AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
+            AdvanceTransition(ref weather, contentDb, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
             if (weather.Transitioning != 0)
-            {
-                float delta = time.FastForwarding != 0
-                    ? 1f
-                    : SystemAPI.Time.DeltaTime * math.max(0.001f, weather.TransitionDelta);
-                weather.Transition = math.saturate(weather.Transition + delta);
-                if (weather.Transition >= 1f)
-                {
-                    weather.CurrentWeather = ClampWeatherIndex(weather.NextWeather, contentDb);
-                    weather.Transition = 0f;
-                    weather.Transitioning = 0;
-                    weather.HoursUntilNextChange = hoursBetweenChanges;
-                }
-                return;
-            }
-
-            weather.HoursUntilNextChange -= math.max(0f, time.LastAdvancedHours);
-            if (!regionChanged && weather.HoursUntilNextChange > 0f)
                 return;
 
-            int next = SampleWeather(contentDb, regionHandleValue, ref random, weather.CurrentWeather);
+            if (!regionChanged && !expiredWeather)
+                return;
+
+            int next = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, ref random), contentDb);
             weather.RandomState = random.state;
-            weather.HoursUntilNextChange = hoursBetweenChanges;
-            if (next == weather.CurrentWeather)
-                return;
-
-            weather.NextWeather = next;
-            weather.Transition = 0f;
-            weather.TransitionDelta = ResolveTransitionDelta(contentDb, next);
-            weather.Transitioning = 1;
+            AddWeatherTransition(ref weather, contentDb, next);
         }
 
         int ResolveCurrentRegionHandle(RuntimeContentDatabase contentDb)
@@ -113,16 +109,169 @@ namespace VVardenfell.Runtime.Streaming
             return 0;
         }
 
-        static int SampleWeather(RuntimeContentDatabase contentDb, int regionHandleValue, ref Unity.Mathematics.Random random, int excludedWeather = -1)
+        static int SampleWeather(RuntimeContentDatabase contentDb, int regionHandleValue, ref Unity.Mathematics.Random random)
         {
             if (contentDb == null)
-                return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random, excludedWeather);
+                return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
 
             if (regionHandleValue <= 0)
-                return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random, excludedWeather);
+                return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
 
             ref readonly var region = ref contentDb.Get(new RegionDefHandle { Value = regionHandleValue });
-            return MorrowindWeatherSelectionUtility.SampleRegionWeather(region, ref random, excludedWeather);
+            return MorrowindWeatherSelectionUtility.SampleRegionWeather(region, ref random);
+        }
+
+        static int GetRegionWeather(RuntimeContentDatabase contentDb, int regionHandleValue, DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather, ref Unity.Mathematics.Random random)
+        {
+            int region = math.max(0, regionHandleValue);
+            for (int i = 0; i < regionWeather.Length; i++)
+            {
+                if (regionWeather[i].RegionHandleValue == region)
+                    return regionWeather[i].Weather;
+            }
+
+            int weather = SampleWeather(contentDb, region, ref random);
+            regionWeather.Add(new MorrowindRegionWeatherCacheEntry
+            {
+                RegionHandleValue = region,
+                Weather = weather,
+            });
+            return weather;
+        }
+
+        static void SetRegionWeather(DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather, int regionHandleValue, int weather)
+        {
+            int region = math.max(0, regionHandleValue);
+            for (int i = 0; i < regionWeather.Length; i++)
+            {
+                if (regionWeather[i].RegionHandleValue != region)
+                    continue;
+
+                regionWeather[i] = new MorrowindRegionWeatherCacheEntry
+                {
+                    RegionHandleValue = region,
+                    Weather = weather,
+                };
+                return;
+            }
+
+            regionWeather.Add(new MorrowindRegionWeatherCacheEntry
+            {
+                RegionHandleValue = region,
+                Weather = weather,
+            });
+        }
+
+        static void ProcessForceRequests(ref MorrowindWeatherState weather, DynamicBuffer<MorrowindWeatherForceRequest> requests, RuntimeContentDatabase contentDb)
+        {
+            for (int i = 0; i < requests.Length; i++)
+            {
+                if (requests[i].Clear != 0)
+                {
+                    weather.ForcedWeather = -1;
+                    continue;
+                }
+
+                weather.ForcedWeather = ClampWeatherIndex(requests[i].Weather, contentDb);
+            }
+
+            requests.Clear();
+        }
+
+        static void ProcessChangeRequests(
+            ref MorrowindWeatherState weather,
+            DynamicBuffer<MorrowindWeatherChangeRequest> requests,
+            DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
+            RuntimeContentDatabase contentDb,
+            int activeRegion)
+        {
+            for (int i = 0; i < requests.Length; i++)
+            {
+                int requested = ClampWeatherIndex(requests[i].Weather, contentDb);
+                SetRegionWeather(regionWeather, requests[i].RegionHandleValue, requested);
+                if (requests[i].RegionHandleValue == activeRegion)
+                    AddWeatherTransition(ref weather, contentDb, requested);
+            }
+
+            requests.Clear();
+        }
+
+        static bool AdvanceWeatherUpdateTimer(ref MorrowindWeatherState weather, DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather, float hoursBetweenChanges, float advancedHours)
+        {
+            float remaining = weather.WeatherUpdateHoursRemaining > 0f ? weather.WeatherUpdateHoursRemaining : weather.HoursUntilNextChange;
+            remaining -= math.max(0f, advancedHours);
+            bool expired = false;
+            while (remaining <= 0f)
+            {
+                regionWeather.Clear();
+                remaining += hoursBetweenChanges;
+                expired = true;
+            }
+
+            weather.WeatherUpdateHoursRemaining = remaining;
+            weather.HoursUntilNextChange = remaining;
+            return expired;
+        }
+
+        static void AddWeatherTransition(ref MorrowindWeatherState weather, RuntimeContentDatabase contentDb, int weatherIndex)
+        {
+            int next = ClampWeatherIndex(weatherIndex, contentDb);
+            if (weather.NextWeather < 0 && next != weather.CurrentWeather)
+            {
+                weather.NextWeather = next;
+                weather.QueuedWeather = -1;
+                weather.TransitionFactor = 1f;
+                weather.Transition = 0f;
+                weather.TransitionDelta = ResolveTransitionDelta(contentDb, next);
+                weather.Transitioning = 1;
+                return;
+            }
+
+            if (weather.NextWeather >= 0 && next != weather.NextWeather)
+                weather.QueuedWeather = next;
+        }
+
+        static void AdvanceTransition(ref MorrowindWeatherState weather, RuntimeContentDatabase contentDb, float elapsedSeconds, bool fastForward)
+        {
+            if (weather.NextWeather < 0)
+            {
+                weather.TransitionFactor = 0f;
+                weather.Transition = 0f;
+                weather.Transitioning = 0;
+                return;
+            }
+
+            if (fastForward)
+            {
+                weather.CurrentWeather = ClampWeatherIndex(weather.QueuedWeather >= 0 ? weather.QueuedWeather : weather.NextWeather, contentDb);
+                weather.NextWeather = -1;
+                weather.QueuedWeather = -1;
+                weather.TransitionFactor = 0f;
+                weather.Transition = 0f;
+                weather.Transitioning = 0;
+                return;
+            }
+
+            weather.TransitionFactor -= math.max(0f, elapsedSeconds) * math.max(0.001f, weather.TransitionDelta);
+            if (weather.TransitionFactor <= 0f)
+            {
+                weather.CurrentWeather = ClampWeatherIndex(weather.NextWeather, contentDb);
+                weather.NextWeather = weather.QueuedWeather;
+                weather.QueuedWeather = -1;
+                if (weather.NextWeather >= 0)
+                {
+                    weather.TransitionFactor = 1f;
+                    weather.TransitionDelta = ResolveTransitionDelta(contentDb, weather.NextWeather);
+                    weather.Transitioning = 1;
+                }
+                else
+                {
+                    weather.TransitionFactor = 0f;
+                    weather.Transitioning = 0;
+                }
+            }
+
+            weather.Transition = weather.NextWeather >= 0 ? math.saturate(1f - weather.TransitionFactor) : 0f;
         }
 
         static int ClampWeatherIndex(int index, RuntimeContentDatabase contentDb)
@@ -166,22 +315,16 @@ namespace VVardenfell.Runtime.Streaming
             ref var sky = ref SystemAPI.GetSingletonRW<ActiveSkyWeatherState>().ValueRW;
 
             WeatherDefinitionDef current = ResolveWeather(contentDb, weather.CurrentWeather);
-            WeatherDefinitionDef next = ResolveWeather(contentDb, weather.NextWeather);
+            int nextIndex = weather.NextWeather >= 0 ? weather.NextWeather : -1;
+            WeatherDefinitionDef next = nextIndex >= 0 ? ResolveWeather(contentDb, nextIndex) : current;
             WeatherSettingsDef weatherSettings = contentDb?.Data?.WeatherSettings ?? MorrowindDayCycleUtility.CreateFallbackWeatherSettings(settings);
-            var currentEval = MorrowindDayCycleUtility.EvaluateWeather(settings, weatherSettings, current, time.GameHour);
-            var nextEval = MorrowindDayCycleUtility.EvaluateWeather(settings, weatherSettings, next, time.GameHour);
-            var eval = MorrowindDayCycleUtility.Lerp(currentEval, nextEval, weather.Transition);
-            WeatherDefinitionDef dominant = weather.Transition < 0.5f ? current : next;
+            var blended = MorrowindWeatherEvaluationUtility.Evaluate(settings, weatherSettings, current, weather.CurrentWeather, next, nextIndex, weather.Transition, time.GameHour);
+            var eval = blended.Evaluation;
+            WeatherDefinitionDef dominant = blended.DominantWeather;
             var masser = MorrowindDayCycleUtility.EvaluateMoon(weatherSettings.MasserMoon, time.DaysPassed, time.GameHour);
             var secunda = MorrowindDayCycleUtility.EvaluateMoon(weatherSettings.SecundaMoon, time.DaysPassed, time.GameHour);
-            float cloudSpeed = math.lerp(current.CloudSpeed, next.CloudSpeed, weather.Transition);
 
-            float precipitation = dominant.UsingPrecip != 0
-                ? math.saturate(math.max(0f, dominant.CloudsMaximumPercent - dominant.RainThreshold) / math.max(0.0001f, 1f - dominant.RainThreshold))
-                : 0f;
-            precipitation *= math.max(0f, settings.PrecipitationIntensityScale);
-
-            ResolveThunder(ref weather, dominant, precipitation);
+            ResolveThunder(ref weather, current, next, blended, time.Paused != 0);
 
             sky = new ActiveSkyWeatherState
             {
@@ -202,26 +345,29 @@ namespace VVardenfell.Runtime.Streaming
                 SecundaPhase = secunda.Phase,
                 StarOpacity = eval.StarOpacity,
                 StarRotationDegrees = MorrowindDayCycleUtility.ComputeStarRotationDegrees(time.DaysPassed, time.GameHour),
-                SunDiscOpacity = eval.SunPercent * math.saturate(math.lerp(current.GlareView, next.GlareView, weather.Transition)),
-                CloudOpacity = math.lerp(current.CloudsMaximumPercent, next.CloudsMaximumPercent, weather.Transition),
-                CloudSpeed = cloudSpeed,
-                CloudUvOffset = MorrowindDayCycleUtility.ComputeCloudUvOffset(time.DaysPassed, time.GameHour, cloudSpeed),
+                SunDiscOpacity = eval.SunPercent * math.saturate(blended.GlareView),
+                CloudOpacity = blended.CloudOpacity,
+                CloudSpeed = blended.CloudSpeed,
+                CloudUvOffset = MorrowindDayCycleUtility.ComputeCloudUvOffset(time.DaysPassed, time.GameHour, blended.CloudSpeed),
                 CurrentCloudTextureIndex = (int)current.Kind,
                 NextCloudTextureIndex = (int)next.Kind,
-                WindSpeed = math.lerp(current.WindSpeed, next.WindSpeed, weather.Transition),
-                StormDirection = math.normalize(new float3(1f, 0f, 0.35f)),
-                PrecipitationIntensity = precipitation,
+                WindSpeed = blended.WindSpeed,
+                StormDirection = ResolveStormDirection(dominant),
+                PrecipitationIntensity = blended.PrecipitationIntensity,
+                PrecipitationAlpha = blended.PrecipitationAlpha,
+                PrecipitationKind = MorrowindWeatherEvaluationUtility.ResolvePrecipitationKind(dominant),
                 RainSpeed = dominant.RainSpeed,
                 RainDiameter = dominant.RainDiameter,
                 RainMinHeight = dominant.RainMinHeight,
                 RainMaxHeight = dominant.RainMaxHeight,
-                Glare = eval.SunPercent * math.lerp(current.GlareView, next.GlareView, weather.Transition),
+                RainMaxRaindrops = dominant.RainMaxRaindrops,
+                Glare = eval.SunPercent * blended.GlareView,
                 LightningBrightness = weather.LightningBrightness * math.max(0f, settings.LightningIntensityScale),
                 ThunderSequence = weather.ThunderSequence,
                 ThunderSoundIndex = weather.LastThunderSoundIndex,
                 WeatherKind = (int)current.Kind,
                 NextWeatherKind = (int)next.Kind,
-                WeatherTransition = weather.Transition,
+                WeatherTransition = blended.CloudBlendFactor,
                 IsNight = eval.IsNight,
                 IsStorm = dominant.IsStorm,
                 IsInterior = SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0 ? (byte)1 : (byte)0,
@@ -236,21 +382,34 @@ namespace VVardenfell.Runtime.Streaming
             return MorrowindDayCycleUtility.CreateFallbackClearWeather();
         }
 
-        void ResolveThunder(ref MorrowindWeatherState weather, in WeatherDefinitionDef dominant, float precipitation)
+        static float3 ResolveStormDirection(in WeatherDefinitionDef weather)
         {
-            weather.LightningBrightness = math.max(0f, weather.LightningBrightness - SystemAPI.Time.DeltaTime * math.max(0.1f, dominant.FlashDecrement));
-            if (dominant.Kind != WeatherKind.Thunderstorm || precipitation <= dominant.ThunderThreshold || dominant.ThunderFrequency <= 0f)
-                return;
+            if (weather.Kind == WeatherKind.Ashstorm || weather.Kind == WeatherKind.Blight)
+                return math.normalize(new float3(-1f, 0f, -0.35f));
+            return math.normalize(new float3(1f, 0f, 0.35f));
+        }
 
-            weather.SecondsUntilThunder -= SystemAPI.Time.DeltaTime;
-            if (weather.SecondsUntilThunder > 0f)
-                return;
+        void ResolveThunder(ref MorrowindWeatherState weather, in WeatherDefinitionDef current, in WeatherDefinitionDef next, in MorrowindWeatherEvaluationUtility.WeatherBlend blend, bool paused)
+        {
+            float elapsedSeconds = SystemAPI.Time.DeltaTime;
+            float flashDecrement = math.max(0.1f, blend.DominantWeather.FlashDecrement);
+            if (!paused)
+                weather.LightningBrightness = math.max(0f, weather.LightningBrightness - elapsedSeconds * flashDecrement);
 
             var random = new Unity.Mathematics.Random(weather.RandomState == 0u ? 1u : weather.RandomState);
-            weather.SecondsUntilThunder = random.NextFloat(1f, math.max(1.1f, 1f / math.max(0.01f, dominant.ThunderFrequency)));
+            bool struck = MorrowindWeatherEvaluationUtility.TryResolveThunder(current, blend.ThunderCurrentRatio, elapsedSeconds, paused, ref random, out int currentSound, out float currentFlash);
+            bool nextStruck = blend.ThunderNextRatio > 0f
+                && MorrowindWeatherEvaluationUtility.TryResolveThunder(next, blend.ThunderNextRatio, elapsedSeconds, paused, ref random, out int nextSound, out float nextFlash);
+
+            if (!struck && !nextStruck)
+            {
+                weather.RandomState = random.state;
+                return;
+            }
+
             weather.ThunderSequence++;
-            weather.LastThunderSoundIndex = random.NextInt(4);
-            weather.LightningBrightness = 1f;
+            weather.LastThunderSoundIndex = nextStruck ? nextSound : currentSound;
+            weather.LightningBrightness = math.saturate(weather.LightningBrightness + (nextStruck ? nextFlash : currentFlash));
             weather.RandomState = random.state;
         }
     }

@@ -44,7 +44,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RestoreAliveRefsForCurrentWorld(entityManager);
+            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager, RuntimeContentDatabase.Active);
             return true;
         }
 
@@ -86,7 +86,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RestoreAliveRefsForCurrentWorld(entityManager);
+            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager, RuntimeContentDatabase.Active);
             if (!WorldStateEntityQueryUtility.HasExactlyOne<PlayerTag>(entityManager)
                 || !WorldStateEntityQueryUtility.HasExactlyOne<PlayerViewComponent>(entityManager))
             {
@@ -95,30 +95,6 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             return true;
-        }
-
-        static void RestoreAliveRefsForCurrentWorld(EntityManager entityManager)
-        {
-            var createEcb = new EntityCommandBuffer(Allocator.Temp);
-            if (!RuntimeSpawnProjectionUtility.TryQueueRestoreAliveRefsCreatePhase(
-                    entityManager,
-                    RuntimeContentDatabase.Active,
-                    ref createEcb,
-                    out var projection))
-            {
-                createEcb.Dispose();
-                return;
-            }
-
-            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref createEcb);
-
-            var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
-            RuntimeSpawnProjectionUtility.QueueRestoreAliveRefsMaterializePhase(
-                entityManager,
-                ref materializeEcb,
-                ref projection);
-            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref materializeEcb);
-            RuntimeSpawnProjectionUtility.ApplyRestoreAliveRefsProjection(entityManager, projection);
         }
 
         public static void ResetRuntimeForInitialization(World world, EntityManager entityManager, bool preserveShell)
@@ -653,9 +629,12 @@ namespace VVardenfell.Runtime.WorldState
                 {
                     CurrentWeather = payload.CurrentWeather,
                     NextWeather = payload.NextWeather,
+                    QueuedWeather = payload.QueuedWeather,
                     Transition = payload.Transition,
+                    TransitionFactor = payload.TransitionFactor,
                     TransitionDelta = payload.TransitionDelta,
                     HoursUntilNextChange = payload.HoursUntilNextChange,
+                    WeatherUpdateHoursRemaining = payload.WeatherUpdateHoursRemaining > 0f ? payload.WeatherUpdateHoursRemaining : payload.HoursUntilNextChange,
                     RegionHandleValue = payload.RegionHandleValue,
                     RandomState = payload.RandomState,
                     ForcedWeather = payload.ForcedWeather,
@@ -675,11 +654,51 @@ namespace VVardenfell.Runtime.WorldState
                 entity = ecb.CreateEntity();
                 ecb.SetName(entity, new FixedString64Bytes("VVardenfell.WeatherState"));
                 ecb.AddComponent(entity, weather);
+                ecb.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+                ecb.AddBuffer<MorrowindWeatherForceRequest>(entity);
+                ecb.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
                 WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+                entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindWeatherState>(entityManager);
+                RestoreRegionWeatherCache(entityManager, entity, payload.RegionWeather);
                 return;
             }
 
             entityManager.SetComponentData(entity, weather);
+            EnsureWeatherBuffers(entityManager, entity);
+            RestoreRegionWeatherCache(entityManager, entity, payload.RegionWeather);
+        }
+
+        static void EnsureWeatherBuffers(EntityManager entityManager, Entity entity)
+        {
+            if (!entityManager.HasBuffer<MorrowindWeatherChangeRequest>(entity))
+                entityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+            if (!entityManager.HasBuffer<MorrowindWeatherForceRequest>(entity))
+                entityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
+            if (!entityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
+                entityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+
+            entityManager.GetBuffer<MorrowindWeatherChangeRequest>(entity).Clear();
+            entityManager.GetBuffer<MorrowindWeatherForceRequest>(entity).Clear();
+        }
+
+        static void RestoreRegionWeatherCache(EntityManager entityManager, Entity entity, MorrowindRegionWeatherCacheSavePayload[] payload)
+        {
+            var buffer = entityManager.GetBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+            buffer.Clear();
+            if (payload == null)
+                return;
+
+            for (int i = 0; i < payload.Length; i++)
+            {
+                if (payload[i].RegionHandleValue <= 0 || payload[i].Weather < 0)
+                    continue;
+
+                buffer.Add(new MorrowindRegionWeatherCacheEntry
+                {
+                    RegionHandleValue = payload[i].RegionHandleValue,
+                    Weather = payload[i].Weather,
+                });
+            }
         }
     }
 }

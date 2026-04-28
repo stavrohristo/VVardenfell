@@ -222,19 +222,28 @@ namespace VVardenfell.Importer.Bake
             {
                 SunTexture = "textures/tx_sun_05.dds",
                 SunGlareTexture = "textures/tx_sun_flash_grey_05.dds",
+                StarTexture = "textures/tx_stars_01.dds",
                 MasserShadowTexture = "textures/tx_mooncircle_full_m.dds",
                 SecundaShadowTexture = "textures/tx_mooncircle_full_s.dds",
                 RainDropTexture = "textures/tx_raindrop_01.dds",
                 MasserPhaseTextures = BuildMoonPhaseTextures("masser"),
                 SecundaPhaseTextures = BuildMoonPhaseTextures("secunda"),
                 CloudTextures = definitions.Select(static def => def.CloudTexture ?? string.Empty).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                PrecipitationTextures = new[]
+                {
+                    "textures/tx_raindrop_01.dds",
+                    "textures/tx_snow_01.dds",
+                    "textures/tx_ashcloud_01.dds",
+                    "textures/tx_blightcloud_01.dds",
+                    "textures/tx_blizzard_01.dds",
+                },
                 PrecipitationEffectModels = new[]
                 {
-                    "meshes/weather/rain.nif",
-                    "meshes/weather/snow.nif",
-                    "meshes/weather/ashcloud.nif",
-                    "meshes/weather/blightcloud.nif",
-                    "meshes/weather/blizzard.nif",
+                    "meshes/raindrop.nif",
+                    "meshes/snow.nif",
+                    "meshes/ashcloud.nif",
+                    "meshes/blightcloud.nif",
+                    "meshes/blizzard.nif",
                 },
             };
         }

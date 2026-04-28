@@ -847,12 +847,14 @@ namespace VVardenfell.Core.Cache
     {
         public string SunTexture;
         public string SunGlareTexture;
+        public string StarTexture;
         public string MasserShadowTexture;
         public string SecundaShadowTexture;
         public string RainDropTexture;
         public string[] MasserPhaseTextures;
         public string[] SecundaPhaseTextures;
         public string[] CloudTextures;
+        public string[] PrecipitationTextures;
         public string[] PrecipitationEffectModels;
     }
 

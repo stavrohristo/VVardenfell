@@ -459,25 +459,8 @@ namespace VVardenfell.Runtime.Bootstrap
             if (focus == null)
                 focus = parent;
 
-            Camera camera = Camera.main;
-            if (camera == null)
-            {
-                camera = UnityEngine.Object.FindFirstObjectByType<Camera>();
-            }
-
-            GameObject go;
-            if (camera != null)
-            {
-                go = camera.gameObject;
-            }
-            else
-            {
-                go = new GameObject("PreviewCamera");
-                go.tag = "MainCamera";
-                go.transform.SetParent(parent, false);
-                camera = go.AddComponent<Camera>();
-                go.AddComponent<AudioListener>();
-            }
+            Camera camera = MainCameraUtility.GetRequiredCamera();
+            GameObject go = camera.gameObject;
 
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = new Color(0.07f, 0.08f, 0.11f, 1f);

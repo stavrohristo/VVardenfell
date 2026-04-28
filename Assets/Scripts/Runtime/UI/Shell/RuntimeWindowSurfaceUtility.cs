@@ -51,4 +51,34 @@ namespace VVardenfell.Runtime.UI.Shell
             return handle;
         }
     }
+
+    static class RuntimeScreenResolutionUtility
+    {
+        public static void SetResolution(int width, int height, FullScreenMode mode, int refreshRate)
+        {
+            if (width <= 0 || height <= 0)
+                return;
+
+            Screen.SetResolution(width, height, mode, ToRefreshRate(refreshRate));
+        }
+
+        public static int ToWholeHertz(Resolution resolution)
+        {
+            return Mathf.RoundToInt((float)resolution.refreshRateRatio.value);
+        }
+
+        static RefreshRate ToRefreshRate(int refreshRate)
+        {
+            if (refreshRate > 0)
+            {
+                return new RefreshRate
+                {
+                    numerator = (uint)refreshRate,
+                    denominator = 1u,
+                };
+            }
+
+            return Screen.currentResolution.refreshRateRatio;
+        }
+    }
 }

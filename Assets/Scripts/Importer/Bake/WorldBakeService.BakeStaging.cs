@@ -377,12 +377,14 @@ namespace VVardenfell.Importer.Bake
             var visual = gameplayContent.SkyWeatherVisualSettings;
             AddTexture(textures, visual.SunTexture);
             AddTexture(textures, visual.SunGlareTexture);
+            AddTexture(textures, visual.StarTexture);
             AddTexture(textures, visual.MasserShadowTexture);
             AddTexture(textures, visual.SecundaShadowTexture);
             AddTexture(textures, visual.RainDropTexture);
             AddTextures(textures, visual.MasserPhaseTextures);
             AddTextures(textures, visual.SecundaPhaseTextures);
             AddTextures(textures, visual.CloudTextures);
+            AddTextures(textures, visual.PrecipitationTextures);
 
             var weather = gameplayContent.WeatherDefinitions ?? Array.Empty<WeatherDefinitionDef>();
             for (int i = 0; i < weather.Length; i++)

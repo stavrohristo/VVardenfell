@@ -73,6 +73,9 @@ namespace VVardenfell.Runtime.Components
     public struct WeatherAudioState : IComponentData
     {
         public SoundDefHandle ResolvedLoopSound;
+        public SoundDefHandle ResolvedNextLoopSound;
+        public float CurrentLoopVolume;
+        public float NextLoopVolume;
         public uint LastThunderSequence;
     }
 

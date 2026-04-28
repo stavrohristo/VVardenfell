@@ -39,9 +39,12 @@ namespace VVardenfell.Runtime.WorldState
     {
         public int CurrentWeather;
         public int NextWeather;
+        public int QueuedWeather;
         public float Transition;
+        public float TransitionFactor;
         public float TransitionDelta;
         public float HoursUntilNextChange;
+        public float WeatherUpdateHoursRemaining;
         public int RegionHandleValue;
         public uint RandomState;
         public int ForcedWeather;
@@ -51,6 +54,13 @@ namespace VVardenfell.Runtime.WorldState
         public int LastThunderSoundIndex;
         public byte Initialized;
         public byte Transitioning;
+        public MorrowindRegionWeatherCacheSavePayload[] RegionWeather;
+    }
+
+    public struct MorrowindRegionWeatherCacheSavePayload
+    {
+        public int RegionHandleValue;
+        public int Weather;
     }
 
     public struct LocalMapDiscoveryTilePayload

@@ -6,6 +6,7 @@ Shader "VVardenfell/MwSkybox"
         _SunDiscColor ("Sun Disc Color", Color) = (1, 0.95, 0.85, 1)
         _SunTex ("Sun", 2D) = "white" {}
         _SunGlareTex ("Sun Glare", 2D) = "white" {}
+        _StarTex ("Stars", 2D) = "black" {}
         _MasserTex ("Masser", 2D) = "white" {}
         _SecundaTex ("Secunda", 2D) = "white" {}
         _MasserMaskTex ("Masser Mask", 2D) = "white" {}
@@ -17,6 +18,7 @@ Shader "VVardenfell/MwSkybox"
         _SecundaDirection ("Secunda Direction", Vector) = (0, 1, 0, 0)
         _MoonWeather ("Moon Weather", Vector) = (0, 0, 0, 0)
         _MoonPresentation ("Moon Presentation", Vector) = (2.75, 1.35, 0, 0)
+        _StarPresentation ("Star Presentation", Vector) = (1.6, 1, 0, 0)
         _CloudWeather ("Cloud Weather", Vector) = (0, 0, 0, 0)
         _SkyWeather ("Sky Weather", Vector) = (0, 0, 0, 0)
     }
@@ -45,6 +47,8 @@ Shader "VVardenfell/MwSkybox"
             SAMPLER(sampler_SunTex);
             TEXTURE2D(_SunGlareTex);
             SAMPLER(sampler_SunGlareTex);
+            TEXTURE2D(_StarTex);
+            SAMPLER(sampler_StarTex);
             TEXTURE2D(_MasserTex);
             SAMPLER(sampler_MasserTex);
             TEXTURE2D(_SecundaTex);
@@ -66,6 +70,7 @@ Shader "VVardenfell/MwSkybox"
                 float4 _SecundaDirection;
                 float4 _MoonWeather;
                 float4 _MoonPresentation;
+                float4 _StarPresentation;
                 float4 _CloudWeather;
                 float4 _SkyWeather;
             CBUFFER_END
@@ -231,20 +236,20 @@ Shader "VVardenfell/MwSkybox"
                 float3 zenithColor = lerp(skyColor * 0.82, skyColor * 1.16, dayAmount);
                 float3 sky = lerp(horizonColor, zenithColor, zenith);
 
-                float horizonBand = smoothstep(-0.22, -0.01, direction.y) * (1.0 - smoothstep(0.08, 0.44, direction.y));
+                float horizonBand = 1.0 - smoothstep(0.0, 0.42, abs(direction.y + 0.015));
                 float sunNearHorizon = smoothstep(-0.18, 0.08, sunDir.y) * (1.0 - smoothstep(0.20, 0.62, sunDir.y));
                 float2 sunPlanar = sunDir.xz * rsqrt(max(0.0001, dot(sunDir.xz, sunDir.xz)));
                 float2 viewPlanar = direction.xz * rsqrt(max(0.0001, dot(direction.xz, direction.xz)));
                 float horizonSunAlignment = pow(saturate(dot(sunPlanar, viewPlanar) * 0.5 + 0.5), 3.0);
-                float horizonGlow = horizonBand * sunNearHorizon * (0.32 + horizonSunAlignment * 0.68);
-                float daylightHorizon = horizonBand * dayAmount * smoothstep(0.02, 0.72, sunDir.y) * 0.28;
-                float3 clearHorizonColor = lerp(horizonColor, float3(0.78, 0.84, 0.92), dayAmount * 0.45);
-                float3 sunHorizonColor = max(_SunDiscColor.rgb, horizonColor) * 1.22;
-                sky = lerp(sky, clearHorizonColor, daylightHorizon);
-                sky = lerp(sky, sunHorizonColor, saturate(horizonGlow));
+                float horizonGlow = horizonBand * sunNearHorizon * (0.18 + horizonSunAlignment * 0.62);
+                float daylightHorizon = horizonBand * dayAmount * smoothstep(0.02, 0.72, sunDir.y) * 0.18;
+                float3 weatherHorizon = horizonColor * (1.0 + dayAmount * 0.10);
+                float3 sunTint = lerp(horizonColor, _SunDiscColor.rgb, 0.42) * (1.0 + sunNearHorizon * 0.12);
+                sky = lerp(sky, weatherHorizon, saturate(daylightHorizon));
+                sky = lerp(sky, lerp(sky, sunTint, 0.48), saturate(horizonGlow));
                 sky = lerp(sky, float3(1, 1, 1), lightning * 0.42);
 
-                float4 sun = SampleDisc(_SunTex, sampler_SunTex, direction, sunDir, 0.034) * sunOpacity;
+                float4 sun = SampleDisc(_SunTex, sampler_SunTex, direction, sunDir, 0.114) * sunOpacity;
                 float sunDot = max(0.0, dot(direction, sunDir));
                 float glare = pow(sunDot, 96.0) * sunGlare * sunOpacity * 0.38;
 
@@ -263,9 +268,10 @@ Shader "VVardenfell/MwSkybox"
                 float starOpacity = saturate(_SkyWeather.y);
                 float2 starUv = DirectionToLatLong(direction);
                 starUv.x += _SkyWeather.x / 360.0;
-                float starSeed = Hash(floor(starUv.xyx * float3(760.0, 420.0, 17.0)));
-                float star = smoothstep(0.9986, 1.0, starSeed) * smoothstep(0.02, 0.34, direction.y);
-                sky += star * starOpacity * 0.16;
+                float4 starSample = SAMPLE_TEXTURE2D(_StarTex, sampler_StarTex, starUv);
+                float starCoverage = max(starSample.a, dot(starSample.rgb, float3(0.299, 0.587, 0.114)) * _StarPresentation.y);
+                starCoverage *= smoothstep(0.02, 0.34, direction.y);
+                sky += starSample.rgb * starCoverage * starOpacity * _StarPresentation.x;
 
                 float3 masserDir = normalize(_MasserDirection.xyz);
                 float3 secundaDir = normalize(_SecundaDirection.xyz);

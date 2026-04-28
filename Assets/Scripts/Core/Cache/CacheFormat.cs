@@ -23,7 +23,7 @@ namespace VVardenfell.Core.Cache
         /// whether an existing cell file is still reusable.
         /// </summary>
         public const uint WorldBakePipelineVersion = 23;
-        public const uint GameplayContentVersion = 16;
+        public const uint GameplayContentVersion = 17;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized

@@ -11,6 +11,7 @@ using UnityEngine.Video;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 using VVardenfell.Runtime.UI.Shell;
@@ -73,7 +74,7 @@ namespace VVardenfell.Runtime.Bootstrap
             if (!VVardenfell.Core.Config.ConfigStorage.TryLoad(out _config) || _config == null)
                 _config = new VVardenfell.Core.Config.MorrowindConfig();
 
-            var cam = Camera.main;
+            Camera cam = MainCameraUtility.GetRequiredCamera();
             _menuOptionsView = new OptionsWindowView(
                 _menuRoot,
                 _theme,
@@ -100,8 +101,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 Gamma = v => Screen.brightness = v,
                 Resolution = (w, h, refresh) =>
                 {
-                    if (w <= 0 || h <= 0) return;
-                    Screen.SetResolution(w, h, Screen.fullScreenMode, refresh > 0 ? refresh : Screen.currentResolution.refreshRate);
+                    RuntimeScreenResolutionUtility.SetResolution(w, h, Screen.fullScreenMode, refresh);
                 },
                 WindowMode = mode => Screen.fullScreenMode = mode switch
                 {
@@ -160,11 +160,11 @@ namespace VVardenfell.Runtime.Bootstrap
             };
             if (_config.ResolutionWidth > 0 && _config.ResolutionHeight > 0)
             {
-                Screen.SetResolution(
+                RuntimeScreenResolutionUtility.SetResolution(
                     _config.ResolutionWidth,
                     _config.ResolutionHeight,
                     Screen.fullScreenMode,
-                    _config.RefreshRate > 0 ? _config.RefreshRate : Screen.currentResolution.refreshRate);
+                    _config.RefreshRate);
             }
         }
 

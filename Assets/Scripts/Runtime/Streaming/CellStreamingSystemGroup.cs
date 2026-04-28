@@ -8,7 +8,7 @@ namespace VVardenfell.Runtime.Streaming
     /// transform updates so camera/view LocalToWorld reads are stable for the frame.
     ///
     /// Ordering inside this group:
-    ///   1. <c>CameraCellTrackerSystem</c>  — reads Camera.main, writes StreamingConfig.
+    ///   1. <c>CameraCellTrackerSystem</c>  — reads the player view entity, writes StreamingConfig.
     ///   2. <c>CellScheduleSystem</c>       — Burst; produces LoadQueue + UnloadList.
     ///   3. <c>CellUnloadSystem</c>         — Burst; disables MMI for cells leaving view.
     ///   4. <c>CellLoadWorkerSystem</c>     — Burst; enables MMI for cells entering view.
