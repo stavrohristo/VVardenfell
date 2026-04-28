@@ -224,7 +224,7 @@ namespace VVardenfell.Runtime.Player
                 if (entry.Count <= 0 || !entry.Content.IsValid)
                     continue;
 
-                if (!InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+                if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                     continue;
 
                 if (metadata.Weight < 0f)

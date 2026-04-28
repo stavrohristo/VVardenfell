@@ -16,6 +16,7 @@ namespace VVardenfell.Runtime.Streaming
     public partial class LightPresentationSystem : SystemBase
     {
         const int MaxPresentedLights = 48;
+        const int MaxPresentedShadowCastingLights = 4;
 
         static readonly ProfilerMarker k_SyncLights = new("VV.Lighting.SyncPresentedLights");
         static readonly ProfilerMarker k_ReleaseLights = new("VV.Lighting.ReleasePresentedLights");
@@ -170,7 +171,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 var candidate = _candidates[i];
                 _selected.Add(candidate.Entity);
-                PresentLight(candidate);
+                PresentLight(candidate, i < MaxPresentedShadowCastingLights);
             }
 
             _releaseList.Clear();
@@ -191,7 +192,7 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        void PresentLight(in LightCandidate candidate)
+        void PresentLight(in LightCandidate candidate, bool castsShadow)
         {
             if (!_activeLights.TryGetValue(candidate.Entity, out var presented))
             {
@@ -210,6 +211,7 @@ namespace VVardenfell.Runtime.Streaming
                 1f);
             presented.Light.intensity = candidate.State.CurrentIntensity;
             presented.Light.range = candidate.State.CurrentRange;
+            presented.Light.shadows = castsShadow ? LightShadows.Hard : LightShadows.None;
         }
 
         PresentedLight AcquirePresentedLight()

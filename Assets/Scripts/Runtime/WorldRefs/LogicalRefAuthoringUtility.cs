@@ -92,6 +92,8 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ItemDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ItemPickupAuthoring { Definition = handle });
+                    if (RuntimeContentMetadataResolver.IsBook(def))
+                        ecb.AddComponent<BookTag>(logicalEntity);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
                 }
@@ -175,52 +177,85 @@ namespace VVardenfell.Runtime.Components
                 statSeed.Vitals,
                 statSeed.EffectModifiers,
                 inventoryWeight: 0f);
-            ecb.AddComponent(logicalEntity, new MorrowindMovementState
-            {
-                GroundNormal = math.up(),
-            });
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
 
             QueueActorCollider(ref ecb, logicalEntity);
 
-            var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
-            ecb.AddComponent(logicalEntity, new ActorAiState
+            if (ActorAiRuntimeAuthoringUtility.HasSupportedPackage(contentDb, actorHandle))
             {
-                HomePosition = worldPosition,
-                CurrentNodeIndex = -1,
-                GoalNodeIndex = -1,
-                RandomSeed = BuildActorAiSeed(actorHandle, worldPosition, exteriorCell, isInterior),
-                Status = (byte)ActorAiPlannerStatus.Idle,
-            });
-            ecb.AddComponent(logicalEntity, anchor);
-            var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
-            ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
-            if (packages.Length > 0)
-            {
-                ActorMovementAuthoringUtility.QueueEnsureMovableActor(
-                    ref ecb,
-                    logicalEntity,
-                    MorrowindActorMovementStats.BuildMovementSpeed(
-                        contentDb,
-                        actor.Kind,
-                        statSeed.Attributes,
-                        statSeed.Skills,
-                        statSeed.Vitals,
-                        statSeed.EffectModifiers,
-                        derivedMovement));
+                var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
+                ecb.AddComponent(logicalEntity, new ActorAiState
+                {
+                    HomePosition = worldPosition,
+                    CurrentNodeIndex = -1,
+                    GoalNodeIndex = -1,
+                    RandomSeed = BuildActorAiSeed(actorHandle, worldPosition, exteriorCell, isInterior),
+                    Status = (byte)ActorAiPlannerStatus.Idle,
+                });
+                ecb.AddComponent(logicalEntity, anchor);
+                var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
+                ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
+                if (packages.Length > 0)
+                {
+                    ActorMovementAuthoringUtility.QueueEnsureMovableActor(
+                        ref ecb,
+                        logicalEntity,
+                        MorrowindActorMovementStats.BuildMovementSpeed(
+                            contentDb,
+                            actor.Kind,
+                            statSeed.Attributes,
+                            statSeed.Skills,
+                            statSeed.Vitals,
+                            statSeed.EffectModifiers,
+                            derivedMovement));
+                }
             }
 
-            var inventory = ecb.AddBuffer<ActorInventoryItem>(logicalEntity);
-            var equipment = ecb.AddBuffer<ActorEquipmentSlot>(logicalEntity);
-            HydrateActorInventoryAndEquipment(contentDb, actorHandle, placedRefId, inventory, equipment);
+            QueueActorInventoryAndEquipment(ref ecb, logicalEntity, contentDb, actorHandle, placedRefId);
+        }
+
+        static void QueueActorInventoryAndEquipment(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            RuntimeContentDatabase contentDb,
+            ActorDefHandle actorHandle,
+            uint placedRefId)
+        {
+            var inventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
+            var equipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
+            try
+            {
+                HydrateActorInventoryAndEquipment(contentDb, actorHandle, placedRefId, ref inventory, ref equipment);
+
+                if (inventory.Length > 0)
+                {
+                    var inventoryBuffer = ecb.AddBuffer<ActorInventoryItem>(logicalEntity);
+                    for (int i = 0; i < inventory.Length; i++)
+                        inventoryBuffer.Add(inventory[i]);
+                }
+
+                if (equipment.Length > 0)
+                {
+                    var equipmentBuffer = ecb.AddBuffer<ActorEquipmentSlot>(logicalEntity);
+                    for (int i = 0; i < equipment.Length; i++)
+                        equipmentBuffer.Add(equipment[i]);
+                }
+            }
+            finally
+            {
+                if (equipment.IsCreated)
+                    equipment.Dispose();
+                if (inventory.IsCreated)
+                    inventory.Dispose();
+            }
         }
 
         static void HydrateActorInventoryAndEquipment(
             RuntimeContentDatabase contentDb,
             ActorDefHandle actorHandle,
             uint placedRefId,
-            DynamicBuffer<ActorInventoryItem> inventory,
-            DynamicBuffer<ActorEquipmentSlot> equipment)
+            ref NativeList<ActorInventoryItem> inventory,
+            ref NativeList<ActorEquipmentSlot> equipment)
         {
             if (contentDb == null || !actorHandle.IsValid)
                 return;
@@ -240,7 +275,6 @@ namespace VVardenfell.Runtime.Components
                 if (!TryResolveActorInventoryContent(contentDb, authored.ItemId, resolutionSeed, out var content) || !content.IsValid)
                     continue;
 
-                int inventoryIndex = inventory.Length;
                 inventory.Add(new ActorInventoryItem
                 {
                     Content = content,
@@ -252,7 +286,7 @@ namespace VVardenfell.Runtime.Components
                     continue;
             }
 
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, inventory, equipment);
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, inventory.AsArray(), equipment);
         }
 
         static bool TryResolveActorInventoryContent(

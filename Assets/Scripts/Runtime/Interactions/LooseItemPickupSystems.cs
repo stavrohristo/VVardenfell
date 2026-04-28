@@ -84,7 +84,9 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            string itemName = ResolveCarryableName(RuntimeContentDatabase.Active, content);
+            string itemName = RuntimeContentMetadataResolver.TryResolveCarryable(RuntimeContentDatabase.Active, content, out var metadata)
+                ? metadata.DisplayName
+                : "item";
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
             int stackCount = AddInventoryItem(inventory, content);
@@ -203,14 +205,6 @@ namespace VVardenfell.Runtime.Interactions
             InteractionEntityDestroyUtility.QueueDestroyLogicalRef(EntityManager, ref ecb, logicalEntity, ref logicalRefLookup);
             ecb.Playback(EntityManager);
             ecb.Dispose();
-        }
-
-        static string ResolveCarryableName(RuntimeContentDatabase contentDb, ContentReference content)
-        {
-            if (!InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, content, out var metadata))
-                return "item";
-
-            return metadata.DisplayName;
         }
 
         static FixedString128Bytes ToFixedString(string value)

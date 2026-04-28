@@ -20,6 +20,7 @@ namespace VVardenfell.Runtime.Animation
 
         EntityQuery _actorQuery;
         ComponentTypeHandle<ActorRenderVisible> _renderVisibleHandle;
+        ComponentTypeHandle<ActorShadowCasterVisible> _shadowCasterVisibleHandle;
         ComponentTypeHandle<ActorGpuAnimationState> _gpuStateHandle;
         ComponentTypeHandle<CPUAnimation> _cpuAnimationHandle;
         ComponentTypeHandle<GPUAnimation> _gpuAnimationHandle;
@@ -32,6 +33,7 @@ namespace VVardenfell.Runtime.Animation
                 All = new[]
                 {
                     ComponentType.ReadOnly<ActorRenderVisible>(),
+                    ComponentType.ReadOnly<ActorShadowCasterVisible>(),
                     ComponentType.ReadOnly<ActorGpuAnimationState>(),
                     ComponentType.ReadWrite<CPUAnimation>(),
                     ComponentType.ReadWrite<GPUAnimation>(),
@@ -41,6 +43,7 @@ namespace VVardenfell.Runtime.Animation
             });
 
             _renderVisibleHandle = state.GetComponentTypeHandle<ActorRenderVisible>(isReadOnly: true);
+            _shadowCasterVisibleHandle = state.GetComponentTypeHandle<ActorShadowCasterVisible>(isReadOnly: true);
             _gpuStateHandle = state.GetComponentTypeHandle<ActorGpuAnimationState>(isReadOnly: true);
             _cpuAnimationHandle = state.GetComponentTypeHandle<CPUAnimation>(isReadOnly: false);
             _gpuAnimationHandle = state.GetComponentTypeHandle<GPUAnimation>(isReadOnly: false);
@@ -64,6 +67,7 @@ namespace VVardenfell.Runtime.Animation
         public void OnUpdate(ref SystemState state)
         {
             _renderVisibleHandle.Update(ref state);
+            _shadowCasterVisibleHandle.Update(ref state);
             _gpuStateHandle.Update(ref state);
             _cpuAnimationHandle.Update(ref state);
             _gpuAnimationHandle.Update(ref state);
@@ -77,6 +81,7 @@ namespace VVardenfell.Runtime.Animation
                     SupportsComputeShaders = SystemInfo.supportsComputeShaders ? (byte)1 : (byte)0,
                     ValidationEnabled = SystemAPI.GetSingleton<ActorAnimationLodSettings>().ValidationEnabled,
                     RenderVisibleHandle = _renderVisibleHandle,
+                    ShadowCasterVisibleHandle = _shadowCasterVisibleHandle,
                     GpuStateHandle = _gpuStateHandle,
                     CpuAnimationHandle = _cpuAnimationHandle,
                     GpuAnimationHandle = _gpuAnimationHandle,
@@ -91,6 +96,7 @@ namespace VVardenfell.Runtime.Animation
             [ReadOnly] public byte SupportsComputeShaders;
             [ReadOnly] public byte ValidationEnabled;
             [ReadOnly] public ComponentTypeHandle<ActorRenderVisible> RenderVisibleHandle;
+            [ReadOnly] public ComponentTypeHandle<ActorShadowCasterVisible> ShadowCasterVisibleHandle;
             [ReadOnly] public ComponentTypeHandle<ActorGpuAnimationState> GpuStateHandle;
             public ComponentTypeHandle<CPUAnimation> CpuAnimationHandle;
             public ComponentTypeHandle<GPUAnimation> GpuAnimationHandle;
@@ -102,13 +108,15 @@ namespace VVardenfell.Runtime.Animation
                 var gpuStates = chunk.GetNativeArray(ref GpuStateHandle);
                 for (int i = 0; i < count; i++)
                 {
-                    bool visible = chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
+                    bool renderVisible = chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
+                    bool shadowVisible = chunk.IsComponentEnabled(ref ShadowCasterVisibleHandle, i);
+                    bool needsPose = renderVisible || shadowVisible;
                     var gpuState = gpuStates[i];
                     bool gpuStateReady = gpuState.LayerCount > 0
                                          && gpuState.BoneMatrixCount > 0
                                          && gpuState.BoneMatrixOffset >= 0;
-                    bool targetGpuEnabled = visible && SupportsComputeShaders != 0;
-                    bool targetCpuEnabled = visible && (!targetGpuEnabled || ValidationEnabled != 0 || !gpuStateReady);
+                    bool targetGpuEnabled = renderVisible && SupportsComputeShaders != 0;
+                    bool targetCpuEnabled = needsPose && (!targetGpuEnabled || ValidationEnabled != 0 || !gpuStateReady);
                     chunk.SetComponentEnabled(ref CpuAnimationHandle, i, targetCpuEnabled);
                     chunk.SetComponentEnabled(ref GpuAnimationHandle, i, targetGpuEnabled);
                     chunk.SetComponentEnabled(ref AttachmentAnimationHandle, i, false);

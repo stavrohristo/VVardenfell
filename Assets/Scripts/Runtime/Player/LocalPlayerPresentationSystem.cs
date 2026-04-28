@@ -7,6 +7,7 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -130,14 +131,42 @@ namespace VVardenfell.Runtime.Player
             ecb.AddComponent(visual, new Parent { Value = firstPerson ? view : player });
             ecb.AddComponent(visual, LocalTransform.Identity);
             ecb.AddComponent(visual, new LocalToWorld());
+            ecb.AddComponent(visual, ResolveInitialMovementState(player));
             ecb.AddComponent<ActorRenderVisible>(visual);
             ecb.SetComponentEnabled<ActorRenderVisible>(visual, visible);
+            ecb.AddComponent<ActorShadowCasterVisible>(visual);
+            ecb.SetComponentEnabled<ActorShadowCasterVisible>(visual, !firstPerson);
 
-            var actorInventory = ecb.AddBuffer<ActorInventoryItem>(visual);
-            var equipment = ecb.AddBuffer<ActorEquipmentSlot>(visual);
             ref readonly var actor = ref contentDb.Get(actorHandle);
-            HydratePlayerVisualEquipment(contentDb, actor, inventory, actorInventory, equipment);
+            var equipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
+            try
+            {
+                HydratePlayerVisualEquipment(contentDb, actor, inventory, ref equipment);
+                if (equipment.Length > 0)
+                {
+                    var equipmentBuffer = ecb.AddBuffer<ActorEquipmentSlot>(visual);
+                    for (int i = 0; i < equipment.Length; i++)
+                        equipmentBuffer.Add(equipment[i]);
+                }
+            }
+            finally
+            {
+                if (equipment.IsCreated)
+                    equipment.Dispose();
+            }
+
             return visual;
+        }
+
+        MorrowindMovementState ResolveInitialMovementState(Entity player)
+        {
+            if (EntityManager.HasComponent<MorrowindMovementState>(player))
+                return EntityManager.GetComponentData<MorrowindMovementState>(player);
+
+            return new MorrowindMovementState
+            {
+                GroundNormal = math.up(),
+            };
         }
 
         void CleanupOrphanVisuals()
@@ -164,12 +193,12 @@ namespace VVardenfell.Runtime.Player
             RuntimeContentDatabase contentDb,
             in ActorDef actor,
             DynamicBuffer<PlayerInventoryItem> playerInventory,
-            DynamicBuffer<ActorInventoryItem> actorInventory,
-            DynamicBuffer<ActorEquipmentSlot> equipment)
+            ref NativeList<ActorEquipmentSlot> equipment)
         {
             if (contentDb == null)
                 return;
 
+            using var actorInventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
             for (int i = 0; i < playerInventory.Length; i++)
             {
                 var item = playerInventory[i];
@@ -188,7 +217,7 @@ namespace VVardenfell.Runtime.Player
                     continue;
             }
 
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, actorInventory, equipment);
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, actorInventory.AsArray(), equipment);
         }
     }
 

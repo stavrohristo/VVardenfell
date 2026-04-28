@@ -468,8 +468,7 @@ namespace VVardenfell.Importer.Bake
 
 
         static bool IsMirroredNpcLeftHelper(string name)
-            => name.Equals("Left Clavicle", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Upper Arm", StringComparison.OrdinalIgnoreCase)
+            => name.Equals("Left Upper Arm", StringComparison.OrdinalIgnoreCase)
                || name.Equals("Left Forearm", StringComparison.OrdinalIgnoreCase)
                || name.Equals("Left Wrist", StringComparison.OrdinalIgnoreCase)
                || name.Equals("Left Upper Leg", StringComparison.OrdinalIgnoreCase)

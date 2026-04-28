@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Mathematics;
 using VVardenfell.Runtime.Pathfinding;
 
 namespace VVardenfell.Runtime.Movement
@@ -11,6 +12,10 @@ namespace VVardenfell.Runtime.Movement
             in MorrowindMovementSpeed speed)
         {
             ecb.AddComponent(actor, new MorrowindMovementInput());
+            ecb.AddComponent(actor, new MorrowindMovementState
+            {
+                GroundNormal = math.up(),
+            });
             ecb.AddComponent(actor, speed);
 
             ecb.AddComponent(actor, new PathGridTraversalState());

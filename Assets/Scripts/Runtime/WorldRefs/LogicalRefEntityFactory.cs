@@ -47,7 +47,6 @@ namespace VVardenfell.Runtime.WorldRefs
                 });
             }
 
-            ecb.AddComponent(logicalEntity, new LogicalRefContentRef { Value = descriptor.ContentReference });
             ecb.AddComponent(logicalEntity, new LogicalRefLocation
             {
                 ExteriorCell = descriptor.ExteriorCell,

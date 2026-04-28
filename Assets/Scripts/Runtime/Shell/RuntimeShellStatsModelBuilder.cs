@@ -10,28 +10,6 @@ namespace VVardenfell.Runtime.Shell
 {
     public partial class RuntimeHudShellPresentationSystem
     {
-        // Vanilla TES3 attribute order. Display names come from GMSTs (sStrength, sIntelligence, ...)
-        // in real MW - hardcoded here while the actor data pillar is pending so the Stats window
-        // matches the vanilla layout today. Replace with GMST lookup once localization lands.
-        static readonly string[] s_AttributeDisplayNames =
-        {
-            "Strength", "Intelligence", "Willpower", "Agility",
-            "Speed", "Endurance", "Personality", "Luck",
-        };
-
-        // Vanilla TES3 skill order (27 skills). Grouping into Major/Minor/Misc requires the
-        // player's class, which doesn't exist pre-character-creation. For now every skill sits
-        // in Misc so the window shows the full skill list the way vanilla would.
-        static readonly string[] s_SkillDisplayNames =
-        {
-            "Block", "Armorer", "Medium Armor", "Heavy Armor", "Blunt Weapon",
-            "Long Blade", "Axe", "Spear", "Athletics", "Enchant",
-            "Destruction", "Alteration", "Illusion", "Conjuration", "Mysticism",
-            "Restoration", "Alchemy", "Unarmored", "Security", "Sneak",
-            "Acrobatics", "Light Armor", "Short Blade", "Marksman",
-            "Mercantile", "Speechcraft", "Hand-to-hand",
-        };
-
         static StatsWindowViewModel BuildStatsModel(RuntimeContentDatabase contentDb, in StatsWindowState state, in PlayerPresentationStats playerStats)
         {
             var attributes = BuildAttributeRows(playerStats);
@@ -40,7 +18,7 @@ namespace VVardenfell.Runtime.Shell
             return new StatsWindowViewModel
             {
                 NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
-                CharacterName = playerStats.HasPlayer ? ToDisplay(playerStats.Identity.CharacterName, "Player") : "--",
+                CharacterName = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ToDisplay(playerStats.Identity.CharacterName, "Player") : "--",
                 HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f,
                 HealthText = playerStats.HasPlayer
                     ? $"{playerStats.Vitals.CurrentHealth:0}/{playerStats.Vitals.ModifiedHealthBase:0}"
@@ -54,28 +32,28 @@ namespace VVardenfell.Runtime.Shell
                     ? $"{playerStats.Vitals.CurrentFatigue:0}/{playerStats.Vitals.ModifiedFatigueBase:0}"
                     : "0/0",
                 LevelText = playerStats.HasPlayer ? Math.Max(1, playerStats.Identity.Level).ToString() : "--",
-                RaceText = playerStats.HasPlayer ? ResolveRaceDisplayName(contentDb, playerStats.Identity.RaceName) : "--",
-                ClassText = playerStats.HasPlayer ? ResolveClassDisplayName(contentDb, playerStats.Identity.ClassName) : "--",
+                RaceText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveRaceDisplayName(contentDb, playerStats.Identity.RaceName) : "--",
+                ClassText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveClassDisplayName(contentDb, playerStats.Identity.ClassName) : "--",
                 Attributes = attributes,
                 MajorSkills = majorSkills,
                 MinorSkills = minorSkills,
                 MiscSkills = miscSkills,
                 Factions = BuildFactionRows(contentDb, playerStats),
-                BirthSignName = playerStats.HasPlayer ? ToDisplay(playerStats.Identity.BirthSignName, string.Empty) : string.Empty,
+                BirthSignName = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ToDisplay(playerStats.Identity.BirthSignName, string.Empty) : string.Empty,
                 ReputationText = playerStats.HasPlayer ? playerStats.Identity.Reputation.ToString() : string.Empty,
             };
         }
 
         static StatsWindowAttributeRow[] BuildAttributeRows(in PlayerPresentationStats playerStats)
         {
-            var rows = new StatsWindowAttributeRow[s_AttributeDisplayNames.Length];
+            var rows = new StatsWindowAttributeRow[RuntimeContentMetadataResolver.AttributeCount];
             for (int i = 0; i < rows.Length; i++)
             {
-                string name = s_AttributeDisplayNames[i];
+                string name = RuntimeContentMetadataResolver.ResolveAttributeName(i);
                 rows[i] = new StatsWindowAttributeRow
                 {
                     Name = name,
-                    Value = ResolveAttributeValue(name, playerStats),
+                    Value = ResolveAttributeValue(i, playerStats),
                 };
             }
 
@@ -92,9 +70,9 @@ namespace VVardenfell.Runtime.Shell
             majorSkills = Array.Empty<StatsWindowSkillRow>();
             minorSkills = Array.Empty<StatsWindowSkillRow>();
 
-            var assigned = new bool[s_SkillDisplayNames.Length];
+            var assigned = new bool[RuntimeContentMetadataResolver.SkillCount];
             if (playerStats.HasPlayer
-                && TryResolveClass(contentDb, playerStats.Identity.ClassName, out var classDef))
+                && RuntimeContentMetadataResolver.TryResolveClass(contentDb, playerStats.Identity.ClassName, out var classDef))
             {
                 majorSkills = BuildSkillRows(classDef.MajorSkills, playerStats, assigned);
                 minorSkills = BuildSkillRows(classDef.MinorSkills, playerStats, assigned);
@@ -123,12 +101,12 @@ namespace VVardenfell.Runtime.Shell
             if (skillIndices == null || skillIndices.Length == 0)
                 return Array.Empty<StatsWindowSkillRow>();
 
-            var rows = new StatsWindowSkillRow[Math.Min(skillIndices.Length, s_SkillDisplayNames.Length)];
+            var rows = new StatsWindowSkillRow[Math.Min(skillIndices.Length, RuntimeContentMetadataResolver.SkillCount)];
             int write = 0;
             for (int i = 0; i < skillIndices.Length; i++)
             {
                 int skillIndex = skillIndices[i];
-                if (skillIndex < 0 || skillIndex >= s_SkillDisplayNames.Length || assigned[skillIndex])
+                if (skillIndex < 0 || skillIndex >= RuntimeContentMetadataResolver.SkillCount || assigned[skillIndex])
                     continue;
 
                 assigned[skillIndex] = true;
@@ -144,22 +122,12 @@ namespace VVardenfell.Runtime.Shell
 
         static StatsWindowSkillRow BuildSkillRow(int skillIndex, in PlayerPresentationStats playerStats)
         {
+            string name = RuntimeContentMetadataResolver.ResolveSkillName(skillIndex);
             return new StatsWindowSkillRow
             {
-                Name = skillIndex >= 0 && skillIndex < s_SkillDisplayNames.Length ? s_SkillDisplayNames[skillIndex] : "--",
+                Name = string.IsNullOrWhiteSpace(name) ? "--" : name,
                 Value = ResolveSkillValue(skillIndex, playerStats),
             };
-        }
-
-        static bool TryResolveClass(RuntimeContentDatabase contentDb, FixedString64Bytes classId, out ClassDef classDef)
-        {
-            classDef = default;
-            string id = classId.ToString();
-            if (contentDb == null || string.IsNullOrWhiteSpace(id) || !contentDb.TryGetClassHandle(id, out var handle) || !handle.IsValid)
-                return false;
-
-            classDef = contentDb.GetClass(handle);
-            return true;
         }
 
         static StatsWindowFactionRow[] BuildFactionRows(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats)
@@ -188,37 +156,28 @@ namespace VVardenfell.Runtime.Shell
             {
                 new StatsWindowFactionRow
                 {
-                    Name = string.IsNullOrWhiteSpace(faction.Name) ? actor.FactionId : faction.Name.Trim(),
-                    Rank = ResolveFactionRankName(faction, actor.Rank),
+                    Name = RuntimeContentMetadataResolver.ResolveFactionDisplayName(faction, actor.FactionId),
+                    Rank = RuntimeContentMetadataResolver.ResolveFactionRankName(faction, actor.Rank),
                 },
             };
         }
 
-        static string ResolveFactionRankName(in FactionDef faction, int rank)
-        {
-            var rankNames = faction.RankNames ?? Array.Empty<string>();
-            if (rank >= 0 && rank < rankNames.Length && !string.IsNullOrWhiteSpace(rankNames[rank]))
-                return rankNames[rank].Trim();
-
-            return rank >= 0 ? rank.ToString() : "--";
-        }
-
-        static string ResolveAttributeValue(string name, in PlayerPresentationStats playerStats)
+        static string ResolveAttributeValue(int attributeIndex, in PlayerPresentationStats playerStats)
         {
             if (!playerStats.HasPlayer)
                 return "--";
 
             var attributes = playerStats.Attributes;
-            return name switch
+            return attributeIndex switch
             {
-                "Strength" => attributes.Strength.ToString("0"),
-                "Intelligence" => attributes.Intelligence.ToString("0"),
-                "Willpower" => attributes.Willpower.ToString("0"),
-                "Agility" => attributes.Agility.ToString("0"),
-                "Speed" => attributes.Speed.ToString("0"),
-                "Endurance" => attributes.Endurance.ToString("0"),
-                "Personality" => attributes.Personality.ToString("0"),
-                "Luck" => attributes.Luck.ToString("0"),
+                0 => attributes.Strength.ToString("0"),
+                1 => attributes.Intelligence.ToString("0"),
+                2 => attributes.Willpower.ToString("0"),
+                3 => attributes.Agility.ToString("0"),
+                4 => attributes.Speed.ToString("0"),
+                5 => attributes.Endurance.ToString("0"),
+                6 => attributes.Personality.ToString("0"),
+                7 => attributes.Luck.ToString("0"),
                 _ => "--",
             };
         }
@@ -262,43 +221,6 @@ namespace VVardenfell.Runtime.Shell
             };
         }
 
-        static string ResolveClassDisplayName(RuntimeContentDatabase contentDb, FixedString64Bytes classId)
-        {
-            string id = classId.ToString();
-            if (!string.IsNullOrWhiteSpace(id)
-                && contentDb != null
-                && contentDb.TryGetClassHandle(id, out var handle)
-                && handle.IsValid)
-            {
-                ref readonly var classDef = ref contentDb.GetClass(handle);
-                if (!string.IsNullOrWhiteSpace(classDef.Name))
-                    return classDef.Name.Trim();
-            }
-
-            return ToDisplay(classId, "--");
-        }
-
-        static string ResolveRaceDisplayName(RuntimeContentDatabase contentDb, FixedString64Bytes raceId)
-        {
-            string id = raceId.ToString();
-            if (!string.IsNullOrWhiteSpace(id)
-                && contentDb != null
-                && contentDb.TryGetRaceHandle(id, out var handle)
-                && handle.IsValid)
-            {
-                ref readonly var raceDef = ref contentDb.GetRace(handle);
-                if (!string.IsNullOrWhiteSpace(raceDef.Name))
-                    return raceDef.Name.Trim();
-            }
-
-            return ToDisplay(raceId, "--");
-        }
-
-        static string ToDisplay(FixedString64Bytes value, string fallback)
-        {
-            string text = value.ToString();
-            return string.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
-        }
     }
 }
 

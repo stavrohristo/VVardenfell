@@ -9,48 +9,11 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    public readonly struct CarryableMetadata
-    {
-        public readonly ContentReferenceKind Kind;
-        public readonly uint RecordTag;
-        public readonly string DisplayName;
-        public readonly string IconPath;
-        public readonly float Weight;
-        public readonly int Value;
-        public readonly bool HasMagicCategory;
-
-        public CarryableMetadata(
-            ContentReferenceKind kind,
-            uint recordTag,
-            string displayName,
-            string iconPath,
-            float weight,
-            int value,
-            bool hasMagicCategory)
-        {
-            Kind = kind;
-            RecordTag = recordTag;
-            DisplayName = displayName;
-            IconPath = iconPath;
-            Weight = weight;
-            Value = value;
-            HasMagicCategory = hasMagicCategory;
-        }
-    }
-
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class InventoryWindowStateSystem : SystemBase
     {
-        static readonly uint WeapTag = MakeTag('W', 'E', 'A', 'P');
-        static readonly uint ArmoTag = MakeTag('A', 'R', 'M', 'O');
-        static readonly uint ClotTag = MakeTag('C', 'L', 'O', 'T');
-        static readonly uint BookTag = MakeTag('B', 'O', 'O', 'K');
-        static readonly uint AlchTag = MakeTag('A', 'L', 'C', 'H');
-        static readonly uint AppaTag = MakeTag('A', 'P', 'P', 'A');
-        static readonly uint IngrTag = MakeTag('I', 'N', 'G', 'R');
-
         protected override void OnCreate()
         {
             RequireForUpdate<RuntimeShellState>();
@@ -139,10 +102,10 @@ namespace VVardenfell.Runtime.Inventory
             if (contentDb == null || !entry.Content.IsValid)
                 return false;
 
-            if (!TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                 return false;
 
-            if (!MatchesCategory(metadata, (InventoryWindowCategory)state.ActiveCategory))
+            if (!RuntimeContentMetadataResolver.MatchesCategory(metadata, (InventoryWindowCategory)state.ActiveCategory))
                 return false;
 
             string filter = state.FilterText.ToString();
@@ -152,120 +115,16 @@ namespace VVardenfell.Runtime.Inventory
             return metadata.DisplayName.IndexOf(filter.Trim(), StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        public static bool TryResolveCarryableMetadata(
-            RuntimeContentDatabase contentDb,
-            ContentReference content,
-            out CarryableMetadata metadata)
-        {
-            metadata = default;
-            if (contentDb == null || !content.IsValid)
-                return false;
-
-            switch (content.Kind)
-            {
-                case ContentReferenceKind.Item:
-                {
-                    var handle = new ItemDefHandle { Value = content.HandleValue };
-                    if (!handle.IsValid)
-                        return false;
-
-                    ref readonly var item = ref contentDb.Get(handle);
-                    metadata = new CarryableMetadata(
-                        ContentReferenceKind.Item,
-                        item.RecordTag,
-                        ResolveDisplayName(item),
-                        item.Icon ?? string.Empty,
-                        item.Float0 > 0f ? item.Float0 : -1f,
-                        item.Int0 > 0 ? item.Int0 : -1,
-                        HasMagicCategory(item));
-                    return true;
-                }
-                case ContentReferenceKind.Light:
-                {
-                    var handle = new LightDefHandle { Value = content.HandleValue };
-                    if (!handle.IsValid)
-                        return false;
-
-                    ref readonly var light = ref contentDb.Get(handle);
-                    metadata = new CarryableMetadata(
-                        ContentReferenceKind.Light,
-                        light.RecordTag,
-                        ResolveDisplayName(light),
-                        light.Icon ?? string.Empty,
-                        light.Weight > 0f ? light.Weight : -1f,
-                        light.Value > 0 ? light.Value : -1,
-                        false);
-                    return true;
-                }
-                default:
-                    return false;
-            }
-        }
-
-        static bool MatchesCategory(in CarryableMetadata metadata, InventoryWindowCategory category)
-        {
-            if (metadata.Kind == ContentReferenceKind.Light)
-                return category == InventoryWindowCategory.All || category == InventoryWindowCategory.Misc;
-
-            return category switch
-            {
-                InventoryWindowCategory.All => true,
-                InventoryWindowCategory.Weapons => metadata.RecordTag == WeapTag,
-                InventoryWindowCategory.Apparel => metadata.RecordTag == ArmoTag || metadata.RecordTag == ClotTag,
-                InventoryWindowCategory.Magic => metadata.HasMagicCategory,
-                InventoryWindowCategory.Misc => metadata.RecordTag != WeapTag
-                    && metadata.RecordTag != ArmoTag
-                    && metadata.RecordTag != ClotTag
-                    && !metadata.HasMagicCategory,
-                _ => true,
-            };
-        }
-
-        static bool HasMagicCategory(in BaseDef item)
-        {
-            return item.RecordTag == AlchTag
-                || item.RecordTag == AppaTag
-                || item.RecordTag == IngrTag
-                || item.RecordTag == BookTag
-                || !string.IsNullOrWhiteSpace(item.EnchantId);
-        }
-
         static string BuildSelectedItemDetails(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, int selectedIndex)
         {
             if (contentDb == null || selectedIndex < 0 || selectedIndex >= inventory.Length)
                 return "Select an item to inspect.";
 
             var entry = inventory[selectedIndex];
-            if (!TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                 return "Select an item to inspect.";
 
-            return BuildCarryableDetails(metadata, entry.Count);
-        }
-
-        public static string BuildCarryableDetails(in CarryableMetadata metadata, int count)
-        {
-            string countLabel = count > 1 ? $" x{count}" : string.Empty;
-            string weightLabel = metadata.Weight >= 0f ? (metadata.Weight * count).ToString("0.0") : "--";
-            string valueLabel = metadata.Value >= 0 ? (metadata.Value * count).ToString() : "--";
-            return $"{metadata.DisplayName}{countLabel}   wt {weightLabel}   val {valueLabel}";
-        }
-
-        public static string ResolveDisplayName(in BaseDef item)
-        {
-            if (!string.IsNullOrWhiteSpace(item.Name))
-                return item.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(item.Id))
-                return item.Id.Trim();
-            return "Unknown item";
-        }
-
-        public static string ResolveDisplayName(in LightDef light)
-        {
-            if (!string.IsNullOrWhiteSpace(light.Name))
-                return light.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(light.Id))
-                return light.Id.Trim();
-            return "Unknown light";
+            return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, entry.Count);
         }
 
         static InventoryWindowCategory ClampCategory(InventoryWindowCategory category)
@@ -301,7 +160,5 @@ namespace VVardenfell.Runtime.Inventory
             return new FixedString512Bytes(value);
         }
 
-        static uint MakeTag(char a, char b, char c, char d)
-            => (uint)a | ((uint)b << 8) | ((uint)c << 16) | ((uint)d << 24);
     }
 }

@@ -89,10 +89,10 @@ namespace VVardenfell.Runtime.Inventory
             if (entry.PlacedRefId != placedRefId || entry.Count <= 0 || contentDb == null)
                 return "Container is empty.";
 
-            if (!InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                 return "Container is empty.";
 
-            return InventoryWindowStateSystem.BuildCarryableDetails(metadata, Math.Max(1, entry.Count));
+            return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, Math.Max(1, entry.Count));
         }
 
         static float Clamp01(float value)

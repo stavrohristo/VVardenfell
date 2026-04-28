@@ -63,6 +63,19 @@ namespace VVardenfell.Runtime.AI
 
     public static class ActorAiRuntimeAuthoringUtility
     {
+        public static bool HasSupportedPackage(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        {
+            var packages = contentDb.GetActorAiPackages(actorHandle);
+            for (int i = 0; i < packages.Length; i++)
+            {
+                var package = packages[i];
+                if (package.Type == ActorAiPackageType.Travel || package.Type == ActorAiPackageType.Wander)
+                    return true;
+            }
+
+            return false;
+        }
+
         public static void HydratePackages(
             RuntimeContentDatabase contentDb,
             ActorDefHandle actorHandle,

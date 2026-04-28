@@ -24,14 +24,18 @@ namespace VVardenfell.Runtime.Rendering
         static readonly ProfilerMarker k_BuildBatches = new("VV.ActorProcedural.Upload.BuildBatches");
         static readonly ProfilerMarker k_UploadFrame = new("VV.ActorProcedural.Upload.FrameBuffers");
 
-        EntityQuery _uploadQuery;
+        EntityQuery _forwardUploadQuery;
+        EntityQuery _shadowUploadQuery;
 
         protected override void OnCreate()
         {
             RequireForUpdate<ActorAnimationBlobCatalog>();
             RequireForUpdate<ActorSkinMesh>();
-            _uploadQuery = SystemAPI.QueryBuilder()
+            _forwardUploadQuery = SystemAPI.QueryBuilder()
                 .WithAll<ActorRenderVisible, LocalToWorld, ActorBone, ActorSkinMesh>()
+                .Build();
+            _shadowUploadQuery = SystemAPI.QueryBuilder()
+                .WithAll<ActorShadowCasterVisible, LocalToWorld, ActorBone, ActorSkinMesh>()
                 .Build();
         }
 
@@ -43,27 +47,40 @@ namespace VVardenfell.Runtime.Rendering
 
             Dependency.Complete();
 
-            int entityCount = _uploadQuery.CalculateEntityCount();
+            var resources = WorldResources.ActorProceduralRenderer;
+            if (resources == null)
+            {
+                resources = new ActorProceduralRenderResources();
+                WorldResources.ActorProceduralRenderer = resources;
+            }
+
+            ref var catalog = ref catalogRef.Value;
+            using (k_EnsureStaticResources.Auto())
+            {
+                resources.EnsureStaticResources(ref catalog);
+            }
+
+            resources.BeginFrame();
+            BuildRenderSet(catalogRef, resources, _forwardUploadQuery, ActorProceduralRenderSet.Forward);
+            BuildRenderSet(catalogRef, resources, _shadowUploadQuery, ActorProceduralRenderSet.Shadow);
+
+            using (k_UploadFrame.Auto())
+            {
+                resources.UploadFrame();
+            }
+        }
+
+        void BuildRenderSet(
+            BlobAssetReference<ActorAnimationCatalogBlob> catalogRef,
+            ActorProceduralRenderResources resources,
+            EntityQuery query,
+            ActorProceduralRenderSet set)
+        {
+            int entityCount = query.CalculateEntityCount();
             if (entityCount <= 0)
             {
-                var emptyResources = WorldResources.ActorProceduralRenderer;
-                if (emptyResources == null)
-                {
-                    emptyResources = new ActorProceduralRenderResources();
-                    WorldResources.ActorProceduralRenderer = emptyResources;
-                }
-
-                ref var emptyCatalog = ref catalogRef.Value;
-                using (k_EnsureStaticResources.Auto())
-                {
-                    emptyResources.EnsureStaticResources(ref emptyCatalog);
-                }
-
-                emptyResources.BeginFrame();
-                using (k_UploadFrame.Auto())
-                {
-                    emptyResources.UploadFrame();
-                }
+                resources.PrepareFrameData(set, 0, 0);
+                resources.FinalizeBatchCount(set, 0);
                 return;
             }
 
@@ -73,13 +90,6 @@ namespace VVardenfell.Runtime.Rendering
             using var totalCounts = new NativeReference<int2>(Allocator.TempJob);
 
             JobHandle countHandle;
-            var resources = WorldResources.ActorProceduralRenderer;
-            if (resources == null)
-            {
-                resources = new ActorProceduralRenderResources();
-                WorldResources.ActorProceduralRenderer = resources;
-            }
-
             using (k_EstimateCounts.Auto())
             {
                 countHandle = new CountActorProceduralWorkJob
@@ -87,13 +97,7 @@ namespace VVardenfell.Runtime.Rendering
                     Catalog = catalogRef,
                     DrawCounts = drawCounts,
                     BoneCounts = boneCounts,
-                }.ScheduleParallel(_uploadQuery, default);
-            }
-
-            ref var catalog = ref catalogRef.Value;
-            using (k_EnsureStaticResources.Auto())
-            {
-                resources.EnsureStaticResources(ref catalog);
+                }.ScheduleParallel(query, default);
             }
 
             using (k_EstimateCounts.Auto())
@@ -108,9 +112,18 @@ namespace VVardenfell.Runtime.Rendering
                 offsetsHandle.Complete();
             }
 
-            resources.BeginFrame();
             int2 totals = totalCounts.Value;
-            resources.PrepareFrameData(totals.x, totals.y);
+            resources.PrepareFrameData(set, totals.x, totals.y);
+
+            NativeArray<ActorProceduralMatrixGpu> boneMatrices = set == ActorProceduralRenderSet.Shadow
+                ? resources.ShadowBoneMatrices.AsArray()
+                : resources.BoneMatrices.AsArray();
+            NativeArray<ActorProceduralDrawGpu> draws = set == ActorProceduralRenderSet.Shadow
+                ? resources.ShadowDraws.AsArray()
+                : resources.Draws.AsArray();
+            NativeArray<ActorProceduralDrawBatch> batchScratch = set == ActorProceduralRenderSet.Shadow
+                ? resources.ShadowBatchScratch
+                : resources.BatchScratch;
 
             using (k_SchedulePackJob.Auto())
             {
@@ -122,8 +135,8 @@ namespace VVardenfell.Runtime.Rendering
                     InvalidBatchTypeId = resources.InvalidBatchTypeId,
                     PackedDraws = resources.PackedDraws,
                     PackedBatchTypeIds = resources.PackedBatchTypeIds,
-                    BoneMatrices = resources.BoneMatrices.AsArray(),
-                }.ScheduleParallel(_uploadQuery, Dependency);
+                    BoneMatrices = boneMatrices,
+                }.ScheduleParallel(query, Dependency);
             }
 
             using (k_CompletePackJob.Auto())
@@ -144,19 +157,14 @@ namespace VVardenfell.Runtime.Rendering
                         BatchTypeCounts = resources.BatchTypeCounts,
                         BatchTypeOffsets = resources.BatchTypeOffsets,
                         BatchTypeWriteHeads = resources.BatchTypeWriteHeads,
-                        Draws = resources.Draws.AsArray(),
-                        BatchScratch = resources.BatchScratch,
+                        Draws = draws,
+                        BatchScratch = batchScratch,
                         BatchCount = batchCount,
                     }.Schedule();
                     buildHandle.Complete();
                 }
             }
-            resources.FinalizeBatchCount(batchCount[0]);
-
-            using (k_UploadFrame.Auto())
-            {
-                resources.UploadFrame();
-            }
+            resources.FinalizeBatchCount(set, batchCount[0]);
         }
 
         protected override void OnDestroy()

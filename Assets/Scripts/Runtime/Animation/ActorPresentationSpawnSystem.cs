@@ -89,14 +89,22 @@ namespace VVardenfell.Runtime.Animation
                 });
                 ecb.AddComponent(entity, new ActorAnimationState
                 {
-                    ClipIndex = -1,
-                    Speed = 1f,
-                    LoopCount = uint.MaxValue,
+                    Playback = new ActorAnimationPlaybackState
+                    {
+                        ClipIndex = -1,
+                        Speed = 1f,
+                        LoopCount = uint.MaxValue,
+                    },
                 });
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);
                     ecb.SetComponentEnabled<ActorRenderVisible>(entity, true);
+                }
+                if (!EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
+                {
+                    ecb.AddComponent<ActorShadowCasterVisible>(entity);
+                    ecb.SetComponentEnabled<ActorShadowCasterVisible>(entity, true);
                 }
                 var boneBuffer = ecb.AddBuffer<ActorBone>(entity);
                 PopulateBoneBuffer(boneBuffer, ref catalog, skeletonIndex);

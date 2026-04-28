@@ -52,7 +52,11 @@ Shader "VVardenfell/MwRef"
 
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
-            #pragma multi_compile _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
+            #pragma multi_compile _ _LIGHT_LAYERS
+            #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile_fog
             #pragma shader_feature_local _ALPHATEST_ON
             #pragma shader_feature_local _SURFACE_TYPE_TRANSPARENT
@@ -63,6 +67,7 @@ Shader "VVardenfell/MwRef"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Assets/Scripts/Runtime/Rendering/MwLightingCommon.hlsl"
 
             TEXTURE2D_ARRAY(_BaseArray); SAMPLER(sampler_BaseArray);
 
@@ -148,22 +153,8 @@ Shader "VVardenfell/MwRef"
                 // Per-pixel shadow coord — cascade selection is distance-based, so
                 // baking it per-vertex produces ring seams on large refs (same issue
                 // as MwTerrain.shader, same fix).
-                float3 N = normalize(IN.normalWS);
-                float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
-                Light mainLight = GetMainLight(shadowCoord);
-                float ndotl = saturate(dot(N, mainLight.direction));
-                half3 lit = albedo.rgb * (mainLight.color * ndotl * mainLight.shadowAttenuation + SampleSH(N));
-
-                #if defined(_ADDITIONAL_LIGHTS)
-                uint additionalLightCount = GetAdditionalLightsCount();
-                for (uint lightIndex = 0u; lightIndex < additionalLightCount; lightIndex++)
-                {
-                    Light additionalLight = GetAdditionalLight(lightIndex, IN.positionWS);
-                    float addNdotL = saturate(dot(N, additionalLight.direction));
-                    lit += albedo.rgb * additionalLight.color * addNdotL
-                        * (additionalLight.distanceAttenuation * additionalLight.shadowAttenuation);
-                }
-                #endif
+                half3 N = normalize(IN.normalWS);
+                half3 lit = albedo.rgb * MwEvaluateDiffuseLighting(IN.positionWS, IN.positionCS, N);
 
                 lit = MixFog(lit, IN.fogFactor);
 

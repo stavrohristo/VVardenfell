@@ -4,6 +4,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Books
@@ -36,9 +37,9 @@ namespace VVardenfell.Runtime.Books
 
             Entity target = activation.TargetEntity;
             if (!EntityManager.Exists(target)
-                || !EntityManager.HasComponent<BookReadable>(target)
+                || !EntityManager.HasComponent<BookTag>(target)
                 || !LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, target, out ContentReference content)
-                || !BookRuntimeUtility.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
+                || !RuntimeContentMetadataResolver.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
             {
                 return;
             }
@@ -108,7 +109,7 @@ namespace VVardenfell.Runtime.Books
                 return;
 
             ContentReference content = inventory[inventoryIndex].Content;
-            if (!BookRuntimeUtility.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
+            if (!RuntimeContentMetadataResolver.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
             {
                 Debug.LogWarning("[VVardenfell][Books] inventory read request targeted a non-book item.");
                 return;

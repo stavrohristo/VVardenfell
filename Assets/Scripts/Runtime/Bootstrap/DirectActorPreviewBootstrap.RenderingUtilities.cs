@@ -211,7 +211,6 @@ namespace VVardenfell.Runtime.Bootstrap
             if (skeletonNodes == null)
                 return;
 
-            ApplyMirrorScale(skeletonNodes, "Left Clavicle");
             ApplyMirrorScale(skeletonNodes, "Left Upper Arm");
             ApplyMirrorScale(skeletonNodes, "Left Forearm");
             ApplyMirrorScale(skeletonNodes, "Left Wrist");

@@ -39,7 +39,7 @@ namespace VVardenfell.Runtime.Shell
             {
                 var entry = inventory[i];
                 int count = Math.Max(1, entry.Count);
-                if (InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+                if (RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                 {
                     if (metadata.Weight >= 0f)
                     {
@@ -52,7 +52,13 @@ namespace VVardenfell.Runtime.Shell
                     continue;
 
                 visibleCount++;
-                entries.Add(BuildEntryViewModel(contentDb, entry, i, i == state.SelectedInventoryIndex));
+                entries.Add(RuntimeShellCarryableEntryBuilder.Build(
+                    contentDb,
+                    entry.Content,
+                    entry.Count,
+                    i,
+                    i == state.SelectedInventoryIndex,
+                    ResolveEquippedState(entry, i)));
             }
 
             viewModel.WeightLabel = hasWeightData && playerStats.HasPlayer
@@ -67,57 +73,14 @@ namespace VVardenfell.Runtime.Shell
             return viewModel;
         }
 
-        static InventoryWindowEntryViewModel BuildEntryViewModel(RuntimeContentDatabase contentDb, PlayerInventoryItem entry, int inventoryIndex, bool selected)
-        {
-            string name = "Unknown item";
-            string iconPath = string.Empty;
-            string weightText = "--";
-            string valueText = "--";
-
-            if (InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
-            {
-                name = metadata.DisplayName;
-                iconPath = metadata.IconPath ?? string.Empty;
-                if (metadata.Weight >= 0f)
-                    weightText = metadata.Weight.ToString("0.0");
-                if (metadata.Value >= 0)
-                    valueText = metadata.Value.ToString();
-            }
-
-            // Equipped gating hook. When the equipment system lands, swap this
-            // for a query against ActorEquipmentSlots (or similar) that asks
-            // "is PlayerInventoryItem[inventoryIndex] currently equipped in
-            // any slot?". The inventory grid reads this flag and renders the
-            // gold MW_Box filigree border only around equipped tiles,
-            // matching vanilla MW. Until equipment lands, every item
-            // reports false and the grid renders borderless.
-            bool equipped = ResolveEquippedState(entry, inventoryIndex);
-
-            return new InventoryWindowEntryViewModel
-            {
-                InventoryIndex = inventoryIndex,
-                Name = name,
-                IconPath = iconPath,
-                CountText = Math.Max(1, entry.Count).ToString(),
-                WeightText = weightText,
-                ValueText = valueText,
-                SecondaryLeftText = $"wt {weightText}",
-                SecondaryRightText = $"val {valueText}",
-                EquippedText = equipped ? "Equipped" : string.Empty,
-                Selected = selected,
-                Equipped = equipped,
-            };
-        }
-
         /// <summary>
-        /// Placeholder stub for the inventory→equipment lookup. The equipment
+        /// Placeholder stub for the inventory-to-equipment lookup. The equipment
         /// system is not online yet; this always returns false so the
         /// inventory renders borderless today. Replace the body with a real
         /// slot query (weapon / cuirass / helmet / gauntlets / etc.) once
         /// ActorEquipmentSlots (or whatever the eventual component is named)
-        /// exists. The caller is in BuildEntryViewModel which has access to
-        /// PlayerPresentationStats through the outer BuildInventoryModel
-        /// scope if slot lookup needs it.
+        /// exists. The caller is in BuildInventoryModel, which has access to
+        /// PlayerPresentationStats if slot lookup needs it.
         /// </summary>
         static bool ResolveEquippedState(PlayerInventoryItem entry, int inventoryIndex)
         {
@@ -147,7 +110,12 @@ namespace VVardenfell.Runtime.Shell
                 if (entry.PlacedRefId != state.OpenPlacedRefId || entry.Count <= 0)
                     continue;
 
-                entries.Add(BuildContainerEntryViewModel(contentDb, entry, i, i == state.SelectedItemIndex));
+                entries.Add(RuntimeShellCarryableEntryBuilder.Build(
+                    contentDb,
+                    entry.Content,
+                    entry.Count,
+                    i,
+                    i == state.SelectedItemIndex));
             }
 
             viewModel.CanTakeSelected = state.SelectedItemIndex >= 0 && state.SelectedItemIndex < items.Length
@@ -159,37 +127,6 @@ namespace VVardenfell.Runtime.Shell
             return viewModel;
         }
 
-        static InventoryWindowEntryViewModel BuildContainerEntryViewModel(RuntimeContentDatabase contentDb, ContainerSessionItem entry, int itemIndex, bool selected)
-        {
-            string name = "Unknown item";
-            string iconPath = string.Empty;
-            string weightText = "--";
-            string valueText = "--";
-
-            if (InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
-            {
-                name = metadata.DisplayName;
-                iconPath = metadata.IconPath ?? string.Empty;
-                if (metadata.Weight >= 0f)
-                    weightText = metadata.Weight.ToString("0.0");
-                if (metadata.Value >= 0)
-                    valueText = metadata.Value.ToString();
-            }
-
-            return new InventoryWindowEntryViewModel
-            {
-                InventoryIndex = itemIndex,
-                Name = name,
-                IconPath = iconPath,
-                CountText = Math.Max(1, entry.Count).ToString(),
-                WeightText = weightText,
-                ValueText = valueText,
-                SecondaryLeftText = $"wt {weightText}",
-                SecondaryRightText = $"val {valueText}",
-                EquippedText = string.Empty,
-                Selected = selected,
-            };
-        }
     }
 }
 

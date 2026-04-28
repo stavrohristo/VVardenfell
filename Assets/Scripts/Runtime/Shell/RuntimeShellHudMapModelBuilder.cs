@@ -72,7 +72,7 @@ namespace VVardenfell.Runtime.Shell
             if (entry.Count <= 0 || !entry.Content.IsValid)
                 return string.Empty;
 
-            if (!InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
                 return string.Empty;
 
             return metadata.DisplayName ?? string.Empty;
@@ -113,7 +113,7 @@ namespace VVardenfell.Runtime.Shell
                 if (available > 0)
                 {
                     var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex];
-                    iconPath = ResolveMagicEffectIconPath(contentDb, effect.EffectId);
+                    iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId);
                 }
             }
 

@@ -118,3 +118,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Active: 1
   _renderPassEvent: 300
+  _enableMainLightActorShadows: 1
+  _enableAdditionalPointLightActorShadows: 1
+  _maxAdditionalPointShadowLights: 4

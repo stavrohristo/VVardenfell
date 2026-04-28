@@ -133,8 +133,9 @@ namespace VVardenfell.Runtime.Animation
             in MorrowindMovementState movementState,
             ref ActorAnimationState animation)
         {
-            if (animation.Speed < 0f)
-                animation.Speed = 0f;
+            ref var playback = ref animation.Playback;
+            if (playback.Speed < 0f)
+                playback.Speed = 0f;
 
             float2 localMove = movementState.LocalMove;
             bool moving = math.lengthsq(localMove) > 0.0001f;
@@ -165,63 +166,28 @@ namespace VVardenfell.Runtime.Animation
 
         static void StartIfNeeded(ref ActorAnimationState animation, ActorAnimationGroupBlob group, uint requestedLoopCount)
         {
-            if (animation.Playing != 0 && animation.GroupHash == group.GroupHash && animation.ClipHash == group.ClipHash)
+            if (ActorAnimationPlaybackUtility.Matches(animation.Playback, group.GroupHash, group.ClipHash))
                 return;
 
-            animation.GroupHash = group.GroupHash;
-            animation.ClipHash = group.ClipHash;
-            animation.ClipIndex = group.ClipIndex;
-            animation.PreviousTime = group.StartTime;
-            animation.Time = group.StartTime;
-            animation.StartTime = group.StartTime;
-            animation.LoopStartTime = group.LoopStartTime;
-            animation.LoopStopTime = group.LoopStopTime;
-            animation.StopTime = group.StopTime;
-            animation.LoopCount = group.Looping != 0 ? requestedLoopCount : 0u;
-            animation.Playing = 1;
+            ActorAnimationPlaybackUtility.Start(ref animation.Playback, group, requestedLoopCount);
             animation.Initialized = 1;
         }
 
         static void Clear(ref ActorAnimationState animation)
         {
-            if (animation.Playing == 0 && animation.ClipIndex < 0 && animation.GroupHash == 0UL && animation.ClipHash == 0UL)
+            if (animation.Playback.Playing == 0
+                && animation.Playback.ClipIndex < 0
+                && animation.Playback.GroupHash == 0UL
+                && animation.Playback.ClipHash == 0UL)
                 return;
 
-            animation.Playing = 0;
-            animation.ClipIndex = -1;
-            animation.GroupHash = 0UL;
-            animation.ClipHash = 0UL;
-            animation.PreviousTime = 0f;
-            animation.Time = 0f;
-            animation.StartTime = 0f;
-            animation.LoopStartTime = 0f;
-            animation.LoopStopTime = 0f;
-            animation.StopTime = 0f;
-            animation.LoopCount = 0u;
+            ActorAnimationPlaybackUtility.Clear(ref animation.Playback);
             animation.Initialized = 1;
         }
 
         static void Advance(ref ActorAnimationState animation, float deltaTime)
         {
-            if (animation.Playing == 0 || animation.ClipIndex < 0)
-                return;
-
-            float speed = animation.Speed <= 0f ? 1f : animation.Speed;
-            animation.PreviousTime = animation.Time;
-            float nextTime = animation.Time + deltaTime * speed;
-            bool canLoop = animation.LoopCount > 0 && animation.LoopStopTime > animation.LoopStartTime;
-            if (canLoop && nextTime >= animation.LoopStopTime)
-            {
-                if (animation.LoopCount != InfiniteLoops)
-                    animation.LoopCount--;
-                float duration = animation.LoopStopTime - animation.LoopStartTime;
-                animation.Time = animation.LoopStartTime + math.fmod(nextTime - animation.LoopStartTime, duration);
-                return;
-            }
-
-            animation.Time = nextTime >= animation.StopTime ? animation.StopTime : nextTime;
-            if (animation.Time >= animation.StopTime)
-                animation.Playing = 0;
+            ActorAnimationPlaybackUtility.Advance(ref animation.Playback, deltaTime, InfiniteLoops);
         }
 
         static void AdvanceOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays, float deltaTime)
@@ -229,27 +195,10 @@ namespace VVardenfell.Runtime.Animation
             for (int i = 0; i < overlays.Length; i++)
             {
                 var overlay = overlays[i];
-                if (overlay.Playing == 0 || overlay.ClipIndex < 0)
+                if (!ActorAnimationPlaybackUtility.IsActive(overlay.Playback))
                     continue;
 
-                float speed = overlay.Speed <= 0f ? 1f : overlay.Speed;
-                overlay.PreviousTime = overlay.Time;
-                float nextTime = overlay.Time + deltaTime * speed;
-                bool canLoop = overlay.LoopCount > 0 && overlay.LoopStopTime > overlay.LoopStartTime;
-                if (canLoop && nextTime >= overlay.LoopStopTime)
-                {
-                    if (overlay.LoopCount != InfiniteLoops)
-                        overlay.LoopCount--;
-                    float duration = overlay.LoopStopTime - overlay.LoopStartTime;
-                    overlay.Time = overlay.LoopStartTime + math.fmod(nextTime - overlay.LoopStartTime, duration);
-                }
-                else
-                {
-                    overlay.Time = nextTime >= overlay.StopTime ? overlay.StopTime : nextTime;
-                    if (overlay.Time >= overlay.StopTime)
-                        overlay.Playing = 0;
-                }
-
+                ActorAnimationPlaybackUtility.Advance(ref overlay.Playback, deltaTime, InfiniteLoops);
                 overlays[i] = overlay;
             }
         }

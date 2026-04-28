@@ -15,153 +15,6 @@ namespace VVardenfell.Runtime.Shell
         const int MagicEffectFlagTargetAttribute = 0x2;
         const int MagicEffectFlagNoMagnitude = 0x8;
 
-        static readonly (string Gmst, string Fallback)[] s_MagicEffectNames =
-        {
-            ("sEffectWaterBreathing", "Water Breathing"),
-            ("sEffectSwiftSwim", "Swift Swim"),
-            ("sEffectWaterWalking", "Water Walking"),
-            ("sEffectShield", "Shield"),
-            ("sEffectFireShield", "Fire Shield"),
-            ("sEffectLightningShield", "Lightning Shield"),
-            ("sEffectFrostShield", "Frost Shield"),
-            ("sEffectBurden", "Burden"),
-            ("sEffectFeather", "Feather"),
-            ("sEffectJump", "Jump"),
-            ("sEffectLevitate", "Levitate"),
-            ("sEffectSlowFall", "SlowFall"),
-            ("sEffectLock", "Lock"),
-            ("sEffectOpen", "Open"),
-            ("sEffectFireDamage", "Fire Damage"),
-            ("sEffectShockDamage", "Shock Damage"),
-            ("sEffectFrostDamage", "Frost Damage"),
-            ("sEffectDrainAttribute", "Drain Attribute"),
-            ("sEffectDrainHealth", "Drain Health"),
-            ("sEffectDrainSpellpoints", "Drain Magicka"),
-            ("sEffectDrainFatigue", "Drain Fatigue"),
-            ("sEffectDrainSkill", "Drain Skill"),
-            ("sEffectDamageAttribute", "Damage Attribute"),
-            ("sEffectDamageHealth", "Damage Health"),
-            ("sEffectDamageMagicka", "Damage Magicka"),
-            ("sEffectDamageFatigue", "Damage Fatigue"),
-            ("sEffectDamageSkill", "Damage Skill"),
-            ("sEffectPoison", "Poison"),
-            ("sEffectWeaknessToFire", "Weakness to Fire"),
-            ("sEffectWeaknessToFrost", "Weakness to Frost"),
-            ("sEffectWeaknessToShock", "Weakness to Shock"),
-            ("sEffectWeaknessToMagicka", "Weakness to Magicka"),
-            ("sEffectWeaknessToCommonDisease", "Weakness to Common Disease"),
-            ("sEffectWeaknessToBlightDisease", "Weakness to Blight Disease"),
-            ("sEffectWeaknessToCorprusDisease", "Weakness to Corprus Disease"),
-            ("sEffectWeaknessToPoison", "Weakness to Poison"),
-            ("sEffectWeaknessToNormalWeapons", "Weakness to Normal Weapons"),
-            ("sEffectDisintegrateWeapon", "Disintegrate Weapon"),
-            ("sEffectDisintegrateArmor", "Disintegrate Armor"),
-            ("sEffectInvisibility", "Invisibility"),
-            ("sEffectChameleon", "Chameleon"),
-            ("sEffectLight", "Light"),
-            ("sEffectSanctuary", "Sanctuary"),
-            ("sEffectNightEye", "Night Eye"),
-            ("sEffectCharm", "Charm"),
-            ("sEffectParalyze", "Paralyze"),
-            ("sEffectSilence", "Silence"),
-            ("sEffectBlind", "Blind"),
-            ("sEffectSound", "Sound"),
-            ("sEffectCalmHumanoid", "Calm Humanoid"),
-            ("sEffectCalmCreature", "Calm Creature"),
-            ("sEffectFrenzyHumanoid", "Frenzy Humanoid"),
-            ("sEffectFrenzyCreature", "Frenzy Creature"),
-            ("sEffectDemoralizeHumanoid", "Demoralize Humanoid"),
-            ("sEffectDemoralizeCreature", "Demoralize Creature"),
-            ("sEffectRallyHumanoid", "Rally Humanoid"),
-            ("sEffectRallyCreature", "Rally Creature"),
-            ("sEffectDispel", "Dispel"),
-            ("sEffectSoultrap", "Soultrap"),
-            ("sEffectTelekinesis", "Telekinesis"),
-            ("sEffectMark", "Mark"),
-            ("sEffectRecall", "Recall"),
-            ("sEffectDivineIntervention", "Divine Intervention"),
-            ("sEffectAlmsiviIntervention", "Almsivi Intervention"),
-            ("sEffectDetectAnimal", "Detect Animal"),
-            ("sEffectDetectEnchantment", "Detect Enchantment"),
-            ("sEffectDetectKey", "Detect Key"),
-            ("sEffectSpellAbsorption", "Spell Absorption"),
-            ("sEffectReflect", "Reflect"),
-            ("sEffectCureCommonDisease", "Cure Common Disease"),
-            ("sEffectCureBlightDisease", "Cure Blight Disease"),
-            ("sEffectCureCorprusDisease", "Cure Corprus Disease"),
-            ("sEffectCurePoison", "Cure Poison"),
-            ("sEffectCureParalyzation", "Cure Paralyzation"),
-            ("sEffectRestoreAttribute", "Restore Attribute"),
-            ("sEffectRestoreHealth", "Restore Health"),
-            ("sEffectRestoreSpellPoints", "Restore Magicka"),
-            ("sEffectRestoreFatigue", "Restore Fatigue"),
-            ("sEffectRestoreSkill", "Restore Skill"),
-            ("sEffectFortifyAttribute", "Fortify Attribute"),
-            ("sEffectFortifyHealth", "Fortify Health"),
-            ("sEffectFortifySpellpoints", "Fortify Magicka"),
-            ("sEffectFortifyFatigue", "Fortify Fatigue"),
-            ("sEffectFortifySkill", "Fortify Skill"),
-            ("sEffectFortifyMagickaMultiplier", "Fortify Maximum Magicka"),
-            ("sEffectAbsorbAttribute", "Absorb Attribute"),
-            ("sEffectAbsorbHealth", "Absorb Health"),
-            ("sEffectAbsorbSpellPoints", "Absorb Magicka"),
-            ("sEffectAbsorbFatigue", "Absorb Fatigue"),
-            ("sEffectAbsorbSkill", "Absorb Skill"),
-            ("sEffectResistFire", "Resist Fire"),
-            ("sEffectResistFrost", "Resist Frost"),
-            ("sEffectResistShock", "Resist Shock"),
-            ("sEffectResistMagicka", "Resist Magicka"),
-            ("sEffectResistCommonDisease", "Resist Common Disease"),
-            ("sEffectResistBlightDisease", "Resist Blight Disease"),
-            ("sEffectResistCorprusDisease", "Resist Corprus Disease"),
-            ("sEffectResistPoison", "Resist Poison"),
-            ("sEffectResistNormalWeapons", "Resist Normal Weapons"),
-            ("sEffectResistParalysis", "Resist Paralysis"),
-            ("sEffectRemoveCurse", "Remove Curse"),
-            ("sEffectTurnUndead", "Turn Undead"),
-            ("sEffectSummonScamp", "Summon Scamp"),
-            ("sEffectSummonClannfear", "Summon Clannfear"),
-            ("sEffectSummonDaedroth", "Summon Daedroth"),
-            ("sEffectSummonDremora", "Summon Dremora"),
-            ("sEffectSummonAncestralGhost", "Summon Ancestral Ghost"),
-            ("sEffectSummonSkeletalMinion", "Summon Skeletal Minion"),
-            ("sEffectSummonLeastBonewalker", "Summon Bonewalker"),
-            ("sEffectSummonGreaterBonewalker", "Summon Greater Bonewalker"),
-            ("sEffectSummonBonelord", "Summon Bonelord"),
-            ("sEffectSummonWingedTwilight", "Summon Winged Twilight"),
-            ("sEffectSummonHunger", "Summon Hunger"),
-            ("sEffectSummonGoldensaint", "Summon Golden Saint"),
-            ("sEffectSummonFlameAtronach", "Summon Flame Atronach"),
-            ("sEffectSummonFrostAtronach", "Summon Frost Atronach"),
-            ("sEffectSummonStormAtronach", "Summon Storm Atronach"),
-            ("sEffectFortifyAttackBonus", "Fortify Attack"),
-            ("sEffectCommandCreatures", "Command Creature"),
-            ("sEffectCommandHumanoids", "Command Humanoid"),
-            ("sEffectBoundDagger", "Bound Dagger"),
-            ("sEffectBoundLongsword", "Bound Longsword"),
-            ("sEffectBoundMace", "Bound Mace"),
-            ("sEffectBoundBattleAxe", "Bound Battle Axe"),
-            ("sEffectBoundSpear", "Bound Spear"),
-            ("sEffectBoundLongbow", "Bound Longbow"),
-            ("sEffectExtraSpell", "EXTRA SPELL"),
-            ("sEffectBoundCuirass", "Bound Cuirass"),
-            ("sEffectBoundHelm", "Bound Helm"),
-            ("sEffectBoundBoots", "Bound Boots"),
-            ("sEffectBoundShield", "Bound Shield"),
-            ("sEffectBoundGloves", "Bound Gloves"),
-            ("sEffectCorpus", "Corprus"),
-            ("sEffectVampirism", "Vampirism"),
-            ("sEffectSummonCenturionSphere", "Summon Centurion Sphere"),
-            ("sEffectSunDamage", "Sun Damage"),
-            ("sEffectStuntedMagicka", "Stunted Magicka"),
-            ("sEffectSummonFabricant", "Summon Fabricant"),
-            ("sEffectSummonCreature01", "Call Wolf"),
-            ("sEffectSummonCreature02", "Call Bear"),
-            ("sEffectSummonCreature03", "Summon Bonewolf"),
-            ("sEffectSummonCreature04", "sEffectSummonCreature04"),
-            ("sEffectSummonCreature05", "sEffectSummonCreature05"),
-        };
-
         SpellWindowViewModel BuildSpellModel(RuntimeContentDatabase contentDb, in SpellWindowState state, in PlayerPresentationStats playerStats)
         {
             int spellCount = contentDb?.SpellCount ?? 0;
@@ -197,9 +50,9 @@ namespace VVardenfell.Runtime.Shell
                 entries.Add(new SpellWindowEntryViewModel
                 {
                     SpellIndex = i,
-                    Name = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim(),
+                    Name = RuntimeContentMetadataResolver.ResolveSpellName(spell),
                     CostText = spell.Cost.ToString(),
-                    TypeText = ResolveSpellTypeName(spell.SpellType),
+                    TypeText = RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType),
                     EffectTooltipText = BuildSpellEffectTooltip(contentDb, spell),
                     SpellTooltip = BuildSpellTooltip(contentDb, spell),
                     Selected = i == selectedIndex,
@@ -217,7 +70,7 @@ namespace VVardenfell.Runtime.Shell
                 if (spellHandle.IsValid && spellHandle.Index >= 0 && spellHandle.Index < contentDb.Data.Spells.Length)
                 {
                     ref readonly var spell = ref contentDb.Get(spellHandle);
-                    model.EffectSummaryText = $"{ResolveSpellName(spell)}   Cost {spell.Cost}   {ResolveSpellTypeName(spell.SpellType)}";
+                    model.EffectSummaryText = $"{RuntimeContentMetadataResolver.ResolveSpellName(spell)}   Cost {spell.Cost}   {RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType)}";
                     model.Effects = BuildSpellEffectRows(contentDb, spell);
                 }
             }
@@ -236,7 +89,7 @@ namespace VVardenfell.Runtime.Shell
             if (!string.IsNullOrWhiteSpace(spell.Id) && spell.Id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
 
-            return ResolveSpellTypeName(spell.SpellType).IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+            return RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType).IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static SpellWindowEffectRow[] BuildSpellEffectRows(RuntimeContentDatabase contentDb, in SpellDef spell)
@@ -253,9 +106,9 @@ namespace VVardenfell.Runtime.Shell
                 rows[i] = new SpellWindowEffectRow
                 {
                     EffectId = effect.EffectId,
-                    Name = ResolveMagicEffectName(contentDb, effect.EffectId),
+                    Name = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effect.EffectId),
                     DetailText = BuildEffectDetail(contentDb, effect),
-                    IconPath = ResolveMagicEffectIconPath(contentDb, effect.EffectId),
+                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId),
                 };
             }
 
@@ -314,9 +167,9 @@ namespace VVardenfell.Runtime.Shell
             {
                 short effectId = ordered[i];
                 var group = groups[effectId];
-                string displayName = ResolveMagicEffectName(contentDb, effectId);
+                string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effectId);
                 var descriptionLines = group.BuildDescriptionLines(displayName);
-                string iconPath = ResolveMagicEffectIconPath(contentDb, effectId);
+                string iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effectId);
                 result[i] = new RuntimeMagicEffectIconViewModel
                 {
                     EffectId = effectId,
@@ -375,42 +228,9 @@ namespace VVardenfell.Runtime.Shell
                 => CollapseRedundantDescriptionLines(_sourceLines, displayName);
         }
 
-        static string ResolveSpellName(in SpellDef spell)
-            => string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? "--" : spell.Name.Trim();
-
-        static string ResolveSpellTypeName(int type)
-        {
-            return type switch
-            {
-                0 => "Spell",
-                1 => "Ability",
-                2 => "Blight",
-                3 => "Disease",
-                4 => "Curse",
-                5 => "Power",
-                _ => "Spell",
-            };
-        }
-
-        static string ResolveMagicEffectName(RuntimeContentDatabase contentDb, short effectId)
-        {
-            if (effectId >= 0 && effectId < s_MagicEffectNames.Length)
-            {
-                var name = s_MagicEffectNames[effectId];
-                if (contentDb != null
-                    && !string.IsNullOrWhiteSpace(name.Gmst)
-                    && contentDb.TryGetGameSettingString(name.Gmst, out string gmstName))
-                    return gmstName.Trim();
-                if (!string.IsNullOrWhiteSpace(name.Fallback))
-                    return name.Fallback;
-            }
-
-            return $"Effect {effectId}";
-        }
-
         static RuntimeSpellTooltipViewModel BuildSpellTooltip(RuntimeContentDatabase contentDb, in SpellDef spell)
         {
-            string title = ResolveSpellName(spell);
+            string title = RuntimeContentMetadataResolver.ResolveSpellName(spell);
             var effects = BuildSpellTooltipEffects(contentDb, spell);
             return new RuntimeSpellTooltipViewModel
             {
@@ -434,7 +254,7 @@ namespace VVardenfell.Runtime.Shell
                 rows[i] = new RuntimeSpellTooltipEffectRow
                 {
                     EffectId = effect.EffectId,
-                    IconPath = ResolveMagicEffectIconPath(contentDb, effect.EffectId),
+                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId),
                     Text = BuildSpellTooltipEffectText(contentDb, effect),
                 };
             }
@@ -459,20 +279,9 @@ namespace VVardenfell.Runtime.Shell
                 school = def.School;
             }
 
-            string schoolName = ResolveSchoolName(contentDb, school);
-            string schoolLabel = ResolveGameSettingString(contentDb, "sSchool", "School");
+            string schoolName = RuntimeContentMetadataResolver.ResolveSchoolName(contentDb, school);
+            string schoolLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sSchool", "School");
             return string.IsNullOrWhiteSpace(schoolName) ? null : $"{schoolLabel}: {schoolName}";
-        }
-
-        static string ResolveMagicEffectIconPath(RuntimeContentDatabase contentDb, short effectId)
-        {
-            if (contentDb != null && contentDb.TryGetMagicEffectHandle(effectId, out var handle))
-            {
-                ref readonly var def = ref contentDb.Get(handle);
-                return def.Icon ?? string.Empty;
-            }
-
-            return string.Empty;
         }
 
         static string BuildEffectDetail(RuntimeContentDatabase contentDb, in MagicEffectInstanceDef effect)
@@ -498,7 +307,7 @@ namespace VVardenfell.Runtime.Shell
 
         static string BuildSpellTooltipEffectText(RuntimeContentDatabase contentDb, in MagicEffectInstanceDef effect)
         {
-            string name = ResolveMagicEffectName(contentDb, effect.EffectId);
+            string name = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effect.EffectId);
             string argument = ResolveEffectArgumentName(effect);
             if (!string.IsNullOrWhiteSpace(argument))
                 name = $"{name} {argument}";
@@ -524,100 +333,13 @@ namespace VVardenfell.Runtime.Shell
             return string.Join("\n", lines);
         }
 
-        static string ResolveSchoolName(RuntimeContentDatabase contentDb, int school)
-        {
-            string gmstId = school switch
-            {
-                0 => "sSkillAlteration",
-                1 => "sSkillConjuration",
-                2 => "sSkillDestruction",
-                3 => "sSkillIllusion",
-                4 => "sSkillMysticism",
-                5 => "sSkillRestoration",
-                _ => null,
-            };
-            if (!string.IsNullOrWhiteSpace(gmstId)
-                && contentDb != null
-                && contentDb.TryGetGameSettingString(gmstId, out string gmstName))
-            {
-                return gmstName.Trim();
-            }
-
-            return school switch
-            {
-                0 => "Alteration",
-                1 => "Conjuration",
-                2 => "Destruction",
-                3 => "Illusion",
-                4 => "Mysticism",
-                5 => "Restoration",
-                _ => string.Empty,
-            };
-        }
-
-        static string ResolveGameSettingString(RuntimeContentDatabase contentDb, string id, string fallback)
-            => contentDb != null && contentDb.TryGetGameSettingString(id, out string value)
-                ? value.Trim()
-                : fallback;
-
         static string ResolveEffectArgumentName(in MagicEffectInstanceDef effect)
         {
             if (effect.Attribute >= 0)
-                return ResolveAttributeName(effect.Attribute);
+                return RuntimeContentMetadataResolver.ResolveAttributeName(effect.Attribute);
             if (effect.Skill >= 0)
-                return ResolveSkillName(effect.Skill);
+                return RuntimeContentMetadataResolver.ResolveSkillName(effect.Skill);
             return string.Empty;
-        }
-
-        static string ResolveAttributeName(int attribute)
-        {
-            return attribute switch
-            {
-                0 => "Strength",
-                1 => "Intelligence",
-                2 => "Willpower",
-                3 => "Agility",
-                4 => "Speed",
-                5 => "Endurance",
-                6 => "Personality",
-                7 => "Luck",
-                _ => string.Empty,
-            };
-        }
-
-        static string ResolveSkillName(int skill)
-        {
-            return skill switch
-            {
-                0 => "Block",
-                1 => "Armorer",
-                2 => "Medium Armor",
-                3 => "Heavy Armor",
-                4 => "Blunt Weapon",
-                5 => "Long Blade",
-                6 => "Axe",
-                7 => "Spear",
-                8 => "Athletics",
-                9 => "Enchant",
-                10 => "Destruction",
-                11 => "Alteration",
-                12 => "Illusion",
-                13 => "Conjuration",
-                14 => "Mysticism",
-                15 => "Restoration",
-                16 => "Alchemy",
-                17 => "Unarmored",
-                18 => "Security",
-                19 => "Sneak",
-                20 => "Acrobatics",
-                21 => "Light Armor",
-                22 => "Short Blade",
-                23 => "Marksman",
-                24 => "Mercantile",
-                25 => "Speechcraft",
-                26 => "Hand-to-hand",
-                _ => string.Empty,
-            };
         }
 
         static string Pluralize(int value, string singular, string plural)
@@ -629,25 +351,25 @@ namespace VVardenfell.Runtime.Shell
             in ActorActiveMagicEffect active,
             string source)
         {
-            string displayName = ResolveMagicEffectName(contentDb, effectId);
+            string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effectId);
             string line = string.IsNullOrWhiteSpace(source)
                 ? displayName
                 : source.Trim();
             string sourceLabel = line;
             string detail = string.Empty;
 
-            if (TryGetMagicEffectDef(contentDb, effectId, out var def))
+            if (RuntimeContentMetadataResolver.TryGetMagicEffectDef(contentDb, effectId, out var def))
             {
                 if ((def.Flags & MagicEffectFlagTargetSkill) != 0 && active.Skill >= 0)
                 {
-                    string skillName = ResolveSkillName(active.Skill);
+                    string skillName = RuntimeContentMetadataResolver.ResolveSkillName(active.Skill);
                     if (!string.IsNullOrWhiteSpace(skillName))
                         line += $" ({skillName})";
                 }
 
                 if ((def.Flags & MagicEffectFlagTargetAttribute) != 0 && active.Attribute >= 0)
                 {
-                    string attributeName = ResolveAttributeName(active.Attribute);
+                    string attributeName = RuntimeContentMetadataResolver.ResolveAttributeName(active.Attribute);
                     if (!string.IsNullOrWhiteSpace(attributeName))
                         line += $" ({attributeName})";
                 }
@@ -657,7 +379,7 @@ namespace VVardenfell.Runtime.Shell
             }
             else if (Math.Abs(active.Magnitude) > 0.0001f)
             {
-                detail = $"{(int)active.Magnitude} {ResolveGameSettingString(contentDb, Math.Abs((int)active.Magnitude) == 1 ? "sPoint" : "sPoints", "pts")}";
+                detail = $"{(int)active.Magnitude} {RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs((int)active.Magnitude) == 1 ? "sPoint" : "sPoints", "pts")}";
             }
 
             if (active.DurationSeconds >= 0f && active.TimeLeftSeconds >= 0f)
@@ -715,7 +437,7 @@ namespace VVardenfell.Runtime.Shell
             int integerMagnitude = (int)magnitude;
             if (displayType == ActiveEffectMagnitudeDisplayType.TimesInt)
             {
-                string unit = ResolveGameSettingString(contentDb, "sXTimesINT", "x INT");
+                string unit = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sXTimesINT", "x INT");
                 return $" {(integerMagnitude / 10f):0.0}{unit}";
             }
 
@@ -725,10 +447,10 @@ namespace VVardenfell.Runtime.Shell
 
             result += displayType switch
             {
-                ActiveEffectMagnitudeDisplayType.Feet => ResolveGameSettingString(contentDb, "sFeet", "ft"),
-                ActiveEffectMagnitudeDisplayType.Level => ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sLevel" : "sLevels", "levels"),
-                ActiveEffectMagnitudeDisplayType.Percentage => ResolveGameSettingString(contentDb, "sPercent", "%"),
-                _ => ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sPoint" : "sPoints", "pts"),
+                ActiveEffectMagnitudeDisplayType.Feet => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sFeet", "ft"),
+                ActiveEffectMagnitudeDisplayType.Level => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sLevel" : "sLevels", "levels"),
+                ActiveEffectMagnitudeDisplayType.Percentage => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sPercent", "%"),
+                _ => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sPoint" : "sPoints", "pts"),
             };
 
             return result;
@@ -737,20 +459,8 @@ namespace VVardenfell.Runtime.Shell
         static string BuildActiveEffectDuration(RuntimeContentDatabase contentDb, float timeLeftSeconds)
         {
             int seconds = Math.Max(0, (int)Math.Ceiling(timeLeftSeconds));
-            string durationLabel = ResolveGameSettingString(contentDb, "sDuration", "Duration");
+            string durationLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sDuration", "Duration");
             return $" {durationLabel}: {seconds}";
-        }
-
-        static bool TryGetMagicEffectDef(RuntimeContentDatabase contentDb, short effectId, out MagicEffectDef def)
-        {
-            if (contentDb != null && contentDb.TryGetMagicEffectHandle(effectId, out var handle))
-            {
-                def = contentDb.Get(handle);
-                return true;
-            }
-
-            def = default;
-            return false;
         }
 
         enum ActiveEffectMagnitudeDisplayType

@@ -76,6 +76,9 @@ namespace VVardenfell.Runtime.Streaming
         public static PathGridNavigationWorld PathGridNavigation;
         public static ActorProceduralRenderResources ActorProceduralRenderer;
         public static ActorGpuAnimationResources ActorGpuAnimation;
+        public static float ActorShadowCasterDistance = 64f;
+        public static float ActorShadowCasterPadding = 8f;
+        public static int MaxActorShadowCasters = 128;
 
         /// <summary>
         /// Per-mesh local AABB, indexed by MeshIndex. Built once at bootstrap from
@@ -258,6 +261,9 @@ namespace VVardenfell.Runtime.Streaming
             ActorProceduralRenderer = null;
             ActorGpuAnimation?.Dispose();
             ActorGpuAnimation = null;
+            ActorShadowCasterDistance = 64f;
+            ActorShadowCasterPadding = 8f;
+            MaxActorShadowCasters = 128;
             FallbackBucketSlice = default;
             BlendVariantCount = 0;
             // TerrainFallbackMat / TerrainTemplate are registry-owned assets in editor —

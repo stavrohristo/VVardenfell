@@ -38,7 +38,11 @@ Shader "VVardenfell/MwTerrain"
             #pragma target 4.5
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
-            #pragma multi_compile _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
+            #pragma multi_compile _ _LIGHT_LAYERS
+            #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile_fog
             // Entities.Graphics / BatchRendererGroup demands this variant to hoist UnityPerMaterial
             // into the per-instance buffer. Without it the BRG refuses to draw and logs a warning.
@@ -49,6 +53,7 @@ Shader "VVardenfell/MwTerrain"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Assets/Scripts/Runtime/Rendering/MwLightingCommon.hlsl"
 
             TEXTURE2D_ARRAY(_LayerArray);        SAMPLER(sampler_LayerArray);
             TEXTURE2D(_Splat);                   // point-sampled via Load(); no SamplerState needed
@@ -153,22 +158,8 @@ Shader "VVardenfell/MwTerrain"
                 // coord per-pixel from positionWS so cascade selection is per-pixel
                 // — interpolating a vert-selected cascade across huge terrain tris
                 // caused ring artifacts at cascade split boundaries.
-                float3 N = normalize(IN.normalWS);
-                float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
-                Light mainLight = GetMainLight(shadowCoord);
-                float ndotl = saturate(dot(N, mainLight.direction));
-                float3 lit = albedo * (mainLight.color * ndotl * mainLight.shadowAttenuation + SampleSH(N));
-
-                #if defined(_ADDITIONAL_LIGHTS)
-                uint additionalLightCount = GetAdditionalLightsCount();
-                for (uint lightIndex = 0u; lightIndex < additionalLightCount; lightIndex++)
-                {
-                    Light additionalLight = GetAdditionalLight(lightIndex, IN.positionWS);
-                    float addNdotL = saturate(dot(N, additionalLight.direction));
-                    lit += albedo * additionalLight.color * addNdotL
-                        * (additionalLight.distanceAttenuation * additionalLight.shadowAttenuation);
-                }
-                #endif
+                half3 N = normalize(IN.normalWS);
+                float3 lit = albedo * MwEvaluateDiffuseLighting(IN.positionWS, IN.positionCS, N);
 
                 lit = MixFog(lit, IN.fogFactor);
 

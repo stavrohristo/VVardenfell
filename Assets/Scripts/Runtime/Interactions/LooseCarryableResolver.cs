@@ -81,7 +81,7 @@ namespace VVardenfell.Runtime.Interactions
         {
             metadata = default;
             return TryResolveContent(contentDb, entityManager, logicalEntity, out ContentReference content)
-                && InventoryWindowStateSystem.TryResolveCarryableMetadata(contentDb, content, out metadata);
+                && RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, content, out metadata);
         }
 
         public static string ResolveDisplayName(

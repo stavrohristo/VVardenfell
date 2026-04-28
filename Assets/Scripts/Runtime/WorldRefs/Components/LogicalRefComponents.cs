@@ -20,11 +20,6 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
-    public struct LogicalRefContentRef : IComponentData
-    {
-        public ContentReference Value;
-    }
-
     public struct LogicalRefLocation : IComponentData
     {
         public int2 ExteriorCell;

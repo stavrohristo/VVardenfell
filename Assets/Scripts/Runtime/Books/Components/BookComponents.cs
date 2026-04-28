@@ -19,12 +19,8 @@ namespace VVardenfell.Runtime.Components
         Scroll = 2,
     }
 
-    public struct BookReadable : IComponentData
+    public struct BookTag : IComponentData
     {
-        public ItemDefHandle Definition;
-        public byte IsScroll;
-        public int SkillId;
-        public int EnchantPoints;
     }
 
     public struct BookReadRequest : IComponentData

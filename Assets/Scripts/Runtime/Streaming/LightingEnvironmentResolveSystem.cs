@@ -25,13 +25,16 @@ namespace VVardenfell.Runtime.Streaming
 
         EntityQuery _environmentQuery;
         EntityQuery _streamingQuery;
+        EntityQuery _dayCycleQuery;
 
         protected override void OnCreate()
         {
             _environmentQuery = GetEntityQuery(ComponentType.ReadWrite<ActiveEnvironmentState>());
             _streamingQuery = GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>());
+            _dayCycleQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindDayCycleState>());
             RequireForUpdate(_environmentQuery);
             RequireForUpdate(_streamingQuery);
+            RequireForUpdate(_dayCycleQuery);
         }
 
         protected override void OnUpdate()
@@ -41,6 +44,7 @@ namespace VVardenfell.Runtime.Streaming
             ref var environment = ref _environmentQuery.GetSingletonRW<ActiveEnvironmentState>().ValueRW;
             var contentDb = RuntimeContentDatabase.Active;
             var streaming = _streamingQuery.GetSingleton<StreamingConfig>();
+            var dayCycle = _dayCycleQuery.GetSingleton<MorrowindDayCycleState>();
 
             if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
@@ -79,7 +83,7 @@ namespace VVardenfell.Runtime.Streaming
 
             if (WorldResources.Cells.TryGetValue(streaming.CameraCell, out var exteriorCell) && exteriorCell != null)
             {
-                environment = BuildExteriorEnvironment(exteriorCell, contentDb);
+                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle);
                 LogEnvironmentContext(
                     isInterior: false,
                     exteriorCell: streaming.CameraCell,
@@ -89,7 +93,7 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            environment = LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: false);
+            environment = BuildExteriorEnvironment(null, contentDb, dayCycle);
             LogEnvironmentContext(
                 isInterior: false,
                 exteriorCell: streaming.CameraCell,
@@ -111,6 +115,9 @@ namespace VVardenfell.Runtime.Streaming
             {
                 AmbientColorRgb = DecodeRgb(env.AmbientColorRgba),
                 DirectionalColorRgb = DecodeRgb(env.DirectionalColorRgba),
+                DirectionalLightDirection = math.normalize(new float3(0f, 1f, -0.25f)),
+                DirectionalIntensity = 0.85f,
+                SunPercent = 1f,
                 FogColorRgb = DecodeRgb(env.FogColorRgba),
                 FogDensity = density,
                 FogNearMeters = fogNear,
@@ -120,15 +127,17 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb)
+        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle)
         {
-            var state = LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: false);
-            string regionId = cell.Environment.RegionId ?? string.Empty;
+            var day = MorrowindDayCycleUtility.Evaluate(dayCycle);
+            float mood = 0f;
+            int regionHandleValue = 0;
+            string regionId = cell?.Environment.RegionId ?? string.Empty;
 
             if (contentDb != null && contentDb.TryGetRegionHandle(regionId, out var regionHandle))
             {
                 ref readonly var region = ref contentDb.Get(regionHandle);
-                state.RegionHandleValue = regionHandle.Value;
+                regionHandleValue = regionHandle.Value;
 
                 float total =
                     region.ClearChance +
@@ -146,24 +155,29 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     float cloudiness = (region.CloudyChance + region.FoggyChance + region.OvercastChance) / total;
                     float storminess = (region.RainChance + region.ThunderChance + region.AshChance + region.BlightChance + region.SnowChance + region.BlizzardChance) / total;
-                    float mood = math.saturate(cloudiness * 0.7f + storminess);
-
-                    float3 clearAmbient = new(0.44f, 0.45f, 0.46f);
-                    float3 stormAmbient = new(0.26f, 0.27f, 0.31f);
-                    float3 clearDirectional = new(0.98f, 0.92f, 0.84f);
-                    float3 stormDirectional = new(0.56f, 0.58f, 0.64f);
-                    float3 clearFog = new(0.60f, 0.69f, 0.78f);
-                    float3 stormFog = new(0.30f, 0.33f, 0.38f);
-
-                    state.AmbientColorRgb = math.lerp(clearAmbient, stormAmbient, mood);
-                    state.DirectionalColorRgb = math.lerp(clearDirectional, stormDirectional, mood);
-                    state.FogColorRgb = math.lerp(clearFog, stormFog, mood);
-                    state.FogDensity = math.lerp(0.14f, 0.48f, mood);
-                    ComputeFogRange(state.FogDensity, isInterior: false, out state.FogNearMeters, out state.FogFarMeters);
+                    mood = math.saturate(cloudiness * 0.7f + storminess);
                 }
             }
 
-            return state;
+            float sunDimmer = math.lerp(1f, 0.45f, mood);
+            float directionalIntensity = day.SunPercent * math.max(0f, dayCycle.ExteriorSunIntensityScale) * sunDimmer;
+            float fogDensity = math.saturate(day.FogDensity);
+            ComputeFogRange(fogDensity, isInterior: false, out float fogNear, out float fogFar);
+
+            return new ActiveEnvironmentState
+            {
+                AmbientColorRgb = day.AmbientColorRgb,
+                DirectionalColorRgb = day.SunColorRgb,
+                DirectionalLightDirection = day.SunDirectionToLight,
+                DirectionalIntensity = directionalIntensity,
+                SunPercent = day.SunPercent,
+                FogColorRgb = day.FogColorRgb,
+                FogDensity = fogDensity,
+                FogNearMeters = fogNear,
+                FogFarMeters = fogFar,
+                RegionHandleValue = regionHandleValue,
+                IsInterior = 0,
+            };
         }
 
         static float3 DecodeRgb(uint value)

@@ -2,6 +2,7 @@ using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
@@ -78,7 +79,7 @@ namespace VVardenfell.Runtime.Books
                 return;
 
             var contentDb = RuntimeContentDatabase.Active;
-            if (!BookRuntimeUtility.TryResolveBook(contentDb, request.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveBook(contentDb, request.Content, out var metadata))
             {
                 request = default;
                 request.InventoryIndex = -1;
@@ -109,7 +110,7 @@ namespace VVardenfell.Runtime.Books
             request.InventoryIndex = -1;
         }
 
-        void TryQueueSkillGrant(uint sequence, in BookRuntimeMetadata metadata)
+        void TryQueueSkillGrant(uint sequence, in BookContentMetadata metadata)
         {
             if (metadata.SkillId < 0 || HasRead(metadata.Content))
                 return;

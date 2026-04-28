@@ -42,7 +42,7 @@ namespace VVardenfell.Runtime.Animation
         public byte RigidMirrorX;
     }
 
-    public struct ActorAnimationState : IComponentData
+    public struct ActorAnimationPlaybackState
     {
         public ulong GroupHash;
         public ulong ClipHash;
@@ -56,26 +56,86 @@ namespace VVardenfell.Runtime.Animation
         public float StopTime;
         public uint LoopCount;
         public byte Playing;
+    }
+
+    public struct ActorAnimationState : IComponentData
+    {
+        public ActorAnimationPlaybackState Playback;
         public byte Initialized;
     }
 
     public struct ActorAnimationOverlayState : IBufferElementData
     {
-        public ulong GroupHash;
-        public ulong ClipHash;
-        public int ClipIndex;
-        public float PreviousTime;
-        public float Time;
-        public float Speed;
-        public float StartTime;
-        public float LoopStartTime;
-        public float LoopStopTime;
-        public float StopTime;
+        public ActorAnimationPlaybackState Playback;
         public float Weight;
         public int Priority;
-        public uint LoopCount;
         public ActorAnimationBlendMask Mask;
-        public byte Playing;
+    }
+
+    public static class ActorAnimationPlaybackUtility
+    {
+        public static bool IsActive(in ActorAnimationPlaybackState playback)
+            => playback.Playing != 0 && playback.ClipIndex >= 0;
+
+        public static bool Matches(in ActorAnimationPlaybackState playback, ulong groupHash, ulong clipHash)
+            => playback.Playing != 0 && playback.GroupHash == groupHash && playback.ClipHash == clipHash;
+
+        public static void Start(
+            ref ActorAnimationPlaybackState playback,
+            ActorAnimationGroupBlob group,
+            uint requestedLoopCount)
+        {
+            playback.GroupHash = group.GroupHash;
+            playback.ClipHash = group.ClipHash;
+            playback.ClipIndex = group.ClipIndex;
+            playback.PreviousTime = group.StartTime;
+            playback.Time = group.StartTime;
+            playback.Speed = playback.Speed < 0f ? 0f : playback.Speed;
+            playback.StartTime = group.StartTime;
+            playback.LoopStartTime = group.LoopStartTime;
+            playback.LoopStopTime = group.LoopStopTime;
+            playback.StopTime = group.StopTime;
+            playback.LoopCount = group.Looping != 0 ? requestedLoopCount : 0u;
+            playback.Playing = 1;
+        }
+
+        public static void Clear(ref ActorAnimationPlaybackState playback)
+        {
+            playback.Playing = 0;
+            playback.ClipIndex = -1;
+            playback.GroupHash = 0UL;
+            playback.ClipHash = 0UL;
+            playback.PreviousTime = 0f;
+            playback.Time = 0f;
+            playback.StartTime = 0f;
+            playback.LoopStartTime = 0f;
+            playback.LoopStopTime = 0f;
+            playback.StopTime = 0f;
+            playback.LoopCount = 0u;
+        }
+
+        public static void Advance(ref ActorAnimationPlaybackState playback, float deltaTime, uint infiniteLoops)
+        {
+            if (!IsActive(playback))
+                return;
+
+            float speed = playback.Speed <= 0f ? 1f : playback.Speed;
+            playback.PreviousTime = playback.Time;
+            float nextTime = playback.Time + deltaTime * speed;
+            bool canLoop = playback.LoopCount > 0 && playback.LoopStopTime > playback.LoopStartTime;
+            if (canLoop && nextTime >= playback.LoopStopTime)
+            {
+                if (playback.LoopCount != infiniteLoops)
+                    playback.LoopCount--;
+                float duration = playback.LoopStopTime - playback.LoopStartTime;
+                playback.Time = playback.LoopStartTime + math.fmod(nextTime - playback.LoopStartTime, duration);
+                return;
+            }
+
+            playback.Time = nextTime >= playback.StopTime ? playback.StopTime : nextTime;
+            if (playback.Time >= playback.StopTime)
+                playback.Playing = 0;
+        }
     }
 
     public struct ActorSampledBonePose : IBufferElementData
@@ -110,6 +170,10 @@ namespace VVardenfell.Runtime.Animation
     }
 
     public struct ActorRenderVisible : IComponentData, IEnableableComponent
+    {
+    }
+
+    public struct ActorShadowCasterVisible : IComponentData, IEnableableComponent
     {
     }
 

@@ -23,8 +23,8 @@ namespace VVardenfell.Runtime.Interactions
             {
                 InteractableKind.Door => ResolveDoorName(contentDb, entityManager, entity),
                 InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Container => ResolveBaseName(contentDb, entityManager, entity),
-                InteractableKind.Activator => ResolveBaseName(contentDb, entityManager, entity),
+                InteractableKind.Container => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
                 _ => null,
             };
@@ -49,8 +49,8 @@ namespace VVardenfell.Runtime.Interactions
             {
                 InteractableKind.Door => ResolveDoorPromptName(contentDb, entityManager, entity),
                 InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Container => ResolveBaseName(contentDb, entityManager, entity),
-                InteractableKind.Activator => ResolveBaseName(contentDb, entityManager, entity),
+                InteractableKind.Container => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
                 _ => null,
             };
@@ -77,12 +77,12 @@ namespace VVardenfell.Runtime.Interactions
                     return ResolveExteriorDoorPromptName(contentDb, entityManager, entity, door);
             }
 
-            return ResolveBaseName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
         }
 
         static string ResolveDoorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
         {
-            return ResolveBaseName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
         }
 
         static string ResolveInteriorDoorPromptName(in DoorInteractable door)
@@ -119,7 +119,7 @@ namespace VVardenfell.Runtime.Interactions
                     return destinationCell.CellId;
             }
 
-            return ResolveBaseName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
         }
 
         static bool TryResolveExteriorDestinationCell(float3 destinationPosition, out int2 cellCoord)
@@ -149,7 +149,7 @@ namespace VVardenfell.Runtime.Interactions
             return value.Substring(commaIndex + 1).Trim();
         }
 
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
+        static string ResolveAuthoredDisplayName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
         {
             if (contentDb == null || !entityManager.Exists(entity))
                 return null;
@@ -157,25 +157,25 @@ namespace VVardenfell.Runtime.Interactions
             if (entityManager.HasComponent<DoorAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<DoorAuthoring>(entity);
-                return ResolveBaseName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveDoorDisplayName(contentDb, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ItemPickupAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ItemPickupAuthoring>(entity);
-                return ResolveBaseName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveItemDisplayName(contentDb, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ContainerAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ContainerAuthoring>(entity);
-                return ResolveBaseName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveContainerDisplayName(contentDb, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ActivatorAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ActivatorAuthoring>(entity);
-                return ResolveBaseName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveActivatorDisplayName(contentDb, authoring.Definition);
             }
 
             if (entityManager.HasComponent<PassiveActorPresence>(entity))
@@ -186,11 +186,6 @@ namespace VVardenfell.Runtime.Interactions
 
             return null;
         }
-
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, DoorDefHandle handle) => ResolveBaseName(contentDb, contentDb.Get(handle), "door");
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, ItemDefHandle handle) => ResolveBaseName(contentDb, contentDb.Get(handle), "item");
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, ContainerDefHandle handle) => ResolveBaseName(contentDb, contentDb.Get(handle), "container");
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, ActivatorDefHandle handle) => ResolveBaseName(contentDb, contentDb.Get(handle), "activator");
 
         static string ResolveActorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
         {
@@ -208,31 +203,7 @@ namespace VVardenfell.Runtime.Interactions
             var source = entityManager.HasComponent<ActorSpawnSource>(entity)
                 ? entityManager.GetComponentData<ActorSpawnSource>(entity)
                 : default;
-            return ResolveActorName(contentDb, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
-        }
-
-        static string ResolveActorName(RuntimeContentDatabase contentDb, ActorDefHandle handle, string fallback)
-        {
-            if (contentDb == null || !handle.IsValid)
-                return fallback;
-
-            ref readonly var def = ref contentDb.Get(handle);
-            if (!string.IsNullOrWhiteSpace(def.Name))
-                return def.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(def.Id))
-                return def.Id.Trim();
-            return fallback;
-        }
-
-        static string ResolveBaseName(RuntimeContentDatabase contentDb, in BaseDef def, string fallback)
-        {
-            if (contentDb == null)
-                return fallback;
-            if (!string.IsNullOrWhiteSpace(def.Name))
-                return def.Name;
-            if (!string.IsNullOrWhiteSpace(def.Id))
-                return def.Id;
-            return fallback;
+            return RuntimeContentMetadataResolver.ResolveActorDisplayName(contentDb, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
         }
     }
 }

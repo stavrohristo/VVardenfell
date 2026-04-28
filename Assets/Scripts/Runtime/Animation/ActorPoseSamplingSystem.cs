@@ -118,10 +118,10 @@ namespace VVardenfell.Runtime.Animation
             in ActorAnimationState animation,
             ActorAnimationBlendMask mask)
         {
-            if (animation.Playing == 0 || animation.ClipIndex < 0)
+            if (!ActorAnimationPlaybackUtility.IsActive(animation.Playback))
                 return;
 
-            SamplePlaybackForMask(ref catalog, skeleton, bones, sampled, animation.ClipIndex, animation.Time, 1f, mask, hasPreviousLayer: false);
+            SamplePlaybackForMask(ref catalog, skeleton, bones, sampled, animation.Playback.ClipIndex, animation.Playback.Time, 1f, mask, hasPreviousLayer: false);
         }
 
         static void SampleBestOverlayForMask(
@@ -141,7 +141,7 @@ namespace VVardenfell.Runtime.Animation
             if (weight <= 0f)
                 return;
 
-            SamplePlaybackForMask(ref catalog, skeleton, bones, sampled, overlay.ClipIndex, overlay.Time, weight, mask, hasPreviousLayer: true);
+            SamplePlaybackForMask(ref catalog, skeleton, bones, sampled, overlay.Playback.ClipIndex, overlay.Playback.Time, weight, mask, hasPreviousLayer: true);
         }
 
         static void SamplePlaybackForMask(
@@ -175,7 +175,7 @@ namespace VVardenfell.Runtime.Animation
             for (int i = 0; i < overlays.Length; i++)
             {
                 var overlay = overlays[i];
-                if (overlay.Playing == 0 || overlay.Weight <= 0f || overlay.ClipIndex < 0 || (overlay.Mask & mask) == 0)
+                if (!ActorAnimationPlaybackUtility.IsActive(overlay.Playback) || overlay.Weight <= 0f || (overlay.Mask & mask) == 0)
                     continue;
                 if (overlay.Priority < bestPriority)
                     continue;
