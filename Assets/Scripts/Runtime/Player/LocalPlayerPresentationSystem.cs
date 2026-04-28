@@ -141,6 +141,11 @@ namespace VVardenfell.Runtime.Player
             ecb.AddComponent(visual, LocalTransform.Identity);
             ecb.AddComponent(visual, new LocalToWorld());
             ecb.AddComponent(visual, ResolveInitialMovementState(player));
+            ecb.AddComponent(visual, new ActorWeaponAnimationState
+            {
+                WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
+                Phase = ActorWeaponAnimationPhase.Hidden,
+            });
             ecb.AddComponent<ActorRenderVisible>(visual);
             ecb.SetComponentEnabled<ActorRenderVisible>(visual, visible);
             ecb.AddComponent<ActorShadowCasterVisible>(visual);

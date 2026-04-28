@@ -17,7 +17,6 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationBlobCatalogSystem))]
     public partial class ActorPresentationSpawnSystem : SystemBase
     {
-        static readonly bool s_SpawnWeaponsDrawnOnPresentation = false;
         static readonly System.Collections.Generic.HashSet<int> s_RigidEquipmentPrefabBuildSet = new();
         static int s_RobeSkirtDiagnosticLogCount;
 
@@ -78,6 +77,7 @@ namespace VVardenfell.Runtime.Animation
                     },
                 });
                 ecb.AddComponent(entity, new ActorJumpAnimationState());
+                ecb.AddBuffer<ActorAnimationOverlayState>(entity);
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);
@@ -551,6 +551,8 @@ namespace VVardenfell.Runtime.Animation
                 ecb.AddComponent(equipmentRoot, new ActorRigidEquipmentAttachment
                 {
                     Actor = actorEntity,
+                    Content = slot.Content,
+                    Slot = itemEquipment.Slot,
                     BoneIndex = attachBoneIndex,
                     LocalPosition = float3.zero,
                     LocalRotation = quaternion.identity,
@@ -566,9 +568,7 @@ namespace VVardenfell.Runtime.Animation
 
         static bool ShouldSpawnRigidEquipmentAtPresentation(in ItemEquipmentDef equipment)
         {
-            // Vanilla keeps equipped weapons sheathed/invisible until the actor is in a drawn weapon state.
-            // Keep the data equipped now; a later combat/draw-state pass can spawn or enable this visual.
-            return equipment.Kind == ItemEquipmentKind.Weapon && s_SpawnWeaponsDrawnOnPresentation;
+            return equipment.Kind == ItemEquipmentKind.Weapon;
         }
 
     }

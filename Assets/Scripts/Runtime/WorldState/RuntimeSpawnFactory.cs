@@ -171,6 +171,9 @@ namespace VVardenfell.Runtime.WorldState
             if (!entityManager.HasBuffer<LinkedEntityGroup>(renderRoot))
                 return;
 
+            if (!isInterior)
+                WorldResources.RegisterExteriorCellEntity(exteriorCell, renderRoot);
+
             var linked = entityManager.GetBuffer<LinkedEntityGroup>(renderRoot);
             var linkedEntities = new NativeArray<Entity>(linked.Length, Allocator.Temp);
             for (int i = 0; i < linked.Length; i++)
@@ -195,6 +198,7 @@ namespace VVardenfell.Runtime.WorldState
                         ecb.SetComponent(child, new CellLink { Value = exteriorCell });
                     else
                         ecb.AddComponent(child, new CellLink { Value = exteriorCell });
+                    WorldResources.RegisterExteriorCellEntity(exteriorCell, child);
                 }
             }
 

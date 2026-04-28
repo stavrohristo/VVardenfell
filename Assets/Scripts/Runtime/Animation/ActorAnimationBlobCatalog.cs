@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Animation
         public BlobArray<int> SkinIndices;
         public BlobArray<ActorSkinBoneBlob> SkinBones;
         public BlobArray<ActorAnimationClipBlob> Clips;
+        public BlobArray<ActorAnimationTextMarkerBlob> TextMarkers;
         public BlobArray<ActorAnimationTrackBlob> Tracks;
         public BlobArray<ActorAnimationKeyBlob> Keys;
         public BlobArray<ActorAnimationGroupBlob> Groups;
@@ -187,6 +188,19 @@ namespace VVardenfell.Runtime.Animation
         public float Duration;
         public int FirstTrackIndex;
         public int TrackCount;
+        public int FirstTextMarkerIndex;
+        public int TextMarkerCount;
+    }
+
+    public struct ActorAnimationTextMarkerBlob
+    {
+        public FixedString64Bytes Group;
+        public FixedString64Bytes Value;
+        public FixedString128Bytes Text;
+        public ulong GroupHash;
+        public ulong ValueHash;
+        public float Time;
+        public ActorAnimationTextMarkerKind Kind;
     }
 
     public struct ActorAnimationTrackBlob

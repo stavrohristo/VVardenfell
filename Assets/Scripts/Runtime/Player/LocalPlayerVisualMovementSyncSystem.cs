@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -41,10 +42,9 @@ namespace VVardenfell.Runtime.Player
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
     [UpdateBefore(typeof(LocalPlayerVisualTransformSyncSystem))]
-    public partial class LocalPlayerPresentationPoseSmoothSystem : SystemBase
+    public partial class LocalPlayerPresentationPoseSyncSystem : SystemBase
     {
-        const float PositionResponsiveness = 30f;
-        const float SnapDistanceSq = 4f;
+        const float TeleportResetDistanceSq = 4f;
 
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
@@ -60,6 +60,7 @@ namespace VVardenfell.Runtime.Player
 
             RequireForUpdate(_playerQuery);
             RequireForUpdate(_viewQuery);
+            RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
         protected override void OnUpdate()
@@ -74,31 +75,42 @@ namespace VVardenfell.Runtime.Player
             quaternion targetBodyRotation = playerTransform.Rotation;
             float3 targetViewPosition = targetBodyPosition + math.rotate(targetBodyRotation, view.LocalEyeOffset);
             quaternion targetViewRotation = math.normalize(math.mul(targetBodyRotation, view.LocalViewRotation));
-
-            float dt = SystemAPI.Time.DeltaTime;
-            float alpha = dt > 0f
-                ? 1f - math.exp(-PositionResponsiveness * dt)
-                : 1f;
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
 
             var poseRef = _playerQuery.GetSingletonRW<LocalPlayerPresentationPose>();
             ref var pose = ref poseRef.ValueRW;
-            bool snap = pose.Initialized == 0
-                || math.lengthsq(pose.BodyPosition - targetBodyPosition) > SnapDistanceSq
-                || math.lengthsq(pose.ViewPosition - targetViewPosition) > SnapDistanceSq;
-
-            if (snap)
+            bool newPhysicsPose = pose.Initialized == 0 || pose.LastFixedTick != fixedTick;
+            if (newPhysicsPose)
             {
-                pose.BodyPosition = targetBodyPosition;
-                pose.ViewPosition = targetViewPosition;
+                bool reset = pose.Initialized == 0
+                             || math.lengthsq(pose.TargetBodyPosition - targetBodyPosition) > TeleportResetDistanceSq;
+                if (reset)
+                {
+                    pose.PreviousBodyPosition = targetBodyPosition;
+                    pose.TargetBodyPosition = targetBodyPosition;
+                    pose.PreviousViewPosition = targetViewPosition;
+                    pose.TargetViewPosition = targetViewPosition;
+                    pose.InterpolationTime = UnityEngine.Time.fixedDeltaTime;
+                }
+                else
+                {
+                    pose.PreviousBodyPosition = pose.TargetBodyPosition;
+                    pose.TargetBodyPosition = targetBodyPosition;
+                    pose.PreviousViewPosition = pose.TargetViewPosition;
+                    pose.TargetViewPosition = targetViewPosition;
+                    pose.InterpolationTime = 0f;
+                }
+
+                pose.LastFixedTick = fixedTick;
                 pose.Initialized = 1;
             }
-            else
-            {
-                pose.BodyPosition = math.lerp(pose.BodyPosition, targetBodyPosition, alpha);
-                pose.ViewPosition = math.lerp(pose.ViewPosition, targetViewPosition, alpha);
-            }
 
+            float fixedDelta = math.max(0.0001f, UnityEngine.Time.fixedDeltaTime);
+            pose.InterpolationTime = math.min(fixedDelta, pose.InterpolationTime + SystemAPI.Time.DeltaTime);
+            float alpha = math.saturate(pose.InterpolationTime / fixedDelta);
+            pose.BodyPosition = math.lerp(pose.PreviousBodyPosition, pose.TargetBodyPosition, alpha);
             pose.BodyRotation = targetBodyRotation;
+            pose.ViewPosition = math.lerp(pose.PreviousViewPosition, pose.TargetViewPosition, alpha);
             pose.ViewRotation = targetViewRotation;
         }
     }

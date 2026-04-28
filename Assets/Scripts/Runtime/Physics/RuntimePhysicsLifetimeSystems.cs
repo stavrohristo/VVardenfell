@@ -110,12 +110,9 @@ namespace VVardenfell.Runtime.Physics
     public partial class RuntimePhysicsLifetimeValidationSystem : SystemBase
     {
         int _lastInvalidSources = -1;
-        EntityQuery _sourceQuery;
 
         protected override void OnCreate()
         {
-            _sourceQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeColliderSource>());
-
             RequireForUpdate<RuntimePhysicsLifetimeState>();
         }
 
@@ -134,13 +131,10 @@ namespace VVardenfell.Runtime.Physics
         int CountInvalidRuntimeColliderSources()
         {
             int invalidSources = 0;
-            using var sources = _sourceQuery.ToComponentDataArray<RuntimeColliderSource>(Unity.Collections.Allocator.Temp);
-            for (int i = 0; i < sources.Length; i++)
+            foreach (var source in SystemAPI.Query<RefRO<RuntimeColliderSource>>())
             {
-                if (!sources[i].Value.IsCreated)
-                {
+                if (!source.ValueRO.Value.IsCreated)
                     invalidSources++;
-                }
             }
 
             return invalidSources;

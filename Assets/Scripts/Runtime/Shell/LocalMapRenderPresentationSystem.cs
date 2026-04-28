@@ -56,15 +56,12 @@ namespace VVardenfell.Runtime.Shell
             int renderResolution = discoveryState.RenderResolution <= 0 ? 256 : discoveryState.RenderResolution;
             LocalMapPresentationCache.PrepareVisibleTiles(centerCell, renderResolution, maskResolution);
 
-            using var entities = _tileQuery.ToEntityArray(Allocator.Temp);
-            using var tiles = _tileQuery.ToComponentDataArray<ExteriorMapDiscoveryTile>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (tileRef, samples) in SystemAPI.Query<RefRO<ExteriorMapDiscoveryTile>, DynamicBuffer<ExteriorMapDiscoverySample>>())
             {
-                var tile = tiles[i];
+                var tile = tileRef.ValueRO;
                 if (math.abs(tile.Cell.x - centerCell.x) > 1 || math.abs(tile.Cell.y - centerCell.y) > 1)
                     continue;
 
-                var samples = EntityManager.GetBuffer<ExteriorMapDiscoverySample>(entities[i]);
                 LocalMapPresentationCache.SyncShroudTexture(
                     tile.Cell,
                     tile.Revision,

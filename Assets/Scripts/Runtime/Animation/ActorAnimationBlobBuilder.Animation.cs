@@ -11,6 +11,8 @@ namespace VVardenfell.Runtime.Animation
         static void BuildClips(
             ActorAnimationCatalogData source,
             int[] clipRigFamilyIndices,
+            int[] clipTextMarkerStarts,
+            int[] clipTextMarkerCounts,
             ref BlobBuilder builder,
             ref ActorAnimationCatalogBlob root)
         {
@@ -34,6 +36,32 @@ namespace VVardenfell.Runtime.Animation
                     Duration = clip?.Duration ?? 0f,
                     FirstTrackIndex = clip?.FirstTrackIndex ?? -1,
                     TrackCount = clip?.TrackCount ?? 0,
+                    FirstTextMarkerIndex = (uint)i < (uint)(clipTextMarkerStarts?.Length ?? 0) ? clipTextMarkerStarts[i] : -1,
+                    TextMarkerCount = (uint)i < (uint)(clipTextMarkerCounts?.Length ?? 0) ? clipTextMarkerCounts[i] : 0,
+                };
+            }
+        }
+
+        static void BuildTextMarkers(
+            RuntimeTextMarker[] markers,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            markers ??= Array.Empty<RuntimeTextMarker>();
+            BlobBuilderArray<ActorAnimationTextMarkerBlob> dst = builder.Allocate(ref root.TextMarkers, markers.Length);
+            for (int i = 0; i < markers.Length; i++)
+            {
+                FixedString64Bytes group = Fixed64(markers[i].Group);
+                FixedString64Bytes value = Fixed64(markers[i].Value);
+                dst[i] = new ActorAnimationTextMarkerBlob
+                {
+                    Group = group,
+                    Value = value,
+                    Text = Fixed128(markers[i].Text),
+                    GroupHash = group.IsEmpty ? 0UL : ActorAnimationGroupHash.Hash(group),
+                    ValueHash = value.IsEmpty ? 0UL : ActorAnimationGroupHash.Hash(value),
+                    Time = markers[i].Time,
+                    Kind = markers[i].Kind,
                 };
             }
         }

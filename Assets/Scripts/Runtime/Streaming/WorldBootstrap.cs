@@ -24,7 +24,7 @@ namespace VVardenfell.Runtime.Streaming
         public const int DefaultViewRadius = 1;
         public const int DefaultMaxLoadsPerFrame = 1;
         public const int DefaultMaxUnloadsPerFrame = 64;
-        public const bool DefaultGateTerrainByRadius = true;
+        public const bool DefaultGateTerrainByRadius = false;
 
         static readonly ProfilerMarker k_Install = new("VV.WorldBootstrap.Install");
 
@@ -125,6 +125,10 @@ namespace VVardenfell.Runtime.Streaming
 
                 foreach (var step in WorldBootstrapResourceSetup.InstallColliderBlobs(collisionLoad, progress))
                     yield return step;
+
+                var terrainSpawn = WorldSpawner.SpawnAllTerrainIncremental(world, loadedMap, progress);
+                while (terrainSpawn.MoveNext())
+                    yield return terrainSpawn.Current;
 
                 var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);

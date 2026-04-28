@@ -1,5 +1,6 @@
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Animation
 {
@@ -81,6 +82,38 @@ namespace VVardenfell.Runtime.Animation
         public byte Phase;
     }
 
+    public enum ActorWeaponAnimationPhase : byte
+    {
+        Hidden = 0,
+        Equipping = 1,
+        Equipped = 2,
+        AttackWindUp = 3,
+        AttackRelease = 4,
+        AttackFollow = 5,
+    }
+
+    public enum ActorWeaponAttackType : byte
+    {
+        Chop = 0,
+        Slash = 1,
+        Thrust = 2,
+    }
+
+    public struct ActorWeaponAnimationState : IComponentData
+    {
+        public ContentReference WeaponContent;
+        public int WeaponType;
+        public byte Drawn;
+        public ActorWeaponAnimationPhase Phase;
+        public ActorWeaponAttackType AttackType;
+        public float AttackStrength;
+        public byte ReadyWeaponTogglePressed;
+        public byte AttackHeld;
+        public byte AttackPressed;
+        public byte AttackReleased;
+        public byte ReleaseQueued;
+    }
+
     public struct ActorAnimationOverlayState : IBufferElementData
     {
         public ActorAnimationPlaybackState Playback;
@@ -129,6 +162,24 @@ namespace VVardenfell.Runtime.Animation
             Start(ref playback, group, requestedLoopCount);
             playback.PreviousTime = startTime;
             playback.Time = startTime;
+        }
+
+        public static void StartWindow(
+            ref ActorAnimationPlaybackState playback,
+            ActorAnimationGroupBlob group,
+            float startTime,
+            float stopTime,
+            bool holdAtStop)
+        {
+            Start(ref playback, group, requestedLoopCount: 0u);
+            playback.PreviousTime = startTime;
+            playback.Time = startTime;
+            playback.StartTime = startTime;
+            playback.LoopStartTime = startTime;
+            playback.LoopStopTime = stopTime;
+            playback.StopTime = stopTime;
+            playback.LoopCount = 0u;
+            playback.HoldAtStop = holdAtStop ? (byte)1 : (byte)0;
         }
 
         public static void Clear(ref ActorAnimationPlaybackState playback)
@@ -226,6 +277,8 @@ namespace VVardenfell.Runtime.Animation
     public struct ActorRigidEquipmentAttachment : IComponentData
     {
         public Entity Actor;
+        public ContentReference Content;
+        public ItemEquipmentSlot Slot;
         public int BoneIndex;
         public float3 LocalPosition;
         public quaternion LocalRotation;

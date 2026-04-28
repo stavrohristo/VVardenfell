@@ -10,25 +10,7 @@ namespace VVardenfell.Runtime.Streaming
     {
         public static void SetExteriorCellActiveState(EntityManager em, int2 coord, bool active, bool gateTerrainByRadius)
         {
-            var targetQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            if (!gateTerrainByRadius)
-                targetQueryBuilder = targetQueryBuilder.WithNone<CellCoord>();
-
-            var targetQuery = em.CreateEntityQuery(targetQueryBuilder);
-            using (var entities = targetQuery.ToEntityArray(Allocator.Temp))
-            using (var links = targetQuery.ToComponentDataArray<CellLink>(Allocator.Temp))
-            {
-                for (int i = 0; i < entities.Length; i++)
-                {
-                    if (links[i].Value.Equals(coord))
-                        em.SetComponentEnabled<MaterialMeshInfo>(entities[i], active);
-                }
-            }
-            targetQuery.Dispose();
-            targetQueryBuilder.Dispose();
-
+            SetRegisteredCellRenderState(em, coord, active, gateTerrainByRadius);
             WorldExteriorPhysicsUtility.SetCellPhysicsActive(em, coord, active);
         }
 
@@ -74,7 +56,7 @@ namespace VVardenfell.Runtime.Streaming
                 while (desiredEnumeratorForSpawn.MoveNext())
                 {
                     var coord = desiredEnumeratorForSpawn.Current;
-                    if (loaded.Map.ContainsKey(coord))
+                    if (loaded.Streamed.Contains(coord))
                         continue;
 
                     if (!WorldResources.Cells.TryGetValue(coord, out var cellData) || cellData == null)
@@ -95,31 +77,7 @@ namespace VVardenfell.Runtime.Streaming
                     em.SetComponentData(streamingEntity, logicalRefs);
             }
 
-            var refsQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            if (!config.GateTerrainByRadius)
-                refsQueryBuilder = refsQueryBuilder.WithNone<CellCoord>();
-
-            var refsQuery = em.CreateEntityQuery(refsQueryBuilder);
-            using var refEntities = refsQuery.ToEntityArray(Allocator.Temp);
-            using var refLinks = refsQuery.ToComponentDataArray<CellLink>(Allocator.Temp);
-            for (int i = 0; i < refEntities.Length; i++)
-                em.SetComponentEnabled<MaterialMeshInfo>(refEntities[i], desired.Contains(refLinks[i].Value));
-
-            refsQuery.Dispose();
-            refsQueryBuilder.Dispose();
-
-            if (!config.GateTerrainByRadius)
-            {
-                var terrainQuery = new EntityQueryBuilder(Allocator.Temp)
-                    .WithAll<CellCoord>()
-                    .WithPresent<MaterialMeshInfo>();
-                var builtTerrainQuery = em.CreateEntityQuery(terrainQuery);
-                em.SetComponentEnabled<MaterialMeshInfo>(builtTerrainQuery, true);
-                builtTerrainQuery.Dispose();
-                terrainQuery.Dispose();
-            }
+            SyncRegisteredRenderState(em, desired, config.GateTerrainByRadius);
 
             WorldExteriorPhysicsUtility.SyncExteriorPhysics(em, desired);
             loaded.Active.Clear();
@@ -136,6 +94,55 @@ namespace VVardenfell.Runtime.Streaming
                 ComponentType.ReadOnly<LoadedCellsMap>(),
                 ComponentType.ReadOnly<LogicalRefLookup>());
             return query.CalculateEntityCount() > 0 ? query.GetSingletonEntity() : Entity.Null;
+        }
+
+        static void SetRegisteredCellRenderState(EntityManager em, int2 coord, bool active, bool gateTerrainByRadius)
+        {
+            if (!WorldResources.ExteriorCellEntities.TryGetValue(coord, out var entities))
+                return;
+
+            for (int i = entities.Count - 1; i >= 0; i--)
+            {
+                Entity entity = entities[i];
+                if (entity == Entity.Null || !em.Exists(entity))
+                {
+                    entities.RemoveAt(i);
+                    continue;
+                }
+
+                if (!em.HasComponent<MaterialMeshInfo>(entity))
+                    continue;
+                if (!gateTerrainByRadius && em.HasComponent<CellCoord>(entity))
+                    continue;
+
+                em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
+            }
+        }
+
+        static void SyncRegisteredRenderState(EntityManager em, NativeHashSet<int2> desired, bool gateTerrainByRadius)
+        {
+            foreach (var pair in WorldResources.ExteriorCellEntities)
+            {
+                bool active = desired.Contains(pair.Key);
+                var entities = pair.Value;
+                for (int i = entities.Count - 1; i >= 0; i--)
+                {
+                    Entity entity = entities[i];
+                    if (entity == Entity.Null || !em.Exists(entity))
+                    {
+                        entities.RemoveAt(i);
+                        continue;
+                    }
+
+                    if (!em.HasComponent<MaterialMeshInfo>(entity))
+                        continue;
+
+                    bool enable = active;
+                    if (!gateTerrainByRadius && em.HasComponent<CellCoord>(entity))
+                        enable = true;
+                    em.SetComponentEnabled<MaterialMeshInfo>(entity, enable);
+                }
+            }
         }
     }
 }

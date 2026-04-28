@@ -36,11 +36,12 @@ namespace VVardenfell.Runtime.Streaming
 
             if (weather.Initialized == 0)
             {
-                weather.CurrentWeather = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, ref random), contentDb);
+                weather.CurrentWeather = ClampWeatherIndex((int)WeatherKind.Clear, contentDb);
                 weather.NextWeather = -1;
                 weather.QueuedWeather = -1;
                 weather.Transition = 0f;
                 weather.TransitionFactor = 0f;
+                weather.Transitioning = 0;
                 weather.HoursUntilNextChange = hoursBetweenChanges;
                 weather.WeatherUpdateHoursRemaining = hoursBetweenChanges;
                 weather.RegionHandleValue = regionHandleValue;

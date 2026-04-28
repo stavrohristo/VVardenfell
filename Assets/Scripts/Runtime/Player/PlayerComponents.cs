@@ -32,6 +32,10 @@ namespace VVardenfell.Runtime.Player
         public bool CrouchHeld;
         public bool InteractPressed;
         public bool ToggleViewPressed;
+        public bool ReadyWeaponTogglePressed;
+        public bool AttackHeld;
+        public bool AttackPressed;
+        public bool AttackReleased;
         public bool JumpThisFixedTick;
         public float3 MoveVectorWorld;
         public FixedInputEvent JumpPressedEvent;
@@ -79,6 +83,12 @@ namespace VVardenfell.Runtime.Player
         public quaternion BodyRotation;
         public float3 ViewPosition;
         public quaternion ViewRotation;
+        public float3 PreviousBodyPosition;
+        public float3 TargetBodyPosition;
+        public float3 PreviousViewPosition;
+        public float3 TargetViewPosition;
+        public uint LastFixedTick;
+        public float InterpolationTime;
         public byte Initialized;
     }
 

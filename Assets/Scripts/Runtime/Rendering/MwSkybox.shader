@@ -251,10 +251,12 @@ Shader "VVardenfell/MwSkybox"
                 float shadowLight = lerp(0.35, 1.0, saturate(shadowBlend));
                 float brightness = max(0.0, _MoonPresentation.x);
                 float emission = max(0.0, _MoonPresentation.y);
-                float maskCoverage = MaskCoverage(mask) * alpha;
-                float3 moonSurface = phase.rgb * shadowLight * brightness;
-                float3 moonGlow = phase.rgb * TextureCoverage(phase) * maskCoverage * emission;
-                return lerp(sky, moonSurface + moonGlow, maskCoverage);
+                float maskAlpha = MaskCoverage(mask) * alpha;
+                float phaseAlpha = phase.a * alpha;
+                float phaseLight = shadowLight * brightness + TextureCoverage(phase) * emission;
+                float3 maskTint = mask.rgb * max(_SkyColor.rgb, 0.0001);
+                float3 shadowedSky = lerp(sky, maskTint, maskAlpha);
+                return shadowedSky + phase.rgb * phaseAlpha * phaseLight;
             }
 
             half4 frag(Varyings input) : SV_Target

@@ -441,6 +441,7 @@ namespace VVardenfell.Runtime.Streaming
                             em.SetComponentData(linkedEntity, new CellLink { Value = exteriorCell });
                         else
                             em.AddComponentData(linkedEntity, new CellLink { Value = exteriorCell });
+                        WorldResources.RegisterExteriorCellEntity(exteriorCell, linkedEntity);
                     }
                 }
             }
@@ -478,6 +479,7 @@ namespace VVardenfell.Runtime.Streaming
                     em.SetComponentData(entity, new CellLink { Value = exteriorCell });
                 else
                     em.AddComponentData(entity, new CellLink { Value = exteriorCell });
+                WorldResources.RegisterExteriorCellEntity(exteriorCell, entity);
             }
 
             var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();

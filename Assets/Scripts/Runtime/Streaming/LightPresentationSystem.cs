@@ -1,6 +1,9 @@
 using System.Collections.Generic;
+using Unity.Burst;
+using Unity.Burst.Intrinsics;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Transforms;
@@ -42,8 +45,9 @@ namespace VVardenfell.Runtime.Streaming
         readonly Dictionary<Entity, PresentedLight> _activeLights = new();
         readonly Stack<PresentedLight> _lightPool = new();
         readonly List<Entity> _releaseList = new();
-        readonly List<LightCandidate> _candidates = new();
-        readonly HashSet<Entity> _selected = new();
+        NativeList<LightCandidate> _candidates;
+        NativeParallelHashSet<Entity> _selected;
+        NativeHashSet<int2> _emptyActiveExteriorCells;
         int _nextSlot;
         bool _hasPresentationContext;
         bool _lastInteriorActive;
@@ -62,6 +66,10 @@ namespace VVardenfell.Runtime.Streaming
             RequireForUpdate<StreamingConfig>();
             RequireForUpdate<ActiveEnvironmentState>();
             RequireForUpdate<MainCameraSingleton>();
+
+            _candidates = new NativeList<LightCandidate>(MaxPresentedLights, Allocator.Persistent);
+            _selected = new NativeParallelHashSet<Entity>(MaxPresentedLights, Allocator.Persistent);
+            _emptyActiveExteriorCells = new NativeHashSet<int2>(1, Allocator.Persistent);
             
             _root = new GameObject("VVardenfell.RuntimePointLights");
             Object.DontDestroyOnLoad(_root);
@@ -83,6 +91,13 @@ namespace VVardenfell.Runtime.Streaming
             if (_root != null)
                 Object.Destroy(_root);
             _root = null;
+
+            if (_candidates.IsCreated)
+                _candidates.Dispose();
+            if (_selected.IsCreated)
+                _selected.Dispose();
+            if (_emptyActiveExteriorCells.IsCreated)
+                _emptyActiveExteriorCells.Dispose();
         }
 
         protected override void OnUpdate()
@@ -115,56 +130,43 @@ namespace VVardenfell.Runtime.Streaming
                 _lastCameraCell = cameraCell;
             }
 
-            NativeHashSet<int2> activeExteriorCells = default;
+            NativeHashSet<int2> activeExteriorCells = _emptyActiveExteriorCells;
+            byte hasActiveExteriorCells = 0;
             if (!interiorActive && SystemAPI.HasSingleton<LoadedCellsMap>())
+            {
                 activeExteriorCells = SystemAPI.GetSingleton<LoadedCellsMap>().Active;
+                hasActiveExteriorCells = 1;
+            }
 
             _candidates.Clear();
             _selected.Clear();
 
-            using var entities = _lightQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
-            using var localToWorlds = _lightQuery.ToComponentDataArray<LocalToWorld>(Unity.Collections.Allocator.Temp);
-            using var states = _lightQuery.ToComponentDataArray<LightInstanceState>(Unity.Collections.Allocator.Temp);
-            using var flags = _lightQuery.ToComponentDataArray<LightInstanceFlags>(Unity.Collections.Allocator.Temp);
-            using var locations = _lightQuery.ToComponentDataArray<LogicalRefLocation>(Unity.Collections.Allocator.Temp);
-
             Camera camera = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             float3 cameraPosition = camera.transform.position;
 
-            for (int i = 0; i < entities.Length; i++)
+            int queryCount = _lightQuery.CalculateEntityCount();
+            if (_candidates.Capacity < queryCount)
+                _candidates.Capacity = queryCount;
+
+            var gatherJob = new GatherLightCandidatesJob
             {
-                if (states[i].Enabled == 0 || flags[i].Negative != 0)
-                    continue;
+                EntityHandle = GetEntityTypeHandle(),
+                LocalToWorldHandle = GetComponentTypeHandle<LocalToWorld>(isReadOnly: true),
+                StateHandle = GetComponentTypeHandle<LightInstanceState>(isReadOnly: true),
+                FlagsHandle = GetComponentTypeHandle<LightInstanceFlags>(isReadOnly: true),
+                LocationHandle = GetComponentTypeHandle<LogicalRefLocation>(isReadOnly: true),
+                ActiveExteriorCells = activeExteriorCells,
+                CameraPosition = cameraPosition,
+                ActiveInteriorCellHash = activeInteriorCellHash,
+                InteriorActive = interiorActive,
+                HasActiveExteriorCells = hasActiveExteriorCells,
+                Candidates = _candidates.AsParallelWriter(),
+            };
+            Dependency = gatherJob.ScheduleParallel(_lightQuery, Dependency);
+            Dependency.Complete();
+            Dependency = default;
 
-                if (interiorActive)
-                {
-                    if (locations[i].IsInterior == 0 || locations[i].InteriorCellHash != activeInteriorCellHash)
-                        continue;
-                }
-                else
-                {
-                    if (locations[i].IsInterior != 0)
-                        continue;
-                    if (activeExteriorCells.IsCreated && !activeExteriorCells.Contains(locations[i].ExteriorCell))
-                        continue;
-                }
-
-                float3 position = localToWorlds[i].Value.c3.xyz;
-                float cullRange = math.max(48f, states[i].CurrentRange * 4f);
-                float distanceSq = math.distancesq(position, cameraPosition);
-                if (distanceSq > cullRange * cullRange)
-                    continue;
-
-                _candidates.Add(new LightCandidate
-                {
-                    Entity = entities[i],
-                    DistanceSq = distanceSq,
-                    Position = position,
-                    State = states[i],
-                });
-            }
-
-            _candidates.Sort((a, b) => a.DistanceSq.CompareTo(b.DistanceSq));
+            _candidates.Sort(new LightCandidateDistanceComparer());
 
             int limit = math.min(MaxPresentedLights, _candidates.Count);
             for (int i = 0; i < limit; i++)
@@ -286,6 +288,76 @@ namespace VVardenfell.Runtime.Streaming
                 return _lastInteriorCellHash != activeInteriorCellHash;
 
             return !math.all(_lastCameraCell == cameraCell);
+        }
+
+        struct LightCandidateDistanceComparer : IComparer<LightCandidate>
+        {
+            public int Compare(LightCandidate x, LightCandidate y)
+            {
+                int distance = x.DistanceSq.CompareTo(y.DistanceSq);
+                return distance != 0 ? distance : x.Entity.Index.CompareTo(y.Entity.Index);
+            }
+        }
+
+        [BurstCompile]
+        struct GatherLightCandidatesJob : IJobChunk
+        {
+            [ReadOnly] public EntityTypeHandle EntityHandle;
+            [ReadOnly] public ComponentTypeHandle<LocalToWorld> LocalToWorldHandle;
+            [ReadOnly] public ComponentTypeHandle<LightInstanceState> StateHandle;
+            [ReadOnly] public ComponentTypeHandle<LightInstanceFlags> FlagsHandle;
+            [ReadOnly] public ComponentTypeHandle<LogicalRefLocation> LocationHandle;
+            [ReadOnly] public NativeHashSet<int2> ActiveExteriorCells;
+            public float3 CameraPosition;
+            public ulong ActiveInteriorCellHash;
+            public bool InteriorActive;
+            public byte HasActiveExteriorCells;
+            public NativeList<LightCandidate>.ParallelWriter Candidates;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                var entities = chunk.GetNativeArray(EntityHandle);
+                var localToWorlds = chunk.GetNativeArray(ref LocalToWorldHandle);
+                var states = chunk.GetNativeArray(ref StateHandle);
+                var flags = chunk.GetNativeArray(ref FlagsHandle);
+                var locations = chunk.GetNativeArray(ref LocationHandle);
+
+                var enumerator = new ChunkEntityEnumerator(useEnabledMask, chunkEnabledMask, chunk.Count);
+                while (enumerator.NextEntityIndex(out int i))
+                {
+                    var state = states[i];
+                    if (state.Enabled == 0 || flags[i].Negative != 0)
+                        continue;
+
+                    var location = locations[i];
+                    if (InteriorActive)
+                    {
+                        if (location.IsInterior == 0 || location.InteriorCellHash != ActiveInteriorCellHash)
+                            continue;
+                    }
+                    else
+                    {
+                        if (location.IsInterior != 0)
+                            continue;
+                        if (HasActiveExteriorCells != 0 && !ActiveExteriorCells.Contains(location.ExteriorCell))
+                            continue;
+                    }
+
+                    float3 position = localToWorlds[i].Value.c3.xyz;
+                    float cullRange = math.max(48f, state.CurrentRange * 4f);
+                    float distanceSq = math.distancesq(position, CameraPosition);
+                    if (distanceSq > cullRange * cullRange)
+                        continue;
+
+                    Candidates.AddNoResize(new LightCandidate
+                    {
+                        Entity = entities[i],
+                        DistanceSq = distanceSq,
+                        Position = position,
+                        State = state,
+                    });
+                }
+            }
         }
     }
 }

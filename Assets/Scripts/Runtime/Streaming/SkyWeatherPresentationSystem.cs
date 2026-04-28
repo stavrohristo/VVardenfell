@@ -6,6 +6,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Rendering;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Rendering;
@@ -70,7 +71,7 @@ namespace VVardenfell.Runtime.Streaming
             const float DefaultStarTextureOpacity = 1f;
             const float DefaultStarTextureScale = 7f;
             const float DefaultPrecipitationEmissionScale = 1f;
-            const float DefaultPrecipitationWorldScale = 1f / 64f;
+            const float DefaultPrecipitationWorldScale = WorldScale.MwUnitsToMeters;
             const float DefaultPrecipitationParticleSizeScale = 1f;
 
             readonly Shader _shader;
@@ -120,6 +121,7 @@ namespace VVardenfell.Runtime.Streaming
             Material _precipitationMaterial;
             Material _skyboxMaterial;
             ParticleSystem _precipitation;
+            ParticleSystemRenderer _precipitationRenderer;
 
             static readonly int k_SkyboxSkyColorId = Shader.PropertyToID("_SkyColor");
             static readonly int k_SkyboxSunDiscColorId = Shader.PropertyToID("_SunDiscColor");
@@ -143,8 +145,8 @@ namespace VVardenfell.Runtime.Streaming
 
             public SkyWeatherRig()
             {
-                _shader = Shader.Find("VVardenfell/SkyWeatherUnlit") ?? Shader.Find("Unlit/Transparent");
-                _skyboxShader = Shader.Find("VVardenfell/MwSkybox") ?? Shader.Find("Skybox/Procedural");
+                _shader = FindRequiredShader("VVardenfell/SkyWeatherUnlit");
+                _skyboxShader = FindRequiredShader("VVardenfell/MwSkybox");
                 _whiteTexture = Own(CreateSolidTexture(new Color(1f, 1f, 1f, 1f)));
                 _sunTexture = Own(CreateSunTexture(128));
                 _sunGlareTexture = _sunTexture;
@@ -178,7 +180,10 @@ namespace VVardenfell.Runtime.Streaming
                 ApplySkybox(sky, settings, exterior);
                 _root.SetActive(exterior);
                 if (!exterior)
+                {
+                    StopPrecipitation();
                     return;
+                }
 
                 Vector3 cameraPosition = camera.transform.position;
                 _rootTransform.position = cameraPosition;
@@ -198,6 +203,8 @@ namespace VVardenfell.Runtime.Streaming
                 DestroyObject(_secundaMaterial);
                 DestroyObject(_precipitationMaterial);
                 DestroyObject(_skyboxMaterial);
+                if (_precipitation != null)
+                    DestroyObject(_precipitation.gameObject);
                 for (int i = 0; i < _ownedTextures.Count; i++)
                 {
                     if (_ownedTextures[i] != null)
@@ -232,6 +239,7 @@ namespace VVardenfell.Runtime.Streaming
                 _masserRenderer = CreatePrimitive("Masser", PrimitiveType.Quad, _masserMaterial, out _masserTransform);
                 _secundaRenderer = CreatePrimitive("Secunda", PrimitiveType.Quad, _secundaMaterial, out _secundaTransform);
                 _precipitation = CreatePrecipitation(_precipitationMaterial);
+                UnityEngine.Object.DontDestroyOnLoad(_precipitation.gameObject);
             }
 
             bool EnsureBakedTexturesLoaded()
@@ -331,7 +339,6 @@ namespace VVardenfell.Runtime.Streaming
             ParticleSystem CreatePrecipitation(Material material)
             {
                 var go = new GameObject("Precipitation");
-                go.transform.SetParent(_rootTransform, false);
                 var particles = go.AddComponent<ParticleSystem>();
                 var main = particles.main;
                 main.loop = true;
@@ -358,8 +365,12 @@ namespace VVardenfell.Runtime.Streaming
                 var renderer = go.GetComponent<ParticleSystemRenderer>();
                 renderer.sharedMaterial = material;
                 renderer.renderMode = ParticleSystemRenderMode.Billboard;
+                renderer.alignment = ParticleSystemRenderSpace.World;
+                renderer.lengthScale = 1f;
+                renderer.velocityScale = 0f;
                 renderer.shadowCastingMode = ShadowCastingMode.Off;
                 renderer.receiveShadows = false;
+                _precipitationRenderer = renderer;
                 particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 return particles;
             }
@@ -409,43 +420,61 @@ namespace VVardenfell.Runtime.Streaming
             void ApplyPrecipitation(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, Camera camera)
             {
                 bool active = sky.PrecipitationIntensity > 0.001f;
-                if (active)
-                    _precipitationMaterial.mainTexture = ResolvePrecipitationTexture(sky.PrecipitationKind);
+                if (!active || IsRainPrecipitation(sky.PrecipitationKind))
+                {
+                    StopPrecipitation();
+                    return;
+                }
 
-                var emission = _precipitation.emission;
+                Material material = _precipitationMaterial;
+                if (_precipitationRenderer != null && _precipitationRenderer.sharedMaterial != material)
+                    _precipitationRenderer.sharedMaterial = material;
+                if (_precipitationRenderer != null)
+                {
+                    _precipitationRenderer.renderMode = ParticleSystemRenderMode.Billboard;
+                    _precipitationRenderer.alignment = ParticleSystemRenderSpace.World;
+                    _precipitationRenderer.lengthScale = 1f;
+                    _precipitationRenderer.velocityScale = 0f;
+                }
+                material.mainTexture = ResolvePrecipitationTexture(sky.PrecipitationKind);
+
                 float maxDrops = sky.RainMaxRaindrops > 0 ? sky.RainMaxRaindrops : 950f;
                 float entranceSpeed = sky.RainEntranceSpeed > 0f ? sky.RainEntranceSpeed : 7f;
-                float targetRate = maxDrops / math.max(0.1f, entranceSpeed) * 20f;
+                float targetRate = MorrowindWeatherEvaluationUtility.ResolveOpenMwRainEmissionRate(maxDrops, entranceSpeed);
                 float emissionScale = settings.PrecipitationEmissionScale > 0f ? settings.PrecipitationEmissionScale : DefaultPrecipitationEmissionScale;
                 float precipitationAmount = math.saturate(sky.PrecipitationIntensity * math.max(0f, sky.PrecipitationAlpha));
-                emission.rateOverTime = active ? math.max(80f, targetRate) * precipitationAmount * emissionScale : 0f;
+                var emission = _precipitation.emission;
+                emission.rateOverTime = math.max(80f, targetRate) * precipitationAmount * emissionScale;
                 _precipitation.transform.position = camera.transform.position;
 
                 var main = _precipitation.main;
-                float worldScale = settings.PrecipitationWorldScale > 0f ? settings.PrecipitationWorldScale : DefaultPrecipitationWorldScale;
+                float worldScale = MorrowindWeatherEvaluationUtility.ResolveRainPresentationWorldScale(settings.PrecipitationWorldScale > 0f ? settings.PrecipitationWorldScale : DefaultPrecipitationWorldScale);
                 float particleSizeScale = settings.PrecipitationParticleSizeScale > 0f ? settings.PrecipitationParticleSizeScale : DefaultPrecipitationParticleSizeScale;
+                main.startLifetime = 1.7f;
                 main.maxParticles = math.max(2400, (int)math.ceil(math.max(maxDrops, targetRate) * 2f));
                 main.startSpeed = ResolvePrecipitationSpeed(sky, worldScale);
-                main.startSize = ResolvePrecipitationSize(sky, worldScale, particleSizeScale);
+                main.startSize = new ParticleSystem.MinMaxCurve(ResolvePrecipitationSize(sky, worldScale, particleSizeScale));
 
                 var shape = _precipitation.shape;
                 float minHeight = sky.RainMinHeight > 0f ? sky.RainMinHeight * worldScale : 8f;
                 float maxHeight = sky.RainMaxHeight > sky.RainMinHeight ? sky.RainMaxHeight * worldScale : minHeight + 12f;
-                float footprint = sky.RainDiameter > 0f ? math.max(12f, sky.RainDiameter * worldScale) : 70f;
+                float vanillaFootprint = sky.RainDiameter > 0f ? sky.RainDiameter * worldScale : 70f;
+                float footprint = math.max(12f, vanillaFootprint);
                 shape.position = new Vector3(0f, math.lerp(minHeight, maxHeight, 0.5f), 0f);
                 shape.scale = new Vector3(footprint, math.max(4f, maxHeight - minHeight), footprint);
 
                 var velocity = _precipitation.velocityOverLifetime;
                 float3 storm = math.normalizesafe(sky.StormDirection, new float3(1f, 0f, 0f));
                 float lateral = sky.IsStorm != 0 ? math.max(1f, sky.WindSpeed * 0.12f) : 0f;
-                velocity.x = new ParticleSystem.MinMaxCurve(storm.x * lateral);
-                velocity.y = new ParticleSystem.MinMaxCurve(-ResolvePrecipitationSpeed(sky, worldScale));
-                velocity.z = new ParticleSystem.MinMaxCurve(storm.z * lateral);
+                float3 resolvedVelocity = new(storm.x * lateral, -ResolvePrecipitationSpeed(sky, worldScale), storm.z * lateral);
+                velocity.x = new ParticleSystem.MinMaxCurve(resolvedVelocity.x);
+                velocity.y = new ParticleSystem.MinMaxCurve(resolvedVelocity.y);
+                velocity.z = new ParticleSystem.MinMaxCurve(resolvedVelocity.z);
+                main.startRotation3D = false;
+                main.startRotation = 0f;
 
-                if (active && !_precipitation.isPlaying)
+                if (!_precipitation.isPlaying)
                     _precipitation.Play();
-                else if (!active && _precipitation.isPlaying)
-                    _precipitation.Stop(true, ParticleSystemStopBehavior.StopEmitting);
             }
 
             static float ResolvePrecipitationSpeed(in ActiveSkyWeatherState sky, float worldScale)
@@ -457,7 +486,7 @@ namespace VVardenfell.Runtime.Streaming
 
             static float ResolvePrecipitationSize(in ActiveSkyWeatherState sky, float worldScale, float particleSizeScale)
             {
-                float baseSize = 10f * worldScale * particleSizeScale;
+                float baseSize = MorrowindWeatherEvaluationUtility.ResolveRainPresentationSize(worldScale, particleSizeScale);
                 WeatherKind kind = (WeatherKind)sky.PrecipitationKind;
                 return kind switch
                 {
@@ -469,15 +498,40 @@ namespace VVardenfell.Runtime.Streaming
                 };
             }
 
-            Material CreateMaterial(Texture texture, int renderQueue)
+            static bool IsRainPrecipitation(int precipitationKind)
             {
-                var material = new Material(_shader)
+                var kind = (WeatherKind)precipitationKind;
+                return kind == WeatherKind.Rain || kind == WeatherKind.Thunderstorm;
+            }
+
+            void StopPrecipitation()
+            {
+                if (_precipitation != null && _precipitation.isPlaying)
+                    _precipitation.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+            }
+
+            Material CreateMaterial(Texture texture, int renderQueue)
+                => CreateMaterial(texture, renderQueue, _shader);
+
+            static Material CreateMaterial(Texture texture, int renderQueue, Shader shader)
+            {
+                var material = new Material(shader)
                 {
                     mainTexture = texture,
                     renderQueue = renderQueue,
                 };
                 SetMaterial(material, texture, Color.white, 1f);
                 return material;
+            }
+
+            static Shader FindRequiredShader(string shaderName)
+            {
+                Shader shader = Shader.Find(shaderName);
+                if (shader == null)
+                    throw new InvalidOperationException(
+                        $"[VVardenfell][SkyWeather] Required shader '{shaderName}' is missing. "
+                        + "Add it to GraphicsSettings always-included shaders or keep a serialized reference to it.");
+                return shader;
             }
 
             static void SetMaterial(Material material, Texture texture, Color color, float alpha)
@@ -522,6 +576,7 @@ namespace VVardenfell.Runtime.Streaming
             static Texture2D CreateRainTexture(int size)
             {
                 var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "VV.RainDrop" };
+                texture.wrapMode = TextureWrapMode.Clamp;
                 var pixels = new Color[size * size];
                 float center = (size - 1) * 0.5f;
                 for (int y = 0; y < size; y++)
@@ -575,7 +630,6 @@ namespace VVardenfell.Runtime.Streaming
                 _sunTexture = LoadRequiredTexture(cache, visual.SunTexture, "sun disc", missing);
                 _sunGlareTexture = LoadRequiredTexture(cache, visual.SunGlareTexture, "sun glare", missing);
                 _starTexture = LoadRequiredTexture(cache, visual.StarTexture, "stars", missing);
-                _rainTexture = LoadRequiredTexture(cache, visual.RainDropTexture, "rain drop", missing);
                 _masserMaskTexture = LoadRequiredTexture(cache, visual.MasserShadowTexture, "Masser mask", missing);
                 _secundaMaskTexture = LoadRequiredTexture(cache, visual.SecundaShadowTexture, "Secunda mask", missing);
                 _masserPhaseTextures = LoadRequiredTextureSet(cache, visual.MasserPhaseTextures, "Masser phase", 8, missing);
@@ -715,6 +769,13 @@ namespace VVardenfell.Runtime.Streaming
             {
                 if (texture != null)
                     texture.wrapMode = TextureWrapMode.Repeat;
+                return texture;
+            }
+
+            static Texture2D ConfigureClampedTexture(Texture2D texture)
+            {
+                if (texture != null)
+                    texture.wrapMode = TextureWrapMode.Clamp;
                 return texture;
             }
 

@@ -29,6 +29,7 @@ namespace VVardenfell.Runtime.Streaming
             loadedMap = new LoadedCellsMap
             {
                 Map = new NativeHashMap<int2, Entity>(cellCap, Allocator.Persistent),
+                Streamed = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
                 Active = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
             };
             logicalRefLookup = new LogicalRefLookup
@@ -201,6 +202,8 @@ namespace VVardenfell.Runtime.Streaming
                 available.Dispose();
             if (loadedMap.Map.IsCreated)
                 loadedMap.Map.Dispose();
+            if (loadedMap.Streamed.IsCreated)
+                loadedMap.Streamed.Dispose();
             if (loadedMap.Active.IsCreated)
                 loadedMap.Active.Dispose();
             if (logicalRefLookup.Map.IsCreated)
@@ -239,8 +242,9 @@ namespace VVardenfell.Runtime.Streaming
             foreach (var e in em.CreateEntityQuery(typeof(LoadedCellsMap)).ToEntityArray(Allocator.Temp))
             {
                 var lc = em.GetComponentData<LoadedCellsMap>(e);
-                lc.Map.Dispose();
-                lc.Active.Dispose();
+                if (lc.Map.IsCreated) lc.Map.Dispose();
+                if (lc.Streamed.IsCreated) lc.Streamed.Dispose();
+                if (lc.Active.IsCreated) lc.Active.Dispose();
             }
 
             foreach (var e in em.CreateEntityQuery(typeof(LogicalRefLookup)).ToEntityArray(Allocator.Temp))

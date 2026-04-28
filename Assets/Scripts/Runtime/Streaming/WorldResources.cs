@@ -123,6 +123,7 @@ namespace VVardenfell.Runtime.Streaming
         /// Populated by <see cref="WorldSpawner.SpawnAll"/>, disposed by <see cref="Reset"/>.
         /// </summary>
         public static readonly Dictionary<int2, PerCellManaged> LoadedManaged = new();
+        public static readonly Dictionary<int2, List<Entity>> ExteriorCellEntities = new();
 
         /// <summary>
         /// Every baked cell, preloaded once at bootstrap. Keyed by grid coord.
@@ -158,6 +159,26 @@ namespace VVardenfell.Runtime.Streaming
         public static bool TryGetTerrainCollider(int2 coord, out BlobAssetReference<Collider> collider)
         {
             return TerrainColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+        }
+
+        public static void RegisterExteriorCellEntity(int2 coord, Entity entity)
+        {
+            if (entity == Entity.Null)
+                return;
+
+            if (!ExteriorCellEntities.TryGetValue(coord, out var entities))
+            {
+                entities = new List<Entity>(64);
+                ExteriorCellEntities[coord] = entities;
+            }
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                if (entities[i] == entity)
+                    return;
+            }
+
+            entities.Add(entity);
         }
 
         public static bool TryGetInteriorCell(ulong cellHash, out CellData cell)
@@ -234,6 +255,7 @@ namespace VVardenfell.Runtime.Streaming
                 if (m.TerrainMat  != null && m.TerrainMat != TerrainFallbackMat) Object.Destroy(m.TerrainMat);
             }
             LoadedManaged.Clear();
+            ExteriorCellEntities.Clear();
 
             foreach (var kv in Cells)
                 DisposeCellResidentBlobs(kv.Value);

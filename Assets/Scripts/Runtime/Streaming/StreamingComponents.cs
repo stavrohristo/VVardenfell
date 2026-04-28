@@ -31,19 +31,22 @@ namespace VVardenfell.Runtime.Streaming
     }
 
     /// <summary>
-    /// Ever-loaded cells: coord → terrain entity (or Entity.Null if the cell had no terrain).
-    /// Entries are appended in <see cref="Runtime.Streaming.CellLoadWorkerSystem"/> on first visit
-    /// and **never removed** — unload now toggles the <see cref="Unity.Rendering.MaterialMeshInfo"/>
-    /// enable bit on each entity instead of destroying it, so entities persist across unload/reload
-    /// cycles and <see cref="Active"/> tracks who's currently rendering.
+    /// Resident cell bookkeeping. Terrain is spawned for every exterior cell at bootstrap and
+    /// stays visible in exterior space; refs/static content are spawned lazily and toggled by
+    /// active radius.
     ///
-    /// Trade-off: memory grows with the set of cells ever visited (bounded in MW at ~1400). The
-    /// win is no structural churn on unload → no chunk layout scrambling → stable BRG batching.
+    /// Trade-off: terrain memory is paid up-front so the horizon is faithful, while ref memory
+    /// still grows only with the set of cells ever visited.
     /// </summary>
+    /// Terrain residency and streamed ref residency are intentionally separate:
+    /// terrain is global for the horizon, refs/static content remain radius-gated.
     public struct LoadedCellsMap : IComponentData
     {
-        /// <summary>Every cell that has entities in ECS. Value = terrain entity (or Entity.Null).</summary>
+        /// <summary>Every terrain-resident cell. Value = terrain entity (or Entity.Null).</summary>
         public NativeHashMap<int2, Entity> Map;
+
+        /// <summary>Cells whose non-terrain streamable content has been spawned.</summary>
+        public NativeHashSet<int2> Streamed;
 
         /// <summary>Subset of <see cref="Map"/>: cells whose entities are currently rendering.</summary>
         public NativeHashSet<int2> Active;

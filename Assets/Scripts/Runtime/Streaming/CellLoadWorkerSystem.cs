@@ -77,7 +77,7 @@ namespace VVardenfell.Runtime.Streaming
                 if (loaded.Active.Contains(coord))
                     continue;
 
-                if (!loaded.Map.ContainsKey(coord))
+                if (!loaded.Streamed.Contains(coord))
                 {
                     if (WorldResources.Cells.TryGetValue(coord, out var cellData) && cellData != null)
                     {

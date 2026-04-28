@@ -223,6 +223,12 @@ namespace VVardenfell.Runtime.Streaming
             if (coordArr.IsCreated)
                 coordArr.Dispose();
 
+            if (loaded.Streamed.IsCreated)
+            {
+                for (int i = 0; i < cellEntries.Length; i++)
+                    loaded.Streamed.Add(cellEntries[i].Key);
+            }
+
             progress?.BeginStage("Finalize render state", "Applying initial visibility gate", 1);
             k_BulkDisable.Begin();
             try
@@ -248,6 +254,42 @@ namespace VVardenfell.Runtime.Streaming
             sw.Stop();
         }
 
+        public static IEnumerator SpawnAllTerrainIncremental(World world, LoadedCellsMap loaded, RuntimeLoadProgress progress)
+        {
+            var em = world.EntityManager;
+            var cellEntries = new KeyValuePair<int2, CellData>[WorldResources.Cells.Count];
+            int cellIndex = 0;
+            foreach (var kv in WorldResources.Cells)
+                cellEntries[cellIndex++] = kv;
+
+            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.Cells.Count);
+
+            progress?.BeginStage("Spawn terrain", "Creating all terrain entities", cellEntries.Length);
+            for (int i = 0; i < cellEntries.Length; i++)
+            {
+                var coord = cellEntries[i].Key;
+                var data = cellEntries[i].Value;
+                Entity terrainEntity = Entity.Null;
+
+                if (data.HasTerrain)
+                {
+                    var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active: false);
+                    terrainEntity = terrainResult.Entity;
+                }
+
+                loaded.Map[coord] = terrainEntity;
+
+                int completed = i + 1;
+                if (completed == cellEntries.Length || (completed % TerrainBatchSize) == 0)
+                {
+                    progress?.Report($"Creating terrain entities {completed}/{cellEntries.Length}", completed, cellEntries.Length);
+                    yield return null;
+                }
+            }
+
+            progress?.CompleteStage("Terrain entities ready");
+        }
+
         public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
         {
             WorldInteriorSpawnUtility.SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
@@ -268,7 +310,8 @@ namespace VVardenfell.Runtime.Streaming
             var em = world.EntityManager;
             Entity terrainEntity = Entity.Null;
 
-            if (data.HasTerrain)
+            bool terrainAlreadyResident = loaded.Map.IsCreated && loaded.Map.TryGetValue(coord, out terrainEntity);
+            if (data.HasTerrain && !terrainAlreadyResident)
             {
                 var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active);
                 terrainEntity = terrainResult.Entity;
@@ -276,12 +319,17 @@ namespace VVardenfell.Runtime.Streaming
                 if (!active && gateTerrainByRadius)
                     em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, false);
             }
+            else if (terrainAlreadyResident && terrainEntity != Entity.Null && em.Exists(terrainEntity))
+            {
+                em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, active || !gateTerrainByRadius);
+            }
 
-            if (WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
+            bool streamableAlreadySpawned = loaded.Streamed.IsCreated && loaded.Streamed.Contains(coord);
+            if (!streamableAlreadySpawned && WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
                 WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, staticBlob, active);
 
             var refs = data.Refs;
-            if (refs != null && refs.Length > 0)
+            if (!streamableAlreadySpawned && refs != null && refs.Length > 0)
             {
                 var spawnedRefEntities = new Entity[refs.Length];
                 var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
@@ -310,11 +358,20 @@ namespace VVardenfell.Runtime.Streaming
                 if (!active)
                     SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
             }
+            else if (!active && !streamableAlreadySpawned)
+            {
+                SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
+            }
 
             if (loaded.Map.IsCreated)
                 loaded.Map[coord] = terrainEntity;
+            if (loaded.Streamed.IsCreated)
+                loaded.Streamed.Add(coord);
             if (active && loaded.Active.IsCreated)
+            {
                 loaded.Active.Add(coord);
+                WorldExteriorPhysicsUtility.SetCellPhysicsActive(em, coord, true);
+            }
 
             return true;
         }

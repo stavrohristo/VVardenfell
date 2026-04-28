@@ -68,10 +68,9 @@ namespace VVardenfell.Runtime.Streaming
 
         public static MorrowindWeatherState CreateDefaultWeather()
         {
-            const int playtestWeather = (int)WeatherKind.Rain;
             return new MorrowindWeatherState
             {
-                CurrentWeather = playtestWeather,
+                CurrentWeather = (int)WeatherKind.Clear,
                 NextWeather = -1,
                 QueuedWeather = -1,
                 Transition = 0f,
@@ -80,7 +79,7 @@ namespace VVardenfell.Runtime.Streaming
                 HoursUntilNextChange = 20f,
                 WeatherUpdateHoursRemaining = 20f,
                 RandomState = 0x6E624EB7u,
-                ForcedWeather = playtestWeather,
+                ForcedWeather = -1,
             };
         }
 

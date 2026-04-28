@@ -96,10 +96,6 @@ namespace VVardenfell.Runtime.Components
         public float PrecipitationEmissionScale;
         public float PrecipitationWorldScale;
         public float PrecipitationParticleSizeScale;
-        public float RainDepthFadeMeters;
-        public float RainDepthClipBiasMeters;
-        public float RainStreakLengthScale;
-        public float RainStreakWidthScale;
         public float LightningIntensityScale;
     }
 

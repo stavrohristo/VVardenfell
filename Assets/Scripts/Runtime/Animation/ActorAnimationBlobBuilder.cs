@@ -38,7 +38,8 @@ namespace VVardenfell.Runtime.Animation
             BuildGraphNodes(source, ref builder, ref root);
             BuildSkeletons(source, ref builder, ref root);
             BuildSkinMeshes(source, ref builder, ref root, vertexCount, indexCount, skinBoneCount);
-            BuildClips(source, clipRigFamilyIndices, ref builder, ref root);
+            BuildClips(source, clipRigFamilyIndices, clipTextMarkerStarts, clipTextMarkerCounts, ref builder, ref root);
+            BuildTextMarkers(runtimeTextMarkers, ref builder, ref root);
             BuildTracks(source, trackTargetBoneIndices, trackBlendMasks, ref builder, ref root);
             BuildKeys(source, ref builder, ref root);
             BuildGroups(runtimeGroups, ref builder, ref root);

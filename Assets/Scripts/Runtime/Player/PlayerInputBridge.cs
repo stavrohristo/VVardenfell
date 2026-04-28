@@ -60,6 +60,10 @@ namespace VVardenfell.Runtime.Player
                 control.CrouchHeld = false;
                 control.InteractPressed = false;
                 control.ToggleViewPressed = false;
+                control.ReadyWeaponTogglePressed = false;
+                control.AttackHeld = false;
+                control.AttackPressed = false;
+                control.AttackReleased = false;
                 movementInput = default;
                 return;
             }
@@ -79,6 +83,10 @@ namespace VVardenfell.Runtime.Player
             bool jumpPressedThisFrame = kb.spaceKey.wasPressedThisFrame;
             bool interactPressedThisFrame = kb.eKey.wasPressedThisFrame;
             bool toggleViewPressedThisFrame = kb.vKey.wasPressedThisFrame;
+            bool readyWeaponTogglePressedThisFrame = kb.fKey.wasPressedThisFrame;
+            bool attackHeld = mouse != null && mouse.leftButton.isPressed;
+            bool attackPressedThisFrame = mouse != null && mouse.leftButton.wasPressedThisFrame;
+            bool attackReleasedThisFrame = mouse != null && mouse.leftButton.wasReleasedThisFrame;
 
             control.MoveInput = move;
             control.LookDeltaDegrees += frameLookDelta;
@@ -87,6 +95,10 @@ namespace VVardenfell.Runtime.Player
             control.CrouchHeld = kb.leftCtrlKey.isPressed || kb.cKey.isPressed;
             control.InteractPressed |= interactPressedThisFrame;
             control.ToggleViewPressed |= toggleViewPressedThisFrame;
+            control.ReadyWeaponTogglePressed |= readyWeaponTogglePressedThisFrame;
+            control.AttackHeld = attackHeld;
+            control.AttackPressed |= attackPressedThisFrame;
+            control.AttackReleased |= attackReleasedThisFrame;
 
             movementInput.LocalMove = move;
             movementInput.JumpPressed = movementInput.JumpPressed || jumpPressedThisFrame;

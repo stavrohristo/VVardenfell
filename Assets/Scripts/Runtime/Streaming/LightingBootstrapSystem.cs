@@ -1,5 +1,6 @@
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -137,12 +138,8 @@ namespace VVardenfell.Runtime.Streaming
                 StarTextureScale = 7f,
                 PrecipitationIntensityScale = 1f,
                 PrecipitationEmissionScale = 1f,
-                PrecipitationWorldScale = 1f / 64f,
+                PrecipitationWorldScale = WorldScale.MwUnitsToMeters,
                 PrecipitationParticleSizeScale = 1f,
-                RainDepthFadeMeters = 0.65f,
-                RainDepthClipBiasMeters = 0.08f,
-                RainStreakLengthScale = 1f,
-                RainStreakWidthScale = 1f,
                 LightningIntensityScale = 1f,
             };
         }

@@ -78,6 +78,7 @@ namespace VVardenfell.Runtime.Streaming
             });
             em.AddComponent<Unity.Transforms.Static>(staticEntity);
             em.AddComponentData(staticEntity, new CellLink { Value = coord });
+            WorldResources.RegisterExteriorCellEntity(coord, staticEntity);
             RuntimeColliderAttachmentUtility.AttachSource(
                 em,
                 staticEntity,
@@ -142,6 +143,7 @@ namespace VVardenfell.Runtime.Streaming
 
             em.AddComponentData(terrainEntity, new CellCoord { Value = coord });
             em.AddComponentData(terrainEntity, new CellLink { Value = coord });
+            WorldResources.RegisterExteriorCellEntity(coord, terrainEntity);
             em.AddComponent<Unity.Transforms.Static>(terrainEntity);
             return terrainEntity;
         }

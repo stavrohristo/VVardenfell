@@ -19,6 +19,7 @@ namespace VVardenfell.Runtime.Map
 
         EntityQuery _playerQuery;
         EntityQuery _tileQuery;
+        NativeParallelHashMap<int2, Entity> _tileLookup;
 
         protected override void OnCreate()
         {
@@ -32,6 +33,14 @@ namespace VVardenfell.Runtime.Map
             RequireForUpdate<LocalMapDiscoveryState>();
             RequireForUpdate<StreamingConfig>();
             RequireForUpdate<InteriorTransitionState>();
+
+            _tileLookup = new NativeParallelHashMap<int2, Entity>(64, Allocator.Persistent);
+        }
+
+        protected override void OnDestroy()
+        {
+            if (_tileLookup.IsCreated)
+                _tileLookup.Dispose();
         }
 
         protected override void OnUpdate()
@@ -90,12 +99,20 @@ namespace VVardenfell.Runtime.Map
 
         Entity EnsureTile(int2 cell, int resolution)
         {
-            using var entities = _tileQuery.ToEntityArray(Allocator.Temp);
-            using var tiles = _tileQuery.ToComponentDataArray<ExteriorMapDiscoveryTile>(Allocator.Temp);
-            for (int i = 0; i < tiles.Length; i++)
+            if (_tileLookup.IsCreated
+                && _tileLookup.TryGetValue(cell, out Entity existing)
+                && EntityManager.Exists(existing)
+                && EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
             {
-                if (tiles[i].Cell.x == cell.x && tiles[i].Cell.y == cell.y)
-                    return entities[i];
+                return existing;
+            }
+
+            RebuildTileLookup();
+            if (_tileLookup.TryGetValue(cell, out existing)
+                && EntityManager.Exists(existing)
+                && EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
+            {
+                return existing;
             }
 
             var entity = EntityManager.CreateEntity();
@@ -111,7 +128,26 @@ namespace VVardenfell.Runtime.Map
             buffer.ResizeUninitialized(resolution * resolution);
             for (int i = 0; i < buffer.Length; i++)
                 buffer[i] = new ExteriorMapDiscoverySample { Alpha = byte.MaxValue };
+            _tileLookup.TryAdd(cell, entity);
             return entity;
+        }
+
+        void RebuildTileLookup()
+        {
+            int count = math.max(64, _tileQuery.CalculateEntityCount());
+            if (!_tileLookup.IsCreated || _tileLookup.Capacity < count)
+            {
+                if (_tileLookup.IsCreated)
+                    _tileLookup.Dispose();
+                _tileLookup = new NativeParallelHashMap<int2, Entity>(count, Allocator.Persistent);
+            }
+            else
+            {
+                _tileLookup.Clear();
+            }
+
+            foreach (var (tile, entity) in SystemAPI.Query<RefRO<ExteriorMapDiscoveryTile>>().WithEntityAccess())
+                _tileLookup.TryAdd(tile.ValueRO.Cell, entity);
         }
 
         static bool Reveal(DynamicBuffer<ExteriorMapDiscoverySample> samples, int resolution, float centerX, float centerY, float radiusSq)

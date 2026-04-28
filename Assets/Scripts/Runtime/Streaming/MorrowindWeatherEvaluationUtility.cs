@@ -1,4 +1,5 @@
 using Unity.Mathematics;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -115,7 +116,7 @@ namespace VVardenfell.Runtime.Streaming
             => math.saturate(precipitationAlpha) * 0.6f;
 
         public static float ResolveRainPresentationWorldScale(float worldScale)
-            => worldScale > 0f ? worldScale : 1f / 64f;
+            => worldScale > 0f ? worldScale : WorldScale.MwUnitsToMeters;
 
         public static float3 ResolveOpenMwRainVelocity(float rainSpeed, float windSpeed, float worldScale)
         {
@@ -129,6 +130,13 @@ namespace VVardenfell.Runtime.Streaming
 
         public static float ResolveRainPresentationSize(float worldScale, float particleSizeScale)
             => math.max(0.025f, 10f * ResolveRainPresentationWorldScale(worldScale) * math.max(0.01f, particleSizeScale));
+
+        public static void ResolveOpenMwRainSizeRange(float worldScale, float particleSizeScale, out float minSize, out float maxSize)
+        {
+            float scale = ResolveRainPresentationWorldScale(worldScale) * math.max(0.01f, particleSizeScale);
+            minSize = math.max(0.02f, 5f * scale);
+            maxSize = math.max(minSize, 15f * scale);
+        }
 
         public static float ResolveRainPresentationRange(float morrowindUnits, float worldScale, float fallbackMeters)
             => morrowindUnits > 0f ? morrowindUnits * ResolveRainPresentationWorldScale(worldScale) : fallbackMeters;
