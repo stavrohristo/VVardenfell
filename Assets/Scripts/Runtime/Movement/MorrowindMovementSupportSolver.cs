@@ -59,32 +59,12 @@ namespace VVardenfell.Runtime.Movement
                 || Kind == MorrowindSupportKind.RecoveryFlat;
         }
 
-        static MorrowindSupportKind ResolvePreviousSupportKind(
-            in MorrowindMovementFrameTrace previousTrace,
-            in MorrowindActorKinematicState kinematic,
-            EntityManager entityManager)
-        {
-            if (previousTrace.SupportKind != 0)
-                return (MorrowindSupportKind)previousTrace.SupportKind;
-
-            if (kinematic.WalkingOnWater)
-                return MorrowindSupportKind.WaterSurfaceCandidate;
-
-            if (!kinematic.Grounded)
-                return MorrowindSupportKind.None;
-
-            if (IsActorSupport(entityManager, kinematic.StandingOn))
-                return MorrowindSupportKind.ActorTop;
-
-            return MorrowindSupportKind.FlatGround;
-        }
-
         static GroundSupportResult FindGroundSupport(
             EntityManager entityManager,
             in CollisionWorld world,
             in PhysicsCollider collider,
             float3 position,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             bool wasGrounded,
             bool allowRecoveryFallback)
         {
@@ -150,7 +130,7 @@ namespace VVardenfell.Runtime.Movement
             in CollisionWorld world,
             in PhysicsCollider collider,
             float3 position,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             bool wasGrounded,
             bool allowRecoveryFallback)
         {
@@ -199,17 +179,16 @@ namespace VVardenfell.Runtime.Movement
         static void ApplySupportResult(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             ref float3 position,
-            ref MorrowindActorKinematicState kinematic,
-            ref MorrowindMovementFrameTrace trace,
+            ref MorrowindMovementState kinematic,
+            ref MovementSolveScratch scratch,
             in GroundSupportResult support,
             bool hadSolidGroundBeforeMove)
         {
-            trace.SupportKind = (byte)support.Kind;
-            trace.SupportRejectedSteep = ToByte(support.RejectedSteep);
-            trace.GroundNormal = support.Normal;
-            trace.StandingOn = support.StandingOn;
+            scratch.SupportKind = support.Kind;
+            scratch.GroundNormal = support.Normal;
+            scratch.StandingOn = support.StandingOn;
             kinematic.WalkingOnWater = support.Kind == MorrowindSupportKind.WaterSurfaceCandidate;
 
             if (support.Kind == MorrowindSupportKind.ActorTop)
@@ -235,19 +214,15 @@ namespace VVardenfell.Runtime.Movement
             kinematic.OnSlope = false;
             kinematic.StandingOn = support.StandingOn;
 
-            if (!hadSolidGroundBeforeMove && kinematic.Inertia.y <= 0f)
-                trace.LandingConsumedInertia = 1;
-
-            ApplyLandingSnap(world, collider, tuning, ref position, ref trace, support, hadSolidGroundBeforeMove);
+            ApplyLandingSnap(world, collider, tuning, ref position, support, hadSolidGroundBeforeMove);
             kinematic.Inertia = float3.zero;
         }
 
         static void ApplyLandingSnap(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             ref float3 position,
-            ref MorrowindMovementFrameTrace trace,
             in GroundSupportResult support,
             bool hadSolidGroundBeforeMove)
         {
@@ -262,21 +237,15 @@ namespace VVardenfell.Runtime.Movement
                 if (routineSupportedSurface
                     && withinFlatGroundTolerance)
                 {
-                    trace.GroundProbeSnapped = 0;
-                    trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
                     return;
                 }
 
-                trace.GroundProbeSnapped = 1;
                 position = support.SupportedPosition;
-                trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.Offset;
                 return;
             }
 
             if (routineSupportedSurface)
             {
-                trace.GroundProbeSnapped = 0;
-                trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
                 return;
             }
 
@@ -287,9 +256,7 @@ namespace VVardenfell.Runtime.Movement
             if (world.CastCollider(settleCast, out ColliderCastHit settleHit))
                 settleHitPosition = start + new float3(0f, 2f * tuning.GroundOffset * settleHit.Fraction, 0f);
 
-            trace.GroundProbeSnapped = 1;
             position = (start + settleHitPosition) * 0.5f;
-            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.Settle;
         }
 
         static bool IsWalkableSlope(float3 normal, float maxSlopeCosine) => normal.y > maxSlopeCosine;
@@ -300,7 +267,5 @@ namespace VVardenfell.Runtime.Movement
                 && entityManager.Exists(entity)
                 && (entityManager.HasComponent<PlayerTag>(entity) || entityManager.HasComponent<PassiveActorPresence>(entity));
         }
-
-        static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
     }
 }

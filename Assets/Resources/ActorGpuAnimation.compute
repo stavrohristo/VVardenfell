@@ -54,6 +54,7 @@ struct GpuTrack
     float TimeStop;
     int FirstKeyIndex;
     int KeyCount;
+    uint Mask;
 };
 
 struct GpuKey
@@ -106,6 +107,7 @@ struct GpuLayer
     int ClipIndex;
     float Time;
     float Weight;
+    int Priority;
     uint Mask;
 };
 
@@ -261,6 +263,16 @@ float3 SafeNormalize3(float3 value, float3 fallbackValue)
     return value * rsqrt(lenSq);
 }
 
+float3 SourceTranslationToUnity(float3 source)
+{
+    return float3(source.x, source.z, source.y) * MW_UNITS_TO_METERS;
+}
+
+float4 SourceQuaternionToUnity(float4 source)
+{
+    return NormalizeQuaternion(float4(-source.x, -source.z, -source.y, source.w));
+}
+
 float4 LookRotationSafe(float3 forward, float3 up)
 {
     float3 safeForward = SafeNormalize3(forward, float3(0.0, 0.0, 1.0));
@@ -294,12 +306,20 @@ float4 ComposeSourceXyzRotation(float3 angles, int axisOrder)
     float4 y = QuaternionAxisAngle(float3(0.0, 1.0, 0.0), angles.y);
     float4 z = QuaternionAxisAngle(float3(0.0, 0.0, 1.0), angles.z);
 
-    if (axisOrder == 1) return NormalizeQuaternion(QuaternionMul(QuaternionMul(x, z), y));
-    if (axisOrder == 2) return NormalizeQuaternion(QuaternionMul(QuaternionMul(y, x), z));
-    if (axisOrder == 3) return NormalizeQuaternion(QuaternionMul(QuaternionMul(y, z), x));
-    if (axisOrder == 4) return NormalizeQuaternion(QuaternionMul(QuaternionMul(z, x), y));
-    if (axisOrder == 5) return NormalizeQuaternion(QuaternionMul(QuaternionMul(z, y), x));
-    return NormalizeQuaternion(QuaternionMul(QuaternionMul(x, y), z));
+    float4 raw;
+    if (axisOrder == 1)
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(x, z), y));
+    else if (axisOrder == 2)
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(y, z), x));
+    else if (axisOrder == 3)
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(y, x), z));
+    else if (axisOrder == 4)
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(z, x), y));
+    else if (axisOrder == 5)
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(z, y), x));
+    else
+        raw = NormalizeQuaternion(QuaternionMul(QuaternionMul(x, y), z));
+    return SourceQuaternionToUnity(raw);
 }
 
 float3 GetColumn0(ActorMatrix3x4 matrixValue)
@@ -471,9 +491,9 @@ float4 SampleSourceRotation(GpuTrack track, float time, uint keyBufferCount)
 
     int last = min((int)keyBufferCount - 1, first + count - 1);
     if (first >= last || time <= _GpuAnimationKeys[first].Time)
-        return NormalizeQuaternion(_GpuAnimationKeys[first].Value);
+        return SourceQuaternionToUnity(_GpuAnimationKeys[first].Value);
     if (time >= _GpuAnimationKeys[last].Time)
-        return NormalizeQuaternion(_GpuAnimationKeys[last].Value);
+        return SourceQuaternionToUnity(_GpuAnimationKeys[last].Value);
 
     int right = first + 1;
     while (right <= last && _GpuAnimationKeys[right].Time < time)
@@ -483,11 +503,11 @@ float4 SampleSourceRotation(GpuTrack track, float time, uint keyBufferCount)
     GpuKey a = _GpuAnimationKeys[left];
     GpuKey b = _GpuAnimationKeys[right];
     if (track.Interpolation == 5)
-        return NormalizeQuaternion(a.Value);
+        return SourceQuaternionToUnity(a.Value);
 
     float span = max(1e-5, b.Time - a.Time);
     float t = saturate((time - a.Time) / span);
-    return QuaternionSlerp(a.Value, b.Value, t);
+    return SourceQuaternionToUnity(QuaternionSlerp(a.Value, b.Value, t));
 }
 
 void WriteActorMatrix(int index, int actorMatrixStart, int actorMatrixEnd, ActorMatrix3x4 value)
@@ -603,32 +623,53 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         sampledOrder[boneIndex] = 0;
     }
 
-    bool hasLayer = actor.LayerCount > 0
-        && actor.FirstLayerIndex >= 0
-        && IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
-    GpuLayer layer;
-    layer.ClipIndex = -1;
-    layer.Time = 0.0;
-    layer.Weight = 0.0;
-    layer.Mask = 0u;
-    GpuClip clip;
-    clip.FirstTrackIndex = 0;
-    clip.TrackCount = 0;
-    clip.Duration = 0.0;
-    clip.Padding = 0.0;
-    if (hasLayer)
+    uint blendMasks[4] = { 1u, 2u, 4u, 8u };
+    [loop]
+    for (int maskSlot = 0; maskSlot < 4; maskSlot++)
     {
-        layer = _GpuAnimationLayers[actor.FirstLayerIndex];
-        hasLayer = layer.Weight > 0.0 && IsInRange((uint)layer.ClipIndex, clipBufferCount);
+        uint activeMask = blendMasks[maskSlot];
+        bool hasLayer = actor.LayerCount > 0
+            && actor.FirstLayerIndex >= 0
+            && IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
+        GpuLayer layer;
+        layer.ClipIndex = -1;
+        layer.Time = 0.0;
+        layer.Weight = 0.0;
+        layer.Priority = -2147483648;
+        layer.Mask = 0u;
+
+        if (hasLayer)
+        {
+            int bestPriority = -2147483648;
+            int layerEnd = min((int)layerBufferCount, actor.FirstLayerIndex + actor.LayerCount);
+            [loop]
+            for (int layerIndex = actor.FirstLayerIndex; layerIndex < layerEnd; layerIndex++)
+            {
+                GpuLayer candidate = _GpuAnimationLayers[layerIndex];
+                if (candidate.Weight <= 0.0 || (candidate.Mask & activeMask) == 0u || candidate.Priority < bestPriority)
+                    continue;
+
+                bestPriority = candidate.Priority;
+                layer = candidate;
+            }
+
+            hasLayer = layer.Weight > 0.0 && IsInRange((uint)layer.ClipIndex, clipBufferCount);
+        }
+
+        GpuClip clip;
+        clip.FirstTrackIndex = 0;
+        clip.TrackCount = 0;
+        clip.Duration = 0.0;
+        clip.Padding = 0.0;
         if (hasLayer)
         {
             clip = _GpuAnimationClips[layer.ClipIndex];
             hasLayer = clip.TrackCount > 0 && clip.FirstTrackIndex >= 0 && clip.FirstTrackIndex < (int)trackBufferCount;
         }
-    }
 
-    if (hasLayer)
-    {
+        if (!hasLayer)
+            continue;
+
         float weight = saturate(layer.Weight);
         int trackEnd = min((int)trackBufferCount, clip.FirstTrackIndex + clip.TrackCount);
         [loop]
@@ -639,18 +680,21 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             if (track.KeyCount <= 0 || track.FirstKeyIndex < 0 || boneIndex < 0 || boneIndex >= skeleton.BoneCount)
                 continue;
 
+            GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+            uint trackMask = track.Mask != 0u ? track.Mask : bone.Mask;
+            if ((trackMask & activeMask) == 0u)
+                continue;
+
             float trackTime = MapTrackTime(layer.Time, track);
             if (track.Kind == 1)
             {
                 float4 value = SampleValue(track, trackTime, keyBufferCount);
-                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
-                float3 sampledPosition = value.xyz;
+                float3 sampledPosition = SourceTranslationToUnity(value.xyz);
                 localPos[boneIndex] = lerp(bone.BindPosition, sampledPosition, weight);
                 localTouched[boneIndex] = 1u;
             }
             else if (track.Kind == 2)
             {
-                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
                 float4 sampledRotation = SampleSourceRotation(track, trackTime, keyBufferCount);
                 localRot[boneIndex] = QuaternionSlerp(NormalizeQuaternion(bone.BindRotation), sampledRotation, weight);
                 localTouched[boneIndex] = 1u;
@@ -658,7 +702,6 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             else if (track.Kind == 3)
             {
                 float4 value = SampleValue(track, trackTime, keyBufferCount);
-                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
                 float bindScale = bone.BindScale <= 0.0 ? 1.0 : bone.BindScale;
                 float sampledBoneScale = value.x <= 0.0 ? 1.0 : value.x;
                 localScale[boneIndex] = lerp(bindScale, sampledBoneScale, weight);
@@ -690,9 +733,12 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         [loop]
         for (int sampledBoneIndex = 0; sampledBoneIndex < skeleton.BoneCount; sampledBoneIndex++)
         {
+            GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + sampledBoneIndex];
+            if ((bone.Mask & activeMask) == 0u)
+                continue;
+
             if (sampledFlags[sampledBoneIndex] != 0u)
             {
-                GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + sampledBoneIndex];
                 float4 sampledRotation = ComposeSourceXyzRotation(sampledAxis[sampledBoneIndex], sampledOrder[sampledBoneIndex]);
                 localRot[sampledBoneIndex] = QuaternionSlerp(NormalizeQuaternion(bone.BindRotation), sampledRotation, weight);
                 localTouched[sampledBoneIndex] = 1u;
@@ -713,17 +759,16 @@ void CSMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         GpuBone composeBone = _GpuAnimationBones[skeleton.FirstBoneIndex + composeIndex];
         int parentIndex = composeBone.ParentIndex;
-        ActorMatrix3x4 sourceLocal;
+        ActorMatrix3x4 unityLocal;
         if (localTouched[composeIndex] == 0u)
-            sourceLocal = MatrixFromRows(
+            unityLocal = MatrixFromRows(
                 composeBone.BindLocalRow0,
                 composeBone.BindLocalRow1,
                 composeBone.BindLocalRow2,
                 float4(0.0, 0.0, 0.0, 1.0));
         else
-            sourceLocal = MatrixTRS(localPos[composeIndex], localRot[composeIndex], max(1e-4, localScale[composeIndex]));
+            unityLocal = MatrixTRS(localPos[composeIndex], localRot[composeIndex], max(1e-4, localScale[composeIndex]));
 
-        ActorMatrix3x4 unityLocal = ConvertSourceAffineToUnity(sourceLocal);
         localToRoot[composeIndex] = unityLocal;
         if (parentIndex >= 0 && parentIndex < composeIndex)
             localToRoot[composeIndex] = MultiplyAffine(localToRoot[parentIndex], unityLocal);

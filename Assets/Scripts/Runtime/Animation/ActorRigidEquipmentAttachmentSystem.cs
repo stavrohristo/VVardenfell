@@ -8,7 +8,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorRootMotionSystem))]
+    [UpdateAfter(typeof(ActorPoseSamplingSystem))]
     public partial struct ActorRigidEquipmentAttachmentSystem : ISystem
     {
         public void OnCreate(ref SystemState state)

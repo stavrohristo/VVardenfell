@@ -18,21 +18,6 @@ namespace VVardenfell.Runtime.Player
         public float StandingEyeHeight;
         public float CrouchingEyeHeight;
         public float Radius;
-        public float SkinWidth;
-        public float MaxStepHeight;
-        public float GroundProbeDistance;
-        public float MaxSlopeCosine;
-        public float GroundMaxSpeed;
-        public float SprintSpeedMultiplier;
-        public float CrouchSpeedMultiplier;
-        public float GroundedMovementSharpness;
-        public float AirAcceleration;
-        public float AirMaxSpeed;
-        public float AirDrag;
-        public float JumpSpeed;
-        public float Gravity;
-        public float CoyoteTime;
-        public float JumpBufferTime;
         public float MinPitch;
         public float MaxPitch;
         public float LookSensitivity;
@@ -92,7 +77,6 @@ namespace VVardenfell.Runtime.Player
     {
         public Entity Player;
         public Entity View;
-        public byte FirstPerson;
     }
 
     public struct PlayerStanceColliders : IComponentData

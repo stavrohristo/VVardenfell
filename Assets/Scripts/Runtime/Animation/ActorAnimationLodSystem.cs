@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_GPU_ANIMATION
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -9,7 +10,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationGraphSystem))]
+    [UpdateAfter(typeof(ActorAnimationControllerSystem))]
     [UpdateBefore(typeof(ActorPoseSamplingSystem))]
     [UpdateBefore(typeof(ActorGpuAnimationRequestSystem))]
     public partial struct ActorAnimationLodSystem : ISystem
@@ -19,6 +20,7 @@ namespace VVardenfell.Runtime.Animation
 
         EntityQuery _actorQuery;
         ComponentTypeHandle<ActorRenderVisible> _renderVisibleHandle;
+        ComponentTypeHandle<ActorGpuAnimationState> _gpuStateHandle;
         ComponentTypeHandle<CPUAnimation> _cpuAnimationHandle;
         ComponentTypeHandle<GPUAnimation> _gpuAnimationHandle;
         ComponentTypeHandle<ActorAttachmentBoneAnimation> _attachmentAnimationHandle;
@@ -30,6 +32,7 @@ namespace VVardenfell.Runtime.Animation
                 All = new[]
                 {
                     ComponentType.ReadOnly<ActorRenderVisible>(),
+                    ComponentType.ReadOnly<ActorGpuAnimationState>(),
                     ComponentType.ReadWrite<CPUAnimation>(),
                     ComponentType.ReadWrite<GPUAnimation>(),
                     ComponentType.ReadWrite<ActorAttachmentBoneAnimation>(),
@@ -38,6 +41,7 @@ namespace VVardenfell.Runtime.Animation
             });
 
             _renderVisibleHandle = state.GetComponentTypeHandle<ActorRenderVisible>(isReadOnly: true);
+            _gpuStateHandle = state.GetComponentTypeHandle<ActorGpuAnimationState>(isReadOnly: true);
             _cpuAnimationHandle = state.GetComponentTypeHandle<CPUAnimation>(isReadOnly: false);
             _gpuAnimationHandle = state.GetComponentTypeHandle<GPUAnimation>(isReadOnly: false);
             _attachmentAnimationHandle = state.GetComponentTypeHandle<ActorAttachmentBoneAnimation>(isReadOnly: false);
@@ -60,6 +64,7 @@ namespace VVardenfell.Runtime.Animation
         public void OnUpdate(ref SystemState state)
         {
             _renderVisibleHandle.Update(ref state);
+            _gpuStateHandle.Update(ref state);
             _cpuAnimationHandle.Update(ref state);
             _gpuAnimationHandle.Update(ref state);
             _attachmentAnimationHandle.Update(ref state);
@@ -70,7 +75,9 @@ namespace VVardenfell.Runtime.Animation
                 state.Dependency = new ClassifyActorAnimationLodJob
                 {
                     SupportsComputeShaders = SystemInfo.supportsComputeShaders ? (byte)1 : (byte)0,
+                    ValidationEnabled = SystemAPI.GetSingleton<ActorAnimationLodSettings>().ValidationEnabled,
                     RenderVisibleHandle = _renderVisibleHandle,
+                    GpuStateHandle = _gpuStateHandle,
                     CpuAnimationHandle = _cpuAnimationHandle,
                     GpuAnimationHandle = _gpuAnimationHandle,
                     AttachmentAnimationHandle = _attachmentAnimationHandle,
@@ -82,7 +89,9 @@ namespace VVardenfell.Runtime.Animation
         struct ClassifyActorAnimationLodJob : IJobChunk
         {
             [ReadOnly] public byte SupportsComputeShaders;
+            [ReadOnly] public byte ValidationEnabled;
             [ReadOnly] public ComponentTypeHandle<ActorRenderVisible> RenderVisibleHandle;
+            [ReadOnly] public ComponentTypeHandle<ActorGpuAnimationState> GpuStateHandle;
             public ComponentTypeHandle<CPUAnimation> CpuAnimationHandle;
             public ComponentTypeHandle<GPUAnimation> GpuAnimationHandle;
             public ComponentTypeHandle<ActorAttachmentBoneAnimation> AttachmentAnimationHandle;
@@ -90,14 +99,22 @@ namespace VVardenfell.Runtime.Animation
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
             {
                 int count = chunk.Count;
+                var gpuStates = chunk.GetNativeArray(ref GpuStateHandle);
                 for (int i = 0; i < count; i++)
                 {
-                    bool targetCpuEnabled = chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
+                    bool visible = chunk.IsComponentEnabled(ref RenderVisibleHandle, i);
+                    var gpuState = gpuStates[i];
+                    bool gpuStateReady = gpuState.LayerCount > 0
+                                         && gpuState.BoneMatrixCount > 0
+                                         && gpuState.BoneMatrixOffset >= 0;
+                    bool targetGpuEnabled = visible && SupportsComputeShaders != 0;
+                    bool targetCpuEnabled = visible && (!targetGpuEnabled || ValidationEnabled != 0 || !gpuStateReady);
                     chunk.SetComponentEnabled(ref CpuAnimationHandle, i, targetCpuEnabled);
-                    chunk.SetComponentEnabled(ref GpuAnimationHandle, i, false);
+                    chunk.SetComponentEnabled(ref GpuAnimationHandle, i, targetGpuEnabled);
                     chunk.SetComponentEnabled(ref AttachmentAnimationHandle, i, false);
                 }
             }
         }
     }
 }
+#endif

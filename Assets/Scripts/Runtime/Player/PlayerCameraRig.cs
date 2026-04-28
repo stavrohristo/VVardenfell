@@ -23,7 +23,6 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
-                ComponentType.ReadWrite<MorrowindMovementIntent>(),
                 ComponentType.ReadWrite<LocalTransform>());
             _viewQuery = state.GetEntityQuery(
                 ComponentType.ReadWrite<PlayerViewComponent>(),
@@ -40,14 +39,12 @@ namespace VVardenfell.Runtime.Player
             Entity playerEntity = _playerQuery.GetSingletonEntity();
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
-            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
             var bodyTransformRef = _playerQuery.GetSingletonRW<LocalTransform>();
 
             var viewRef = _viewQuery.GetSingletonRW<PlayerViewComponent>();
             var viewTransformRef = _viewQuery.GetSingletonRW<LocalTransform>();
 
             ref var control = ref controlRef.ValueRW;
-            ref var intent = ref intentRef.ValueRW;
             ref var view = ref viewRef.ValueRW;
             if (view.ControlledCharacter != playerEntity)
                 return;
@@ -70,7 +67,6 @@ namespace VVardenfell.Runtime.Player
                 1f);
 
             control.LookDeltaDegrees = float2.zero;
-            intent.LookDeltaDegrees = float2.zero;
         }
     }
 

@@ -298,7 +298,7 @@ namespace VVardenfell.Runtime.Rendering
         {
             int offset = BoneMatrices.Length;
             for (int i = 0; i < bones.Length; i++)
-                BoneMatrices.Add(ToGpuMatrix(bones[i].SkinMatrix));
+                BoneMatrices.Add(ToGpuMatrix(bones[i].LocalToRoot));
             return offset;
         }
 

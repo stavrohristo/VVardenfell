@@ -121,7 +121,8 @@ namespace VVardenfell.Runtime.Interactions
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
                 ComponentType.ReadWrite<PlayerCharacterState>(),
-                ComponentType.ReadWrite<MorrowindMovementIntent>());
+                ComponentType.ReadWrite<MorrowindMovementInput>(),
+                ComponentType.ReadWrite<MorrowindMovementState>());
             _viewQuery = GetEntityQuery(
                 ComponentType.ReadWrite<PlayerViewComponent>(),
                 ComponentType.ReadWrite<LocalTransform>(),
@@ -255,7 +256,8 @@ namespace VVardenfell.Runtime.Interactions
             var character = EntityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
             var control = EntityManager.GetComponentData<PlayerCharacterControl>(playerEntity);
             var state = EntityManager.GetComponentData<PlayerCharacterState>(playerEntity);
-            var intent = EntityManager.GetComponentData<MorrowindMovementIntent>(playerEntity);
+            var movementInput = EntityManager.GetComponentData<MorrowindMovementInput>(playerEntity);
+            var movementState = EntityManager.GetComponentData<MorrowindMovementState>(playerEntity);
             var playerTransform = EntityManager.GetComponentData<LocalTransform>(playerEntity);
 
             playerTransform.Position = destinationPosition;
@@ -273,12 +275,18 @@ namespace VVardenfell.Runtime.Interactions
             control.JumpPressedEvent.Clear();
             EntityManager.SetComponentData(playerEntity, control);
 
-            intent.LocalMove = float3.zero;
-            intent.LookDeltaDegrees = float2.zero;
-            intent.InteractPressed = false;
-            intent.SpeedFactor = 0f;
-            intent.IsStrafing = false;
-            EntityManager.SetComponentData(playerEntity, intent);
+            movementInput = default;
+            EntityManager.SetComponentData(playerEntity, movementInput);
+
+            movementState.Inertia = float3.zero;
+            movementState.LastVelocity = float3.zero;
+            movementState.LocalMove = float2.zero;
+            movementState.SpeedFactor = 0f;
+            movementState.Flags = 0;
+            movementState.SupportKind = 0;
+            movementState.StandingOn = Entity.Null;
+            movementState.GroundNormal = math.up();
+            EntityManager.SetComponentData(playerEntity, movementState);
 
             state.WorldVelocity = float3.zero;
             state.Grounded = false;

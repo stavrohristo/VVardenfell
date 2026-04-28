@@ -31,8 +31,7 @@ namespace VVardenfell.Runtime.Rendering
             RequireForUpdate<ActorAnimationBlobCatalog>();
             RequireForUpdate<ActorSkinMesh>();
             _uploadQuery = SystemAPI.QueryBuilder()
-                .WithAll<ActorRenderVisible, LocalToWorld, ActorGpuAnimationState, ActorBone, ActorSkinMesh>()
-                .WithPresent<GPUAnimation>()
+                .WithAll<ActorRenderVisible, LocalToWorld, ActorBone, ActorSkinMesh>()
                 .Build();
         }
 
@@ -166,17 +165,6 @@ namespace VVardenfell.Runtime.Rendering
             WorldResources.ActorProceduralRenderer = null;
         }
 
-        static bool IsValidGpuState(in ActorGpuAnimationState gpuState, int expectedSkinMeshCount, ref ActorAnimationCatalogBlob catalog)
-        {
-            if ((uint)gpuState.SkeletonIndex >= (uint)catalog.Skeletons.Length)
-                return false;
-            if (gpuState.SkinMeshCount != expectedSkinMeshCount)
-                return false;
-            if (gpuState.BoneMatrixCount <= 0 || gpuState.BoneMatrixOffset < 0)
-                return false;
-            return true;
-        }
-
         [BurstCompile]
         partial struct CountActorProceduralWorkJob : IJobEntity
         {
@@ -186,28 +174,12 @@ namespace VVardenfell.Runtime.Rendering
 
             void Execute(
                 [EntityIndexInQuery] int entityIndex,
-                EnabledRefRO<GPUAnimation> gpuAnimation,
-                in ActorGpuAnimationState gpuState,
                 [ReadOnly] DynamicBuffer<ActorBone> bones,
                 [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
             {
                 if (!Catalog.IsCreated || skinMeshes.Length == 0)
                 {
                     DrawCounts[entityIndex] = 0;
-                    BoneCounts[entityIndex] = 0;
-                    return;
-                }
-
-                if (gpuAnimation.ValueRO)
-                {
-                    if (!ActorProceduralRenderUploadSystem.IsValidGpuState(gpuState, skinMeshes.Length, ref Catalog.Value))
-                    {
-                        DrawCounts[entityIndex] = 0;
-                        BoneCounts[entityIndex] = 0;
-                        return;
-                    }
-
-                    DrawCounts[entityIndex] = skinMeshes.Length;
                     BoneCounts[entityIndex] = 0;
                     return;
                 }
@@ -272,9 +244,7 @@ namespace VVardenfell.Runtime.Rendering
 
             void Execute(
                 [EntityIndexInQuery] int entityIndex,
-                EnabledRefRO<GPUAnimation> gpuAnimation,
                 in LocalToWorld localToWorld,
-                in ActorGpuAnimationState gpuState,
                 [ReadOnly] DynamicBuffer<ActorBone> bones,
                 [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
             {
@@ -287,10 +257,7 @@ namespace VVardenfell.Runtime.Rendering
 
                 ref var catalog = ref Catalog.Value;
                 float4x4 actorLocalToWorld = localToWorld.Value;
-                int gpuBoneCursor = gpuState.BoneMatrixOffset;
-                bool gpuAnimationEnabled = gpuAnimation.ValueRO;
-                bool useGpuAnimation = gpuAnimationEnabled && ActorProceduralRenderUploadSystem.IsValidGpuState(gpuState, skinMeshes.Length, ref catalog);
-                if (gpuAnimationEnabled && !useGpuAnimation)
+                if (bones.Length == 0)
                     return;
 
                 for (int i = 0; i < skinMeshes.Length; i++)
@@ -310,26 +277,9 @@ namespace VVardenfell.Runtime.Rendering
                         : default;
                     int boneMatrixOffset;
                     int boneMatrixSource;
-                    if (gpuAnimationEnabled)
-                    {
-                        if (gpuBoneCursor + runtimeInfo.BoneMatrixCount > gpuState.BoneMatrixOffset + gpuState.BoneMatrixCount)
-                        {
-                            PackedDraws[drawCursor] = default;
-                            PackedBatchTypeIds[drawCursor] = InvalidBatchTypeId;
-                            drawCursor++;
-                            continue;
-                        }
-
-                        boneMatrixOffset = gpuBoneCursor;
-                        gpuBoneCursor += runtimeInfo.BoneMatrixCount;
-                        boneMatrixSource = 1;
-                    }
-                    else
-                    {
-                        boneMatrixOffset = boneCursor;
-                        AddSkinBoneMatrices(ref catalog, skinMesh, bones, skinMeshRef.AttachBoneIndex, skinMeshRef.RigidMirrorX, ref boneCursor);
-                        boneMatrixSource = 0;
-                    }
+                    boneMatrixOffset = boneCursor;
+                    AddSkinBoneMatrices(ref catalog, skinMesh, bones, skinMeshRef.AttachBoneIndex, skinMeshRef.RigidMirrorX, ref boneCursor);
+                    boneMatrixSource = 0;
 
                     PackedDraws[drawCursor] = new ActorProceduralDrawGpu
                     {

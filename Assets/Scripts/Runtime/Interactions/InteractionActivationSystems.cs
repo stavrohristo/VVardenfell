@@ -281,8 +281,7 @@ namespace VVardenfell.Runtime.Interactions
         {
             _playerQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<PlayerCharacterControl>(),
-                ComponentType.ReadWrite<MorrowindMovementIntent>());
+                ComponentType.ReadWrite<PlayerCharacterControl>());
             _focusQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerInteractionFocus>());
             _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
             _transitionQuery = GetEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>());
@@ -299,14 +298,11 @@ namespace VVardenfell.Runtime.Interactions
             ref var request = ref requestRef.ValueRW;
             var transition = _transitionQuery.GetSingleton<InteriorTransitionState>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
-            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
             ref var control = ref controlRef.ValueRW;
-            ref var intent = ref intentRef.ValueRW;
             if (!control.InteractPressed)
                 return;
 
             control.InteractPressed = false;
-            intent.InteractPressed = false;
 
             if (request.Pending != 0 || transition.TransitionInProgress != 0)
                 return;

@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_GPU_ANIMATION
 using System;
 using System.Collections.Generic;
 using Unity.Entities;
@@ -150,8 +151,8 @@ namespace VVardenfell.Runtime.Animation
                 {
                     local[boneIndex] = new LocalPose
                     {
-                        Position = bindBone.BindPosition,
-                        Rotation = SafeNormalize(bindBone.BindRotation),
+                        Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(bindBone.BindPosition),
+                        Rotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(bindBone.BindRotation),
                         Scale = bindBone.BindScale <= 0f ? 1f : bindBone.BindScale,
                         HasTrack = 0,
                     };
@@ -160,8 +161,14 @@ namespace VVardenfell.Runtime.Animation
 
                 local[boneIndex] = new LocalPose
                 {
-                    Position = math.lerp(bindBone.BindPosition, sampled[boneIndex].Position, weight),
-                    Rotation = SafeNormalize(math.slerp(SafeNormalize(bindBone.BindRotation), SafeNormalize(sampled[boneIndex].Rotation), weight)),
+                    Position = math.lerp(
+                        ActorAnimationSpaceConversion.SourceTranslationToUnity(bindBone.BindPosition),
+                        sampled[boneIndex].Position,
+                        weight),
+                    Rotation = SafeNormalize(math.slerp(
+                        ActorAnimationSpaceConversion.SourceQuaternionToUnity(bindBone.BindRotation),
+                        SafeNormalize(sampled[boneIndex].Rotation),
+                        weight)),
                     Scale = math.lerp(bindBone.BindScale <= 0f ? 1f : bindBone.BindScale, sampled[boneIndex].Scale, weight),
                     HasTrack = 1,
                 };
@@ -208,8 +215,9 @@ namespace VVardenfell.Runtime.Animation
                     var skinBone = catalog.SkinBones[skinBoneIndex];
                     int boneIndex = skinBone.BoneIndex;
                     float4x4 pose = (uint)boneIndex < (uint)localToRoot.Length ? localToRoot[boneIndex] : float4x4.identity;
-                    skinMatrices.Add(ActorAnimationSpaceConversion.SourceAffineToUnity(
-                        math.mul(math.mul(skinMesh.GeometryToSkeleton, pose), skinBone.BindPose)));
+                    float4x4 unityGeometryToSkeleton = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
+                    float4x4 unityBindPose = ActorAnimationSpaceConversion.SourceAffineToUnity(skinBone.BindPose);
+                    skinMatrices.Add(math.mul(math.mul(unityGeometryToSkeleton, pose), unityBindPose));
                     skinMeshIndices.Add(skinMeshIndex);
                     boneIndices.Add(boneIndex);
                 }
@@ -226,7 +234,7 @@ namespace VVardenfell.Runtime.Animation
                 float4x4 local;
                 if (localPoses[boneIndex].HasTrack == 0)
                 {
-                    local = bone.BindLocalMatrix;
+                    local = ActorAnimationSpaceConversion.SourceAffineToUnity(bone.BindLocalMatrix);
                 }
                 else
                 {
@@ -264,7 +272,7 @@ namespace VVardenfell.Runtime.Animation
                     case ActorAnimationTrackKind.Translation:
                     {
                         float4 value = SampleValue(ref catalog, track, trackTime);
-                        pose.Position = value.xyz;
+                        pose.Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(value.xyz);
                         break;
                     }
                     case ActorAnimationTrackKind.Rotation:
@@ -325,8 +333,8 @@ namespace VVardenfell.Runtime.Animation
             var bindBone = catalog.Bones[firstBoneIndex + skeleton.AccumulationBoneIndex];
             local[skeleton.AccumulationBoneIndex] = new LocalPose
             {
-                Position = bindBone.BindPosition,
-                Rotation = SafeNormalize(bindBone.BindRotation),
+                Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(bindBone.BindPosition),
+                Rotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(bindBone.BindRotation),
                 Scale = bindBone.BindScale <= 0f ? 1f : bindBone.BindScale,
                 HasTrack = 0,
             };
@@ -341,8 +349,8 @@ namespace VVardenfell.Runtime.Animation
                 var bone = catalog.Bones[firstBoneIndex + boneIndex];
                 sampled[boneIndex] = new SampledPose
                 {
-                    Position = bone.BindPosition,
-                    Rotation = SafeNormalize(bone.BindRotation),
+                    Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(bone.BindPosition),
+                    Rotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(bone.BindRotation),
                     Scale = bone.BindScale <= 0f ? 1f : bone.BindScale,
                     AxisRotation = float3.zero,
                     AxisFlags = 0,
@@ -363,8 +371,8 @@ namespace VVardenfell.Runtime.Animation
                 var bone = catalog.Bones[firstBoneIndex + boneIndex];
                 local[boneIndex] = new LocalPose
                 {
-                    Position = bone.BindPosition,
-                    Rotation = SafeNormalize(bone.BindRotation),
+                    Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(bone.BindPosition),
+                    Rotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(bone.BindRotation),
                     Scale = bone.BindScale <= 0f ? 1f : bone.BindScale,
                     HasTrack = 0,
                 };
@@ -591,7 +599,8 @@ namespace VVardenfell.Runtime.Animation
 
         static quaternion KeyRotation(ActorAnimationKeyBlob key)
         {
-            return SafeNormalize(new quaternion(key.Value.x, key.Value.y, key.Value.z, key.Value.w));
+            return ActorAnimationSpaceConversion.SourceQuaternionToUnity(
+                new quaternion(key.Value.x, key.Value.y, key.Value.z, key.Value.w));
         }
 
         static float4 Hermite(ActorAnimationKeyBlob a, ActorAnimationKeyBlob b, float t, float span)
@@ -614,15 +623,16 @@ namespace VVardenfell.Runtime.Animation
             quaternion y = quaternion.AxisAngle(new float3(0f, 1f, 0f), angles.y);
             quaternion z = quaternion.AxisAngle(new float3(0f, 0f, 1f), angles.z);
 
-            return axisOrder switch
+            quaternion raw = axisOrder switch
             {
                 1 => SafeNormalize(math.mul(math.mul(x, z), y)),
-                2 => SafeNormalize(math.mul(math.mul(y, x), z)),
-                3 => SafeNormalize(math.mul(math.mul(y, z), x)),
+                2 => SafeNormalize(math.mul(math.mul(y, z), x)),
+                3 => SafeNormalize(math.mul(math.mul(y, x), z)),
                 4 => SafeNormalize(math.mul(math.mul(z, x), y)),
                 5 => SafeNormalize(math.mul(math.mul(z, y), x)),
                 _ => SafeNormalize(math.mul(math.mul(x, y), z)),
             };
+            return ActorAnimationSpaceConversion.SourceQuaternionToUnity(raw);
         }
 
         static quaternion SafeNormalize(quaternion value)
@@ -651,3 +661,4 @@ namespace VVardenfell.Runtime.Animation
         }
     }
 }
+#endif

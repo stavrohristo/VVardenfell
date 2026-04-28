@@ -95,11 +95,6 @@ namespace VVardenfell.Runtime.Components
         public float Encumbrance;
         public float NormalizedEncumbrance;
         public float FatigueTerm;
-        public float WalkSpeed;
-        public float RunSpeed;
-        public float SneakWalkSpeed;
-        public float JumpSpeed;
-        public float JumpMoveFactor;
     }
 
     public struct ActorRuntimeStatSeed

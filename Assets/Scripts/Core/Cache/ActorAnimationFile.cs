@@ -349,7 +349,7 @@ namespace VVardenfell.Core.Cache
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 63u;
+        const uint Version = 64u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {

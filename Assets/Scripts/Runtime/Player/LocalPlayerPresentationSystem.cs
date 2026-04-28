@@ -126,7 +126,6 @@ namespace VVardenfell.Runtime.Player
             {
                 Player = player,
                 View = view,
-                FirstPerson = (byte)(firstPerson ? 1 : 0),
             });
             ecb.AddComponent(visual, new Parent { Value = firstPerson ? view : player });
             ecb.AddComponent(visual, LocalTransform.Identity);
@@ -234,66 +233,6 @@ namespace VVardenfell.Runtime.Player
             }
 
             EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, visible);
-        }
-    }
-
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationStateResolveSystem))]
-    [UpdateBefore(typeof(ActorAnimationGraphSystem))]
-    public partial class LocalPlayerVisualAnimationSyncSystem : SystemBase
-    {
-        protected override void OnCreate()
-        {
-            RequireForUpdate<LocalPlayerVisual>();
-            RequireForUpdate<PlayerCharacterControl>();
-        }
-
-        protected override void OnUpdate()
-        {
-            var control = SystemAPI.GetSingleton<PlayerCharacterControl>();
-            FixedString64Bytes group = ResolveMovementGroup(control);
-
-            foreach (var controller in
-                     SystemAPI.Query<RefRW<ActorAnimationController>>()
-                         .WithAll<LocalPlayerVisual>())
-            {
-                controller.ValueRW.RequestedGroup = group;
-                controller.ValueRW.Speed = control.SprintHeld ? 1.15f : 1f;
-            }
-        }
-
-        static FixedString64Bytes ResolveMovementGroup(in PlayerCharacterControl control)
-        {
-            float2 move = control.MoveInput;
-            if (math.lengthsq(move) < 0.0001f)
-                return Fixed("idle");
-
-            bool lateral = math.abs(move.x) > math.abs(move.y);
-            if (control.CrouchHeld)
-            {
-                if (lateral)
-                    return move.x >= 0f ? Fixed("sneakright") : Fixed("sneakleft");
-                return move.y >= 0f ? Fixed("sneakforward") : Fixed("sneakback");
-            }
-
-            if (control.SprintHeld)
-            {
-                if (lateral)
-                    return move.x >= 0f ? Fixed("runright") : Fixed("runleft");
-                return move.y >= 0f ? Fixed("runforward") : Fixed("runback");
-            }
-
-            if (lateral)
-                return move.x >= 0f ? Fixed("walkright") : Fixed("walkleft");
-            return move.y >= 0f ? Fixed("walkforward") : Fixed("walkback");
-        }
-
-        static FixedString64Bytes Fixed(string value)
-        {
-            FixedString64Bytes result = default;
-            for (int i = 0; i < value.Length; i++)
-                result.Append(value[i]);
-            return result;
         }
     }
 }

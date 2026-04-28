@@ -15,17 +15,13 @@ namespace VVardenfell.Runtime.Movement
     [UpdateAfter(typeof(PathGridTraversalSteeringSystem))]
     public partial struct NonPlayerActorMovementSystem : ISystem
     {
-        static readonly bool s_EnableNonPlayerActorMovement = false;
-
         EntityQuery _query;
         ComponentTypeHandle<LocalTransform> _transformHandle;
         ComponentTypeHandle<LocalToWorld> _localToWorldHandle;
-        ComponentTypeHandle<MorrowindMovementIntent> _intentHandle;
-        ComponentTypeHandle<MorrowindActorKinematicState> _kinematicHandle;
-        ComponentTypeHandle<MorrowindMovementFrameTrace> _traceHandle;
+        ComponentTypeHandle<MorrowindMovementInput> _inputHandle;
+        ComponentTypeHandle<MorrowindMovementState> _movementStateHandle;
         ComponentTypeHandle<PhysicsCollider> _colliderHandle;
-        ComponentTypeHandle<MorrowindMovementTuning> _tuningHandle;
-        ComponentTypeHandle<ActorDerivedMovementStats> _derivedStatsHandle;
+        ComponentTypeHandle<MorrowindMovementSpeed> _speedHandle;
 
         public void OnCreate(ref SystemState state)
         {
@@ -37,11 +33,9 @@ namespace VVardenfell.Runtime.Movement
                     ComponentType.ReadWrite<LocalTransform>(),
                     ComponentType.ReadWrite<LocalToWorld>(),
                     ComponentType.ReadWrite<PhysicsCollider>(),
-                    ComponentType.ReadWrite<MorrowindMovementIntent>(),
-                    ComponentType.ReadWrite<MorrowindActorKinematicState>(),
-                    ComponentType.ReadWrite<MorrowindMovementFrameTrace>(),
-                    ComponentType.ReadOnly<MorrowindMovementTuning>(),
-                    ComponentType.ReadOnly<ActorDerivedMovementStats>(),
+                    ComponentType.ReadWrite<MorrowindMovementInput>(),
+                    ComponentType.ReadWrite<MorrowindMovementState>(),
+                    ComponentType.ReadOnly<MorrowindMovementSpeed>(),
                 },
                 None = new ComponentType[]
                 {
@@ -51,47 +45,41 @@ namespace VVardenfell.Runtime.Movement
 
             _transformHandle = state.GetComponentTypeHandle<LocalTransform>(isReadOnly: false);
             _localToWorldHandle = state.GetComponentTypeHandle<LocalToWorld>(isReadOnly: false);
-            _intentHandle = state.GetComponentTypeHandle<MorrowindMovementIntent>(isReadOnly: false);
-            _kinematicHandle = state.GetComponentTypeHandle<MorrowindActorKinematicState>(isReadOnly: false);
-            _traceHandle = state.GetComponentTypeHandle<MorrowindMovementFrameTrace>(isReadOnly: false);
+            _inputHandle = state.GetComponentTypeHandle<MorrowindMovementInput>(isReadOnly: false);
+            _movementStateHandle = state.GetComponentTypeHandle<MorrowindMovementState>(isReadOnly: false);
             _colliderHandle = state.GetComponentTypeHandle<PhysicsCollider>(isReadOnly: false);
-            _tuningHandle = state.GetComponentTypeHandle<MorrowindMovementTuning>(isReadOnly: true);
-            _derivedStatsHandle = state.GetComponentTypeHandle<ActorDerivedMovementStats>(isReadOnly: true);
+            _speedHandle = state.GetComponentTypeHandle<MorrowindMovementSpeed>(isReadOnly: true);
 
             state.RequireForUpdate(_query);
             state.RequireForUpdate<PhysicsWorldSingleton>();
+            state.RequireForUpdate<MorrowindMovementSettings>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
-            if (!s_EnableNonPlayerActorMovement)
-                return;
-
             float dt = SystemAPI.Time.DeltaTime;
             if (dt <= 0f)
                 return;
 
+            var settings = SystemAPI.GetSingleton<MorrowindMovementSettings>();
             _transformHandle.Update(ref state);
             _localToWorldHandle.Update(ref state);
-            _intentHandle.Update(ref state);
-            _kinematicHandle.Update(ref state);
-            _traceHandle.Update(ref state);
+            _inputHandle.Update(ref state);
+            _movementStateHandle.Update(ref state);
             _colliderHandle.Update(ref state);
-            _tuningHandle.Update(ref state);
-            _derivedStatsHandle.Update(ref state);
+            _speedHandle.Update(ref state);
 
             state.Dependency = new NonPlayerActorMovementJob
             {
                 CollisionWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>().CollisionWorld,
+                Settings = settings,
                 DeltaTime = dt,
                 TransformHandle = _transformHandle,
                 LocalToWorldHandle = _localToWorldHandle,
-                IntentHandle = _intentHandle,
-                KinematicHandle = _kinematicHandle,
-                TraceHandle = _traceHandle,
+                InputHandle = _inputHandle,
+                MovementStateHandle = _movementStateHandle,
                 ColliderHandle = _colliderHandle,
-                TuningHandle = _tuningHandle,
-                DerivedStatsHandle = _derivedStatsHandle,
+                SpeedHandle = _speedHandle,
             }.ScheduleParallel(_query, state.Dependency);
         }
 
@@ -99,54 +87,45 @@ namespace VVardenfell.Runtime.Movement
         struct NonPlayerActorMovementJob : IJobChunk
         {
             [ReadOnly] public CollisionWorld CollisionWorld;
+            public MorrowindMovementSettings Settings;
             public float DeltaTime;
             public ComponentTypeHandle<LocalTransform> TransformHandle;
             public ComponentTypeHandle<LocalToWorld> LocalToWorldHandle;
-            public ComponentTypeHandle<MorrowindMovementIntent> IntentHandle;
-            public ComponentTypeHandle<MorrowindActorKinematicState> KinematicHandle;
-            public ComponentTypeHandle<MorrowindMovementFrameTrace> TraceHandle;
+            public ComponentTypeHandle<MorrowindMovementInput> InputHandle;
+            public ComponentTypeHandle<MorrowindMovementState> MovementStateHandle;
             public ComponentTypeHandle<PhysicsCollider> ColliderHandle;
-            [ReadOnly] public ComponentTypeHandle<MorrowindMovementTuning> TuningHandle;
-            [ReadOnly] public ComponentTypeHandle<ActorDerivedMovementStats> DerivedStatsHandle;
+            [ReadOnly] public ComponentTypeHandle<MorrowindMovementSpeed> SpeedHandle;
 
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
             {
                 var transforms = chunk.GetNativeArray(ref TransformHandle);
                 var localToWorlds = chunk.GetNativeArray(ref LocalToWorldHandle);
-                var intents = chunk.GetNativeArray(ref IntentHandle);
-                var kinematics = chunk.GetNativeArray(ref KinematicHandle);
-                var traces = chunk.GetNativeArray(ref TraceHandle);
+                var inputs = chunk.GetNativeArray(ref InputHandle);
+                var movementStates = chunk.GetNativeArray(ref MovementStateHandle);
                 var colliders = chunk.GetNativeArray(ref ColliderHandle);
-                var tunings = chunk.GetNativeArray(ref TuningHandle);
-                var derivedStats = chunk.GetNativeArray(ref DerivedStatsHandle);
+                var speeds = chunk.GetNativeArray(ref SpeedHandle);
 
                 int count = chunk.Count;
                 for (int i = 0; i < count; i++)
                 {
                     var transform = transforms[i];
-                    var intent = intents[i];
-                    var kinematic = kinematics[i];
-                    var trace = traces[i];
+                    var input = inputs[i];
+                    var movementState = movementStates[i];
                     float3 position = transform.Position;
                     quaternion rotation = transform.Rotation;
 
-                    var stats = MorrowindActorMovementStats.BuildUnmanaged(derivedStats[i]);
                     var result = MorrowindActorMovementSolver.SolveUnmanaged(
                         CollisionWorld,
                         colliders[i],
-                        tunings[i],
-                        stats,
+                        Settings,
+                        speeds[i],
                         rotation,
                         ref position,
-                        ref intent,
-                        ref kinematic,
-                        trace,
+                        ref input,
+                        ref movementState,
                         DeltaTime);
 
-                    intent.LocalMove = float3.zero;
-                    intent.RunHeld = false;
-                    intent.SneakHeld = false;
-                    intent.JumpHeld = false;
+                    input = default;
 
                     transform = LocalTransform.FromPositionRotationScale(position, rotation, transform.Scale);
                     transforms[i] = transform;
@@ -154,9 +133,8 @@ namespace VVardenfell.Runtime.Movement
                     {
                         Value = float4x4.TRS(position, rotation, new float3(transform.Scale)),
                     };
-                    intents[i] = intent;
-                    kinematics[i] = kinematic;
-                    traces[i] = result.Trace;
+                    inputs[i] = input;
+                    movementStates[i] = movementState;
                 }
             }
         }

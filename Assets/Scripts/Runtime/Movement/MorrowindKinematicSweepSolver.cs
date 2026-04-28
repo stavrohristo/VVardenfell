@@ -9,12 +9,12 @@ namespace VVardenfell.Runtime.Movement
         static void MoveKinematic(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             ref float3 position,
             ref float3 velocity,
             float time,
             bool startedGrounded,
-            ref MorrowindMovementFrameTrace trace)
+            ref MovementSolveScratch scratch)
         {
             float remainingTime = time;
             float3 originalVelocity = velocity;
@@ -24,7 +24,6 @@ namespace VVardenfell.Runtime.Movement
 
             for (int iteration = 0; iteration < tuning.MaxIterations && remainingTime > 0.0001f; iteration++)
             {
-                trace.SweepIterations++;
                 float3 move = velocity * remainingTime;
                 if (math.lengthsq(move) <= MinMoveEpsilon)
                     break;
@@ -36,23 +35,17 @@ namespace VVardenfell.Runtime.Movement
                     break;
                 }
 
-                trace.LastBlocker = hit.Entity;
-                trace.LastBlockerNormal = hit.SurfaceNormal;
-                trace.LastBlockerFraction = hit.Fraction;
-
                 bool seenGround = startedGrounded || IsWalkableSlope(hit.SurfaceNormal, tuning.MaxSlopeCosine);
                 float3 oldPosition = position;
                 bool stepped = false;
                 if (hit.SurfaceNormal.y < tuning.MaxSlopeCosine)
                 {
-                    trace.SteepSlopeRejected = 1;
-                    trace.StepAttempted = 1;
-                    stepped = TryStep(world, collider, tuning, ref position, ref velocity, ref remainingTime, startedGrounded, iteration == 0, ref trace);
+                    stepped = TryStep(world, collider, tuning, ref position, ref velocity, ref remainingTime, startedGrounded, iteration == 0);
                 }
 
                 if (stepped)
                 {
-                    trace.StepSucceeded = 1;
+                    scratch.StepSucceeded = true;
                     continue;
                 }
 
@@ -64,7 +57,6 @@ namespace VVardenfell.Runtime.Movement
                 if (seenGround && !IsWalkableSlope(planeNormal, tuning.MaxSlopeCosine) && math.abs(planeNormal.y) > 0.0001f)
                 {
                     planeNormal = math.normalizesafe(new float3(planeNormal.x, 0f, planeNormal.z), planeNormal);
-                    trace.UsedGroundedWallNormalFlatten = 1;
                 }
 
                 float3 direction = math.normalizesafe(velocity);
@@ -89,7 +81,6 @@ namespace VVardenfell.Runtime.Movement
                             constraint = math.normalize(constraint);
                             newVelocity = Project(velocity, constraint);
                             usedSeamLogic = true;
-                            trace.UsedSeamLogic = 1;
                         }
                     }
                 }
@@ -108,7 +99,6 @@ namespace VVardenfell.Runtime.Movement
                     newVelocity.y = math.min(newVelocity.y, velocity.y);
 
                 slideCount++;
-                trace.SlideCount = slideCount;
                 lastSlideNormalFallback = lastSlideNormal;
                 lastSlideNormal = originalPlaneNormal;
                 velocity = newVelocity;
@@ -118,13 +108,12 @@ namespace VVardenfell.Runtime.Movement
         static bool TryStep(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
+            in MorrowindMovementSettings tuning,
             ref float3 position,
             ref float3 velocity,
             ref float remainingTime,
             bool onGround,
-            bool firstIteration,
-            ref MorrowindMovementFrameTrace trace)
+            bool firstIteration)
         {
             if (math.lengthsq(new float2(velocity.x, velocity.z)) <= MinMoveEpsilon)
                 return false;
@@ -148,9 +137,6 @@ namespace VVardenfell.Runtime.Movement
 
             for (int attempt = 1; attempt <= 3; attempt++)
             {
-                trace.StepAttempted = 1;
-                trace.StepAttemptIndex = (byte)attempt;
-
                 if (attempt > 1 && !firstIteration)
                     return false;
 

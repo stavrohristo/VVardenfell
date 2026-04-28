@@ -59,8 +59,8 @@ namespace VVardenfell.Runtime.Interactions
             ref var dialogue = ref SystemAPI.GetSingletonRW<DialogueReadinessState>().ValueRW;
             dialogue.PendingTargetEntity = target;
             dialogue.PendingTargetPlacedRefId = placedRefId;
-            dialogue.PendingActor = EntityManager.HasComponent<PassiveActorPresence>(target)
-                ? EntityManager.GetComponentData<PassiveActorPresence>(target).Definition
+            dialogue.PendingActor = EntityManager.HasComponent<ActorSpawnSource>(target)
+                ? EntityManager.GetComponentData<ActorSpawnSource>(target).Definition
                 : default;
             dialogue.LastActivationSequence = sequence;
 

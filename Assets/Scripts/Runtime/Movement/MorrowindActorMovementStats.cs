@@ -20,6 +20,7 @@ namespace VVardenfell.Runtime.Movement
             readonly ActorVitalSet _vitals;
             readonly ActorEffectStatModifiers _effectModifiers;
             readonly ActorDerivedMovementStats _derived;
+            readonly MorrowindMovementSpeed _speed;
 
             public Context(
                 RuntimeContentDatabase contentDb,
@@ -27,7 +28,8 @@ namespace VVardenfell.Runtime.Movement
                 in ActorSkillSet skills,
                 in ActorVitalSet vitals,
                 in ActorEffectStatModifiers effectModifiers,
-                in ActorDerivedMovementStats derived)
+                in ActorDerivedMovementStats derived,
+                in MorrowindMovementSpeed speed)
             {
                 _contentDb = contentDb;
                 _attributes = attributes;
@@ -35,13 +37,14 @@ namespace VVardenfell.Runtime.Movement
                 _vitals = vitals;
                 _effectModifiers = effectModifiers;
                 _derived = derived;
+                _speed = speed;
             }
 
             public float GetCurrentSpeed(bool running, bool sneaking, bool inAir, float speedFactor, bool strafing)
             {
                 float speed = running && !sneaking
-                    ? _derived.RunSpeed
-                    : (sneaking ? _derived.SneakWalkSpeed : _derived.WalkSpeed);
+                    ? _speed.RunSpeed
+                    : (sneaking ? _speed.SneakWalkSpeed : _speed.WalkSpeed);
 
                 speed *= math.saturate(speedFactor);
                 if (strafing)
@@ -53,12 +56,12 @@ namespace VVardenfell.Runtime.Movement
             public float GetJumpSpeed(bool running)
             {
                 if (running)
-                    return _derived.JumpSpeed * Gmst("fJumpRunMultiplier", 1f) * WorldScale.MwUnitsToMeters;
+                    return _speed.JumpSpeed * _speed.JumpRunMultiplier * WorldScale.MwUnitsToMeters;
 
-                return _derived.JumpSpeed * WorldScale.MwUnitsToMeters;
+                return _speed.JumpSpeed * WorldScale.MwUnitsToMeters;
             }
 
-            public float GetJumpMoveFactor() => _derived.JumpMoveFactor;
+            public float GetJumpMoveFactor() => _speed.JumpMoveFactor;
 
             public float GetMovementFatigueLossPerSecond(bool running, bool sneaking, float speedFactor)
             {
@@ -107,39 +110,6 @@ namespace VVardenfell.Runtime.Movement
                 return fallback;
             }
         }
-
-        public readonly struct UnmanagedContext
-        {
-            readonly ActorDerivedMovementStats _derived;
-
-            public UnmanagedContext(in ActorDerivedMovementStats derived)
-            {
-                _derived = derived;
-            }
-
-            public float GetCurrentSpeed(bool running, bool sneaking, bool inAir, float speedFactor, bool strafing)
-            {
-                float speed = running && !sneaking
-                    ? _derived.RunSpeed
-                    : (sneaking ? _derived.SneakWalkSpeed : _derived.WalkSpeed);
-
-                speed *= math.saturate(speedFactor);
-                if (strafing)
-                    speed *= 0.75f;
-
-                return speed * WorldScale.MwUnitsToMeters;
-            }
-
-            public float GetJumpSpeed(bool running)
-            {
-                return _derived.JumpSpeed * WorldScale.MwUnitsToMeters;
-            }
-
-            public float GetJumpMoveFactor() => _derived.JumpMoveFactor;
-        }
-
-        public static UnmanagedContext BuildUnmanaged(in ActorDerivedMovementStats derived)
-            => new UnmanagedContext(derived);
 
         public static ActorRuntimeStatSeed CreateDefaultPlayerSeed()
         {
@@ -469,6 +439,59 @@ namespace VVardenfell.Runtime.Movement
             return derived;
         }
 
+        public static MorrowindMovementSpeed BuildMovementSpeed(
+            RuntimeContentDatabase contentDb,
+            ActorDefKind actorKind,
+            in ActorAttributeSet attributes,
+            in ActorSkillSet skills,
+            in ActorVitalSet vitals,
+            in ActorEffectStatModifiers effectModifiers,
+            in ActorDerivedMovementStats derived)
+        {
+            float jumpSpeed = ComputeJumpSpeed(contentDb, skills, effectModifiers, derived);
+            float jumpMoveFactor = ComputeJumpMoveFactor(contentDb, skills);
+            if (actorKind == ActorDefKind.Creature)
+            {
+                float walkSpeed = Gmst(contentDb, "fMinWalkSpeedCreature", 5f)
+                    + 0.01f * attributes.Speed * (Gmst(contentDb, "fMaxWalkSpeedCreature", 300f) - Gmst(contentDb, "fMinWalkSpeedCreature", 5f));
+
+                return new MorrowindMovementSpeed
+                {
+                    WalkSpeed = math.max(0f, walkSpeed),
+                    RunSpeed = math.max(0f, walkSpeed),
+                    SneakWalkSpeed = math.max(0f, walkSpeed),
+                    JumpSpeed = jumpSpeed,
+                    JumpRunMultiplier = 1f,
+                    JumpMoveFactor = jumpMoveFactor,
+                };
+            }
+
+            float walkSpeedNpc = ComputeWalkSpeed(contentDb, attributes, derived);
+            float runSpeedNpc = walkSpeedNpc
+                * (0.01f * skills.Athletics * Gmst(contentDb, "fAthleticsRunBonus", 1f)
+                    + Gmst(contentDb, "fBaseRunMultiplier", 1.75f));
+            float sneakWalkSpeedNpc = walkSpeedNpc * Gmst(contentDb, "fSneakSpeedMultiplier", 0.5f);
+
+            return new MorrowindMovementSpeed
+            {
+                WalkSpeed = walkSpeedNpc,
+                RunSpeed = math.max(0f, runSpeedNpc),
+                SneakWalkSpeed = math.max(0f, sneakWalkSpeedNpc),
+                JumpSpeed = jumpSpeed,
+                JumpRunMultiplier = Gmst(contentDb, "fJumpRunMultiplier", 1f),
+                JumpMoveFactor = jumpMoveFactor,
+            };
+        }
+
+        public static MorrowindMovementSpeed BuildPlayerMovementSpeed(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attributes,
+            in ActorSkillSet skills,
+            in ActorVitalSet vitals,
+            in ActorEffectStatModifiers effectModifiers,
+            in ActorDerivedMovementStats derived)
+            => BuildMovementSpeed(contentDb, ActorDefKind.Npc, attributes, skills, vitals, effectModifiers, derived);
+
         public static float ComputeModifiedFatigueBase(in ActorAttributeSet attributes)
             => math.max(0f, attributes.Strength + attributes.Willpower + attributes.Agility + attributes.Endurance);
 
@@ -532,16 +555,25 @@ namespace VVardenfell.Runtime.Movement
                 : math.max(0f, vitals.CurrentFatigue / modifiedFatigueBase);
             derived.FatigueTerm = Gmst(contentDb, "fFatigueBase", 1f)
                 - Gmst(contentDb, "fFatigueMult", 1f) * (1f - normalizedFatigue);
+        }
+
+        static float ComputeWalkSpeed(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attributes,
+            in ActorDerivedMovementStats derived)
+        {
             float walkSpeed = Gmst(contentDb, "fMinWalkSpeed", 100f)
                 + 0.01f * attributes.Speed * (Gmst(contentDb, "fMaxWalkSpeed", 200f) - Gmst(contentDb, "fMinWalkSpeed", 100f));
             walkSpeed *= 1f - Gmst(contentDb, "fEncumberedMoveEffect", 0.5f) * derived.NormalizedEncumbrance;
-            walkSpeed = math.max(0f, walkSpeed);
+            return math.max(0f, walkSpeed);
+        }
 
-            float runSpeed = walkSpeed
-                * (0.01f * skills.Athletics * Gmst(contentDb, "fAthleticsRunBonus", 1f)
-                    + Gmst(contentDb, "fBaseRunMultiplier", 1.75f));
-            float sneakWalkSpeed = walkSpeed * Gmst(contentDb, "fSneakSpeedMultiplier", 0.5f);
-
+        static float ComputeJumpSpeed(
+            RuntimeContentDatabase contentDb,
+            in ActorSkillSet skills,
+            in ActorEffectStatModifiers effectModifiers,
+            in ActorDerivedMovementStats derived)
+        {
             float a = skills.Acrobatics;
             float b = 0f;
             if (a > 50f)
@@ -559,16 +591,14 @@ namespace VVardenfell.Runtime.Movement
             jump *= derived.FatigueTerm;
             jump += 8.96f * (1f / WorldScale.MwUnitsToMeters);
             jump /= 3f;
+            return math.max(0f, jump);
+        }
 
-            float jumpMoveFactor = math.min(1f,
+        static float ComputeJumpMoveFactor(RuntimeContentDatabase contentDb, in ActorSkillSet skills)
+        {
+            return math.min(1f,
                 Gmst(contentDb, "fJumpMoveBase", 0f)
                 + Gmst(contentDb, "fJumpMoveMult", 1f) * skills.Acrobatics / 100f);
-
-            derived.WalkSpeed = walkSpeed;
-            derived.RunSpeed = runSpeed;
-            derived.SneakWalkSpeed = sneakWalkSpeed;
-            derived.JumpSpeed = jump;
-            derived.JumpMoveFactor = jumpMoveFactor;
         }
 
         public static Context Build(
@@ -577,9 +607,10 @@ namespace VVardenfell.Runtime.Movement
             in ActorSkillSet skills,
             in ActorVitalSet vitals,
             in ActorEffectStatModifiers effectModifiers,
-            in ActorDerivedMovementStats derived)
+            in ActorDerivedMovementStats derived,
+            in MorrowindMovementSpeed speed)
         {
-            return new Context(contentDb, attributes, skills, vitals, effectModifiers, derived);
+            return new Context(contentDb, attributes, skills, vitals, effectModifiers, derived, speed);
         }
 
         public static string DescribeRuntimeState(
@@ -590,7 +621,8 @@ namespace VVardenfell.Runtime.Movement
             in ActorEffectStatModifiers effectModifiers,
             in ActorDerivedMovementStats derived)
         {
-            var context = Build(contentDb, attributes, skills, vitals, effectModifiers, derived);
+            var speed = BuildPlayerMovementSpeed(contentDb, attributes, skills, vitals, effectModifiers, derived);
+            var context = Build(contentDb, attributes, skills, vitals, effectModifiers, derived, speed);
             var builder = new StringBuilder(384);
             builder.Append("stats str=");
             builder.Append(attributes.Strength.ToString("F0"));
@@ -678,8 +710,9 @@ namespace VVardenfell.Runtime.Movement
             in ActorSkillSet skills,
             in ActorVitalSet vitals,
             in ActorEffectStatModifiers effectModifiers,
-            in ActorDerivedMovementStats derived)
-            => MorrowindActorMovementStats.Build(contentDb, attributes, skills, vitals, effectModifiers, derived);
+            in ActorDerivedMovementStats derived,
+            in MorrowindMovementSpeed speed)
+            => MorrowindActorMovementStats.Build(contentDb, attributes, skills, vitals, effectModifiers, derived, speed);
 
         public static string DescribeRuntimeState(
             RuntimeContentDatabase contentDb,

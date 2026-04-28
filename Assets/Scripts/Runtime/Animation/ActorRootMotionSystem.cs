@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_ROOT_MOTION
 using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Systems;
@@ -16,3 +17,4 @@ namespace VVardenfell.Runtime.Animation
         }
     }
 }
+#endif

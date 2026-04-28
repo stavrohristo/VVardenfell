@@ -3,7 +3,6 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -76,49 +75,24 @@ namespace VVardenfell.Runtime.Animation
                     ? cache.ActorAnimationCatalog.RigFamilies[recipe.RigFamilyIndex]
                     : null;
                 int skeletonIndex = rigFamily?.SkeletonIndex ?? -1;
-                int firstClipIndex = rigFamily?.FirstClipIndex ?? -1;
-                int clipCount = rigFamily?.ClipCount ?? 0;
                 int boneCount = ResolveBoneCount(ref catalog, skeletonIndex);
 
                 ecb.AddComponent(entity, new ActorPresentation
                 {
-                    Actor = source.ValueRO.Definition,
-                    IsNpc = (byte)(isNpc ? 1 : 0),
-                    IsCreature = (byte)(isNpc ? 0 : 1),
-                    IsFemale = (byte)((actor.Flags & 0x1u) != 0 ? 1 : 0),
-                    IsFirstPerson = (byte)(firstPerson ? 1 : 0),
                     RigFamilyIndex = hasRecipe ? recipe.RigFamilyIndex : -1,
-                    SkeletonIndex = skeletonIndex,
-                    FirstSkinMeshIndex = hasRecipe ? recipe.FirstEntryIndex : -1,
-                    SkinMeshCount = hasRecipe ? recipe.EntryCount : 0,
-                    FirstClipIndex = firstClipIndex,
-                    ClipCount = clipCount,
                 });
                 ecb.AddComponent(entity, new ActorSkeleton
                 {
                     SkeletonIndex = skeletonIndex,
                     BoneCount = boneCount,
                     AccumulationBoneIndex = ResolveAccumulationBoneIndex(ref catalog, skeletonIndex),
-                    AccumulationSubtreeEndIndex = ResolveAccumulationSubtreeEndIndex(ref catalog, skeletonIndex),
-                    FirstClipIndex = firstClipIndex,
-                    ClipCount = clipCount,
                 });
-                ecb.AddComponent<CPUAnimation>(entity);
-                ecb.AddComponent<GPUAnimation>(entity);
-                ecb.AddComponent(entity, new ActorAnimationController
+                ecb.AddComponent(entity, new ActorAnimationState
                 {
-                    RequestedGroup = new FixedString64Bytes("idle"),
+                    ClipIndex = -1,
                     Speed = 1f,
-                    ActiveMask = ActorAnimationBlendMask.All,
+                    LoopCount = uint.MaxValue,
                 });
-                ecb.AddComponent(entity, new ActorAnimationState());
-                ecb.AddComponent(entity, new ActorRootMotion());
-                ecb.AddComponent(entity, new ActorGpuAnimationState
-                {
-                    SkeletonIndex = skeletonIndex,
-                });
-                ecb.AddComponent<ActorAttachmentBoneAnimation>(entity);
-                ecb.AddComponent(entity, new ActorAnimationEventCursor());
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);
@@ -153,36 +127,19 @@ namespace VVardenfell.Runtime.Animation
                     ref ecb,
                     entity,
                     rigidEquipmentBuffer,
-                    boneBuffer,
+                    ref catalog,
+                    skeletonIndex,
                     contentDb,
                     hasEquipment,
                     equipmentBuffer);
                 var attachmentBoneBuffer = ecb.AddBuffer<ActorAttachmentBone>(entity);
-                PopulateAttachmentBoneBuffer(attachmentBoneBuffer, bones: boneBuffer, rigidEquipment: rigidEquipmentBuffer);
+                PopulateAttachmentBoneBuffer(
+                    attachmentBoneBuffer,
+                    ref catalog,
+                    skeletonIndex,
+                    rigidEquipmentBuffer);
                 ecb.AddComponent(entity, BuildLocalBounds(skinMeshBuffer, ref catalog));
-                ecb.SetComponentEnabled<GPUAnimation>(entity, false);
-                ecb.SetComponentEnabled<CPUAnimation>(entity, true);
-                ecb.SetComponentEnabled<ActorAttachmentBoneAnimation>(entity, false);
-
-                var layerBuffer = ecb.AddBuffer<ActorAnimationLayer>(entity);
-                if (hasRecipe && firstClipIndex >= 0 && clipCount > 0)
-                {
-                    ulong clipHash = ResolveClipHash(ref catalog, firstClipIndex);
-                    layerBuffer.Add(new ActorAnimationLayer
-                    {
-                        Group = new FixedString64Bytes("idle"),
-                        ClipIndex = firstClipIndex,
-                        ClipHash = clipHash,
-                        Time = 0f,
-                        Weight = 1f,
-                        Priority = 0,
-                        Mask = ActorAnimationBlendMask.All,
-                    });
-                }
-                ecb.AddBuffer<ActorAnimationEvent>(entity);
-                ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
-                ecb.AddComponent<ActorAnimationPoseDirty>(entity);
-                ecb.SetComponentEnabled<ActorAnimationPoseDirty>(entity, boneCount > 0);
+                ecb.AddBuffer<ActorAnimationOverlayState>(entity);
             }
 
             ecb.Playback(EntityManager);
@@ -190,11 +147,7 @@ namespace VVardenfell.Runtime.Animation
         }
 
         static int ResolveBoneCount(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
-        {
-            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
-                return 0;
-            return catalog.Skeletons[skeletonIndex].BoneCount;
-        }
+            => ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
 
         static int ResolveAccumulationBoneIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
         {
@@ -250,20 +203,23 @@ namespace VVardenfell.Runtime.Animation
 
         static void PopulateAttachmentBoneBuffer(
             DynamicBuffer<ActorAttachmentBone> attachmentBones,
-            DynamicBuffer<ActorBone> bones,
+            ref ActorAnimationCatalogBlob catalog,
+            int skeletonIndex,
             DynamicBuffer<ActorRigidEquipment> rigidEquipment)
         {
-            if (bones.Length == 0 || rigidEquipment.Length == 0)
+            int boneCount = ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
+            if (boneCount == 0 || rigidEquipment.Length == 0)
                 return;
 
-            var included = new bool[bones.Length];
+            var included = new bool[boneCount];
+            var skeleton = new ActorSkeleton { SkeletonIndex = skeletonIndex, BoneCount = boneCount };
             for (int i = 0; i < rigidEquipment.Length; i++)
             {
                 int boneIndex = rigidEquipment[i].AttachBoneIndex;
-                while ((uint)boneIndex < (uint)bones.Length && !included[boneIndex])
+                while ((uint)boneIndex < (uint)boneCount && !included[boneIndex])
                 {
                     included[boneIndex] = true;
-                    boneIndex = bones[boneIndex].ParentIndex;
+                    boneIndex = ActorAnimationCatalogRuntimeUtility.ResolveParentIndex(ref catalog, skeleton, boneIndex);
                 }
             }
 
@@ -279,55 +235,22 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
-        static int ResolveAccumulationSubtreeEndIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
-        {
-            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
-                return -1;
-            return catalog.Skeletons[skeletonIndex].AccumulationSubtreeEndIndex;
-        }
-
-        static ulong ResolveClipHash(ref ActorAnimationCatalogBlob catalog, int clipIndex)
-        {
-            if ((uint)clipIndex >= (uint)catalog.Clips.Length)
-                return 0UL;
-            return catalog.Clips[clipIndex].AnimationHash;
-        }
-
         static void PopulateBoneBuffer(DynamicBuffer<ActorBone> buffer, ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
         {
-            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
+            if (!ActorAnimationCatalogRuntimeUtility.TryGetSkeletonBlob(ref catalog, skeletonIndex, out var skeleton))
                 return;
 
-            var skeleton = catalog.Skeletons[skeletonIndex];
             int end = skeleton.FirstBoneIndex + skeleton.BoneCount;
             for (int sourceIndex = skeleton.FirstBoneIndex; sourceIndex < end; sourceIndex++)
             {
                 var source = catalog.Bones[sourceIndex];
-                int localIndex = sourceIndex - skeleton.FirstBoneIndex;
-                var rotation = source.BindRotation;
-                if (math.lengthsq(rotation.value) <= 0f)
-                    rotation = quaternion.identity;
-
-                float scale = source.BindScale <= 0f ? 1f : source.BindScale;
-                var position = ActorAnimationSpaceConversion.SourceTranslationToUnity(source.BindPosition);
-                rotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(rotation);
-                float4x4 localToParent = ActorAnimationSpaceConversion.SourceAffineToUnity(source.BindLocalMatrix);
-                float4x4 localToRoot = ActorAnimationSpaceConversion.SourceAffineToUnity(source.BindLocalToRootMatrix);
                 buffer.Add(new ActorBone
                 {
-                    Name = source.Name,
-                    ParentIndex = source.ParentIndex,
-                    BindPosition = position,
-                    BindRotation = rotation,
-                    BindScale = scale,
-                    BindLocalMatrix = localToParent,
-                    BindLocalToRootMatrix = localToRoot,
-                    LocalPosition = position,
-                    LocalRotation = rotation,
-                    LocalScale = scale,
+                    LocalPosition = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(source),
+                    LocalRotation = ActorAnimationCatalogRuntimeUtility.RuntimeBindRotation(source),
+                    LocalScale = ActorAnimationCatalogRuntimeUtility.RuntimeBindScale(source),
                     LocalPoseAnimated = 0,
-                    LocalToRoot = localToRoot,
-                    SkinMatrix = localToRoot,
+                    LocalToRoot = ActorAnimationCatalogRuntimeUtility.RuntimeBindLocalToRootMatrix(source),
                 });
             }
         }
@@ -501,11 +424,6 @@ namespace VVardenfell.Runtime.Animation
             buffer.Add(new ActorSkinMesh
             {
                 SkinMeshIndex = skinMeshIndex,
-                MeshIndex = skinMesh.MeshIndex,
-                MaterialIndex = skinMesh.MaterialIndex,
-                TextureIndex = skinMesh.TextureIndex,
-                FirstBoneIndex = 0,
-                BoneCount = skinMesh.SkinBoneCount,
                 AttachBoneIndex = skinMesh.IsRigid != 0 ? attachBoneIndex : -1,
                 RigidMirrorX = skinMesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
             });
@@ -589,7 +507,8 @@ namespace VVardenfell.Runtime.Animation
             ref EntityCommandBuffer ecb,
             Entity actorEntity,
             DynamicBuffer<ActorRigidEquipment> rigidEquipment,
-            DynamicBuffer<ActorBone> bones,
+            ref ActorAnimationCatalogBlob catalog,
+            int skeletonIndex,
             RuntimeContentDatabase contentDb,
             bool hasEquipment,
             DynamicBuffer<ActorEquipmentSlot> equipment)
@@ -627,7 +546,7 @@ namespace VVardenfell.Runtime.Animation
                 if (prefab == Entity.Null || !EntityManager.Exists(prefab))
                     continue;
 
-                int attachBoneIndex = ResolveRigidEquipmentAttachBone(bones, itemEquipment);
+                int attachBoneIndex = ResolveRigidEquipmentAttachBone(ref catalog, skeletonIndex, itemEquipment);
                 if (attachBoneIndex < 0)
                     continue;
 
@@ -664,33 +583,52 @@ namespace VVardenfell.Runtime.Animation
             return equipment.Kind == ItemEquipmentKind.Weapon && s_SpawnWeaponsDrawnOnPresentation;
         }
 
-        static int ResolveRigidEquipmentAttachBone(DynamicBuffer<ActorBone> bones, in ItemEquipmentDef equipment)
+        static int ResolveRigidEquipmentAttachBone(
+            ref ActorAnimationCatalogBlob catalog,
+            int skeletonIndex,
+            in ItemEquipmentDef equipment)
         {
             if (equipment.Kind == ItemEquipmentKind.Weapon)
             {
                 if (equipment.Type == 9)
                 {
-                    int leftWeaponBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("weapon bone left"));
+                    int leftWeaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone left"));
                     if (leftWeaponBone >= 0)
                         return leftWeaponBone;
                 }
 
-                int weaponBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("weapon bone"));
-                return weaponBone >= 0 ? weaponBone : ResolveAttachBoneIndex(bones, new FixedString64Bytes("bip01 r hand"));
+                int weaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone"));
+                return weaponBone >= 0
+                    ? weaponBone
+                    : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 r hand"));
             }
 
-            int shieldBone = ResolveAttachBoneIndex(bones, new FixedString64Bytes("shield bone"));
-            return shieldBone >= 0 ? shieldBone : ResolveAttachBoneIndex(bones, new FixedString64Bytes("bip01 l forearm"));
+            int shieldBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("shield bone"));
+            return shieldBone >= 0
+                ? shieldBone
+                : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 l forearm"));
         }
 
-        static int ResolveAttachBoneIndex(DynamicBuffer<ActorBone> bones, FixedString64Bytes name)
+        static int ResolveAttachBoneIndex(
+            ref ActorAnimationCatalogBlob catalog,
+            int skeletonIndex,
+            FixedString64Bytes name)
         {
             if (name.IsEmpty)
                 return -1;
 
-            for (int i = 0; i < bones.Length; i++)
-                if (FixedStringEqualsIgnoreCase(bones[i].Name, name))
+            var skeleton = new ActorSkeleton
+            {
+                SkeletonIndex = skeletonIndex,
+                BoneCount = ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex),
+            };
+            for (int i = 0; i < skeleton.BoneCount; i++)
+            {
+                var boneName = ActorAnimationCatalogRuntimeUtility.ResolveBoneName(ref catalog, skeleton, i);
+                if (FixedStringEqualsIgnoreCase(boneName, name))
                     return i;
+            }
+
             return -1;
         }
 

@@ -181,7 +181,7 @@ namespace VVardenfell.Runtime.Interactions
             if (entityManager.HasComponent<PassiveActorPresence>(entity))
             {
                 var actor = entityManager.GetComponentData<PassiveActorPresence>(entity);
-                return ResolveActorName(contentDb, actor);
+                return ResolveActorName(contentDb, entityManager, entity, actor);
             }
 
             return null;
@@ -198,23 +198,17 @@ namespace VVardenfell.Runtime.Interactions
                 return "npc";
 
             if (entityManager.HasComponent<PassiveActorPresence>(entity))
-                return ResolveActorName(contentDb, entityManager.GetComponentData<PassiveActorPresence>(entity));
-
-            if (entityManager.HasComponent<DialogueSpeakerAuthoring>(entity))
-            {
-                var authoring = entityManager.GetComponentData<DialogueSpeakerAuthoring>(entity);
-                return ResolveActorName(contentDb, authoring.Definition, "npc");
-            }
+                return ResolveActorName(contentDb, entityManager, entity, entityManager.GetComponentData<PassiveActorPresence>(entity));
 
             return "npc";
         }
 
-        static string ResolveActorName(RuntimeContentDatabase contentDb, in PassiveActorPresence actor)
+        static string ResolveActorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity, in PassiveActorPresence actor)
         {
-            if (actor.DisplayName.Length > 0)
-                return actor.DisplayName.ToString();
-
-            return ResolveActorName(contentDb, actor.Definition, actor.CanTalk != 0 ? "npc" : "creature");
+            var source = entityManager.HasComponent<ActorSpawnSource>(entity)
+                ? entityManager.GetComponentData<ActorSpawnSource>(entity)
+                : default;
+            return ResolveActorName(contentDb, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
         }
 
         static string ResolveActorName(RuntimeContentDatabase contentDb, ActorDefHandle handle, string fallback)

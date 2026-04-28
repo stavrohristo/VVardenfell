@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_ANIMATION_EVENTS
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -7,7 +8,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationGraphSystem))]
+    [UpdateAfter(typeof(ActorAnimationControllerSystem))]
     public partial struct ActorAnimationEventSystem : ISystem
     {
         public void OnCreate(ref SystemState state)
@@ -173,3 +174,4 @@ namespace VVardenfell.Runtime.Animation
         }
     }
 }
+#endif

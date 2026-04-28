@@ -195,6 +195,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 AttachBodyPart(records, assets, actorRoot, skeletonNodes, bodyPart, reference, gpuLeaves, ref totalRenderers);
             }
 
+            AttachPreviewAnimation(cache, actorRoot, skeletonNodes, records.Actor.Id, PreviewFirstPerson);
             LayoutPreviewRootsFromRenderBounds(actorRoot, gpuActorRoot, bakedActorRoot);
             BuildProceduralGpuPreview(actorRoot, gpuActorRoot, bakedActorRoot, gpuLeaves, cache, records.Actor.Id);
             CreateGround(root.transform);
@@ -224,7 +225,7 @@ namespace VVardenfell.Runtime.Bootstrap
             string modelPath = ResolveCreaturePreviewModelPath(records.Actor, assets);
             var source = assets.LoadModelSource(modelPath);
             var gpuLeaves = new List<DirectActorGpuPreviewLeaf>();
-            InstantiateModelSource(
+            var skeletonNodes = InstantiateModelSource(
                 source,
                 actorRoot,
                 includeRenderLeaf: _ => true,
@@ -234,6 +235,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 gpuLeaves,
                 modelPath);
 
+            AttachPreviewAnimation(cache, actorRoot, skeletonNodes, records.Actor.Id, PreviewFirstPerson);
             LayoutPreviewRootsFromRenderBounds(actorRoot, gpuActorRoot, bakedActorRoot);
             BuildProceduralGpuPreview(actorRoot, gpuActorRoot, bakedActorRoot, gpuLeaves, cache, records.Actor.Id);
             CreateGround(root.transform);

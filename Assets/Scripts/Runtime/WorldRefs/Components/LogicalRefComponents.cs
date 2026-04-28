@@ -118,16 +118,9 @@ namespace VVardenfell.Runtime.Components
         public CreatureLeveledListDefHandle Definition;
     }
 
-    public struct DialogueSpeakerAuthoring : IComponentData
-    {
-        public ActorDefHandle Definition;
-    }
-
     public struct PassiveActorPresence : IComponentData
     {
-        public ActorDefHandle Definition;
         public byte Family;
         public byte CanTalk;
-        public FixedString128Bytes DisplayName;
     }
 }

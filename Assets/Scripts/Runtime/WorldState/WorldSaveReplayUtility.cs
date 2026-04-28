@@ -186,12 +186,23 @@ namespace VVardenfell.Runtime.WorldState
                 payload.ActorStats.EffectModifiers,
                 0f);
             entityManager.SetComponentData(playerEntity, derived);
+            entityManager.SetComponentData(
+                playerEntity,
+                MorrowindActorMovementStats.BuildPlayerMovementSpeed(
+                    RuntimeContentDatabase.Active,
+                    payload.ActorStats.Attributes,
+                    payload.ActorStats.Skills,
+                    vitals,
+                    payload.ActorStats.EffectModifiers,
+                    derived));
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             entityManager.SetComponentData(playerEntity, new PlayerCharacterControl());
             entityManager.SetComponentData(playerEntity, new PlayerCharacterState());
-            entityManager.SetComponentData(playerEntity, new MorrowindMovementIntent());
-            entityManager.SetComponentData(playerEntity, new MorrowindActorKinematicState());
-            entityManager.SetComponentData(playerEntity, new MorrowindMovementFrameTrace());
+            entityManager.SetComponentData(playerEntity, new MorrowindMovementInput());
+            entityManager.SetComponentData(playerEntity, new MorrowindMovementState
+            {
+                GroundNormal = math.up(),
+            });
 
             if (entityManager.HasBuffer<PlayerKnownSpell>(playerEntity))
             {

@@ -19,7 +19,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
                 ComponentType.ReadWrite<PlayerCharacterState>(),
-                ComponentType.ReadWrite<MorrowindMovementIntent>());
+                ComponentType.ReadWrite<MorrowindMovementInput>());
             RequireForUpdate(_playerQuery);
             RequireForUpdate<FixedTickSystem.Singleton>();
         }
@@ -40,12 +40,12 @@ namespace VVardenfell.Runtime.Player
             uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick;
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
-            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
+            var inputRef = _playerQuery.GetSingletonRW<MorrowindMovementInput>();
             var stateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
             var kb = Keyboard.current;
             var mouse = Mouse.current;
             ref var control = ref controlRef.ValueRW;
-            ref var intent = ref intentRef.ValueRW;
+            ref var movementInput = ref inputRef.ValueRW;
             ref var state = ref stateRef.ValueRW;
 
             bool gameplayInputAllowed = !GameplayInputGate.BlocksGameplayInput;
@@ -60,7 +60,7 @@ namespace VVardenfell.Runtime.Player
                 control.CrouchHeld = false;
                 control.InteractPressed = false;
                 control.ToggleViewPressed = false;
-                intent = default;
+                movementInput = default;
                 return;
             }
 
@@ -88,14 +88,10 @@ namespace VVardenfell.Runtime.Player
             control.InteractPressed |= interactPressedThisFrame;
             control.ToggleViewPressed |= toggleViewPressedThisFrame;
 
-            intent.LocalMove = new float3(move.x, move.y, math.max(intent.LocalMove.z, jumpPressedThisFrame ? 1f : 0f));
-            intent.LookDeltaDegrees = control.LookDeltaDegrees;
-            intent.JumpHeld = control.JumpHeld;
-            intent.RunHeld = control.SprintHeld;
-            intent.SneakHeld = control.CrouchHeld;
-            intent.InteractPressed = control.InteractPressed;
-            intent.SpeedFactor = math.saturate(math.length(move));
-            intent.IsStrafing = math.abs(move.x) > math.abs(move.y) * 2f;
+            movementInput.LocalMove = move;
+            movementInput.JumpPressed = movementInput.JumpPressed || jumpPressedThisFrame;
+            movementInput.RunHeld = control.SprintHeld;
+            movementInput.SneakHeld = control.CrouchHeld;
 
             if (jumpPressedThisFrame)
             {

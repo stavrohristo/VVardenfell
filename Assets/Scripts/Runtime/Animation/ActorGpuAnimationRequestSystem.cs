@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_GPU_ANIMATION
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -6,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationGraphSystem))]
+    [UpdateAfter(typeof(ActorAnimationControllerSystem))]
     public partial struct ActorGpuAnimationRequestSystem : ISystem
     {
         [BurstCompile]
@@ -20,42 +21,29 @@ namespace VVardenfell.Runtime.Animation
         partial struct BuildGpuAnimationRequestsJob : IJobEntity
         {
             void Execute(
-                in ActorAnimationController controller,
                 [ReadOnly] DynamicBuffer<ActorAnimationLayer> layers,
                 DynamicBuffer<ActorGpuAnimationRequest> requests)
             {
                 requests.Clear();
 
-                int selectedLayerIndex = -1;
                 for (int i = 0; i < layers.Length; i++)
                 {
                     var layer = layers[i];
-                    if (layer.Weight <= 0f || layer.ClipIndex < 0)
+                    if (layer.Playing == 0 || layer.Weight <= 0f || layer.ClipIndex < 0)
                         continue;
 
-                    if (selectedLayerIndex < 0)
-                        selectedLayerIndex = i;
-
-                    if (layer.ClipHash == controller.CurrentClipHash)
+                    requests.Add(new ActorGpuAnimationRequest
                     {
-                        selectedLayerIndex = i;
-                        break;
-                    }
+                        ClipIndex = layer.ClipIndex,
+                        ClipHash = layer.ClipHash,
+                        Time = layer.Time,
+                        Weight = layer.Weight,
+                        Priority = layer.Priority,
+                        Mask = layer.Mask,
+                    });
                 }
-
-                if (selectedLayerIndex < 0)
-                    return;
-
-                var selectedLayer = layers[selectedLayerIndex];
-                requests.Add(new ActorGpuAnimationRequest
-                {
-                    ClipIndex = selectedLayer.ClipIndex,
-                    ClipHash = selectedLayer.ClipHash,
-                    Time = selectedLayer.Time,
-                    Weight = selectedLayer.Weight,
-                    Mask = ActorAnimationBlendMask.All,
-                });
             }
         }
     }
 }
+#endif

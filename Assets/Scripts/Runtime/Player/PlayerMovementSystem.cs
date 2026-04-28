@@ -28,15 +28,9 @@ namespace VVardenfell.Runtime.Player
                     ComponentType.ReadWrite<PlayerCharacterComponent>(),
                     ComponentType.ReadWrite<PlayerCharacterControl>(),
                     ComponentType.ReadWrite<PlayerCharacterState>(),
-                    ComponentType.ReadWrite<MorrowindMovementIntent>(),
-                    ComponentType.ReadWrite<MorrowindActorKinematicState>(),
-                    ComponentType.ReadWrite<ActorAttributeSet>(),
-                    ComponentType.ReadWrite<ActorSkillSet>(),
-                    ComponentType.ReadWrite<ActorVitalSet>(),
-                    ComponentType.ReadWrite<ActorEffectStatModifiers>(),
-                    ComponentType.ReadWrite<ActorDerivedMovementStats>(),
-                    ComponentType.ReadWrite<MorrowindMovementTuning>(),
-                    ComponentType.ReadWrite<MorrowindMovementFrameTrace>(),
+                    ComponentType.ReadWrite<MorrowindMovementInput>(),
+                    ComponentType.ReadWrite<MorrowindMovementState>(),
+                    ComponentType.ReadOnly<MorrowindMovementSpeed>(),
                 }
             });
             _viewQuery = GetEntityQuery(
@@ -46,6 +40,7 @@ namespace VVardenfell.Runtime.Player
             RequireForUpdate(_playerQuery);
             RequireForUpdate(_viewQuery);
             RequireForUpdate<PhysicsWorldSingleton>();
+            RequireForUpdate<MorrowindMovementSettings>();
         }
 
         protected override void OnUpdate()
@@ -65,15 +60,10 @@ namespace VVardenfell.Runtime.Player
             var characterRef = _playerQuery.GetSingletonRW<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
             var legacyStateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
-            var intentRef = _playerQuery.GetSingletonRW<MorrowindMovementIntent>();
-            var kinematicRef = _playerQuery.GetSingletonRW<MorrowindActorKinematicState>();
-            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
-            var skills = _playerQuery.GetSingleton<ActorSkillSet>();
-            var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
-            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
-            var derivedStats = _playerQuery.GetSingleton<ActorDerivedMovementStats>();
-            var traceRef = _playerQuery.GetSingletonRW<MorrowindMovementFrameTrace>();
-            var tuning = _playerQuery.GetSingleton<MorrowindMovementTuning>();
+            var inputRef = _playerQuery.GetSingletonRW<MorrowindMovementInput>();
+            var movementStateRef = _playerQuery.GetSingletonRW<MorrowindMovementState>();
+            var movementSpeed = _playerQuery.GetSingleton<MorrowindMovementSpeed>();
+            var settings = SystemAPI.GetSingleton<MorrowindMovementSettings>();
 
             var viewRef = _viewQuery.GetSingletonRW<PlayerViewComponent>();
             var viewTransformRef = _viewQuery.GetSingletonRW<LocalTransform>();
@@ -82,9 +72,8 @@ namespace VVardenfell.Runtime.Player
             ref var playerLocalToWorld = ref localToWorldRef.ValueRW;
             ref var control = ref controlRef.ValueRW;
             ref var legacyState = ref legacyStateRef.ValueRW;
-            ref var intent = ref intentRef.ValueRW;
-            ref var kinematic = ref kinematicRef.ValueRW;
-            ref var trace = ref traceRef.ValueRW;
+            ref var movementInput = ref inputRef.ValueRW;
+            ref var movementState = ref movementStateRef.ValueRW;
             ref var view = ref viewRef.ValueRW;
 
             if (view.ControlledCharacter != playerEntity)
@@ -101,34 +90,25 @@ namespace VVardenfell.Runtime.Player
             PhysicsCollider playerCollider = colliderRef.ValueRO;
             bool previousGrounded = legacyState.Grounded;
 
-            var movementStats = MorrowindPlayerSpeedResolver.Build(
-                RuntimeContentDatabase.Active,
-                attributes,
-                skills,
-                vitals,
-                effectModifiers,
-                derivedStats);
             var result = MorrowindActorMovementSolver.Solve(
                 EntityManager,
                 physicsWorld.CollisionWorld,
                 playerCollider,
-                tuning,
-                movementStats,
+                settings,
+                movementSpeed,
                 rotation,
                 ref position,
-                ref intent,
-                ref kinematic,
-                trace,
+                ref movementInput,
+                ref movementState,
                 dt);
 
-            intent.LocalMove.z = 0f;
-            trace = result.Trace;
+            movementInput.JumpPressed = false;
 
             legacyState.WasGrounded = previousGrounded;
-            legacyState.Grounded = kinematic.Grounded;
-            legacyState.WorldVelocity = result.FinalVelocity;
+            legacyState.Grounded = movementState.Grounded;
+            legacyState.WorldVelocity = movementState.LastVelocity;
             legacyState.Crouched = false;
-            legacyState.Sprinting = intent.RunHeld && !intent.SneakHeld && intent.SpeedFactor > 0f;
+            legacyState.Sprinting = movementInput.RunHeld && !movementInput.SneakHeld && movementState.SpeedFactor > 0f;
             if (legacyState.Grounded)
             {
                 legacyState.GroundedTime = legacyState.WasGrounded ? legacyState.GroundedTime + dt : dt;
@@ -142,7 +122,7 @@ namespace VVardenfell.Runtime.Player
 
             control.MoveInput = result.PlanarInput;
             control.MoveVectorWorld = result.LocalMoveWorld;
-            control.JumpThisFixedTick = result.Trace.JumpAccepted != 0;
+            control.JumpThisFixedTick = movementState.JumpAccepted;
 
             playerTransform = LocalTransform.FromPositionRotationScale(position, rotation, playerTransform.Scale);
             playerLocalToWorld = new LocalToWorld

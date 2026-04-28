@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             var blob = ActorAnimationBlobBuilder.Build(catalog);
+
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new ActorAnimationBlobCatalog { Blob = blob });

@@ -1,3 +1,4 @@
+#if VVARDENFELL_ACTOR_GPU_ANIMATION
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -216,10 +217,16 @@ namespace VVardenfell.Runtime.Animation
                 }
 
                 ref var catalog = ref Catalog.Value;
-                count.ValidActorCount = 1;
-                count.SkinMeshCount = skinMeshes.Length;
                 count.LayerCount = GetValidLayerCount(requests, ref catalog);
                 count.BoneMatrixCount = CountOutputBoneMatrices(skinMeshes, ref catalog);
+                if (count.LayerCount <= 0 || count.BoneMatrixCount <= 0)
+                {
+                    Counts[entityIndex] = default;
+                    return;
+                }
+
+                count.ValidActorCount = 1;
+                count.SkinMeshCount = skinMeshes.Length;
                 Counts[entityIndex] = count;
             }
         }
@@ -279,14 +286,22 @@ namespace VVardenfell.Runtime.Animation
                 }
 
                 ref var catalog = ref Catalog.Value;
+                int layerCount = GetValidLayerCount(requests, ref catalog);
+                int actorBoneMatrixCount = CountOutputBoneMatrices(skinMeshes, ref catalog);
+                if (layerCount <= 0 || actorBoneMatrixCount <= 0)
+                {
+                    gpuState.ValueRW = default;
+                    return;
+                }
+
                 ActorGpuAnimationOffset offsets = Offsets[entityIndex];
                 int actorIndex = offsets.ActorOffset;
                 int layerOffset = offsets.LayerOffset;
                 int skinMeshOffset = offsets.SkinMeshOffset;
                 int boneMatrixOffset = offsets.BoneMatrixOffset;
 
-                int layerCount = WriteLayers(requests, ref catalog, Layers, layerOffset);
-                int actorBoneMatrixCount = 0;
+                layerCount = WriteLayers(requests, ref catalog, Layers, layerOffset);
+                actorBoneMatrixCount = 0;
                 for (int i = 0; i < skinMeshes.Length; i++)
                 {
                     var skinMeshRef = skinMeshes[i];
@@ -369,6 +384,7 @@ namespace VVardenfell.Runtime.Animation
                     ClipIndex = request.ClipIndex,
                     Time = request.Time,
                     Weight = request.Weight,
+                    Priority = request.Priority,
                     Mask = (uint)request.Mask,
                 };
                 count++;
@@ -423,3 +439,4 @@ namespace VVardenfell.Runtime.Animation
         }
     }
 }
+#endif

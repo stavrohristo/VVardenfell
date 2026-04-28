@@ -31,10 +31,6 @@ namespace VVardenfell.Runtime.Bootstrap
             [Min(0.05f)] public float StandingHeight = 1.8f;
             [Min(0.05f)] public float CrouchingHeight = 1.15f;
             [Min(0.01f)] public float Radius = 0.35f;
-            [Min(0f)] public float SkinWidth = 0.015f;
-            [Min(0f)] public float MaxStepHeight = 0.35f;
-            [Min(0f)] public float GroundProbeDistance = 0.3f;
-            [Range(0f, 89f)] public float MaxSlopeDegrees = 50f;
 
             [Header("View")]
             public float StandingEyeHeight = 1.65f;
@@ -42,23 +38,6 @@ namespace VVardenfell.Runtime.Bootstrap
             public float MinPitch = -89f;
             public float MaxPitch = 89f;
             [Min(0.001f)] public float LookSensitivity = 0.12f;
-
-            [Header("Ground")]
-            [Min(0f)] public float GroundMaxSpeed = 5f;
-            [Min(0f)] public float SprintSpeedMultiplier = 1.45f;
-            [Min(0f)] public float CrouchSpeedMultiplier = 0.5f;
-            [Min(0f)] public float GroundedMovementSharpness = 18f;
-
-            [Header("Air")]
-            [Min(0f)] public float AirAcceleration = 14f;
-            [Min(0f)] public float AirMaxSpeed = 6f;
-            [Min(0f)] public float AirDrag = 0.05f;
-            public float Gravity = -20f;
-
-            [Header("Jump")]
-            [Min(0f)] public float JumpSpeed = 5f;
-            [Min(0f)] public float CoyoteTime = 0.12f;
-            [Min(0f)] public float JumpBufferTime = 0.12f;
 
             public PlayerCharacterComponent Build()
             {
@@ -76,21 +55,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     StandingEyeHeight = resolvedStandingEyeHeight,
                     CrouchingEyeHeight = resolvedCrouchingEyeHeight,
                     Radius = Radius,
-                    SkinWidth = SkinWidth,
-                    MaxStepHeight = MaxStepHeight,
-                    GroundProbeDistance = GroundProbeDistance,
-                    MaxSlopeCosine = math.cos(math.radians(MaxSlopeDegrees)),
-                    GroundMaxSpeed = GroundMaxSpeed,
-                    SprintSpeedMultiplier = SprintSpeedMultiplier,
-                    CrouchSpeedMultiplier = CrouchSpeedMultiplier,
-                    GroundedMovementSharpness = GroundedMovementSharpness,
-                    AirAcceleration = AirAcceleration,
-                    AirMaxSpeed = AirMaxSpeed,
-                    AirDrag = AirDrag,
-                    JumpSpeed = JumpSpeed,
-                    Gravity = Gravity,
-                    CoyoteTime = CoyoteTime,
-                    JumpBufferTime = JumpBufferTime,
                     MinPitch = resolvedMinPitch,
                     MaxPitch = resolvedMaxPitch,
                     LookSensitivity = LookSensitivity,
@@ -102,21 +66,8 @@ namespace VVardenfell.Runtime.Bootstrap
                 StandingHeight = math.max(0.05f, StandingHeight);
                 CrouchingHeight = math.clamp(CrouchingHeight, 0.05f, StandingHeight);
                 Radius = math.max(0.01f, Radius);
-                SkinWidth = math.max(0f, SkinWidth);
-                MaxStepHeight = math.max(0f, MaxStepHeight);
-                GroundProbeDistance = math.max(0f, GroundProbeDistance);
                 StandingEyeHeight = math.max(0.01f, StandingEyeHeight);
                 CrouchingEyeHeight = math.max(0.01f, CrouchingEyeHeight);
-                GroundMaxSpeed = math.max(0f, GroundMaxSpeed);
-                SprintSpeedMultiplier = math.max(0f, SprintSpeedMultiplier);
-                CrouchSpeedMultiplier = math.max(0f, CrouchSpeedMultiplier);
-                GroundedMovementSharpness = math.max(0f, GroundedMovementSharpness);
-                AirAcceleration = math.max(0f, AirAcceleration);
-                AirMaxSpeed = math.max(0f, AirMaxSpeed);
-                AirDrag = math.max(0f, AirDrag);
-                JumpSpeed = math.max(0f, JumpSpeed);
-                CoyoteTime = math.max(0f, CoyoteTime);
-                JumpBufferTime = math.max(0f, JumpBufferTime);
                 LookSensitivity = math.max(0.001f, LookSensitivity);
             }
         }

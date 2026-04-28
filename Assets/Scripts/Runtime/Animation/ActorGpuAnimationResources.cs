@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Animation
         public float TimeStop;
         public int FirstKeyIndex;
         public int KeyCount;
+        public uint Mask;
     }
 
     struct ActorGpuAnimationKeyGpu
@@ -104,6 +105,7 @@ namespace VVardenfell.Runtime.Animation
         public int ClipIndex;
         public float Time;
         public float Weight;
+        public int Priority;
         public uint Mask;
     }
 
@@ -120,6 +122,7 @@ namespace VVardenfell.Runtime.Animation
         const string ComputeShaderPath = "ActorGpuAnimation";
         const string KernelName = "CSMain";
         const int ThreadsPerGroup = 8;
+        const ulong StaticUploadVersion = 2UL;
         const GraphicsBuffer.UsageFlags DynamicBufferUsage = GraphicsBuffer.UsageFlags.LockBufferForWrite;
 
         static readonly int k_ActorCountId = Shader.PropertyToID("_ActorCount");
@@ -286,19 +289,21 @@ namespace VVardenfell.Runtime.Animation
             for (int i = 0; i < bones.Length; i++)
             {
                 var source = catalog.Bones[i];
+                float4x4 bindLocal = ActorAnimationSpaceConversion.SourceAffineToUnity(source.BindLocalMatrix);
+                float4x4 bindRoot = ActorAnimationSpaceConversion.SourceAffineToUnity(source.BindLocalToRootMatrix);
                 bones[i] = new ActorGpuAnimationBoneGpu
                 {
                     ParentIndex = source.ParentIndex,
                     Mask = (uint)ComputeBoneMask(source.Name),
-                    BindPosition = source.BindPosition,
+                    BindPosition = ActorAnimationSpaceConversion.SourceTranslationToUnity(source.BindPosition),
                     BindScale = source.BindScale <= 0f ? 1f : source.BindScale,
-                    BindRotation = source.BindRotation.value,
-                    BindLocalRow0 = new float4(source.BindLocalMatrix.c0.x, source.BindLocalMatrix.c1.x, source.BindLocalMatrix.c2.x, source.BindLocalMatrix.c3.x),
-                    BindLocalRow1 = new float4(source.BindLocalMatrix.c0.y, source.BindLocalMatrix.c1.y, source.BindLocalMatrix.c2.y, source.BindLocalMatrix.c3.y),
-                    BindLocalRow2 = new float4(source.BindLocalMatrix.c0.z, source.BindLocalMatrix.c1.z, source.BindLocalMatrix.c2.z, source.BindLocalMatrix.c3.z),
-                    BindRootRow0 = new float4(source.BindLocalToRootMatrix.c0.x, source.BindLocalToRootMatrix.c1.x, source.BindLocalToRootMatrix.c2.x, source.BindLocalToRootMatrix.c3.x),
-                    BindRootRow1 = new float4(source.BindLocalToRootMatrix.c0.y, source.BindLocalToRootMatrix.c1.y, source.BindLocalToRootMatrix.c2.y, source.BindLocalToRootMatrix.c3.y),
-                    BindRootRow2 = new float4(source.BindLocalToRootMatrix.c0.z, source.BindLocalToRootMatrix.c1.z, source.BindLocalToRootMatrix.c2.z, source.BindLocalToRootMatrix.c3.z),
+                    BindRotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(source.BindRotation).value,
+                    BindLocalRow0 = new float4(bindLocal.c0.x, bindLocal.c1.x, bindLocal.c2.x, bindLocal.c3.x),
+                    BindLocalRow1 = new float4(bindLocal.c0.y, bindLocal.c1.y, bindLocal.c2.y, bindLocal.c3.y),
+                    BindLocalRow2 = new float4(bindLocal.c0.z, bindLocal.c1.z, bindLocal.c2.z, bindLocal.c3.z),
+                    BindRootRow0 = new float4(bindRoot.c0.x, bindRoot.c1.x, bindRoot.c2.x, bindRoot.c3.x),
+                    BindRootRow1 = new float4(bindRoot.c0.y, bindRoot.c1.y, bindRoot.c2.y, bindRoot.c3.y),
+                    BindRootRow2 = new float4(bindRoot.c0.z, bindRoot.c1.z, bindRoot.c2.z, bindRoot.c3.z),
                 };
             }
 
@@ -331,6 +336,9 @@ namespace VVardenfell.Runtime.Animation
                     TimeStop = source.TimeStop,
                     FirstKeyIndex = source.FirstKeyIndex,
                     KeyCount = source.KeyCount,
+                    Mask = source.BlendMask != 0
+                        ? source.BlendMask
+                        : (uint)ComputeBoneMask(source.TargetName),
                 };
             }
 
@@ -406,7 +414,7 @@ namespace VVardenfell.Runtime.Animation
         {
             string lower = name.ToString().ToLowerInvariant();
             if (lower.Contains("head") || lower.Contains("neck"))
-                return ActorAnimationBlendMask.Head;
+                return ActorAnimationBlendMask.Torso;
             if (lower.Contains("l clavicle")
                 || lower.Contains("l upperarm")
                 || lower.Contains("l forearm")
@@ -444,6 +452,7 @@ namespace VVardenfell.Runtime.Animation
         static ulong BuildCatalogSignature(ref ActorAnimationCatalogBlob catalog)
         {
             ulong signature = 14695981039346656037UL;
+            Mix(ref signature, StaticUploadVersion);
             Mix(ref signature, (ulong)catalog.Skeletons.Length);
             Mix(ref signature, (ulong)catalog.Bones.Length);
             Mix(ref signature, (ulong)catalog.Clips.Length);

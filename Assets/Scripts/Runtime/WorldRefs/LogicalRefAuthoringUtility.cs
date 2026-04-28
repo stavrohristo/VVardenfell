@@ -43,8 +43,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ActorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var actor = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
-                    ecb.AddComponent(logicalEntity, new DialogueSpeakerAuthoring { Definition = handle });
-                    ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(handle, actor));
+                    ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(actor));
                     QueueActorRuntimeComponents(
                         ref ecb,
                         logicalEntity,
@@ -142,23 +141,13 @@ namespace VVardenfell.Runtime.Components
             }
         }
 
-        static PassiveActorPresence BuildPassiveActorPresence(ActorDefHandle handle, in ActorDef actor)
+        static PassiveActorPresence BuildPassiveActorPresence(in ActorDef actor)
         {
-            string displayName = !string.IsNullOrWhiteSpace(actor.Name)
-                ? actor.Name.Trim()
-                : !string.IsNullOrWhiteSpace(actor.Id)
-                    ? actor.Id.Trim()
-                    : "Actor";
-            if (displayName.Length > 127)
-                displayName = displayName.Substring(0, 127);
-
             bool canTalk = actor.Kind == ActorDefKind.Npc;
             return new PassiveActorPresence
             {
-                Definition = handle,
                 Family = (byte)(actor.Kind == ActorDefKind.Npc ? PassiveActorFamily.Npc : PassiveActorFamily.Creature),
                 CanTalk = (byte)(canTalk ? 1 : 0),
-                DisplayName = displayName,
             };
         }
 
@@ -179,29 +168,20 @@ namespace VVardenfell.Runtime.Components
             ecb.AddComponent(logicalEntity, statSeed.Skills);
             ecb.AddComponent(logicalEntity, statSeed.Vitals);
             ecb.AddComponent(logicalEntity, statSeed.EffectModifiers);
-            ecb.AddComponent(logicalEntity, MorrowindActorMovementStats.BuildDerived(
+            var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
                 statSeed.Attributes,
                 statSeed.Skills,
                 statSeed.Vitals,
                 statSeed.EffectModifiers,
-                inventoryWeight: 0f));
-            ecb.AddComponent(logicalEntity, MorrowindActorMovementStats.CreateIdentityFromActor(actor));
+                inventoryWeight: 0f);
+            ecb.AddComponent(logicalEntity, new MorrowindMovementState
+            {
+                GroundNormal = math.up(),
+            });
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
 
-            ecb.AddComponent(logicalEntity, new MorrowindMovementIntent());
-            ecb.AddComponent(logicalEntity, new MorrowindActorKinematicState());
-            ecb.AddComponent(logicalEntity, MorrowindMovementTuning.OpenMwDefaults());
-            ecb.AddComponent(logicalEntity, new MorrowindMovementFrameTrace());
             QueueActorCollider(ref ecb, logicalEntity);
-
-            ecb.AddComponent(logicalEntity, PathGridTraversalSettings.Defaults);
-            ecb.AddComponent(logicalEntity, new PathGridTraversalState());
-            ecb.AddComponent(logicalEntity, new PathGridTraversalPendingRequest());
-            ecb.SetComponentEnabled<PathGridTraversalPendingRequest>(logicalEntity, false);
-            ecb.AddComponent(logicalEntity, new PathGridTraversalAwaitingResult());
-            ecb.SetComponentEnabled<PathGridTraversalAwaitingResult>(logicalEntity, false);
-            ecb.AddBuffer<PathGridTraversalNode>(logicalEntity);
 
             var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
             ecb.AddComponent(logicalEntity, new ActorAiState
@@ -215,6 +195,20 @@ namespace VVardenfell.Runtime.Components
             ecb.AddComponent(logicalEntity, anchor);
             var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
             ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
+            if (packages.Length > 0)
+            {
+                ActorMovementAuthoringUtility.QueueEnsureMovableActor(
+                    ref ecb,
+                    logicalEntity,
+                    MorrowindActorMovementStats.BuildMovementSpeed(
+                        contentDb,
+                        actor.Kind,
+                        statSeed.Attributes,
+                        statSeed.Skills,
+                        statSeed.Vitals,
+                        statSeed.EffectModifiers,
+                        derivedMovement));
+            }
 
             var inventory = ecb.AddBuffer<ActorInventoryItem>(logicalEntity);
             var equipment = ecb.AddBuffer<ActorEquipmentSlot>(logicalEntity);

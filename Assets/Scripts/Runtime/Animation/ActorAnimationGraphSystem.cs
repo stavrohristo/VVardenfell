@@ -1,5 +1,475 @@
-using Unity.Collections;
+#if !VVARDENFELL_OLD_ACTOR_ANIMATION
 using Unity.Burst;
+using Unity.Collections;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Profiling;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Systems;
+
+namespace VVardenfell.Runtime.Animation
+{
+    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    public partial struct ActorAnimationControllerSystem : ISystem
+    {
+        const uint InfiniteLoops = uint.MaxValue;
+        static readonly ProfilerMarker s_Controller = new("VV.ActorAnimation.Controller");
+
+        EntityQuery _movingPlaybackQuery;
+        EntityQuery _idlePlaybackQuery;
+        EntityQuery _overlayPlaybackQuery;
+
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<ActorAnimationBlobCatalog>();
+
+            _movingPlaybackQuery = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<ActorPresentation>(),
+                    ComponentType.ReadOnly<MorrowindMovementState>(),
+                    ComponentType.ReadWrite<ActorAnimationState>(),
+                }
+            });
+            _idlePlaybackQuery = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<ActorPresentation>(),
+                    ComponentType.ReadWrite<ActorAnimationState>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<MorrowindMovementState>(),
+                }
+            });
+
+            _overlayPlaybackQuery = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadWrite<ActorAnimationOverlayState>()
+                }
+            });
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
+            var catalog = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
+            if (!catalog.IsCreated)
+                return;
+
+            float deltaTime = SystemAPI.Time.DeltaTime;
+            using (s_Controller.Auto())
+            {
+                state.Dependency = new PlaybackMovingJob
+                {
+                    Catalog = catalog,
+                    DeltaTime = deltaTime,
+                }.ScheduleParallel(_movingPlaybackQuery, state.Dependency);
+
+                state.Dependency = new PlaybackIdleJob
+                {
+                    Catalog = catalog,
+                    DeltaTime = deltaTime,
+                }.ScheduleParallel(_idlePlaybackQuery, state.Dependency);
+
+                state.Dependency = new AdvanceOverlaysJob
+                {
+                    DeltaTime = deltaTime,
+                }.ScheduleParallel(_overlayPlaybackQuery, state.Dependency);
+            }
+        }
+
+        [BurstCompile]
+        partial struct PlaybackMovingJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
+            public float DeltaTime;
+
+            void Execute(
+                in ActorPresentation presentation,
+                in MorrowindMovementState movementState,
+                ref ActorAnimationState animation)
+            {
+                ref var catalog = ref Catalog.Value;
+                ResolveMain(ref catalog, presentation, movementState, ref animation);
+                Advance(ref animation, DeltaTime);
+            }
+        }
+
+        [BurstCompile]
+        partial struct PlaybackIdleJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
+            public float DeltaTime;
+
+            void Execute(
+                in ActorPresentation presentation,
+                ref ActorAnimationState animation)
+            {
+                ref var catalog = ref Catalog.Value;
+                ResolveIdle(ref catalog, presentation, ref animation);
+                Advance(ref animation, DeltaTime);
+            }
+        }
+
+        [BurstCompile]
+        [WithAll(typeof(ActorPresentation))]
+        partial struct AdvanceOverlaysJob : IJobEntity
+        {
+            public float DeltaTime;
+
+            void Execute(DynamicBuffer<ActorAnimationOverlayState> overlays)
+            {
+                AdvanceOverlays(overlays, DeltaTime);
+            }
+        }
+
+        static void ResolveMain(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            in MorrowindMovementState movementState,
+            ref ActorAnimationState animation)
+        {
+            if (animation.Speed < 0f)
+                animation.Speed = 0f;
+
+            float2 localMove = movementState.LocalMove;
+            bool moving = math.lengthsq(localMove) > 0.0001f;
+            if (moving)
+            {
+                ResolveMovementHashes(localMove, movementState.RunHeld, movementState.SneakHeld, swim: false, out ulong primary, out ulong fallback);
+                if (TryResolveGroup(ref catalog, presentation, primary, out var movement)
+                    || (fallback != 0UL && TryResolveGroup(ref catalog, presentation, fallback, out movement)))
+                {
+                    StartIfNeeded(ref animation, movement, InfiniteLoops);
+                    return;
+                }
+            }
+
+            ResolveIdle(ref catalog, presentation, ref animation);
+        }
+
+        static void ResolveIdle(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ref ActorAnimationState animation)
+        {
+            if (TryResolveGroup(ref catalog, presentation, IdleHash(), out var idle))
+                StartIfNeeded(ref animation, idle, InfiniteLoops);
+            else
+                Clear(ref animation);
+        }
+
+        static void StartIfNeeded(ref ActorAnimationState animation, ActorAnimationGroupBlob group, uint requestedLoopCount)
+        {
+            if (animation.Playing != 0 && animation.GroupHash == group.GroupHash && animation.ClipHash == group.ClipHash)
+                return;
+
+            animation.GroupHash = group.GroupHash;
+            animation.ClipHash = group.ClipHash;
+            animation.ClipIndex = group.ClipIndex;
+            animation.PreviousTime = group.StartTime;
+            animation.Time = group.StartTime;
+            animation.StartTime = group.StartTime;
+            animation.LoopStartTime = group.LoopStartTime;
+            animation.LoopStopTime = group.LoopStopTime;
+            animation.StopTime = group.StopTime;
+            animation.LoopCount = group.Looping != 0 ? requestedLoopCount : 0u;
+            animation.Playing = 1;
+            animation.Initialized = 1;
+        }
+
+        static void Clear(ref ActorAnimationState animation)
+        {
+            if (animation.Playing == 0 && animation.ClipIndex < 0 && animation.GroupHash == 0UL && animation.ClipHash == 0UL)
+                return;
+
+            animation.Playing = 0;
+            animation.ClipIndex = -1;
+            animation.GroupHash = 0UL;
+            animation.ClipHash = 0UL;
+            animation.PreviousTime = 0f;
+            animation.Time = 0f;
+            animation.StartTime = 0f;
+            animation.LoopStartTime = 0f;
+            animation.LoopStopTime = 0f;
+            animation.StopTime = 0f;
+            animation.LoopCount = 0u;
+            animation.Initialized = 1;
+        }
+
+        static void Advance(ref ActorAnimationState animation, float deltaTime)
+        {
+            if (animation.Playing == 0 || animation.ClipIndex < 0)
+                return;
+
+            float speed = animation.Speed <= 0f ? 1f : animation.Speed;
+            animation.PreviousTime = animation.Time;
+            float nextTime = animation.Time + deltaTime * speed;
+            bool canLoop = animation.LoopCount > 0 && animation.LoopStopTime > animation.LoopStartTime;
+            if (canLoop && nextTime >= animation.LoopStopTime)
+            {
+                if (animation.LoopCount != InfiniteLoops)
+                    animation.LoopCount--;
+                float duration = animation.LoopStopTime - animation.LoopStartTime;
+                animation.Time = animation.LoopStartTime + math.fmod(nextTime - animation.LoopStartTime, duration);
+                return;
+            }
+
+            animation.Time = nextTime >= animation.StopTime ? animation.StopTime : nextTime;
+            if (animation.Time >= animation.StopTime)
+                animation.Playing = 0;
+        }
+
+        static void AdvanceOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays, float deltaTime)
+        {
+            for (int i = 0; i < overlays.Length; i++)
+            {
+                var overlay = overlays[i];
+                if (overlay.Playing == 0 || overlay.ClipIndex < 0)
+                    continue;
+
+                float speed = overlay.Speed <= 0f ? 1f : overlay.Speed;
+                overlay.PreviousTime = overlay.Time;
+                float nextTime = overlay.Time + deltaTime * speed;
+                bool canLoop = overlay.LoopCount > 0 && overlay.LoopStopTime > overlay.LoopStartTime;
+                if (canLoop && nextTime >= overlay.LoopStopTime)
+                {
+                    if (overlay.LoopCount != InfiniteLoops)
+                        overlay.LoopCount--;
+                    float duration = overlay.LoopStopTime - overlay.LoopStartTime;
+                    overlay.Time = overlay.LoopStartTime + math.fmod(nextTime - overlay.LoopStartTime, duration);
+                }
+                else
+                {
+                    overlay.Time = nextTime >= overlay.StopTime ? overlay.StopTime : nextTime;
+                    if (overlay.Time >= overlay.StopTime)
+                        overlay.Playing = 0;
+                }
+
+                overlays[i] = overlay;
+            }
+        }
+
+        static bool TryResolveGroup(ref ActorAnimationCatalogBlob catalog, in ActorPresentation presentation, ulong groupHash, out ActorAnimationGroupBlob group)
+        {
+            if (!TryGetRigFamilyAnimationIndex(ref catalog, presentation.RigFamilyIndex, out var index))
+            {
+                group = default;
+                return false;
+            }
+
+            int first = index.FirstGroupLookupIndex;
+            int count = index.GroupLookupCount;
+            int end = math.min(catalog.GroupLookups.Length, first + count);
+            if (first < 0 || count <= 0 || first >= end)
+            {
+                group = default;
+                return false;
+            }
+
+            int lower = first;
+            int upper = end;
+            while (lower < upper)
+            {
+                int mid = lower + ((upper - lower) >> 1);
+                if (catalog.GroupLookups[mid].GroupHash < groupHash)
+                    lower = mid + 1;
+                else
+                    upper = mid;
+            }
+
+            int duplicateEnd = lower;
+            while (duplicateEnd < end && catalog.GroupLookups[duplicateEnd].GroupHash == groupHash)
+                duplicateEnd++;
+
+            for (int i = duplicateEnd - 1; i >= lower; i--)
+            {
+                var lookup = catalog.GroupLookups[i];
+                if ((uint)lookup.GroupIndex >= (uint)catalog.Groups.Length)
+                    continue;
+
+                group = catalog.Groups[lookup.GroupIndex];
+                if ((uint)group.ClipIndex < (uint)catalog.Clips.Length)
+                    return true;
+            }
+
+            group = default;
+            return false;
+        }
+
+        static bool TryGetRigFamilyAnimationIndex(
+            ref ActorAnimationCatalogBlob catalog,
+            int rigFamilyIndex,
+            out ActorRigFamilyAnimationIndexBlob index)
+        {
+            if ((uint)rigFamilyIndex >= (uint)catalog.RigFamilyAnimationIndexes.Length)
+            {
+                index = default;
+                return false;
+            }
+
+            index = catalog.RigFamilyAnimationIndexes[rigFamilyIndex];
+            return true;
+        }
+
+        static void ResolveMovementHashes(float2 localMove, bool run, bool sneak, bool swim, out ulong primary, out ulong fallback)
+        {
+            byte direction = ResolveDirection(localMove);
+            if (swim)
+            {
+                primary = MovementHash(run ? (byte)4 : (byte)3, direction);
+                fallback = MovementHash(run ? (byte)3 : (byte)0, direction);
+                return;
+            }
+
+            if (sneak)
+            {
+                primary = MovementHash(2, direction);
+                fallback = MovementHash(0, direction);
+                return;
+            }
+
+            primary = MovementHash(run ? (byte)1 : (byte)0, direction);
+            fallback = run ? MovementHash(0, direction) : 0UL;
+        }
+
+        static byte ResolveDirection(float2 localMove)
+        {
+            bool lateral = math.abs(localMove.x) > math.abs(localMove.y);
+            if (lateral)
+                return localMove.x >= 0f ? (byte)3 : (byte)2;
+            return localMove.y >= 0f ? (byte)0 : (byte)1;
+        }
+
+        static ulong IdleHash()
+        {
+            FixedString64Bytes value = default;
+            AppendIdle(ref value);
+            return ActorAnimationGroupHash.Hash(value);
+        }
+
+        static ulong MovementHash(byte family, byte direction)
+        {
+            FixedString64Bytes value = default;
+            if (family == 4)
+            {
+                AppendSwim(ref value);
+                AppendRun(ref value);
+            }
+            else if (family == 3)
+            {
+                AppendSwim(ref value);
+                AppendWalk(ref value);
+            }
+            else if (family == 2)
+            {
+                AppendSneak(ref value);
+            }
+            else if (family == 1)
+            {
+                AppendRun(ref value);
+            }
+            else
+            {
+                AppendWalk(ref value);
+            }
+
+            if (direction == 1)
+                AppendBack(ref value);
+            else if (direction == 2)
+                AppendLeft(ref value);
+            else if (direction == 3)
+                AppendRight(ref value);
+            else
+                AppendForward(ref value);
+
+            return ActorAnimationGroupHash.Hash(value);
+        }
+
+        static void AppendIdle(ref FixedString64Bytes value)
+        {
+            value.Append('i');
+            value.Append('d');
+            value.Append('l');
+            value.Append('e');
+        }
+
+        static void AppendWalk(ref FixedString64Bytes value)
+        {
+            value.Append('w');
+            value.Append('a');
+            value.Append('l');
+            value.Append('k');
+        }
+
+        static void AppendRun(ref FixedString64Bytes value)
+        {
+            value.Append('r');
+            value.Append('u');
+            value.Append('n');
+        }
+
+        static void AppendSneak(ref FixedString64Bytes value)
+        {
+            value.Append('s');
+            value.Append('n');
+            value.Append('e');
+            value.Append('a');
+            value.Append('k');
+        }
+
+        static void AppendSwim(ref FixedString64Bytes value)
+        {
+            value.Append('s');
+            value.Append('w');
+            value.Append('i');
+            value.Append('m');
+        }
+
+        static void AppendForward(ref FixedString64Bytes value)
+        {
+            value.Append('f');
+            value.Append('o');
+            value.Append('r');
+            value.Append('w');
+            value.Append('a');
+            value.Append('r');
+            value.Append('d');
+        }
+
+        static void AppendBack(ref FixedString64Bytes value)
+        {
+            value.Append('b');
+            value.Append('a');
+            value.Append('c');
+            value.Append('k');
+        }
+
+        static void AppendLeft(ref FixedString64Bytes value)
+        {
+            value.Append('l');
+            value.Append('e');
+            value.Append('f');
+            value.Append('t');
+        }
+
+        static void AppendRight(ref FixedString64Bytes value)
+        {
+            value.Append('r');
+            value.Append('i');
+            value.Append('g');
+            value.Append('h');
+            value.Append('t');
+        }
+    }
+}
+#else
+using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Profiling;
@@ -12,9 +482,12 @@ namespace VVardenfell.Runtime.Animation
     [UpdateAfter(typeof(ActorAnimationStateResolveSystem))]
     public partial struct ActorAnimationGraphSystem : ISystem
     {
+        const int DefaultPriority = 0;
+        const int MovementPriority = 10;
+        const uint InfiniteLoops = uint.MaxValue;
+
         static readonly ProfilerMarker k_ResolveRequestedGroups = new("VV.ActorAnimationGraph.ResolveRequestedGroups");
-        static readonly ProfilerMarker k_AdvanceControllers = new("VV.ActorAnimationGraph.AdvanceControllers");
-        static readonly ProfilerMarker k_SyncLayerTimes = new("VV.ActorAnimationGraph.SyncLayerTimes");
+        static readonly ProfilerMarker k_AdvanceLayers = new("VV.ActorAnimationGraph.AdvanceLayers");
 
         public void OnCreate(ref SystemState state)
         {
@@ -28,26 +501,20 @@ namespace VVardenfell.Runtime.Animation
             if (!catalogRef.IsCreated)
                 return;
 
-            ref var catalog = ref catalogRef.Value;
+            using (k_AdvanceLayers.Auto())
+            {
+                state.Dependency = new AdvanceLayersJob
+                {
+                    DeltaTime = deltaTime,
+                }.ScheduleParallel(state.Dependency);
+            }
+
             using (k_ResolveRequestedGroups.Auto())
             {
                 state.Dependency = new ResolveRequestedGroupsJob
                 {
                     Catalog = catalogRef,
                 }.ScheduleParallel(state.Dependency);
-            }
-
-            using (k_AdvanceControllers.Auto())
-            {
-                state.Dependency = new AdvanceControllersJob
-                {
-                    DeltaTime = deltaTime,
-                }.ScheduleParallel(state.Dependency);
-            }
-
-            using (k_SyncLayerTimes.Auto())
-            {
-                state.Dependency = new SyncLayerTimesJob().ScheduleParallel(state.Dependency);
             }
         }
 
@@ -59,6 +526,7 @@ namespace VVardenfell.Runtime.Animation
 
             void Execute(
                 ref ActorAnimationController controller,
+                ref ActorIdleAnimationState idleState,
                 in ActorPresentation presentation,
                 DynamicBuffer<ActorAnimationLayer> layers,
                 EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
@@ -69,168 +537,472 @@ namespace VVardenfell.Runtime.Animation
                 if (controller.Speed <= 0f)
                     controller.Speed = 1f;
 
-                if (controller.RequestedGroup.IsEmpty
-                    || (controller.RequestedGroup.Equals(controller.CurrentGroup) && controller.Playing != 0))
+                ref var catalog = ref Catalog.Value;
+                bool changed = false;
+                FixedString64Bytes idle = IdleGroup();
+                FixedString64Bytes activeIdle = SelectIdleGroup(ref catalog, presentation, ref idleState, layers);
+                changed |= RemoveIdleLayersExcept(layers, activeIdle);
+
+                // OpenMW keeps animation groups as active states (`mStates`) with priorities and masks.
+                // We mirror that contract in flat ECS buffers: idle is the base state, movement is a
+                // higher-priority full-body state. Combat/weapon layers can extend this without changing
+                // the sampling formula.
+                changed |= EnsureLayer(
+                    layers,
+                    ref catalog,
+                    presentation,
+                    activeIdle,
+                    DefaultPriority,
+                    ActorAnimationBlendMask.All,
+                    idleState.CandidateCount <= 1 ? InfiniteLoops : 0u,
+                    autoDisable: 0);
+
+                FixedString64Bytes requested = controller.RequestedGroup.IsEmpty
+                    ? idle
+                    : controller.RequestedGroup;
+                bool wantsMovement = !EqualsIgnoreCase(requested, idle);
+                int movementIndex = FindMovementLayer(layers);
+                if (wantsMovement)
                 {
-                    return;
+                    bool movementClipExists = TryBuildLayer(
+                        ref catalog,
+                        presentation,
+                        requested,
+                        MovementPriority,
+                        ActorAnimationBlendMask.All,
+                        InfiniteLoops,
+                        autoDisable: 0,
+                        out var movementLayer);
+                    if (movementClipExists)
+                    {
+                        if (movementIndex >= 0)
+                        {
+                            var existing = layers[movementIndex];
+                            if (existing.Playing != 0 && existing.ClipHash == movementLayer.ClipHash)
+                                movementLayer.Time = existing.Time;
+
+                            if (!LayerEquals(layers[movementIndex], movementLayer))
+                            {
+                                layers[movementIndex] = movementLayer;
+                                changed = true;
+                            }
+                        }
+                        else
+                        {
+                            layers.Add(movementLayer);
+                            changed = true;
+                        }
+                    }
+                    else if (movementIndex >= 0)
+                    {
+                        layers.RemoveAt(movementIndex);
+                        changed = true;
+                    }
+                }
+                else if (movementIndex >= 0)
+                {
+                    layers.RemoveAt(movementIndex);
+                    changed = true;
                 }
 
-                ref var catalog = ref Catalog.Value;
-                StartGroup(
-                    ref controller,
-                    layers,
-                    presentation,
-                    ref catalog,
-                    controller.RequestedGroup);
-                poseDirty.ValueRW = true;
+                changed |= SyncControllerToBestLayer(ref controller, layers);
+                if (changed)
+                    poseDirty.ValueRW = true;
             }
         }
 
         [BurstCompile]
-        partial struct AdvanceControllersJob : IJobEntity
+        [WithAll(typeof(ActorPresentation))]
+        partial struct AdvanceLayersJob : IJobEntity
         {
             public float DeltaTime;
 
             void Execute(
                 ref ActorAnimationController controller,
-                in ActorPresentation presentation,
                 DynamicBuffer<ActorAnimationLayer> layers,
                 EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
             {
                 if (controller.Speed <= 0f)
                     controller.Speed = 1f;
 
-                if (controller.Playing == 0)
-                    return;
-
-                float previousTime = controller.Time;
-                byte previousPlaying = controller.Playing;
-                var previousGroup = controller.CurrentGroup;
-
-                float nextTime = previousTime + DeltaTime * controller.Speed;
-                bool loop = controller.LoopCount > 0 && nextTime >= controller.LoopStopTime;
-                if (loop)
-                {
-                    if (controller.LoopCount != uint.MaxValue)
-                        controller.LoopCount--;
-                    controller.Time = controller.LoopStartTime;
-                }
-                else
-                {
-                    controller.Time = nextTime >= controller.StopTime
-                        ? controller.StopTime
-                        : nextTime;
-                }
-
-                if (!loop && controller.Time >= controller.StopTime)
-                {
-                    controller.Playing = 0;
-                    if (controller.AutoDisable != 0)
-                        controller.CurrentGroup = default;
-                }
-
-                if (!MathEquals(previousTime, controller.Time)
-                    || previousPlaying != controller.Playing
-                    || !previousGroup.Equals(controller.CurrentGroup))
-                {
-                    poseDirty.ValueRW = true;
-                }
-            }
-        }
-
-        [BurstCompile]
-        partial struct SyncLayerTimesJob : IJobEntity
-        {
-            void Execute(
-                in ActorAnimationController controller,
-                DynamicBuffer<ActorAnimationLayer> layers,
-                EnabledRefRW<ActorAnimationPoseDirty> poseDirty)
-            {
-                if (layers.Length == 0)
-                    return;
-
                 bool changed = false;
                 for (int i = 0; i < layers.Length; i++)
                 {
                     var layer = layers[i];
-                    if (!layer.Group.IsEmpty && !layer.Group.Equals(controller.CurrentGroup))
+                    if (layer.Playing == 0 || layer.Weight <= 0f || layer.ClipIndex < 0)
                         continue;
 
-                    if (MathEquals(layer.Time, controller.Time))
-                        continue;
+                    float previousTime = layer.Time;
+                    byte previousPlaying = layer.Playing;
+                    float nextTime = layer.Time + DeltaTime * controller.Speed;
+                    bool canLoop = layer.LoopCount > 0 && layer.LoopStopTime > layer.LoopStartTime;
 
-                    layer.Time = controller.Time;
-                    layers[i] = layer;
-                    changed = true;
+                    if (canLoop && nextTime >= layer.LoopStopTime)
+                    {
+                        if (layer.LoopCount != InfiniteLoops)
+                            layer.LoopCount--;
+                        layer.Time = layer.LoopStartTime;
+                    }
+                    else
+                    {
+                        layer.Time = nextTime >= layer.StopTime ? layer.StopTime : nextTime;
+                    }
+
+                    if (!canLoop && layer.Time >= layer.StopTime)
+                    {
+                        layer.Playing = 0;
+                        if (layer.AutoDisable != 0)
+                            layer.Weight = 0f;
+                    }
+
+                    if (!MathEquals(previousTime, layer.Time) || previousPlaying != layer.Playing)
+                    {
+                        layers[i] = layer;
+                        changed = true;
+                    }
                 }
 
+                changed |= SyncControllerToBestLayer(ref controller, layers);
                 if (changed)
                     poseDirty.ValueRW = true;
             }
         }
 
-        static void StartGroup(
-            ref ActorAnimationController controller,
+        static bool EnsureLayer(
             DynamicBuffer<ActorAnimationLayer> layers,
-            in ActorPresentation presentation,
             ref ActorAnimationCatalogBlob catalog,
-            FixedString64Bytes group)
+            in ActorPresentation presentation,
+            FixedString64Bytes group,
+            int priority,
+            ActorAnimationBlendMask mask,
+            uint loopCount,
+            byte autoDisable)
         {
-            int clipIndex = ResolveClipIndex(ref catalog, presentation, group);
-            ulong clipHash = ResolveClipHash(ref catalog, clipIndex);
-            ResolveGroupWindow(ref catalog, clipIndex, group, out float startTime, out float loopStart, out float loopStop, out float stopTime);
+            if (!TryBuildLayer(ref catalog, presentation, group, priority, mask, loopCount, autoDisable, out var desired))
+                return false;
 
-            controller.CurrentGroup = group;
-            controller.CurrentClipHash = clipHash;
-            controller.Time = startTime;
-            controller.Speed = controller.Speed <= 0f ? 1f : controller.Speed;
-            controller.StartTime = startTime;
-            controller.LoopStartTime = loopStart;
-            controller.LoopStopTime = loopStop;
-            controller.StopTime = stopTime;
-            controller.LoopCount = IsLooping(group) ? uint.MaxValue : 0u;
-            controller.Playing = 1;
-            controller.AutoDisable = 0;
-            controller.ActiveMask = ActorAnimationBlendMask.All;
-
-            if (clipIndex < 0)
-                return;
-
-            if (layers.Length == 0)
+            int existingIndex = FindLayer(layers, group, priority);
+            if (existingIndex < 0)
             {
-                layers.Add(new ActorAnimationLayer
-                {
-                    Group = group,
-                    ClipIndex = clipIndex,
-                    ClipHash = clipHash,
-                    Time = startTime,
-                    Weight = 1f,
-                    Priority = 0,
-                    Mask = ActorAnimationBlendMask.All,
-                });
-                return;
+                layers.Add(desired);
+                return true;
             }
 
-            var layer = layers[0];
-            layer.Group = group;
-            layer.ClipIndex = clipIndex;
-            layer.ClipHash = clipHash;
-            layer.Time = startTime;
-            layer.Weight = 1f;
-            layer.Priority = 0;
-            layer.Mask = ActorAnimationBlendMask.All;
-            layers[0] = layer;
+            var existing = layers[existingIndex];
+            if (LayerEquals(existing, desired))
+                return false;
+
+            desired.Time = existing.Playing != 0 && existing.ClipHash == desired.ClipHash
+                ? existing.Time
+                : desired.Time;
+            layers[existingIndex] = desired;
+            return true;
         }
 
-        static void SyncLayerTimes(DynamicBuffer<ActorAnimationLayer> layers, in ActorAnimationController controller)
+        static bool RemoveIdleLayersExcept(DynamicBuffer<ActorAnimationLayer> layers, FixedString64Bytes activeIdle)
+        {
+            bool changed = false;
+            for (int i = layers.Length - 1; i >= 0; i--)
+            {
+                var layer = layers[i];
+                if (layer.Priority != DefaultPriority || EqualsIgnoreCase(layer.Group, activeIdle))
+                    continue;
+
+                layers.RemoveAt(i);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        static FixedString64Bytes SelectIdleGroup(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ref ActorIdleAnimationState idleState,
+            DynamicBuffer<ActorAnimationLayer> layers)
+        {
+            int candidateCount = CountIdleCandidates(ref catalog, presentation);
+            idleState.CandidateCount = (byte)math.min(candidateCount, byte.MaxValue);
+            if (candidateCount <= 0)
+                return IdleGroup();
+
+            int currentIndex = idleState.CurrentIndex;
+            bool needsSelection = idleState.Initialized == 0
+                                  || currentIndex >= candidateCount
+                                  || IsIdleLayerFinished(layers);
+            if (needsSelection)
+            {
+                uint seed = idleState.Seed == 0 ? 1u : idleState.Seed;
+                seed = NextRandom(seed);
+                idleState.Seed = seed;
+                currentIndex = (int)(seed % (uint)candidateCount);
+                idleState.CurrentIndex = (byte)math.min(currentIndex, byte.MaxValue);
+                idleState.Initialized = 1;
+            }
+
+            if (ResolveIdleCandidateByOrdinal(ref catalog, presentation, currentIndex, out var group))
+                return group;
+
+            return IdleGroup();
+        }
+
+        static bool IsIdleLayerFinished(DynamicBuffer<ActorAnimationLayer> layers)
+        {
+            bool sawIdle = false;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var layer = layers[i];
+                if (layer.Priority != DefaultPriority)
+                    continue;
+
+                sawIdle = true;
+                if (layer.Playing != 0 && layer.Weight > 0f && layer.ClipIndex >= 0)
+                    return false;
+            }
+
+            return sawIdle;
+        }
+
+        static uint NextRandom(uint seed)
+        {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            return seed == 0 ? 1u : seed;
+        }
+
+        static int CountIdleCandidates(ref ActorAnimationCatalogBlob catalog, in ActorPresentation presentation)
+        {
+            int count = 0;
+            for (int i = 0; i < 9; i++)
+            {
+                FixedString64Bytes group = IdleVariantGroup(i);
+                if (ResolveClipIndex(ref catalog, presentation, group) >= 0)
+                    count++;
+            }
+
+            return count;
+        }
+
+        static bool ResolveIdleCandidateByOrdinal(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            int ordinal,
+            out FixedString64Bytes group)
+        {
+            group = IdleGroup();
+            int count = 0;
+            for (int i = 0; i < 9; i++)
+            {
+                FixedString64Bytes candidate = IdleVariantGroup(i);
+                if (ResolveClipIndex(ref catalog, presentation, candidate) < 0)
+                    continue;
+
+                if (count == ordinal)
+                {
+                    group = candidate;
+                    return true;
+                }
+
+                count++;
+            }
+
+            return false;
+        }
+
+        static bool TryBuildLayer(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            FixedString64Bytes group,
+            int priority,
+            ActorAnimationBlendMask mask,
+            uint loopCount,
+            byte autoDisable,
+            out ActorAnimationLayer layer)
+        {
+            layer = default;
+            int clipIndex = ResolveClipIndexWithFallback(ref catalog, presentation, group, out var resolvedGroup);
+            if (clipIndex < 0)
+                return false;
+
+            ResolveGroupWindow(ref catalog, clipIndex, resolvedGroup, out float startTime, out float loopStart, out float loopStop, out float stopTime);
+            uint resolvedLoopCount = IsLooping(ref catalog, clipIndex, resolvedGroup) ? loopCount : 0u;
+            layer = new ActorAnimationLayer
+            {
+                Group = resolvedGroup,
+                ClipIndex = clipIndex,
+                ClipHash = ResolveClipHash(ref catalog, clipIndex),
+                Time = startTime,
+                StartTime = startTime,
+                LoopStartTime = loopStart,
+                LoopStopTime = loopStop,
+                StopTime = stopTime,
+                Weight = 1f,
+                Priority = priority,
+                LowerBodyPriority = MaskContains(mask, ActorAnimationBlendMask.LowerBody) ? priority : int.MinValue,
+                TorsoPriority = MaskContains(mask, ActorAnimationBlendMask.Torso) ? priority : int.MinValue,
+                LeftArmPriority = MaskContains(mask, ActorAnimationBlendMask.LeftArm) ? priority : int.MinValue,
+                RightArmPriority = MaskContains(mask, ActorAnimationBlendMask.RightArm) ? priority : int.MinValue,
+                LoopCount = resolvedLoopCount,
+                Mask = mask,
+                Playing = 1,
+                AutoDisable = autoDisable,
+            };
+            return true;
+        }
+
+        static bool SyncControllerToBestLayer(ref ActorAnimationController controller, DynamicBuffer<ActorAnimationLayer> layers)
+        {
+            int bestIndex = SelectBestLayer(layers);
+            if (bestIndex < 0)
+            {
+                bool cleared = controller.Playing != 0 || !controller.CurrentGroup.IsEmpty;
+                controller.CurrentGroup = default;
+                controller.CurrentClipHash = 0UL;
+                controller.Time = 0f;
+                controller.StartTime = 0f;
+                controller.LoopStartTime = 0f;
+                controller.LoopStopTime = 0f;
+                controller.StopTime = 0f;
+                controller.LoopCount = 0u;
+                controller.Playing = 0;
+                controller.AutoDisable = 0;
+                controller.ActiveMask = 0;
+                return cleared;
+            }
+
+            var best = layers[bestIndex];
+            bool changed = !controller.CurrentGroup.Equals(best.Group)
+                           || controller.CurrentClipHash != best.ClipHash
+                           || !MathEquals(controller.Time, best.Time)
+                           || controller.Playing != best.Playing
+                           || controller.ActiveMask != best.Mask;
+            controller.CurrentGroup = best.Group;
+            controller.CurrentClipHash = best.ClipHash;
+            controller.Time = best.Time;
+            controller.StartTime = best.StartTime;
+            controller.LoopStartTime = best.LoopStartTime;
+            controller.LoopStopTime = best.LoopStopTime;
+            controller.StopTime = best.StopTime;
+            controller.LoopCount = best.LoopCount;
+            controller.Playing = best.Playing;
+            controller.AutoDisable = best.AutoDisable;
+            controller.ActiveMask = best.Mask;
+            return changed;
+        }
+
+        static int SelectBestLayer(DynamicBuffer<ActorAnimationLayer> layers)
+        {
+            int bestIndex = -1;
+            int bestPriority = int.MinValue;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var layer = layers[i];
+                if (layer.Playing == 0 || layer.Weight <= 0f || layer.ClipIndex < 0)
+                    continue;
+                if (layer.Priority < bestPriority)
+                    continue;
+
+                bestPriority = layer.Priority;
+                bestIndex = i;
+            }
+
+            return bestIndex;
+        }
+
+        static int FindLayer(DynamicBuffer<ActorAnimationLayer> layers, FixedString64Bytes group, int priority)
         {
             for (int i = 0; i < layers.Length; i++)
             {
                 var layer = layers[i];
-                if (layer.Group.IsEmpty || layer.Group.Equals(controller.CurrentGroup))
-                    layer.Time = controller.Time;
-                layers[i] = layer;
+                if (layer.Priority == priority && EqualsIgnoreCase(layer.Group, group))
+                    return i;
             }
+
+            return -1;
+        }
+
+        static int FindMovementLayer(DynamicBuffer<ActorAnimationLayer> layers)
+        {
+            for (int i = 0; i < layers.Length; i++)
+                if (layers[i].Priority == MovementPriority)
+                    return i;
+            return -1;
+        }
+
+        static bool LayerEquals(ActorAnimationLayer left, ActorAnimationLayer right)
+        {
+            return left.ClipIndex == right.ClipIndex
+                   && left.ClipHash == right.ClipHash
+                   && left.Priority == right.Priority
+                   && left.LowerBodyPriority == right.LowerBodyPriority
+                   && left.TorsoPriority == right.TorsoPriority
+                   && left.LeftArmPriority == right.LeftArmPriority
+                   && left.RightArmPriority == right.RightArmPriority
+                   && left.Mask == right.Mask
+                   && left.Playing == right.Playing
+                   && left.AutoDisable == right.AutoDisable
+                   && MathEquals(left.StartTime, right.StartTime)
+                   && MathEquals(left.LoopStartTime, right.LoopStartTime)
+                   && MathEquals(left.LoopStopTime, right.LoopStopTime)
+                   && MathEquals(left.StopTime, right.StopTime)
+                   && MathEquals(left.Weight, right.Weight)
+                   && EqualsIgnoreCase(left.Group, right.Group);
+        }
+
+        static bool MaskContains(ActorAnimationBlendMask value, ActorAnimationBlendMask mask)
+            => (value & mask) != 0;
+
+        static int ResolveClipIndexWithFallback(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            FixedString64Bytes group,
+            out FixedString64Bytes resolvedGroup)
+        {
+            resolvedGroup = group;
+            int clipIndex = ResolveClipIndex(ref catalog, presentation, group);
+            if (clipIndex >= 0)
+                return clipIndex;
+
+            if (StartsWith(group, (byte)'i', (byte)'d', (byte)'l', (byte)'e')
+                && (EqualsIgnoreCase(group, IdleSwimGroup()) || EqualsIgnoreCase(group, IdleSneakGroup())))
+            {
+                resolvedGroup = IdleGroup();
+                return ResolveClipIndex(ref catalog, presentation, resolvedGroup);
+            }
+
+            if (StartsWithSwim(group))
+            {
+                FixedString64Bytes withoutSwim = StripSwimPrefix(group);
+                clipIndex = ResolveClipIndex(ref catalog, presentation, withoutSwim);
+                if (clipIndex >= 0)
+                {
+                    resolvedGroup = withoutSwim;
+                    return clipIndex;
+                }
+
+                if (StartsWithRun(withoutSwim))
+                {
+                    FixedString64Bytes walk = ReplaceRunWithWalk(withoutSwim);
+                    clipIndex = ResolveClipIndex(ref catalog, presentation, walk);
+                    if (clipIndex >= 0)
+                        resolvedGroup = walk;
+                    return clipIndex;
+                }
+
+                return -1;
+            }
+
+            if (StartsWithRun(group))
+            {
+                FixedString64Bytes walk = ReplaceRunWithWalk(group);
+                clipIndex = ResolveClipIndex(ref catalog, presentation, walk);
+                if (clipIndex >= 0)
+                    resolvedGroup = walk;
+                return clipIndex;
+            }
+
+            return -1;
         }
 
         static int ResolveClipIndex(
@@ -238,25 +1010,31 @@ namespace VVardenfell.Runtime.Animation
             in ActorPresentation presentation,
             FixedString64Bytes group)
         {
-            if (presentation.FirstClipIndex < 0 || presentation.ClipCount <= 0)
+            if ((uint)presentation.RigFamilyIndex >= (uint)catalog.RigFamilies.Length)
                 return -1;
 
-            int end = math.min(catalog.Clips.Length, presentation.FirstClipIndex + presentation.ClipCount);
-            for (int i = end - 1; i >= presentation.FirstClipIndex; i--)
+            var rigFamily = catalog.RigFamilies[presentation.RigFamilyIndex];
+            if (rigFamily.FirstClipIndex < 0 || rigFamily.ClipCount <= 0)
+                return -1;
+
+            int end = math.min(catalog.Clips.Length, rigFamily.FirstClipIndex + rigFamily.ClipCount);
+            for (int i = end - 1; i >= rigFamily.FirstClipIndex; i--)
             {
                 var clip = catalog.Clips[i];
                 if (EqualsIgnoreCase(clip.Name, group))
                     return i;
             }
 
-            for (int i = end - 1; i >= presentation.FirstClipIndex; i--)
+            for (int i = end - 1; i >= rigFamily.FirstClipIndex; i--)
             {
                 var clip = catalog.Clips[i];
                 if (ClipHasGroupTextKey(ref catalog, clip, group))
                     return i;
             }
 
-            return presentation.FirstClipIndex < catalog.Clips.Length ? presentation.FirstClipIndex : -1;
+            // OpenMW can fall back at the gameplay animation selection layer, but the graph state
+            // itself should not silently bind to the first clip. That was the source of broad cycling.
+            return -1;
         }
 
         static ulong ResolveClipHash(ref ActorAnimationCatalogBlob catalog, int clipIndex)
@@ -362,48 +1140,232 @@ namespace VVardenfell.Runtime.Animation
                 loopStop = stopTime;
         }
 
-        static bool IsLooping(FixedString64Bytes group)
+        static bool IsLooping(ref ActorAnimationCatalogBlob catalog, int clipIndex, FixedString64Bytes group)
         {
-            if (EqualsIdle(group))
+            if (IsKnownLoopingGroup(group))
                 return true;
 
-            ulong hash = HashGroup(group);
-            return hash == 11428733724764909075UL
-                || hash == 2840003338041434093UL
-                || hash == 13126534554455935837UL
-                || hash == 15293321721980343883UL
-                || hash == 17455567770838934929UL
-                || hash == 8077834754628661618UL
-                || hash == 10777559574499982535UL
-                || hash == 14915820621887690617UL
-                || hash == 3639883521381160167UL
-                || hash == 13144730594257661592UL
-                || hash == 3390669506715992788UL
-                || hash == 9999511677273344816UL
-                || hash == 14103176270394171182UL
-                || hash == 17999522183465603107UL;
-        }
+            if ((uint)clipIndex >= (uint)catalog.Clips.Length)
+                return false;
 
-        static ulong HashGroup(FixedString64Bytes value)
-        {
-            const ulong offset = 14695981039346656037UL;
-            const ulong prime = 1099511628211UL;
-            ulong hash = offset;
-            for (int i = 0; i < value.Length; i++)
+            var clip = catalog.Clips[clipIndex];
+            if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
+                return false;
+
+            int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
+            for (int i = clip.FirstTextMarkerIndex; i < end; i++)
             {
-                hash ^= ToLowerAscii(value[i]);
-                hash *= prime;
+                var marker = catalog.TextMarkers[i];
+                if (marker.Kind == ActorAnimationTextMarkerKind.LoopStart
+                    || marker.Kind == ActorAnimationTextMarkerKind.LoopStop)
+                {
+                    return true;
+                }
             }
 
-            return hash;
+            return false;
         }
 
-        static bool EqualsIdle(FixedString64Bytes group)
-            => group.Length == 4
-               && ToLowerAscii(group[0]) == (byte)'i'
-               && ToLowerAscii(group[1]) == (byte)'d'
-               && ToLowerAscii(group[2]) == (byte)'l'
-               && ToLowerAscii(group[3]) == (byte)'e';
+        static bool IsKnownLoopingGroup(FixedString64Bytes group)
+        {
+            return EqualsIgnoreCase(group, IdleGroup())
+                   || EqualsIgnoreCase(group, IdleSwimGroup())
+                   || EqualsIgnoreCase(group, IdleSneakGroup())
+                   || StartsWithWalk(group)
+                   || StartsWithRun(group)
+                   || StartsWithSneak(group)
+                   || StartsWithSwimWalk(group)
+                   || StartsWithSwimRun(group)
+                   || StartsWithTurn(group)
+                   || StartsWithSwimTurn(group);
+        }
+
+        static FixedString64Bytes IdleGroup()
+        {
+            FixedString64Bytes value = default;
+            value.Append('i');
+            value.Append('d');
+            value.Append('l');
+            value.Append('e');
+            return value;
+        }
+
+        static FixedString64Bytes IdleVariantGroup(int index)
+        {
+            FixedString64Bytes value = IdleGroup();
+            if (index <= 0)
+                return value;
+
+            value.Append((byte)('1' + index));
+            return value;
+        }
+
+        static FixedString64Bytes WalkForwardGroup()
+        {
+            FixedString64Bytes value = default;
+            value.Append('w');
+            value.Append('a');
+            value.Append('l');
+            value.Append('k');
+            value.Append('f');
+            value.Append('o');
+            value.Append('r');
+            value.Append('w');
+            value.Append('a');
+            value.Append('r');
+            value.Append('d');
+            return value;
+        }
+
+        static FixedString64Bytes WalkBackGroup()
+        {
+            FixedString64Bytes value = default;
+            value.Append('w');
+            value.Append('a');
+            value.Append('l');
+            value.Append('k');
+            value.Append('b');
+            value.Append('a');
+            value.Append('c');
+            value.Append('k');
+            return value;
+        }
+
+        static FixedString64Bytes WalkLeftGroup()
+        {
+            FixedString64Bytes value = default;
+            value.Append('w');
+            value.Append('a');
+            value.Append('l');
+            value.Append('k');
+            value.Append('l');
+            value.Append('e');
+            value.Append('f');
+            value.Append('t');
+            return value;
+        }
+
+        static FixedString64Bytes WalkRightGroup()
+        {
+            FixedString64Bytes value = default;
+            value.Append('w');
+            value.Append('a');
+            value.Append('l');
+            value.Append('k');
+            value.Append('r');
+            value.Append('i');
+            value.Append('g');
+            value.Append('h');
+            value.Append('t');
+            return value;
+        }
+
+        static FixedString64Bytes IdleSwimGroup()
+        {
+            FixedString64Bytes value = IdleGroup();
+            value.Append('s');
+            value.Append('w');
+            value.Append('i');
+            value.Append('m');
+            return value;
+        }
+
+        static FixedString64Bytes IdleSneakGroup()
+        {
+            FixedString64Bytes value = IdleGroup();
+            value.Append('s');
+            value.Append('n');
+            value.Append('e');
+            value.Append('a');
+            value.Append('k');
+            return value;
+        }
+
+        static FixedString64Bytes StripSwimPrefix(FixedString64Bytes group)
+        {
+            FixedString64Bytes result = default;
+            for (int i = 4; i < group.Length; i++)
+                result.Append(group[i]);
+            return result;
+        }
+
+        static FixedString64Bytes ReplaceRunWithWalk(FixedString64Bytes group)
+        {
+            FixedString64Bytes result = default;
+            result.Append('w');
+            result.Append('a');
+            result.Append('l');
+            result.Append('k');
+            for (int i = 3; i < group.Length; i++)
+                result.Append(group[i]);
+            return result;
+        }
+
+        static bool StartsWithWalk(FixedString64Bytes value)
+            => StartsWith(value, (byte)'w', (byte)'a', (byte)'l', (byte)'k');
+
+        static bool StartsWithRun(FixedString64Bytes value)
+            => StartsWith(value, (byte)'r', (byte)'u', (byte)'n');
+
+        static bool StartsWithSneak(FixedString64Bytes value)
+            => StartsWith(value, (byte)'s', (byte)'n', (byte)'e', (byte)'a', (byte)'k');
+
+        static bool StartsWithSwim(FixedString64Bytes value)
+            => StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m');
+
+        static bool StartsWithSwimWalk(FixedString64Bytes value)
+            => StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'w', (byte)'a', (byte)'l', (byte)'k');
+
+        static bool StartsWithSwimRun(FixedString64Bytes value)
+            => StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'r', (byte)'u', (byte)'n');
+
+        static bool StartsWithTurn(FixedString64Bytes value)
+            => StartsWith(value, (byte)'t', (byte)'u', (byte)'r', (byte)'n');
+
+        static bool StartsWithSwimTurn(FixedString64Bytes value)
+            => StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'t', (byte)'u', (byte)'r', (byte)'n');
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c)
+            => value.Length >= 3
+               && ToLowerAscii(value[0]) == a
+               && ToLowerAscii(value[1]) == b
+               && ToLowerAscii(value[2]) == c;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d)
+            => value.Length >= 4
+               && ToLowerAscii(value[0]) == a
+               && ToLowerAscii(value[1]) == b
+               && ToLowerAscii(value[2]) == c
+               && ToLowerAscii(value[3]) == d;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e)
+            => value.Length >= 5
+               && ToLowerAscii(value[0]) == a
+               && ToLowerAscii(value[1]) == b
+               && ToLowerAscii(value[2]) == c
+               && ToLowerAscii(value[3]) == d
+               && ToLowerAscii(value[4]) == e;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f, byte g)
+            => value.Length >= 7
+               && ToLowerAscii(value[0]) == a
+               && ToLowerAscii(value[1]) == b
+               && ToLowerAscii(value[2]) == c
+               && ToLowerAscii(value[3]) == d
+               && ToLowerAscii(value[4]) == e
+               && ToLowerAscii(value[5]) == f
+               && ToLowerAscii(value[6]) == g;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f, byte g, byte h)
+            => value.Length >= 8
+               && ToLowerAscii(value[0]) == a
+               && ToLowerAscii(value[1]) == b
+               && ToLowerAscii(value[2]) == c
+               && ToLowerAscii(value[3]) == d
+               && ToLowerAscii(value[4]) == e
+               && ToLowerAscii(value[5]) == f
+               && ToLowerAscii(value[6]) == g
+               && ToLowerAscii(value[7]) == h;
 
         static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
         {
@@ -429,3 +1391,4 @@ namespace VVardenfell.Runtime.Animation
             => math.abs(left - right) <= 0.0001f;
     }
 }
+#endif

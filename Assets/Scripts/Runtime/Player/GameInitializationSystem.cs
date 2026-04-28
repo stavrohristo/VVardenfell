@@ -141,6 +141,13 @@ namespace VVardenfell.Runtime.Player
             var effectModifiers = init.PlayerActorStats.EffectModifiers;
             MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: true);
             var derivedStats = MorrowindActorMovementStats.BuildDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, 0f);
+            var movementSpeed = MorrowindActorMovementStats.BuildPlayerMovementSpeed(
+                RuntimeContentDatabase.Active,
+                attributes,
+                skills,
+                vitals,
+                effectModifiers,
+                derivedStats);
             var player = em.CreateEntity();
             em.SetName(player, "VVardenfell.Player");
             em.AddComponentData(player, new PlayerTag());
@@ -152,19 +159,19 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, init.PlayerSettings);
             em.AddComponentData(player, new PlayerCharacterControl());
             em.AddComponentData(player, new PlayerCharacterState());
-            em.AddComponentData(player, new MorrowindMovementIntent());
-            em.AddComponentData(player, new MorrowindActorKinematicState
+            em.AddComponentData(player, new MorrowindMovementInput());
+            em.AddComponentData(player, new MorrowindMovementState
             {
                 Grounded = hasNewGameRequest,
+                GroundNormal = math.up(),
             });
-            em.AddComponentData(player, MorrowindMovementTuning.OpenMwDefaults());
+            em.AddComponentData(player, movementSpeed);
             em.AddComponentData(player, attributes);
             em.AddComponentData(player, skills);
             em.AddComponentData(player, vitals);
             em.AddComponentData(player, effectModifiers);
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
-            em.AddComponentData(player, new MorrowindMovementFrameTrace());
             var playerSpells = em.AddBuffer<PlayerKnownSpell>(player);
             if (em.HasBuffer<PlayerKnownSpell>(initEntity))
             {

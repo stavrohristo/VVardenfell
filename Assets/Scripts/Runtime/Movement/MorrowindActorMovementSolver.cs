@@ -9,23 +9,28 @@ namespace VVardenfell.Runtime.Movement
         public readonly float2 PlanarInput;
         public readonly float3 LocalMoveWorld;
         public readonly float3 FinalVelocity;
-        public readonly MorrowindMovementFrameTrace Trace;
 
         public MorrowindActorMovementResult(
             float2 planarInput,
             float3 localMoveWorld,
-            float3 finalVelocity,
-            in MorrowindMovementFrameTrace trace)
+            float3 finalVelocity)
         {
             PlanarInput = planarInput;
             LocalMoveWorld = localMoveWorld;
             FinalVelocity = finalVelocity;
-            Trace = trace;
         }
     }
 
     public static partial class MorrowindActorMovementSolver
     {
+        struct MovementSolveScratch
+        {
+            public bool StepSucceeded;
+            public MorrowindSupportKind SupportKind;
+            public float3 GroundNormal;
+            public Entity StandingOn;
+        }
+
         const float MinMoveEpsilon = 1e-5f;
         const float MinInputEpsilonSq = 1e-4f;
         const float JumpDiagonalScale = 0.707f;
@@ -38,38 +43,31 @@ namespace VVardenfell.Runtime.Movement
             EntityManager entityManager,
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
-            in MorrowindActorMovementStats.Context stats,
+            in MorrowindMovementSettings settings,
+            in MorrowindMovementSpeed speed,
             quaternion rotation,
             ref float3 position,
-            ref MorrowindMovementIntent intent,
-            ref MorrowindActorKinematicState kinematic,
-            in MorrowindMovementFrameTrace previousTrace,
+            ref MorrowindMovementInput input,
+            ref MorrowindMovementState movementState,
             float dt)
         {
-            var trace = new MorrowindMovementFrameTrace
-            {
-                Sequence = previousTrace.Sequence + 1,
-                DeltaTime = dt,
-                StartPosition = position,
-                EndPosition = position,
-                GroundNormal = math.up(),
-            };
+            var scratch = new MovementSolveScratch { GroundNormal = math.up() };
 
-            bool wasGrounded = kinematic.Grounded;
-            bool wasOnSlope = kinematic.OnSlope;
+            movementState.JumpAccepted = false;
+            bool wasGrounded = movementState.Grounded;
+            bool wasOnSlope = movementState.OnSlope;
             bool hadSolidGroundBeforeMove = wasGrounded && !wasOnSlope;
-            trace.PreviousSupportKind = (byte)ResolvePreviousSupportKind(previousTrace, kinematic, entityManager);
-            trace.SupportKind = (byte)MorrowindSupportKind.None;
-            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
 
-            float2 planarInput = intent.LocalMove.xy;
+            float2 planarInput = input.LocalMove;
             float inputLengthSq = math.lengthsq(planarInput);
             if (inputLengthSq > 1f)
                 planarInput *= math.rsqrt(inputLengthSq);
 
-            intent.SpeedFactor = math.saturate(math.length(planarInput));
-            intent.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
+            movementState.LocalMove = planarInput;
+            movementState.SpeedFactor = math.saturate(math.length(planarInput));
+            movementState.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
+            movementState.RunHeld = input.RunHeld;
+            movementState.SneakHeld = input.SneakHeld;
 
             float3 forward = math.normalizesafe(math.mul(rotation, new float3(0f, 0f, 1f)));
             float3 right = math.normalizesafe(math.mul(rotation, new float3(1f, 0f, 0f)));
@@ -82,27 +80,24 @@ namespace VVardenfell.Runtime.Movement
             float3 desiredVelocity = float3.zero;
             if (moveLengthSq > MinInputEpsilonSq)
             {
-                float speed = stats.GetCurrentSpeed(intent.RunHeld, intent.SneakHeld, kinematic.Grounded, intent.SpeedFactor, intent.IsStrafing);
-                trace.ResolvedSpeed = speed;
-                desiredVelocity = localMoveWorld * speed;
+                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, input.SneakHeld, movementState.SpeedFactor, movementState.IsStrafing);
+                desiredVelocity = localMoveWorld * resolvedSpeed;
             }
-            trace.DesiredVelocity = desiredVelocity;
 
-            bool jumpRequested = intent.LocalMove.z > 0f;
-            trace.JumpRequested = ToByte(jumpRequested);
-            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !intent.SneakHeld;
+            bool jumpRequested = input.JumpPressed;
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !input.SneakHeld;
             if (canJump)
             {
-                trace.JumpAccepted = 1;
-                float jumpSpeed = stats.GetJumpSpeed(intent.RunHeld);
+                movementState.JumpAccepted = true;
+                float jumpSpeed = speed.GetJumpSpeed(input.RunHeld);
                 if (math.lengthsq(desiredVelocity.xz) <= MinMoveEpsilon)
                 {
-                    kinematic.Inertia = new float3(0f, jumpSpeed, 0f);
+                    movementState.Inertia = new float3(0f, jumpSpeed, 0f);
                 }
                 else
                 {
                     float3 horizontal = math.normalizesafe(new float3(desiredVelocity.x, 0f, desiredVelocity.z));
-                    kinematic.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
+                    movementState.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
                 }
 
                 hadSolidGroundBeforeMove = false;
@@ -110,28 +105,28 @@ namespace VVardenfell.Runtime.Movement
 
             float airControlFactor = 1f;
             if (!hadSolidGroundBeforeMove)
-                airControlFactor = stats.GetJumpMoveFactor();
+                airControlFactor = speed.JumpMoveFactor;
 
             float3 velocity = desiredVelocity * airControlFactor;
             if (!hadSolidGroundBeforeMove)
-                velocity += kinematic.Inertia;
+                velocity += movementState.Inertia;
 
             if (math.lengthsq(velocity) > MinMoveEpsilon)
-                MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref trace);
+                MoveKinematic(world, collider, settings, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref scratch);
 
             // A stale grounded flag can survive focus loss or save replay while the
             // player is actually airborne. Always probe for real support during the
             // normal movement path; recovery fallback is only safe for explicit stuck
             // recovery.
             bool allowGroundedRecoveryFallback = false;
-            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f;
+            bool shouldResolveSupport = scratch.StepSucceeded || movementState.Inertia.y <= 0f;
             var support = shouldResolveSupport
                 ? FindGroundSupport(
                     entityManager,
                     world,
                     collider,
                     position,
-                    tuning,
+                    settings,
                     wasGrounded,
                     allowGroundedRecoveryFallback)
                 : GroundSupportResult.None(position);
@@ -139,63 +134,54 @@ namespace VVardenfell.Runtime.Movement
             ApplySupportResult(
                 world,
                 collider,
-                tuning,
+                settings,
                 ref position,
-                ref kinematic,
-                ref trace,
+                ref movementState,
+                ref scratch,
                 support,
                 hadSolidGroundBeforeMove);
 
-            if (kinematic.Grounded && !kinematic.OnSlope)
+            if (movementState.Grounded && !movementState.OnSlope)
                 velocity.y = 0f;
 
-            if (!(kinematic.Grounded && !kinematic.OnSlope))
-                kinematic.Inertia.y -= tuning.Gravity * dt;
+            if (!(movementState.Grounded && !movementState.OnSlope))
+                movementState.Inertia.y -= settings.Gravity * dt;
 
-            trace.FinalVelocity = velocity;
-            trace.EndPosition = position;
-            return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
+            movementState.LastVelocity = velocity;
+            movementState.GroundNormal = scratch.GroundNormal;
+            movementState.StandingOn = scratch.StandingOn;
+            movementState.SupportKind = (byte)scratch.SupportKind;
+            return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity);
         }
 
         public static MorrowindActorMovementResult SolveUnmanaged(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            in MorrowindMovementTuning tuning,
-            in MorrowindActorMovementStats.UnmanagedContext stats,
+            in MorrowindMovementSettings settings,
+            in MorrowindMovementSpeed speed,
             quaternion rotation,
             ref float3 position,
-            ref MorrowindMovementIntent intent,
-            ref MorrowindActorKinematicState kinematic,
-            in MorrowindMovementFrameTrace previousTrace,
+            ref MorrowindMovementInput input,
+            ref MorrowindMovementState movementState,
             float dt)
         {
-            var trace = new MorrowindMovementFrameTrace
-            {
-                Sequence = previousTrace.Sequence + 1,
-                DeltaTime = dt,
-                StartPosition = position,
-                EndPosition = position,
-                GroundNormal = math.up(),
-            };
+            var scratch = new MovementSolveScratch { GroundNormal = math.up() };
 
-            bool wasGrounded = kinematic.Grounded;
-            bool wasOnSlope = kinematic.OnSlope;
+            movementState.JumpAccepted = false;
+            bool wasGrounded = movementState.Grounded;
+            bool wasOnSlope = movementState.OnSlope;
             bool hadSolidGroundBeforeMove = wasGrounded && !wasOnSlope;
-            trace.PreviousSupportKind = previousTrace.SupportKind != 0
-                ? previousTrace.SupportKind
-                : (byte)(kinematic.WalkingOnWater
-                    ? MorrowindSupportKind.WaterSurfaceCandidate
-                    : (kinematic.Grounded ? MorrowindSupportKind.FlatGround : MorrowindSupportKind.None));
-            trace.SupportKind = (byte)MorrowindSupportKind.None;
-            trace.SupportSnapMode = (byte)MorrowindSupportSnapMode.None;
 
-            float2 planarInput = intent.LocalMove.xy;
+            float2 planarInput = input.LocalMove;
             float inputLengthSq = math.lengthsq(planarInput);
             if (inputLengthSq > 1f)
                 planarInput *= math.rsqrt(inputLengthSq);
 
-            intent.SpeedFactor = math.saturate(math.length(planarInput));
-            intent.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
+            movementState.LocalMove = planarInput;
+            movementState.SpeedFactor = math.saturate(math.length(planarInput));
+            movementState.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
+            movementState.RunHeld = input.RunHeld;
+            movementState.SneakHeld = input.SneakHeld;
 
             float3 forward = math.normalizesafe(math.mul(rotation, new float3(0f, 0f, 1f)));
             float3 right = math.normalizesafe(math.mul(rotation, new float3(1f, 0f, 0f)));
@@ -208,27 +194,24 @@ namespace VVardenfell.Runtime.Movement
             float3 desiredVelocity = float3.zero;
             if (moveLengthSq > MinInputEpsilonSq)
             {
-                float speed = stats.GetCurrentSpeed(intent.RunHeld, intent.SneakHeld, kinematic.Grounded, intent.SpeedFactor, intent.IsStrafing);
-                trace.ResolvedSpeed = speed;
-                desiredVelocity = localMoveWorld * speed;
+                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, input.SneakHeld, movementState.SpeedFactor, movementState.IsStrafing);
+                desiredVelocity = localMoveWorld * resolvedSpeed;
             }
-            trace.DesiredVelocity = desiredVelocity;
 
-            bool jumpRequested = intent.LocalMove.z > 0f;
-            trace.JumpRequested = ToByte(jumpRequested);
-            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !intent.SneakHeld;
+            bool jumpRequested = input.JumpPressed;
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !input.SneakHeld;
             if (canJump)
             {
-                trace.JumpAccepted = 1;
-                float jumpSpeed = stats.GetJumpSpeed(intent.RunHeld);
+                movementState.JumpAccepted = true;
+                float jumpSpeed = speed.GetJumpSpeed(input.RunHeld);
                 if (math.lengthsq(desiredVelocity.xz) <= MinMoveEpsilon)
                 {
-                    kinematic.Inertia = new float3(0f, jumpSpeed, 0f);
+                    movementState.Inertia = new float3(0f, jumpSpeed, 0f);
                 }
                 else
                 {
                     float3 horizontal = math.normalizesafe(new float3(desiredVelocity.x, 0f, desiredVelocity.z));
-                    kinematic.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
+                    movementState.Inertia = new float3(horizontal.x, 1f, horizontal.z) * jumpSpeed * JumpDiagonalScale;
                 }
 
                 hadSolidGroundBeforeMove = false;
@@ -236,23 +219,23 @@ namespace VVardenfell.Runtime.Movement
 
             float airControlFactor = 1f;
             if (!hadSolidGroundBeforeMove)
-                airControlFactor = stats.GetJumpMoveFactor();
+                airControlFactor = speed.JumpMoveFactor;
 
             float3 velocity = desiredVelocity * airControlFactor;
             if (!hadSolidGroundBeforeMove)
-                velocity += kinematic.Inertia;
+                velocity += movementState.Inertia;
 
             if (math.lengthsq(velocity) > MinMoveEpsilon)
-                MoveKinematic(world, collider, tuning, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref trace);
+                MoveKinematic(world, collider, settings, ref position, ref velocity, dt, hadSolidGroundBeforeMove, ref scratch);
 
             bool allowGroundedRecoveryFallback = false;
-            bool shouldResolveSupport = trace.StepSucceeded != 0 || kinematic.Inertia.y <= 0f;
+            bool shouldResolveSupport = scratch.StepSucceeded || movementState.Inertia.y <= 0f;
             var support = shouldResolveSupport
                 ? FindGroundSupportUnmanaged(
                     world,
                     collider,
                     position,
-                    tuning,
+                    settings,
                     wasGrounded,
                     allowGroundedRecoveryFallback)
                 : GroundSupportResult.None(position);
@@ -260,22 +243,24 @@ namespace VVardenfell.Runtime.Movement
             ApplySupportResult(
                 world,
                 collider,
-                tuning,
+                settings,
                 ref position,
-                ref kinematic,
-                ref trace,
+                ref movementState,
+                ref scratch,
                 support,
                 hadSolidGroundBeforeMove);
 
-            if (kinematic.Grounded && !kinematic.OnSlope)
+            if (movementState.Grounded && !movementState.OnSlope)
                 velocity.y = 0f;
 
-            if (!(kinematic.Grounded && !kinematic.OnSlope))
-                kinematic.Inertia.y -= tuning.Gravity * dt;
+            if (!(movementState.Grounded && !movementState.OnSlope))
+                movementState.Inertia.y -= settings.Gravity * dt;
 
-            trace.FinalVelocity = velocity;
-            trace.EndPosition = position;
-            return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity, trace);
+            movementState.LastVelocity = velocity;
+            movementState.GroundNormal = scratch.GroundNormal;
+            movementState.StandingOn = scratch.StandingOn;
+            movementState.SupportKind = (byte)scratch.SupportKind;
+            return new MorrowindActorMovementResult(planarInput, localMoveWorld, velocity);
         }
     }
 }

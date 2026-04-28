@@ -51,6 +51,7 @@ namespace VVardenfell.Runtime.Pathfinding
         public int MaxFineIterations;
         public int MaxAbstractIterations;
         public byte AllowPartial;
+        public byte Run;
     }
 
     public struct PathGridTraversalAwaitingResult : IComponentData, IEnableableComponent
@@ -68,6 +69,7 @@ namespace VVardenfell.Runtime.Pathfinding
         public byte Status;
         public byte UsedAbstractRoute;
         public byte ReachedGoal;
+        public byte Run;
     }
 
     public struct PathGridTraversalNode : IBufferElementData
@@ -109,22 +111,16 @@ namespace VVardenfell.Runtime.Pathfinding
             }
 
             EnsureTraversalComponents(entityManager, owner);
-            var settings = entityManager.GetComponentData<PathGridTraversalSettings>(owner);
-            settings.AllowPartial = allowPartial ? (byte)1 : (byte)0;
-            settings.Run = run ? (byte)1 : (byte)0;
-            if (maxFineIterations > 0)
-                settings.MaxFineIterations = maxFineIterations;
-            if (maxAbstractIterations > 0)
-                settings.MaxAbstractIterations = maxAbstractIterations;
-            entityManager.SetComponentData(owner, settings);
+            var settings = ResolveSettings(entityManager);
 
             entityManager.SetComponentData(owner, new PathGridTraversalPendingRequest
             {
                 StartNodeIndex = startNodeIndex,
                 GoalNodeIndex = goalNodeIndex,
-                MaxFineIterations = maxFineIterations,
-                MaxAbstractIterations = maxAbstractIterations,
-                AllowPartial = allowPartial ? (byte)1 : (byte)0,
+                MaxFineIterations = maxFineIterations > 0 ? maxFineIterations : settings.MaxFineIterations,
+                MaxAbstractIterations = maxAbstractIterations > 0 ? maxAbstractIterations : settings.MaxAbstractIterations,
+                AllowPartial = allowPartial ? (byte)1 : settings.AllowPartial,
+                Run = run ? (byte)1 : settings.Run,
             });
             entityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(owner, true);
             entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(owner, false);
@@ -137,6 +133,7 @@ namespace VVardenfell.Runtime.Pathfinding
                 Status = (byte)PathGridTraversalStatus.Idle,
                 LastStartNodeIndex = startNodeIndex,
                 LastGoalNodeIndex = goalNodeIndex,
+                Run = run ? (byte)1 : settings.Run,
             };
             entityManager.SetComponentData(owner, state);
             entityManager.GetBuffer<PathGridTraversalNode>(owner).Clear();
@@ -223,8 +220,6 @@ namespace VVardenfell.Runtime.Pathfinding
 
         static void EnsureTraversalComponents(EntityManager entityManager, Entity owner)
         {
-            if (!entityManager.HasComponent<PathGridTraversalSettings>(owner))
-                entityManager.AddComponentData(owner, PathGridTraversalSettings.Defaults);
             if (!entityManager.HasComponent<PathGridTraversalState>(owner))
                 entityManager.AddComponentData(owner, new PathGridTraversalState());
             if (!entityManager.HasBuffer<PathGridTraversalNode>(owner))
@@ -241,6 +236,14 @@ namespace VVardenfell.Runtime.Pathfinding
             }
         }
 
+        static PathGridTraversalSettings ResolveSettings(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PathGridTraversalSettings>());
+            return query.IsEmptyIgnoreFilter
+                ? PathGridTraversalSettings.Defaults
+                : query.GetSingleton<PathGridTraversalSettings>();
+        }
+
         static bool TryGetWorld(out EntityManager entityManager, out string error)
         {
             entityManager = default;
@@ -254,6 +257,20 @@ namespace VVardenfell.Runtime.Pathfinding
             entityManager = world.EntityManager;
             error = null;
             return true;
+        }
+    }
+
+    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    public partial struct PathGridTraversalSettingsBootstrapSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            if (SystemAPI.HasSingleton<PathGridTraversalSettings>())
+                return;
+
+            Entity entity = state.EntityManager.CreateEntity();
+            state.EntityManager.SetName(entity, "VVardenfell.PathGridTraversalSettings");
+            state.EntityManager.AddComponentData(entity, PathGridTraversalSettings.Defaults);
         }
     }
 
@@ -327,6 +344,7 @@ namespace VVardenfell.Runtime.Pathfinding
                 nextState.LastStartNodeIndex = request.StartNodeIndex;
                 nextState.LastGoalNodeIndex = request.GoalNodeIndex;
                 nextState.Status = (byte)PathGridTraversalStatus.RequestingPath;
+                nextState.Run = request.Run;
                 EntityManager.SetComponentData(entity, nextState);
                 SystemAPI.SetComponentEnabled<PathGridTraversalPendingRequest>(entity, false);
                 SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, true);
@@ -428,24 +446,22 @@ namespace VVardenfell.Runtime.Pathfinding
     {
         EntityQuery _query;
         ComponentTypeHandle<LocalTransform> _transformHandle;
-        ComponentTypeHandle<MorrowindMovementIntent> _intentHandle;
+        ComponentTypeHandle<MorrowindMovementInput> _inputHandle;
         ComponentTypeHandle<PathGridTraversalState> _stateHandle;
-        ComponentTypeHandle<PathGridTraversalSettings> _settingsHandle;
         BufferTypeHandle<PathGridTraversalNode> _pathNodeHandle;
 
         public void OnCreate(ref SystemState state)
         {
             _query = state.GetEntityQuery(
                 ComponentType.ReadWrite<LocalTransform>(),
-                ComponentType.ReadWrite<MorrowindMovementIntent>(),
+                ComponentType.ReadWrite<MorrowindMovementInput>(),
                 ComponentType.ReadWrite<PathGridTraversalState>(),
-                ComponentType.ReadOnly<PathGridTraversalSettings>(),
                 ComponentType.ReadOnly<PathGridTraversalNode>());
             _transformHandle = state.GetComponentTypeHandle<LocalTransform>(isReadOnly: false);
-            _intentHandle = state.GetComponentTypeHandle<MorrowindMovementIntent>(isReadOnly: false);
+            _inputHandle = state.GetComponentTypeHandle<MorrowindMovementInput>(isReadOnly: false);
             _stateHandle = state.GetComponentTypeHandle<PathGridTraversalState>(isReadOnly: false);
-            _settingsHandle = state.GetComponentTypeHandle<PathGridTraversalSettings>(isReadOnly: true);
             _pathNodeHandle = state.GetBufferTypeHandle<PathGridTraversalNode>(isReadOnly: true);
+            state.RequireForUpdate<PathGridTraversalSettings>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -456,19 +472,18 @@ namespace VVardenfell.Runtime.Pathfinding
 
             float dt = SystemAPI.Time.DeltaTime;
             _transformHandle.Update(ref state);
-            _intentHandle.Update(ref state);
+            _inputHandle.Update(ref state);
             _stateHandle.Update(ref state);
-            _settingsHandle.Update(ref state);
             _pathNodeHandle.Update(ref state);
 
             state.Dependency = new PathGridTraversalSteeringJob
             {
                 Navigation = navigation,
+                Settings = SystemAPI.GetSingleton<PathGridTraversalSettings>(),
                 DeltaTime = dt,
                 TransformHandle = _transformHandle,
-                IntentHandle = _intentHandle,
+                InputHandle = _inputHandle,
                 StateHandle = _stateHandle,
-                SettingsHandle = _settingsHandle,
                 PathNodeHandle = _pathNodeHandle,
             }.ScheduleParallel(_query, state.Dependency);
         }
@@ -477,38 +492,35 @@ namespace VVardenfell.Runtime.Pathfinding
         struct PathGridTraversalSteeringJob : IJobChunk
         {
             [ReadOnly] public PathGridNavigationWorld Navigation;
+            public PathGridTraversalSettings Settings;
             public float DeltaTime;
             public ComponentTypeHandle<LocalTransform> TransformHandle;
-            public ComponentTypeHandle<MorrowindMovementIntent> IntentHandle;
+            public ComponentTypeHandle<MorrowindMovementInput> InputHandle;
             public ComponentTypeHandle<PathGridTraversalState> StateHandle;
-            [ReadOnly] public ComponentTypeHandle<PathGridTraversalSettings> SettingsHandle;
             [ReadOnly] public BufferTypeHandle<PathGridTraversalNode> PathNodeHandle;
 
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
             {
                 var transforms = chunk.GetNativeArray(ref TransformHandle);
-                var intents = chunk.GetNativeArray(ref IntentHandle);
+                var inputs = chunk.GetNativeArray(ref InputHandle);
                 var states = chunk.GetNativeArray(ref StateHandle);
-                var settings = chunk.GetNativeArray(ref SettingsHandle);
                 var pathNodes = chunk.GetBufferAccessor(ref PathNodeHandle);
 
                 int count = chunk.Count;
                 for (int i = 0; i < count; i++)
                 {
                     var transform = transforms[i];
-                    var intent = intents[i];
+                    var input = inputs[i];
                     var traversalState = states[i];
-                    var traversalSettings = settings[i];
                     var nodes = pathNodes[i];
                     if (traversalState.Status != (byte)PathGridTraversalStatus.Traversing || nodes.Length == 0)
                         continue;
 
-                    if (AdvancePastReachedNodes(Navigation, transform.Position, nodes, traversalSettings, ref traversalState))
+                    if (AdvancePastReachedNodes(Navigation, transform.Position, nodes, Settings, ref traversalState))
                     {
-                        intent.LocalMove.x = 0f;
-                        intent.LocalMove.y = 0f;
-                        intent.RunHeld = false;
-                        intents[i] = intent;
+                        input.LocalMove = float2.zero;
+                        input.RunHeld = false;
+                        inputs[i] = input;
                         states[i] = traversalState;
                         continue;
                     }
@@ -517,9 +529,8 @@ namespace VVardenfell.Runtime.Pathfinding
                     if ((uint)nodeIndex >= (uint)Navigation.Nodes.Length)
                     {
                         traversalState.Status = (byte)PathGridTraversalStatus.Failed;
-                        intent.LocalMove.x = 0f;
-                        intent.LocalMove.y = 0f;
-                        intents[i] = intent;
+                        input.LocalMove = float2.zero;
+                        inputs[i] = input;
                         states[i] = traversalState;
                         continue;
                     }
@@ -531,22 +542,22 @@ namespace VVardenfell.Runtime.Pathfinding
                     if (math.lengthsq(worldDirection) <= 1e-5f)
                         continue;
 
-                    if (traversalSettings.FacePath != 0)
+                    if (Settings.FacePath != 0)
                     {
                         quaternion targetRotation = quaternion.LookRotationSafe(worldDirection, math.up());
-                        float t = 1f - math.exp(-math.max(0f, traversalSettings.FacingSharpness) * DeltaTime);
+                        float t = 1f - math.exp(-math.max(0f, Settings.FacingSharpness) * DeltaTime);
                         transform.Rotation = math.slerp(transform.Rotation, targetRotation, math.saturate(t));
                     }
 
                     float3 localDirection = math.mul(math.inverse(transform.Rotation), worldDirection);
-                    intent.LocalMove.x = math.clamp(localDirection.x, -1f, 1f);
-                    intent.LocalMove.y = math.clamp(localDirection.z, -1f, 1f);
-                    intent.RunHeld = traversalSettings.Run != 0;
-                    intent.SneakHeld = false;
-                    intent.JumpHeld = false;
+                    input.LocalMove.x = math.clamp(localDirection.x, -1f, 1f);
+                    input.LocalMove.y = math.clamp(localDirection.z, -1f, 1f);
+                    input.RunHeld = traversalState.Run != 0;
+                    input.SneakHeld = false;
+                    input.JumpPressed = false;
 
                     transforms[i] = transform;
-                    intents[i] = intent;
+                    inputs[i] = input;
                     states[i] = traversalState;
                 }
             }
