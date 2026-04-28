@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.Rendering
         static readonly int k_ShadowBiasId = Shader.PropertyToID("_ShadowBias");
         static readonly int k_LightDirectionId = Shader.PropertyToID("_LightDirection");
         static readonly int k_LightPositionId = Shader.PropertyToID("_LightPosition");
+        static readonly int k_ActorShadowViewProjectionId = Shader.PropertyToID("_ActorShadowViewProjection");
         static readonly int k_RenderingLayerId = Shader.PropertyToID("unity_RenderingLayer");
         const string CastingPunctualShadowKeywordName = "_CASTING_PUNCTUAL_LIGHT_SHADOW";
 
@@ -225,7 +226,11 @@ namespace VVardenfell.Runtime.Rendering
 
                 if (_enableMainLightActorShadows && resourceData.mainShadowsTexture.IsValid())
                 {
-                    int mainSliceCount = BuildMainLightShadowSlices(renderingData, lightData, shadowData, _mainSlices);
+                    int mainSliceCount = BuildMainLightShadowSlices(
+                        renderingData,
+                        lightData,
+                        shadowData,
+                        _mainSlices);
                     if (mainSliceCount > 0)
                     {
                         using var builder = renderGraph.AddRasterRenderPass<ShadowPassData>("VV Actor Main Light Shadows", out var passData);
@@ -241,7 +246,12 @@ namespace VVardenfell.Runtime.Rendering
                     && _maxAdditionalPointShadowLights > 0
                     && resourceData.additionalShadowsTexture.IsValid())
                 {
-                    int additionalSliceCount = BuildAdditionalPointShadowSlices(renderingData, cameraData, lightData, shadowData, _additionalSlices);
+                    int additionalSliceCount = BuildAdditionalPointShadowSlices(
+                        renderingData,
+                        cameraData,
+                        lightData,
+                        shadowData,
+                        _additionalSlices);
                     if (additionalSliceCount > 0)
                     {
                         using var builder = renderGraph.AddRasterRenderPass<ShadowPassData>("VV Actor Additional Point Shadows", out var passData);
@@ -297,6 +307,7 @@ namespace VVardenfell.Runtime.Rendering
                         cmd.SetGlobalVector(k_ShadowBiasId, slice.ShadowBias);
                         cmd.SetGlobalVector(k_LightDirectionId, slice.LightDirection);
                         cmd.SetGlobalVector(k_LightPositionId, slice.LightPosition);
+                        cmd.SetGlobalMatrix(k_ActorShadowViewProjectionId, slice.ViewProjectionMatrix);
                         cmd.SetViewport(slice.Viewport);
                         cmd.SetViewProjectionMatrices(slice.ViewMatrix, slice.ProjectionMatrix);
                         resources.DrawBatches(cmd, properties, ShadowPassIndex, ActorProceduralRenderSet.Shadow);
@@ -368,6 +379,7 @@ namespace VVardenfell.Runtime.Rendering
                     {
                         ViewMatrix = sliceData.viewMatrix,
                         ProjectionMatrix = sliceData.projectionMatrix,
+                        ViewProjectionMatrix = BuildShadowViewProjection(sliceData.viewMatrix, sliceData.projectionMatrix),
                         Viewport = new Rect(sliceData.offsetX, sliceData.offsetY, sliceData.resolution, sliceData.resolution),
                         ShadowBias = shadowBias,
                         LightDirection = new Vector4(lightDirection.x, lightDirection.y, lightDirection.z, 0f),
@@ -424,9 +436,10 @@ namespace VVardenfell.Runtime.Rendering
                     if (shadowLight.light == null)
                         continue;
 
+                    bool softShadow = shadowLight.light.shadows == LightShadows.Soft;
                     float fovBias = GetPointLightShadowFrustumFovBiasInDegrees(
                         request.AllocatedResolution,
-                        shadowLight.light.shadows == LightShadows.Soft);
+                        softShadow);
                     if (!ShadowUtils.ExtractPointLightMatrix(
                             ref cullResults,
                             shadowData,
@@ -453,6 +466,7 @@ namespace VVardenfell.Runtime.Rendering
                     {
                         ViewMatrix = viewMatrix,
                         ProjectionMatrix = projectionMatrix,
+                        ViewProjectionMatrix = BuildShadowViewProjection(viewMatrix, projectionMatrix),
                         Viewport = new Rect(request.OffsetX, request.OffsetY, request.AllocatedResolution, request.AllocatedResolution),
                         ShadowBias = shadowBias,
                         LightDirection = new Vector4(lightDirection.x, lightDirection.y, lightDirection.z, 0f),
@@ -678,6 +692,11 @@ namespace VVardenfell.Runtime.Rendering
 
             static int MinimalPunctualLightShadowResolution(bool softShadow) => softShadow ? 16 : 8;
 
+            static Matrix4x4 BuildShadowViewProjection(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix)
+            {
+                return GL.GetGPUProjectionMatrix(projectionMatrix, true) * viewMatrix;
+            }
+
             static float GetPointLightShadowFrustumFovBiasInDegrees(int shadowSliceResolution, bool shadowFiltering)
             {
                 float fovBias = 4.00f;
@@ -724,6 +743,7 @@ namespace VVardenfell.Runtime.Rendering
         {
             public Matrix4x4 ViewMatrix;
             public Matrix4x4 ProjectionMatrix;
+            public Matrix4x4 ViewProjectionMatrix;
             public Rect Viewport;
             public Vector4 ShadowBias;
             public Vector4 LightDirection;

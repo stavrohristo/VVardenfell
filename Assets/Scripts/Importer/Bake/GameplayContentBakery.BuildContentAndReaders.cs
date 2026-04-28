@@ -130,6 +130,301 @@ namespace VVardenfell.Importer.Bake
         }
 
 
+        static WeatherSettingsDef BuildWeatherSettings(string installPath)
+        {
+            var config = LoadWeatherConfig(installPath);
+            return new WeatherSettingsDef
+            {
+                SunriseTime = ReadWeatherFloat(config, "Weather_Sunrise_Time", 6f),
+                SunsetTime = ReadWeatherFloat(config, "Weather_Sunset_Time", 18f),
+                SunriseDuration = ReadWeatherFloat(config, "Weather_Sunrise_Duration", 2f),
+                SunsetDuration = ReadWeatherFloat(config, "Weather_Sunset_Duration", 2f),
+                HoursBetweenWeatherChanges = ReadWeatherFloat(config, "Weather_Hours_Between_Weather_Changes", 20f),
+                PrecipGravity = ReadWeatherFloat(config, "Weather_Precip_Gravity", 575f),
+                SunGlareFaderMax = ReadWeatherFloat(config, "Weather_Sun_Glare_Fader_Max", 0.5f),
+                SunGlareFaderAngleMax = ReadWeatherFloat(config, "Weather_Sun_Glare_Fader_Angle_Max", 30f),
+                SunGlareFaderColorRgba = ReadWeatherColor(config, "Weather_Sun_Glare_Fader_Color", PackRgba(222, 95, 39, 255)),
+                SunPreSunriseTime = ReadWeatherFloat(config, "Weather_Sun_Pre-Sunrise_Time", 0f),
+                SunPostSunriseTime = ReadWeatherFloat(config, "Weather_Sun_Post-Sunrise_Time", 0f),
+                SunPreSunsetTime = ReadWeatherFloat(config, "Weather_Sun_Pre-Sunset_Time", 1f),
+                SunPostSunsetTime = ReadWeatherFloat(config, "Weather_Sun_Post-Sunset_Time", 1.25f),
+                AmbientPreSunriseTime = ReadWeatherFloat(config, "Weather_Ambient_Pre-Sunrise_Time", 0.5f),
+                AmbientPostSunriseTime = ReadWeatherFloat(config, "Weather_Ambient_Post-Sunrise_Time", 2f),
+                AmbientPreSunsetTime = ReadWeatherFloat(config, "Weather_Ambient_Pre-Sunset_Time", 1f),
+                AmbientPostSunsetTime = ReadWeatherFloat(config, "Weather_Ambient_Post-Sunset_Time", 1.25f),
+                FogPreSunriseTime = ReadWeatherFloat(config, "Weather_Fog_Pre-Sunrise_Time", 0.5f),
+                FogPostSunriseTime = ReadWeatherFloat(config, "Weather_Fog_Post-Sunrise_Time", 1f),
+                FogPreSunsetTime = ReadWeatherFloat(config, "Weather_Fog_Pre-Sunset_Time", 2f),
+                FogPostSunsetTime = ReadWeatherFloat(config, "Weather_Fog_Post-Sunset_Time", 1f),
+                SkyPreSunriseTime = ReadWeatherFloat(config, "Weather_Sky_Pre-Sunrise_Time", 0.5f),
+                SkyPostSunriseTime = ReadWeatherFloat(config, "Weather_Sky_Post-Sunrise_Time", 0.5f),
+                SkyPreSunsetTime = ReadWeatherFloat(config, "Weather_Sky_Pre-Sunset_Time", 1f),
+                SkyPostSunsetTime = ReadWeatherFloat(config, "Weather_Sky_Post-Sunset_Time", 1f),
+                StarsPostSunsetStart = ReadWeatherFloat(config, "Weather_Stars_Post-Sunset_Start", 1f),
+                StarsPreSunriseFinish = ReadWeatherFloat(config, "Weather_Stars_Pre-Sunrise_Finish", 2f),
+                StarsFadingDuration = ReadWeatherFloat(config, "Weather_Stars_Fading_Duration", 2f),
+                MasserMoon = BuildMoonSettings(config, "Masser", 55f, 35f, 0.5f, 1f, 50f, 40f),
+                SecundaMoon = BuildMoonSettings(config, "Secunda", 20f, 50f, 0.6f, 1.2f, 50f, 30f),
+            };
+        }
+
+        static MoonSettingsDef BuildMoonSettings(
+            WeatherConfigSource config,
+            string name,
+            float defaultSize,
+            float defaultAxisOffset,
+            float defaultSpeed,
+            float defaultDailyIncrement,
+            float defaultFadeStartAngle,
+            float defaultFadeEndAngle)
+        {
+            return new MoonSettingsDef
+            {
+                Size = ReadWeatherFloat(config, $"Moons_{name}_Size", defaultSize),
+                AxisOffset = ReadWeatherFloat(config, $"Moons_{name}_Axis_Offset", defaultAxisOffset),
+                Speed = ReadWeatherFloat(config, $"Moons_{name}_Speed", defaultSpeed),
+                DailyIncrement = ReadWeatherFloat(config, $"Moons_{name}_Daily_Increment", defaultDailyIncrement),
+                FadeStartAngle = ReadWeatherFloat(config, $"Moons_{name}_Fade_Start_Angle", defaultFadeStartAngle),
+                FadeEndAngle = ReadWeatherFloat(config, $"Moons_{name}_Fade_End_Angle", defaultFadeEndAngle),
+                MoonShadowEarlyFadeAngle = ReadWeatherFloat(config, $"Moons_{name}_Moon_Shadow_Early_Fade_Angle", 0.5f),
+                FadeInStart = ReadWeatherFloat(config, $"Moons_{name}_Fade_In_Start", 14f),
+                FadeInFinish = ReadWeatherFloat(config, $"Moons_{name}_Fade_In_Finish", 15f),
+                FadeOutStart = ReadWeatherFloat(config, $"Moons_{name}_Fade_Out_Start", 7f),
+                FadeOutFinish = ReadWeatherFloat(config, $"Moons_{name}_Fade_Out_Finish", 10f),
+            };
+        }
+
+
+        static WeatherDefinitionDef[] BuildWeatherDefinitions(string installPath)
+        {
+            var config = LoadWeatherConfig(installPath);
+            var weather = new[]
+            {
+                BuildWeatherDefinition(config, WeatherKind.Clear, "Clear", stormWindSpeed: 0.7f, rainSpeed: 0f),
+                BuildWeatherDefinition(config, WeatherKind.Cloudy, "Cloudy", stormWindSpeed: 0.7f, rainSpeed: 0f),
+                BuildWeatherDefinition(config, WeatherKind.Foggy, "Foggy", stormWindSpeed: 0.7f, rainSpeed: 0f),
+                BuildWeatherDefinition(config, WeatherKind.Overcast, "Overcast", stormWindSpeed: 0.7f, rainSpeed: 0f),
+                BuildWeatherDefinition(config, WeatherKind.Rain, "Rain", stormWindSpeed: 0.7f, rainSpeed: 10f),
+                BuildWeatherDefinition(config, WeatherKind.Thunderstorm, "Thunderstorm", stormWindSpeed: 0.7f, rainSpeed: 20f),
+                BuildWeatherDefinition(config, WeatherKind.Ashstorm, "Ashstorm", stormWindSpeed: 0.7f, rainSpeed: 50f),
+                BuildWeatherDefinition(config, WeatherKind.Blight, "Blight", stormWindSpeed: 0.7f, rainSpeed: 60f),
+                BuildWeatherDefinition(config, WeatherKind.Snow, "Snow", stormWindSpeed: 0.7f, rainSpeed: 30f),
+                BuildWeatherDefinition(config, WeatherKind.Blizzard, "Blizzard", stormWindSpeed: 0.7f, rainSpeed: 50f),
+            };
+            return weather;
+        }
+
+
+        static SkyWeatherVisualSettingsDef BuildSkyWeatherVisualSettings(string installPath)
+        {
+            var definitions = BuildWeatherDefinitions(installPath);
+            return new SkyWeatherVisualSettingsDef
+            {
+                SunTexture = "textures/tx_sun_05.dds",
+                SunGlareTexture = "textures/tx_sun_flash_grey_05.dds",
+                MasserShadowTexture = "textures/tx_mooncircle_full_m.dds",
+                SecundaShadowTexture = "textures/tx_mooncircle_full_s.dds",
+                RainDropTexture = "textures/tx_raindrop_01.dds",
+                MasserPhaseTextures = BuildMoonPhaseTextures("masser"),
+                SecundaPhaseTextures = BuildMoonPhaseTextures("secunda"),
+                CloudTextures = definitions.Select(static def => def.CloudTexture ?? string.Empty).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                PrecipitationEffectModels = new[]
+                {
+                    "meshes/weather/rain.nif",
+                    "meshes/weather/snow.nif",
+                    "meshes/weather/ashcloud.nif",
+                    "meshes/weather/blightcloud.nif",
+                    "meshes/weather/blizzard.nif",
+                },
+            };
+        }
+
+
+        static string[] BuildMoonPhaseTextures(string moon)
+        {
+            return new[]
+            {
+                $"textures/tx_{moon}_full.dds",
+                $"textures/tx_{moon}_three_wan.dds",
+                $"textures/tx_{moon}_half_wan.dds",
+                $"textures/tx_{moon}_one_wan.dds",
+                $"textures/tx_{moon}_new.dds",
+                $"textures/tx_{moon}_one_wax.dds",
+                $"textures/tx_{moon}_half_wax.dds",
+                $"textures/tx_{moon}_three_wax.dds",
+            };
+        }
+
+
+        static WeatherDefinitionDef BuildWeatherDefinition(WeatherConfigSource config, WeatherKind kind, string name, float stormWindSpeed, float rainSpeed)
+        {
+            float windSpeed = ReadWeatherFloat(config, $"Weather_{name}_Wind_Speed", 0f);
+            string rainLoop = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Rain_Loop_Sound_ID", kind == WeatherKind.Rain ? "Rain" : string.Empty));
+            string ambientLoop = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Ambient_Loop_Sound_ID", string.Empty));
+            return new WeatherDefinitionDef
+            {
+                Kind = kind,
+                Id = name,
+                CloudTexture = ReadWeatherString(config, $"Weather_{name}_Cloud_Texture", string.Empty),
+                SkyColor = BuildWeatherColorSet(config, name, "Sky"),
+                FogColor = BuildWeatherColorSet(config, name, "Fog"),
+                AmbientColor = BuildWeatherColorSet(config, name, "Ambient"),
+                SunColor = BuildWeatherColorSet(config, name, "Sun"),
+                SunDiscSunsetColorRgba = ReadWeatherColor(config, $"Weather_{name}_Sun_Disc_Sunset_Color", PackRgba(128, 128, 128, 255)),
+                LandFogDayDepth = ReadWeatherFloat(config, $"Weather_{name}_Land_Fog_Day_Depth", 1f),
+                LandFogNightDepth = ReadWeatherFloat(config, $"Weather_{name}_Land_Fog_Night_Depth", 1f),
+                WindSpeed = windSpeed,
+                CloudSpeed = ReadWeatherFloat(config, $"Weather_{name}_Cloud_Speed", 1f),
+                GlareView = ReadWeatherFloat(config, $"Weather_{name}_Glare_View", 0f),
+                CloudsMaximumPercent = ReadWeatherFloat(config, $"Weather_{name}_Clouds_Maximum_Percent", 1f),
+                TransitionDelta = ReadWeatherFloat(config, $"Weather_{name}_Transition_Delta", 0.015f),
+                RainSpeed = rainSpeed,
+                RainEntranceSpeed = ReadWeatherFloat(config, $"Weather_{name}_Rain_Entrance_Speed", 0f),
+                RainMaxRaindrops = ReadWeatherInt(config, $"Weather_{name}_Max_Raindrops", 0),
+                RainDiameter = ReadWeatherFloat(config, $"Weather_{name}_Rain_Diameter", 0f),
+                RainThreshold = ReadWeatherFloat(config, $"Weather_{name}_Rain_Threshold", 1f),
+                RainMinHeight = ReadWeatherFloat(config, $"Weather_{name}_Rain_Height_Min", 0f),
+                RainMaxHeight = ReadWeatherFloat(config, $"Weather_{name}_Rain_Height_Max", 0f),
+                UsingPrecip = ReadWeatherBool(config, $"Weather_{name}_Using_Precip", false) ? (byte)1 : (byte)0,
+                IsStorm = windSpeed > stormWindSpeed ? (byte)1 : (byte)0,
+                RainLoopSoundId = rainLoop,
+                AmbientLoopSoundId = ambientLoop,
+                ThunderFrequency = ReadWeatherFloat(config, $"Weather_{name}_Thunder_Frequency", 0f),
+                ThunderThreshold = ReadWeatherFloat(config, $"Weather_{name}_Thunder_Threshold", 1f),
+                FlashDecrement = ReadWeatherFloat(config, $"Weather_{name}_Flash_Decrement", 4f),
+                ThunderSoundId0 = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Thunder_Sound_ID_0", string.Empty)),
+                ThunderSoundId1 = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Thunder_Sound_ID_1", string.Empty)),
+                ThunderSoundId2 = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Thunder_Sound_ID_2", string.Empty)),
+                ThunderSoundId3 = NormalizeNone(ReadWeatherString(config, $"Weather_{name}_Thunder_Sound_ID_3", string.Empty)),
+            };
+        }
+
+
+        static WeatherColorSetDef BuildWeatherColorSet(WeatherConfigSource config, string weatherName, string channel)
+        {
+            return new WeatherColorSetDef
+            {
+                SunriseRgba = ReadWeatherColor(config, $"Weather_{weatherName}_{channel}_Sunrise_Color", PackRgba(0, 0, 0, 255)),
+                DayRgba = ReadWeatherColor(config, $"Weather_{weatherName}_{channel}_Day_Color", PackRgba(0, 0, 0, 255)),
+                SunsetRgba = ReadWeatherColor(config, $"Weather_{weatherName}_{channel}_Sunset_Color", PackRgba(0, 0, 0, 255)),
+                NightRgba = ReadWeatherColor(config, $"Weather_{weatherName}_{channel}_Night_Color", PackRgba(0, 0, 0, 255)),
+            };
+        }
+
+
+        sealed class WeatherConfigSource
+        {
+            public MorrowindIniReader Ini;
+            public readonly Dictionary<string, string> Fallbacks = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+
+        static WeatherConfigSource LoadWeatherConfig(string installPath)
+        {
+            var source = new WeatherConfigSource();
+            string iniPath = Path.Combine(installPath ?? string.Empty, "Morrowind.ini");
+            if (File.Exists(iniPath))
+                source.Ini = MorrowindIniReader.Read(iniPath);
+
+            string openMwPath = Path.Combine(Directory.GetCurrentDirectory(), "OpenMW", "files", "openmw.cfg");
+            if (File.Exists(openMwPath))
+            {
+                foreach (string rawLine in File.ReadLines(openMwPath))
+                {
+                    string line = rawLine?.Trim();
+                    if (string.IsNullOrEmpty(line) || line.StartsWith("#", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    const string prefix = "fallback=";
+                    if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string payload = line.Substring(prefix.Length);
+                    int comma = payload.IndexOf(',');
+                    if (comma <= 0)
+                        continue;
+
+                    source.Fallbacks[payload.Substring(0, comma).Trim()] = payload.Substring(comma + 1).Trim();
+                }
+            }
+
+            return source;
+        }
+
+
+        static string ReadWeatherString(WeatherConfigSource source, string key, string fallback)
+        {
+            if (source?.Ini != null)
+            {
+                string iniKey = key.StartsWith("Weather_", StringComparison.OrdinalIgnoreCase) ? key.Substring("Weather_".Length) : key;
+                if (source.Ini.TryGetValue("Weather", iniKey.Replace('_', ' '), out string iniValue))
+                    return iniValue;
+                if (source.Ini.TryGetValue("Weather", iniKey, out iniValue))
+                    return iniValue;
+                if (source.Ini.TryGetValue("Weather", key, out iniValue))
+                    return iniValue;
+            }
+
+            return source != null && source.Fallbacks.TryGetValue(key, out string value) ? value : fallback;
+        }
+
+
+        static float ReadWeatherFloat(WeatherConfigSource source, string key, float fallback)
+        {
+            string value = ReadWeatherString(source, key, string.Empty);
+            return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed) ? parsed : fallback;
+        }
+
+
+        static int ReadWeatherInt(WeatherConfigSource source, string key, int fallback)
+        {
+            string value = ReadWeatherString(source, key, string.Empty);
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : fallback;
+        }
+
+
+        static bool ReadWeatherBool(WeatherConfigSource source, string key, bool fallback)
+        {
+            string value = ReadWeatherString(source, key, string.Empty);
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+                return parsed != 0;
+            return bool.TryParse(value, out bool result) ? result : fallback;
+        }
+
+
+        static int ReadWeatherColor(WeatherConfigSource source, string key, int fallback)
+        {
+            string value = ReadWeatherString(source, key, string.Empty);
+            if (string.IsNullOrWhiteSpace(value))
+                return fallback;
+
+            string[] parts = value.Split(',');
+            if (parts.Length < 3)
+                return fallback;
+
+            if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int r)
+                || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int g)
+                || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int b))
+                return fallback;
+
+            int a = 255;
+            if (parts.Length > 3)
+                int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out a);
+            return PackRgba(r, g, b, a);
+        }
+
+
+        static int PackRgba(int r, int g, int b, int a)
+        {
+            uint packed = (uint)(byte)r | ((uint)(byte)g << 8) | ((uint)(byte)b << 16) | ((uint)(byte)a << 24);
+            return unchecked((int)packed);
+        }
+
+
+        static string NormalizeNone(string value)
+            => string.Equals(value, "None", StringComparison.OrdinalIgnoreCase) ? string.Empty : value ?? string.Empty;
+
+
         static float ReadIniFloat(MorrowindIniReader ini, string section, string key, float fallback)
         {
             string value = ini.GetValueOrDefault(section, key, string.Empty);
@@ -190,6 +485,8 @@ namespace VVardenfell.Importer.Bake
             manifest.RegionSoundRefCount = data.RegionSoundRefs.Length;
             manifest.MusicTrackCount = data.MusicTracks.Length;
             manifest.AmbientSettingsCount = 1;
+            manifest.WeatherSettingsCount = 1;
+            manifest.WeatherDefinitionCount = data.WeatherDefinitions?.Length ?? 0;
             manifest.GameSettingCount = data.GameSettings.Length;
             manifest.GlobalCount = data.Globals.Length;
             manifest.ClassCount = data.Classes.Length;

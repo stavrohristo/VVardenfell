@@ -60,7 +60,7 @@ namespace VVardenfell.Runtime.Player
         {
             for (int i = 0; i < activeEffects.Length; i++)
             {
-                if (activeEffects[i].SourceId.Equals(ToFixed64(DebugBuffSourceId)))
+                if (activeEffects[i].SourceId.Equals(RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId)))
                     return true;
             }
 
@@ -83,8 +83,8 @@ namespace VVardenfell.Runtime.Player
                 TimeLeftSeconds = -1f,
                 Applied = 1,
                 SourceKind = ActorActiveMagicEffectSourceKind.TimedSpell,
-                SourceName = ToFixed64(sourceName),
-                SourceId = ToFixed64(DebugBuffSourceId),
+                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(sourceName),
+                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId),
             });
         }
 
@@ -127,8 +127,8 @@ namespace VVardenfell.Runtime.Player
                         TimeLeftSeconds = -1f,
                         Applied = 1,
                         SourceKind = ActorActiveMagicEffectSourceKind.PassiveSpell,
-                        SourceName = ToFixed64(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                        SourceId = ToFixed64(spell.Id),
+                        SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
+                        SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
                     });
                 }
             }
@@ -165,15 +165,6 @@ namespace VVardenfell.Runtime.Player
         static bool IsPassiveSpellType(int spellType)
             => spellType is 1 or 2 or 3 or 4;
 
-        static FixedString64Bytes ToFixed64(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            var result = default(FixedString64Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
     }
 
     [UpdateAfter(typeof(PlayerActiveMagicEffectSystem))]

@@ -1,4 +1,5 @@
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Shell;
@@ -12,34 +13,19 @@ namespace VVardenfell.Runtime.Books
     {
         protected override void OnUpdate()
         {
-            Entity runtimeEntity;
-            if (SystemAPI.HasSingleton<RuntimeShellState>())
-                runtimeEntity = SystemAPI.GetSingletonEntity<RuntimeShellState>();
-            else if (SystemAPI.HasSingleton<PlayerInteractionFocus>())
-                runtimeEntity = SystemAPI.GetSingletonEntity<PlayerInteractionFocus>();
-            else
-            {
-                runtimeEntity = EntityManager.CreateEntity();
-                EntityManager.SetName(runtimeEntity, "VVardenfell.BookRuntime");
-            }
+            Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<RuntimeShellState, PlayerInteractionFocus>(
+                EntityManager,
+                "VVardenfell.BookRuntime");
 
-            EnsureComponent(runtimeEntity, new BookReadRequest { InventoryIndex = -1 });
-            EnsureComponent(runtimeEntity, new BookReaderState { InventoryIndex = -1 });
-            EnsureComponent(runtimeEntity, new BookReaderRequest());
-            EnsureComponent(runtimeEntity, new BookInventoryReadRequest { InventoryIndex = -1 });
-            EnsureComponent(runtimeEntity, new BookSkillGrantRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReadRequest { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReaderState { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReaderRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookInventoryReadRequest { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookSkillGrantRequest());
 
-            if (!EntityManager.HasBuffer<BookReadHistoryEntry>(runtimeEntity))
-                EntityManager.AddBuffer<BookReadHistoryEntry>(runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<BookReadHistoryEntry>(EntityManager, runtimeEntity);
 
             Enabled = false;
-        }
-
-        void EnsureComponent<T>(Entity entity, T value)
-            where T : unmanaged, IComponentData
-        {
-            if (!EntityManager.HasComponent<T>(entity))
-                EntityManager.AddComponentData(entity, value);
         }
     }
 }

@@ -64,10 +64,7 @@ namespace VVardenfell.Runtime.Components
     public struct InventoryWindowState : IComponentData
     {
         public byte Visible;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRect Rect;
         public int SelectedInventoryIndex;
         public byte ActiveCategory;
         // MW_Window_Pinnable toggle - when 1, the window stays visible on the
@@ -81,11 +78,7 @@ namespace VVardenfell.Runtime.Components
 
     public struct InventoryWindowRequest : IComponentData
     {
-        public byte PendingRectUpdate;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRectRequest RectRequest;
         public byte PendingSelectionChange;
         public int SelectedInventoryIndex;
         public byte PendingCategoryChange;
@@ -100,10 +93,7 @@ namespace VVardenfell.Runtime.Components
         public uint OpenPlacedRefId;
         public Entity OpenTargetEntity;
         public ContainerDefHandle Definition;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRect Rect;
         public int SelectedItemIndex;
         public byte PreserveInventoryOnClose;
         public FixedString128Bytes Title;
@@ -112,11 +102,7 @@ namespace VVardenfell.Runtime.Components
 
     public struct ContainerWindowRequest : IComponentData
     {
-        public byte PendingRectUpdate;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRectRequest RectRequest;
         public byte PendingSelectionChange;
         public int SelectedItemIndex;
         public byte PendingTakeSelected;

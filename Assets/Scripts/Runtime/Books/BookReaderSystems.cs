@@ -51,7 +51,7 @@ namespace VVardenfell.Runtime.Books
             }
             else if (request.PendingTake != 0 && state.Visible != 0 && state.AllowTake != 0)
             {
-                state.StatusText = BookRuntimeUtility.ToFixed128("Taking world books is queued for the pickup integration pass.");
+                state.StatusText = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace("Taking world books is queued for the pickup integration pass.");
             }
 
             request = default;
@@ -95,7 +95,7 @@ namespace VVardenfell.Runtime.Books
             reader.Content = metadata.Content;
             reader.InventoryIndex = request.InventoryIndex;
             reader.CurrentPage = 0;
-            reader.Title = BookRuntimeUtility.ToFixed128(metadata.Title);
+            reader.Title = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(metadata.Title);
             reader.StatusText = default;
 
             TryQueueSkillGrant(request.Sequence, metadata);

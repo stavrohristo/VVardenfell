@@ -94,32 +94,36 @@ namespace VVardenfell.Runtime.Components
         public FixedString64Bytes SaveName;
     }
 
+    public struct RuntimeWindowRect
+    {
+        public float X;
+        public float Y;
+        public float Width;
+        public float Height;
+    }
+
+    public struct RuntimeWindowRectRequest
+    {
+        public byte Pending;
+        public RuntimeWindowRect Rect;
+    }
+
     public struct StatsWindowState : IComponentData
     {
         public byte Visible;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRect Rect;
         public byte Pinned;
     }
 
     public struct StatsWindowRequest : IComponentData
     {
-        public byte PendingRectUpdate;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRectRequest RectRequest;
     }
 
     public struct SpellWindowState : IComponentData
     {
         public byte Visible;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRect Rect;
         public int SelectedSpellIndex;
         public byte Pinned;
         public FixedString64Bytes FilterText;
@@ -127,11 +131,7 @@ namespace VVardenfell.Runtime.Components
 
     public struct SpellWindowRequest : IComponentData
     {
-        public byte PendingRectUpdate;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRectRequest RectRequest;
         public byte PendingSelectionChange;
         public int SelectedSpellIndex;
         public byte PendingFilterTextChange;
@@ -148,10 +148,7 @@ namespace VVardenfell.Runtime.Components
     {
         public byte Visible;
         public byte Mode;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRect Rect;
         public byte Pinned;
         public float LocalPanX;
         public float LocalPanY;
@@ -163,11 +160,7 @@ namespace VVardenfell.Runtime.Components
 
     public struct MapWindowRequest : IComponentData
     {
-        public byte PendingRectUpdate;
-        public float NormalizedX;
-        public float NormalizedY;
-        public float NormalizedWidth;
-        public float NormalizedHeight;
+        public RuntimeWindowRectRequest RectRequest;
         public byte PendingModeChange;
         public byte Mode;
         public byte PendingViewportChange;

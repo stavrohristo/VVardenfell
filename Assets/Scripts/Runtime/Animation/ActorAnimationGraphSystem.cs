@@ -146,6 +146,7 @@ namespace VVardenfell.Runtime.Animation
                     || (fallback != 0UL && TryResolveGroup(ref catalog, presentation, fallback, out movement)))
                 {
                     StartIfNeeded(ref animation, movement, InfiniteLoops);
+                    animation.Playback.Speed = ResolveMovementSpeed(movement, movementState);
                     return;
                 }
             }
@@ -159,9 +160,24 @@ namespace VVardenfell.Runtime.Animation
             ref ActorAnimationState animation)
         {
             if (TryResolveGroup(ref catalog, presentation, IdleHash(), out var idle))
+            {
                 StartIfNeeded(ref animation, idle, InfiniteLoops);
+                animation.Playback.Speed = 1f;
+            }
             else
                 Clear(ref animation);
+        }
+
+        static float ResolveMovementSpeed(ActorAnimationGroupBlob group, in MorrowindMovementState movementState)
+        {
+            if (group.Velocity <= 0.0001f)
+                return 1f;
+
+            float planarSpeed = math.length(new float2(movementState.LastVelocity.x, movementState.LastVelocity.z));
+            if (planarSpeed <= 0.0001f)
+                return 1f;
+
+            return math.min(10f, planarSpeed / group.Velocity);
         }
 
         static void StartIfNeeded(ref ActorAnimationState animation, ActorAnimationGroupBlob group, uint requestedLoopCount)

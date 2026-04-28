@@ -139,7 +139,7 @@ namespace VVardenfell.Runtime.Interactions
             result.Kind = (byte)InteractableKind.Activator;
             result.Success = 1;
             result.PendingNotification = 1;
-            result.NotificationText = ToFixedString(string.IsNullOrWhiteSpace(displayName)
+            result.NotificationText = RuntimeFixedStringUtility.ToFixed128OrDefault(string.IsNullOrWhiteSpace(displayName)
                 ? "Nothing happens."
                 : $"{displayName}: Nothing happens.");
         }
@@ -153,16 +153,6 @@ namespace VVardenfell.Runtime.Interactions
             };
         }
 
-        static FixedString128Bytes ToFixedString(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            if (value.Length > 127)
-                value = value.Substring(0, 127);
-
-            return new FixedString128Bytes(value);
-        }
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]

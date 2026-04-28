@@ -1,5 +1,6 @@
-﻿using Unity.Collections;
+using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
@@ -13,84 +14,78 @@ namespace VVardenfell.Runtime.Shell
     {
         protected override void OnUpdate()
         {
-            Entity runtimeEntity;
-            if (SystemAPI.HasSingleton<PlayerInteractionFocus>())
-            {
-                runtimeEntity = SystemAPI.GetSingletonEntity<PlayerInteractionFocus>();
-            }
-            else if (SystemAPI.HasSingleton<RuntimeShellState>())
-            {
-                runtimeEntity = SystemAPI.GetSingletonEntity<RuntimeShellState>();
-            }
-            else
-            {
-                runtimeEntity = EntityManager.CreateEntity();
-                EntityManager.SetName(runtimeEntity, "VVardenfell.RuntimeShell");
-            }
+            Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus, RuntimeShellState>(
+                EntityManager,
+                "VVardenfell.RuntimeShell");
 
-            EnsureComponent(runtimeEntity, new RuntimeShellState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellState
             {
                 HudVisible = 1,
                 SelectedAction = (byte)RuntimeShellMenuActionId.Resume,
             });
-            EnsureComponent(runtimeEntity, new RuntimeShellActionRequest());
-            EnsureComponent(runtimeEntity, new SaveLoadBrowserState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellActionRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserState
             {
                 DraftSaveName = new FixedString64Bytes("New Save"),
             });
-            EnsureComponent(runtimeEntity, new SaveLoadBrowserRequest());
-            EnsureComponent(runtimeEntity, new InventoryWindowState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowState
             {
-                NormalizedX = 0.015f,
-                NormalizedY = 0.54f,
-                NormalizedWidth = 0.45f,
-                NormalizedHeight = 0.38f,
+                Rect = new RuntimeWindowRect
+                {
+                    X = 0.015f,
+                    Y = 0.54f,
+                    Width = 0.45f,
+                    Height = 0.38f,
+                },
                 SelectedInventoryIndex = -1,
                 ActiveCategory = (byte)InventoryWindowCategory.All,
             });
-            EnsureComponent(runtimeEntity, new InventoryWindowRequest());
-            EnsureComponent(runtimeEntity, new StatsWindowState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new StatsWindowState
             {
-                NormalizedX = 0.015f,
-                NormalizedY = 0.015f,
-                NormalizedWidth = 0.4275f,
-                NormalizedHeight = 0.45f,
+                Rect = new RuntimeWindowRect
+                {
+                    X = 0.015f,
+                    Y = 0.015f,
+                    Width = 0.4275f,
+                    Height = 0.45f,
+                },
             });
-            EnsureComponent(runtimeEntity, new StatsWindowRequest());
-            EnsureComponent(runtimeEntity, new SpellWindowState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new StatsWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SpellWindowState
             {
-                NormalizedX = 0.63f,
-                NormalizedY = 0.39f,
-                NormalizedWidth = 0.36f,
-                NormalizedHeight = 0.51f,
+                Rect = new RuntimeWindowRect
+                {
+                    X = 0.63f,
+                    Y = 0.39f,
+                    Width = 0.36f,
+                    Height = 0.51f,
+                },
                 SelectedSpellIndex = -1,
             });
-            EnsureComponent(runtimeEntity, new SpellWindowRequest());
-            EnsureComponent(runtimeEntity, new MapWindowState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SpellWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MapWindowState
             {
                 Mode = (byte)MapWindowMode.Local,
-                NormalizedX = 0.63f,
-                NormalizedY = 0.015f,
-                NormalizedWidth = 0.36f,
-                NormalizedHeight = 0.37f,
+                Rect = new RuntimeWindowRect
+                {
+                    X = 0.63f,
+                    Y = 0.015f,
+                    Width = 0.36f,
+                    Height = 0.37f,
+                },
                 LocalZoom = 1f,
                 GlobalZoom = 1f,
             });
-            EnsureComponent(runtimeEntity, new MapWindowRequest());
-            EnsureComponent(runtimeEntity, new LocalMapDiscoveryState
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MapWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,
                 RenderResolution = 256,
                 RevealRadiusFraction = 0.17f,
             });
             Enabled = false;
-        }
-
-        void EnsureComponent<T>(Entity entity, T value)
-            where T : unmanaged, IComponentData
-        {
-            if (!EntityManager.HasComponent<T>(entity))
-                EntityManager.AddComponentData(entity, value);
         }
     }
 }

@@ -1,5 +1,7 @@
 using System;
 using Unity.Collections;
+using Unity.Mathematics;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Animation
@@ -12,6 +14,7 @@ namespace VVardenfell.Runtime.Animation
             public ulong ClipHash;
             public int ClipIndex;
             public int RigFamilyIndex;
+            public float Velocity;
             public float StartTime;
             public float LoopStartTime;
             public float LoopStopTime;
@@ -225,6 +228,7 @@ namespace VVardenfell.Runtime.Animation
                 ClipHash = clipHash,
                 ClipIndex = clipIndex,
                 RigFamilyIndex = rigFamilyIndex,
+                Velocity = CalculateGroupVelocity(source, clipIndex, rigFamilyIndex, group, runtimeTextMarkers, clipTextMarkerStarts, clipTextMarkerCounts),
                 StartTime = start,
                 LoopStartTime = loopStart,
                 LoopStopTime = loopStop,
@@ -308,6 +312,164 @@ namespace VVardenfell.Runtime.Animation
                 loopStart = start;
             if (loopStop <= loopStart || loopStop > stop)
                 loopStop = stop;
+        }
+
+        static float CalculateGroupVelocity(
+            ActorAnimationCatalogData source,
+            int clipIndex,
+            int rigFamilyIndex,
+            string group,
+            RuntimeTextMarker[] runtimeTextMarkers,
+            int[] clipTextMarkerStarts,
+            int[] clipTextMarkerCounts)
+        {
+            ResolveVelocityWindow(clipIndex, group, runtimeTextMarkers, clipTextMarkerStarts, clipTextMarkerCounts, out float start, out float stop);
+            if (stop <= start)
+                return 0f;
+
+            var clips = source.Clips ?? Array.Empty<ActorAnimationClipDef>();
+            var clip = (uint)clipIndex < (uint)clips.Length ? clips[clipIndex] : null;
+            if (clip == null || clip.FirstTrackIndex < 0 || clip.TrackCount <= 0)
+                return 0f;
+
+            string accumulationName = ResolveAccumulationBoneName(source, rigFamilyIndex, clip);
+            if (string.IsNullOrEmpty(accumulationName))
+                return 0f;
+
+            var tracks = source.Tracks ?? Array.Empty<ActorAnimationTrackDef>();
+            int trackEnd = math.min(tracks.Length, clip.FirstTrackIndex + clip.TrackCount);
+            for (int trackIndex = clip.FirstTrackIndex; trackIndex < trackEnd; trackIndex++)
+            {
+                var track = tracks[trackIndex];
+                if (track == null
+                    || track.Kind != ActorAnimationTrackKind.Translation
+                    || !string.Equals(track.TargetName, accumulationName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                float3 startPosition = SampleSourceTranslation(source, track, start);
+                float3 stopPosition = SampleSourceTranslation(source, track, stop);
+                float2 horizontalDelta = new(startPosition.x - stopPosition.x, startPosition.y - stopPosition.y);
+                return math.length(horizontalDelta) * WorldScale.MwUnitsToMeters / (stop - start);
+            }
+
+            return 0f;
+        }
+
+        static void ResolveVelocityWindow(
+            int clipIndex,
+            string group,
+            RuntimeTextMarker[] runtimeTextMarkers,
+            int[] clipTextMarkerStarts,
+            int[] clipTextMarkerCounts,
+            out float start,
+            out float stop)
+        {
+            start = float.MaxValue;
+            stop = 0f;
+            int markerStart = (uint)clipIndex < (uint)clipTextMarkerStarts.Length ? clipTextMarkerStarts[clipIndex] : -1;
+            int markerCount = (uint)clipIndex < (uint)clipTextMarkerCounts.Length ? clipTextMarkerCounts[clipIndex] : 0;
+            int markerEnd = markerStart >= 0 ? Math.Min(runtimeTextMarkers.Length, markerStart + markerCount) : -1;
+
+            for (int markerIndex = markerEnd - 1; markerIndex >= markerStart && markerIndex >= 0; markerIndex--)
+            {
+                var marker = runtimeTextMarkers[markerIndex];
+                if (MarkerMatches(marker, group, ActorAnimationTextMarkerKind.Start)
+                    || MarkerMatches(marker, group, ActorAnimationTextMarkerKind.LoopStart))
+                {
+                    start = marker.Time;
+                    break;
+                }
+            }
+
+            for (int markerIndex = markerEnd - 1; markerIndex >= markerStart && markerIndex >= 0; markerIndex--)
+            {
+                var marker = runtimeTextMarkers[markerIndex];
+                if (MarkerMatches(marker, group, ActorAnimationTextMarkerKind.Stop))
+                    stop = marker.Time;
+                else if (MarkerMatches(marker, group, ActorAnimationTextMarkerKind.LoopStop))
+                {
+                    stop = marker.Time;
+                    break;
+                }
+            }
+
+            if (start == float.MaxValue)
+                start = 0f;
+        }
+
+        static bool MarkerMatches(RuntimeTextMarker marker, string group, ActorAnimationTextMarkerKind kind)
+            => marker.Kind == kind && string.Equals(marker.Group, group, StringComparison.OrdinalIgnoreCase);
+
+        static string ResolveAccumulationBoneName(
+            ActorAnimationCatalogData source,
+            int rigFamilyIndex,
+            ActorAnimationClipDef clip)
+        {
+            if (!string.IsNullOrWhiteSpace(clip.AccumRootName))
+                return clip.AccumRootName;
+
+            var rigFamilies = source.RigFamilies ?? Array.Empty<ActorRigFamilyDef>();
+            int skeletonIndex = (uint)rigFamilyIndex < (uint)rigFamilies.Length
+                ? rigFamilies[rigFamilyIndex]?.SkeletonIndex ?? -1
+                : -1;
+            var skeletons = source.Skeletons ?? Array.Empty<ActorSkeletonDef>();
+            var skeleton = (uint)skeletonIndex < (uint)skeletons.Length ? skeletons[skeletonIndex] : null;
+            var bones = skeleton?.Bones;
+            int accumulationIndex = ResolveAccumulationBoneIndex(bones, skeleton?.AccumulationBoneIndex ?? -1);
+            return (uint)accumulationIndex < (uint)(bones?.Length ?? 0)
+                ? bones[accumulationIndex].Name
+                : string.Empty;
+        }
+
+        static float3 SampleSourceTranslation(ActorAnimationCatalogData source, ActorAnimationTrackDef track, float time)
+        {
+            var keys = source.Keys ?? Array.Empty<ActorAnimationKeyDef>();
+            int first = track.FirstKeyIndex;
+            int count = track.KeyCount;
+            if (count <= 0 || first < 0 || first >= keys.Length)
+                return float3.zero;
+
+            int last = math.min(keys.Length - 1, first + count - 1);
+            if (first >= last || time <= keys[first].Time)
+                return KeyTranslation(keys[first]);
+            if (time >= keys[last].Time)
+                return KeyTranslation(keys[last]);
+
+            int right = first + 1;
+            while (right <= last && keys[right].Time < time)
+                right++;
+
+            int left = Math.Max(first, right - 1);
+            var a = keys[left];
+            var b = keys[right];
+            if (track.Interpolation == ActorAnimationInterpolation.Constant)
+                return KeyTranslation(a);
+
+            float span = Math.Max(0.00001f, b.Time - a.Time);
+            float t = math.saturate((time - a.Time) / span);
+            if (track.Interpolation == ActorAnimationInterpolation.Quadratic)
+                return HermiteTranslation(a, b, t, span);
+
+            return math.lerp(KeyTranslation(a), KeyTranslation(b), t);
+        }
+
+        static float3 KeyTranslation(ActorAnimationKeyDef key)
+            => new(key.X, key.Y, key.Z);
+
+        static float3 HermiteTranslation(ActorAnimationKeyDef a, ActorAnimationKeyDef b, float t, float span)
+        {
+            float3 p0 = KeyTranslation(a);
+            float3 p1 = KeyTranslation(b);
+            float3 m0 = new float3(a.OutX, a.OutY, a.OutZ) * span;
+            float3 m1 = new float3(b.InX, b.InY, b.InZ) * span;
+            float t2 = t * t;
+            float t3 = t2 * t;
+            return (2f * t3 - 3f * t2 + 1f) * p0
+                   + (t3 - 2f * t2 + t) * m0
+                   + (-2f * t3 + 3f * t2) * p1
+                   + (t3 - t2) * m1;
         }
 
         static bool IsLoopingGroup(

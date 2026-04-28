@@ -19,7 +19,7 @@ namespace VVardenfell.Runtime.Shell
         {
             var viewModel = new InventoryWindowViewModel
             {
-                NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
+                NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
                 Title = "Inventory",
                 Category = (InventoryWindowCategory)state.ActiveCategory,
                 FilterText = state.FilterText.ToString(),
@@ -96,7 +96,7 @@ namespace VVardenfell.Runtime.Shell
         {
             var viewModel = new ContainerWindowViewModel
             {
-                NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
+                NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
                 Title = string.IsNullOrWhiteSpace(state.Title.ToString()) ? "Container" : state.Title.ToString(),
                 DetailText = string.IsNullOrWhiteSpace(state.SelectedItemDetailsText.ToString())
                     ? "Container is empty."

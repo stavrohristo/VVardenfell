@@ -68,6 +68,66 @@ namespace VVardenfell.Runtime.Streaming
             RuntimeLoadProgress progress,
             out int proxyQueueCount)
         {
+            return BuildLogicalRefsCore(
+                em,
+                contentDb,
+                new NativeLogicalRefBuildSource(refs, coords),
+                childEntities,
+                isInterior,
+                interiorCellId,
+                worldOffset,
+                ref logicalRefs,
+                progress,
+                null,
+                out proxyQueueCount);
+        }
+
+        internal static int BuildLogicalRefs(
+            EntityManager em,
+            RuntimeContentDatabase contentDb,
+            RefEntry[] refs,
+            Entity[] childEntities,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            ref LogicalRefLookup logicalRefs,
+            List<Entity> spawnedEntities,
+            out int proxyQueueCount)
+        {
+            if (refs == null)
+            {
+                proxyQueueCount = 0;
+                return 0;
+            }
+
+            return BuildLogicalRefsCore(
+                em,
+                contentDb,
+                new ManagedLogicalRefBuildSource(refs),
+                childEntities,
+                isInterior,
+                interiorCellId,
+                worldOffset,
+                ref logicalRefs,
+                null,
+                spawnedEntities,
+                out proxyQueueCount);
+        }
+
+        static int BuildLogicalRefsCore<TSource>(
+            EntityManager em,
+            RuntimeContentDatabase contentDb,
+            TSource source,
+            Entity[] childEntities,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            ref LogicalRefLookup logicalRefs,
+            RuntimeLoadProgress progress,
+            List<Entity> spawnedEntities,
+            out int proxyQueueCount)
+            where TSource : struct, ILogicalRefBuildSource
+        {
             using var _ = k_LogicalRefs.Auto();
             proxyQueueCount = 0;
             if (contentDb == null || childEntities == null)
@@ -78,12 +138,13 @@ namespace VVardenfell.Runtime.Streaming
             var placedRefsToResolve = new List<uint>();
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             int logicalRefCount = 0;
-            for (int i = 0; i < refs.Length; i++)
+            int refCount = source.Length;
+            for (int i = 0; i < refCount; i++)
             {
                 if (i >= childEntities.Length)
                     break;
 
-                RefEntry entry = refs[i];
+                RefEntry entry = source.GetRef(i);
                 if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
                     continue;
 
@@ -109,7 +170,7 @@ namespace VVardenfell.Runtime.Streaming
                                 contentReference,
                                 placedRefId,
                                 entry,
-                                coords[i],
+                                source.GetExteriorCell(i),
                                 isInterior,
                                 interiorCellId,
                                 worldOffset));
@@ -140,104 +201,67 @@ namespace VVardenfell.Runtime.Streaming
                 }
 
                 if (((i + 1) % RefGatherBatchSize) == 0)
-                    progress?.Report($"Creating logical placed refs {i + 1}/{refs.Length}", i + 1, refs.Length);
-            }
-
-            ecb.Playback(em);
-            ecb.Dispose();
-            ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, null);
-            progress?.Report($"Creating logical placed refs {refs.Length}/{refs.Length}", refs.Length, refs.Length);
-            return logicalRefCount;
-        }
-
-        internal static int BuildLogicalRefs(
-            EntityManager em,
-            RuntimeContentDatabase contentDb,
-            RefEntry[] refs,
-            Entity[] childEntities,
-            bool isInterior,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            ref LogicalRefLookup logicalRefs,
-            List<Entity> spawnedEntities,
-            out int proxyQueueCount)
-        {
-            using var _ = k_LogicalRefs.Auto();
-            proxyQueueCount = 0;
-            if (contentDb == null || refs == null || childEntities == null)
-                return 0;
-
-            Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
-            var logicalByPlacedRef = new Dictionary<uint, Entity>();
-            var placedRefsToResolve = new List<uint>();
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            int logicalRefCount = 0;
-            for (int i = 0; i < refs.Length; i++)
-            {
-                if (i >= childEntities.Length)
-                    break;
-
-                RefEntry entry = refs[i];
-                if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
-                    continue;
-
-                Entity child = childEntities[i];
-                bool hasChild = child != Entity.Null && em.Exists(child);
-                if (!hasChild && contentReference.Kind != ContentReferenceKind.Actor)
-                    continue;
-
-                uint placedRefId = entry.PlacedRefId;
-                if (placedRefId == 0u)
-                    continue;
-
-                if (!logicalByPlacedRef.TryGetValue(placedRefId, out Entity logicalEntity))
-                {
-                    k_LogicalRefCreate.Begin();
-                    try
-                    {
-                        logicalEntity = LogicalRefEntityFactory.QueueCreate(
-                            em,
-                            ref ecb,
-                            contentDb,
-                            BuildLogicalRefDescriptor(
-                                contentReference,
-                                placedRefId,
-                                entry,
-                                default,
-                                isInterior,
-                                interiorCellId,
-                                worldOffset));
-                    }
-                    finally
-                    {
-                        k_LogicalRefCreate.End();
-                    }
-                    logicalByPlacedRef.Add(placedRefId, logicalEntity);
-                    placedRefsToResolve.Add(placedRefId);
-                    logicalRefCount++;
-                    if (LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
-                        proxyQueueCount++;
-                }
-
-                if (hasChild)
-                {
-                    k_LogicalRefLink.Begin();
-                    try
-                    {
-                        DisableActorModelPrefabChildren(em, ref ecb, contentReference, childSnapshots[i]);
-                        LogicalRefChildUtility.QueueAppendChildren(em, ref ecb, logicalEntity, childSnapshots[i]);
-                    }
-                    finally
-                    {
-                        k_LogicalRefLink.End();
-                    }
-                }
+                    progress?.Report($"Creating logical placed refs {i + 1}/{refCount}", i + 1, refCount);
             }
 
             ecb.Playback(em);
             ecb.Dispose();
             ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, spawnedEntities);
+            progress?.Report($"Creating logical placed refs {refCount}/{refCount}", refCount, refCount);
             return logicalRefCount;
+        }
+
+        interface ILogicalRefBuildSource
+        {
+            int Length { get; }
+            RefEntry GetRef(int index);
+            int2 GetExteriorCell(int index);
+        }
+
+        readonly struct NativeLogicalRefBuildSource : ILogicalRefBuildSource
+        {
+            readonly NativeArray<RefEntry> _refs;
+            readonly NativeArray<int2> _coords;
+
+            public NativeLogicalRefBuildSource(NativeArray<RefEntry> refs, NativeArray<int2> coords)
+            {
+                _refs = refs;
+                _coords = coords;
+            }
+
+            public int Length => _refs.Length;
+
+            public RefEntry GetRef(int index)
+            {
+                return _refs[index];
+            }
+
+            public int2 GetExteriorCell(int index)
+            {
+                return _coords[index];
+            }
+        }
+
+        readonly struct ManagedLogicalRefBuildSource : ILogicalRefBuildSource
+        {
+            readonly RefEntry[] _refs;
+
+            public ManagedLogicalRefBuildSource(RefEntry[] refs)
+            {
+                _refs = refs;
+            }
+
+            public int Length => _refs.Length;
+
+            public RefEntry GetRef(int index)
+            {
+                return _refs[index];
+            }
+
+            public int2 GetExteriorCell(int index)
+            {
+                return default;
+            }
         }
 
         static void DisableActorModelPrefabChildren(

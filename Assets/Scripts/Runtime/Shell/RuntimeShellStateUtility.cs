@@ -81,52 +81,27 @@ namespace VVardenfell.Runtime.Shell
 
         public static FixedString64Bytes ToFixedName(string value)
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString64Bytes);
-            result.CopyFromTruncated(value);
-            return result;
+            return RuntimeFixedStringUtility.ToFixed64OrDefault(value);
         }
 
         public static FixedString128Bytes ToFixedSlotId(string value)
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
+            return RuntimeFixedStringUtility.ToFixed128OrDefault(value);
         }
 
         public static FixedString128Bytes ToFixedStatus(string value)
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
+            return RuntimeFixedStringUtility.ToFixed128OrDefault(value);
         }
 
         public static FixedString128Bytes ToFixedTitle(string value)
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
+            return RuntimeFixedStringUtility.ToFixed128OrDefault(value);
         }
 
         public static FixedString512Bytes ToFixedBody(string value)
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString512Bytes);
-            result.CopyFromTruncated(value);
-            return result;
+            return RuntimeFixedStringUtility.ToFixed512OrDefault(value);
         }
     }
 }

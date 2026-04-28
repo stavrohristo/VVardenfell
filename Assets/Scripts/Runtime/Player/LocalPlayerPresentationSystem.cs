@@ -127,8 +127,8 @@ namespace VVardenfell.Runtime.Player
             {
                 Player = player,
                 View = view,
+                FirstPerson = (byte)(firstPerson ? 1 : 0),
             });
-            ecb.AddComponent(visual, new Parent { Value = firstPerson ? view : player });
             ecb.AddComponent(visual, LocalTransform.Identity);
             ecb.AddComponent(visual, new LocalToWorld());
             ecb.AddComponent(visual, ResolveInitialMovementState(player));

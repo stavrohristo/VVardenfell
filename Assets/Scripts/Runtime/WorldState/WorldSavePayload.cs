@@ -20,6 +20,37 @@ namespace VVardenfell.Runtime.WorldState
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
         public GlobalMapOverlayPayload GlobalMapOverlay;
         public WorldJournalEntry[] JournalEntries;
+        public MorrowindTimeSavePayload Time;
+        public MorrowindWeatherSavePayload Weather;
+    }
+
+    public struct MorrowindTimeSavePayload
+    {
+        public float GameHour;
+        public int DaysPassed;
+        public int Day;
+        public int Month;
+        public int Year;
+        public float TimeScale;
+        public float SimulationTimeScale;
+    }
+
+    public struct MorrowindWeatherSavePayload
+    {
+        public int CurrentWeather;
+        public int NextWeather;
+        public float Transition;
+        public float TransitionDelta;
+        public float HoursUntilNextChange;
+        public int RegionHandleValue;
+        public uint RandomState;
+        public int ForcedWeather;
+        public float SecondsUntilThunder;
+        public float LightningBrightness;
+        public uint ThunderSequence;
+        public int LastThunderSoundIndex;
+        public byte Initialized;
+        public byte Transitioning;
     }
 
     public struct LocalMapDiscoveryTilePayload

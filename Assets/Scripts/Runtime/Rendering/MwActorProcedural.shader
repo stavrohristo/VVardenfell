@@ -96,6 +96,7 @@ Shader "VVardenfell/MwActorProcedural"
             half4 _VV_EnvironmentAmbientColor;
             float3 _LightDirection;
             float3 _LightPosition;
+            float4x4 _ActorShadowViewProjection;
 
             ActorMatrix3x4 IdentityMatrix3x4()
             {
@@ -300,7 +301,7 @@ Shader "VVardenfell/MwActorProcedural"
             ZWrite On
             ZTest LEqual
             ColorMask 0
-            Cull Back
+            Cull Off
 
             HLSLPROGRAM
             #pragma target 4.5
@@ -327,7 +328,8 @@ Shader "VVardenfell/MwActorProcedural"
                 #endif
 
                 ShadowVaryings OUT;
-                OUT.positionCS = TransformWorldToHClip(ApplyShadowBias(surface.PositionWS, surface.NormalWS, lightDirectionWS));
+                float3 biasedPositionWS = ApplyShadowBias(surface.PositionWS, surface.NormalWS, lightDirectionWS);
+                OUT.positionCS = mul(_ActorShadowViewProjection, float4(biasedPositionWS, 1.0));
                 OUT.positionCS = ApplyShadowClamping(OUT.positionCS);
                 OUT.uv = surface.Uv;
                 OUT.textureSlice = surface.TextureSlice;
@@ -338,6 +340,59 @@ Shader "VVardenfell/MwActorProcedural"
             {
                 #ifdef _ALPHATEST_ON
                     half alpha = SAMPLE_TEXTURE2D_ARRAY(_BaseArray, sampler_BaseArray, IN.uv, IN.textureSlice).a * _BaseColor.a;
+                    clip(alpha - _Cutoff);
+                #endif
+
+                return 0;
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Off
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex depthVert
+            #pragma fragment depthFrag
+
+            #pragma shader_feature_local_fragment _ALPHATEST_ON
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                nointerpolation int textureSlice : TEXCOORD1;
+            };
+
+            DepthVaryings depthVert(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
+            {
+                ActorSurface surface = BuildActorSurface(vertexId, instanceId);
+
+                DepthVaryings OUT;
+                OUT.positionCS = surface.PositionCS;
+                OUT.uv = surface.Uv;
+                OUT.textureSlice = surface.TextureSlice;
+                return OUT;
+            }
+
+            half4 depthFrag(DepthVaryings IN) : SV_Target
+            {
+                #ifdef _ALPHATEST_ON
+                    half alpha = SAMPLE_TEXTURE2D_ARRAY(
+                        _BaseArray,
+                        sampler_BaseArray,
+                        IN.uv,
+                        IN.textureSlice
+                    ).a * _BaseColor.a;
+
                     clip(alpha - _Cutoff);
                 #endif
 

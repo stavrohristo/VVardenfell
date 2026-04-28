@@ -248,19 +248,8 @@ namespace VVardenfell.Runtime.WorldState
         static void CompleteFailure(ref RuntimeSpawnResult result, RuntimeSpawnResultStatus status, string message)
         {
             result.Status = (byte)status;
-            result.Message = ToFixedString(message);
+            result.Message = RuntimeFixedStringUtility.ToFixed128OrDefault(message);
             Debug.LogWarning($"[VVardenfell][Spawn] {message}");
-        }
-
-        static FixedString128Bytes ToFixedString(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            if (value.Length > 127)
-                value = value.Substring(0, 127);
-
-            return new FixedString128Bytes(value);
         }
     }
 }

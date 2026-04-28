@@ -47,23 +47,12 @@ namespace VVardenfell.Runtime.Inventory
                 selectedIndex = FindFirstVisibleInventoryIndex(contentDb, inventory, state);
 
             state.SelectedInventoryIndex = selectedIndex;
-            state.SelectedItemDetailsText = ToFixedDetails(BuildSelectedItemDetails(contentDb, inventory, selectedIndex));
+            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(contentDb, inventory, selectedIndex));
         }
 
         static void ApplyRequests(ref InventoryWindowState state, ref InventoryWindowRequest request)
         {
-            if (request.PendingRectUpdate != 0)
-            {
-                state.NormalizedX = Clamp01(request.NormalizedX);
-                state.NormalizedY = Clamp01(request.NormalizedY);
-                state.NormalizedWidth = ClampDimension(request.NormalizedWidth, state.NormalizedWidth);
-                state.NormalizedHeight = ClampDimension(request.NormalizedHeight, state.NormalizedHeight);
-
-                if (state.NormalizedX + state.NormalizedWidth > 1f)
-                    state.NormalizedX = Math.Max(0f, 1f - state.NormalizedWidth);
-                if (state.NormalizedY + state.NormalizedHeight > 1f)
-                    state.NormalizedY = Math.Max(0f, 1f - state.NormalizedHeight);
-            }
+            RuntimeWindowGeometryUtility.ApplyRectRequest(ref state.Rect, ref request.RectRequest);
 
             if (request.PendingCategoryChange != 0)
                 state.ActiveCategory = (byte)ClampCategory((InventoryWindowCategory)request.ActiveCategory);
@@ -132,32 +121,6 @@ namespace VVardenfell.Runtime.Inventory
             return category is >= InventoryWindowCategory.All and <= InventoryWindowCategory.Misc
                 ? category
                 : InventoryWindowCategory.All;
-        }
-
-        static float Clamp01(float value)
-        {
-            if (float.IsNaN(value) || float.IsInfinity(value))
-                return 0f;
-            return Math.Clamp(value, 0f, 1f);
-        }
-
-        static float ClampDimension(float requested, float fallback)
-        {
-            if (float.IsNaN(requested) || float.IsInfinity(requested) || requested <= 0f)
-                requested = fallback > 0f ? fallback : 0.1f;
-
-            return Math.Clamp(requested, 0.1f, 1f);
-        }
-
-        static FixedString512Bytes ToFixedDetails(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            if (value.Length > 511)
-                value = value.Substring(0, 511);
-
-            return new FixedString512Bytes(value);
         }
 
     }

@@ -95,14 +95,14 @@ MonoBehaviour:
     AOMethod: 0
     Downsample: 0
     AfterOpaque: 0
-    Source: 1
-    NormalSamples: 1
-    Intensity: 1
-    DirectLightingStrength: 0.381
-    Radius: 155
+    Source: 0
+    NormalSamples: 2
+    Intensity: 2
+    DirectLightingStrength: 0.504
+    Radius: 500
     Samples: 0
     BlurQuality: 0
-    Falloff: 299.76
+    Falloff: 1000
     SampleCount: -1
 --- !u!114 &8715144715598568205
 MonoBehaviour:
@@ -120,4 +120,7 @@ MonoBehaviour:
   _renderPassEvent: 300
   _enableMainLightActorShadows: 1
   _enableAdditionalPointLightActorShadows: 1
-  _maxAdditionalPointShadowLights: 4
+  _maxAdditionalPointShadowLights: 117
+  _actorRenderingLayerMask: 1
+  _actorShadowCasterPadding: 0
+  _maxActorShadowCasters: 2

@@ -248,9 +248,7 @@ namespace VVardenfell.Runtime.Animation
                     || track.FirstKeyIndex < 0
                     || (uint)boneIndex >= (uint)sampled.Length
                     || (uint)boneIndex >= (uint)bones.Length
-                    || (ResolveTrackMask(
-                        track,
-                        ActorAnimationCatalogRuntimeUtility.ResolveBoneName(ref catalog, skeleton, boneIndex)) & mask) == 0)
+                    || (((ActorAnimationBlendMask)track.BlendMask & mask) == 0))
                 {
                     continue;
                 }
@@ -264,6 +262,13 @@ namespace VVardenfell.Runtime.Animation
                     {
                         float4 value = SampleValue(ref catalog, track, trackTime);
                         pose.Position = ActorAnimationSpaceConversion.SourceTranslationToUnity(value.xyz);
+                        if (boneIndex == skeleton.AccumulationBoneIndex
+                            && ActorAnimationCatalogRuntimeUtility.TryGetBoneBlob(ref catalog, skeleton, boneIndex, out var bindBone))
+                        {
+                            float3 bindPosition = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone);
+                            pose.Position.x = bindPosition.x;
+                            pose.Position.z = bindPosition.z;
+                        }
                         break;
                     }
                     case ActorAnimationTrackKind.Rotation:
@@ -490,9 +495,9 @@ namespace VVardenfell.Runtime.Animation
                 var bone = bones[i];
                 if (i == skeleton.AccumulationBoneIndex)
                 {
-                    bone.LocalPosition = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone);
-                    bone.LocalRotation = SafeNormalize(ActorAnimationCatalogRuntimeUtility.RuntimeBindRotation(bindBone));
-                    bone.LocalPoseAnimated = 0;
+                    float3 bindPosition = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone);
+                    bone.LocalPosition.x = bindPosition.x;
+                    bone.LocalPosition.z = bindPosition.z;
                 }
 
                 float4x4 local = bone.LocalPoseAnimated == 0
@@ -523,114 +528,6 @@ namespace VVardenfell.Runtime.Animation
                 ? math.normalize(value)
                 : quaternion.identity;
 
-        static ActorAnimationBlendMask ResolveTrackMask(ActorAnimationTrackBlob track, FixedString64Bytes fallbackBoneName)
-        {
-            if (track.BlendMask != 0)
-                return (ActorAnimationBlendMask)track.BlendMask;
-            return BoneMask(fallbackBoneName);
-        }
-
-        static ActorAnimationBlendMask BoneMask(FixedString64Bytes name)
-        {
-            if (Contains(name, (byte)'l', (byte)' ', (byte)'c', (byte)'l', (byte)'a', (byte)'v')
-                || Contains(name, (byte)'l', (byte)' ', (byte)'u', (byte)'p', (byte)'p', (byte)'e', (byte)'r')
-                || Contains(name, (byte)'l', (byte)' ', (byte)'f', (byte)'o', (byte)'r', (byte)'e')
-                || Contains(name, (byte)'l', (byte)' ', (byte)'h', (byte)'a', (byte)'n', (byte)'d')
-                || Contains(name, (byte)'s', (byte)'h', (byte)'i', (byte)'e', (byte)'l', (byte)'d'))
-            {
-                return ActorAnimationBlendMask.LeftArm;
-            }
-
-            if (Contains(name, (byte)'r', (byte)' ', (byte)'c', (byte)'l', (byte)'a', (byte)'v')
-                || Contains(name, (byte)'r', (byte)' ', (byte)'u', (byte)'p', (byte)'p', (byte)'e', (byte)'r')
-                || Contains(name, (byte)'r', (byte)' ', (byte)'f', (byte)'o', (byte)'r', (byte)'e')
-                || Contains(name, (byte)'r', (byte)' ', (byte)'h', (byte)'a', (byte)'n', (byte)'d')
-                || Contains(name, (byte)'w', (byte)'e', (byte)'a', (byte)'p', (byte)'o', (byte)'n'))
-            {
-                return ActorAnimationBlendMask.RightArm;
-            }
-
-            if (Contains(name, (byte)'p', (byte)'e', (byte)'l', (byte)'v', (byte)'i', (byte)'s')
-                || Contains(name, (byte)'g', (byte)'r', (byte)'o', (byte)'i', (byte)'n')
-                || Contains(name, (byte)'t', (byte)'h', (byte)'i', (byte)'g', (byte)'h')
-                || Contains(name, (byte)'c', (byte)'a', (byte)'l', (byte)'f')
-                || Contains(name, (byte)'a', (byte)'n', (byte)'k', (byte)'l', (byte)'e')
-                || Contains(name, (byte)'f', (byte)'o', (byte)'o', (byte)'t')
-                || Contains(name, (byte)'t', (byte)'o', (byte)'e')
-                || Contains(name, (byte)'k', (byte)'n', (byte)'e', (byte)'e')
-                || Contains(name, (byte)'l', (byte)'e', (byte)'g')
-                || Contains(name, (byte)'t', (byte)'a', (byte)'i', (byte)'l'))
-            {
-                return ActorAnimationBlendMask.LowerBody;
-            }
-
-            return ActorAnimationBlendMask.Torso;
-        }
-
-        static bool Contains(FixedString64Bytes value, byte a, byte b, byte c)
-        {
-            for (int i = 0; i <= value.Length - 3; i++)
-                if (ToLowerAscii(value[i]) == a
-                    && ToLowerAscii(value[i + 1]) == b
-                    && ToLowerAscii(value[i + 2]) == c)
-                    return true;
-            return false;
-        }
-
-        static bool Contains(FixedString64Bytes value, byte a, byte b, byte c, byte d)
-        {
-            for (int i = 0; i <= value.Length - 4; i++)
-                if (ToLowerAscii(value[i]) == a
-                    && ToLowerAscii(value[i + 1]) == b
-                    && ToLowerAscii(value[i + 2]) == c
-                    && ToLowerAscii(value[i + 3]) == d)
-                    return true;
-            return false;
-        }
-
-        static bool Contains(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e)
-        {
-            for (int i = 0; i <= value.Length - 5; i++)
-                if (ToLowerAscii(value[i]) == a
-                    && ToLowerAscii(value[i + 1]) == b
-                    && ToLowerAscii(value[i + 2]) == c
-                    && ToLowerAscii(value[i + 3]) == d
-                    && ToLowerAscii(value[i + 4]) == e)
-                    return true;
-            return false;
-        }
-
-        static bool Contains(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f)
-        {
-            for (int i = 0; i <= value.Length - 6; i++)
-                if (ToLowerAscii(value[i]) == a
-                    && ToLowerAscii(value[i + 1]) == b
-                    && ToLowerAscii(value[i + 2]) == c
-                    && ToLowerAscii(value[i + 3]) == d
-                    && ToLowerAscii(value[i + 4]) == e
-                    && ToLowerAscii(value[i + 5]) == f)
-                    return true;
-            return false;
-        }
-
-        static bool Contains(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f, byte g)
-        {
-            for (int i = 0; i <= value.Length - 7; i++)
-                if (ToLowerAscii(value[i]) == a
-                    && ToLowerAscii(value[i + 1]) == b
-                    && ToLowerAscii(value[i + 2]) == c
-                    && ToLowerAscii(value[i + 3]) == d
-                    && ToLowerAscii(value[i + 4]) == e
-                    && ToLowerAscii(value[i + 5]) == f
-                    && ToLowerAscii(value[i + 6]) == g)
-                    return true;
-            return false;
-        }
-
-        static byte ToLowerAscii(byte value)
-            => value >= (byte)'A' && value <= (byte)'Z'
-                ? (byte)(value + 32)
-                : value;
     }
 }
 #endif

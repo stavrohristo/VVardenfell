@@ -108,6 +108,18 @@ namespace VVardenfell.Importer.Bake
 
         public IReadOnlyList<string> HashesInOrder => _hashHexByIndex;
 
+        public readonly struct CatalogEntry
+        {
+            public readonly string ResolvedPath;
+            public readonly string HashHex;
+
+            public CatalogEntry(string resolvedPath, string hashHex)
+            {
+                ResolvedPath = resolvedPath;
+                HashHex = hashHex;
+            }
+        }
+
         public int2 GetBucketDimensions(int textureIndex)
         {
             if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
@@ -158,6 +170,23 @@ namespace VVardenfell.Importer.Bake
                 var utf8 = r.ReadBytes(len);
                 result[i] = Encoding.ASCII.GetString(utf8);
             }
+            return result;
+        }
+
+        public static CatalogEntry[] ReadCatalog(string path)
+        {
+            if (!File.Exists(path))
+                return Array.Empty<CatalogEntry>();
+
+            using var fs = File.OpenRead(path);
+            using var r = new BinaryReader(fs);
+            if (r.ReadUInt32() != MagicCatalog)
+                return Array.Empty<CatalogEntry>();
+
+            uint count = r.ReadUInt32();
+            var result = new CatalogEntry[count];
+            for (int i = 0; i < count; i++)
+                result[i] = new CatalogEntry(r.ReadString(), r.ReadString());
             return result;
         }
 

@@ -530,6 +530,245 @@ namespace VVardenfell.Core.Cache
         }
 
 
+        static void WriteWeatherSettings(BinaryWriter w, WeatherSettingsDef value)
+        {
+            w.Write(value.SunriseTime);
+            w.Write(value.SunsetTime);
+            w.Write(value.SunriseDuration);
+            w.Write(value.SunsetDuration);
+            w.Write(value.HoursBetweenWeatherChanges);
+            w.Write(value.PrecipGravity);
+            w.Write(value.SunGlareFaderMax);
+            w.Write(value.SunGlareFaderAngleMax);
+            w.Write(value.SunGlareFaderColorRgba);
+            w.Write(value.SunPreSunriseTime);
+            w.Write(value.SunPostSunriseTime);
+            w.Write(value.SunPreSunsetTime);
+            w.Write(value.SunPostSunsetTime);
+            w.Write(value.AmbientPreSunriseTime);
+            w.Write(value.AmbientPostSunriseTime);
+            w.Write(value.AmbientPreSunsetTime);
+            w.Write(value.AmbientPostSunsetTime);
+            w.Write(value.FogPreSunriseTime);
+            w.Write(value.FogPostSunriseTime);
+            w.Write(value.FogPreSunsetTime);
+            w.Write(value.FogPostSunsetTime);
+            w.Write(value.SkyPreSunriseTime);
+            w.Write(value.SkyPostSunriseTime);
+            w.Write(value.SkyPreSunsetTime);
+            w.Write(value.SkyPostSunsetTime);
+            w.Write(value.StarsPostSunsetStart);
+            w.Write(value.StarsPreSunriseFinish);
+            w.Write(value.StarsFadingDuration);
+            WriteMoonSettings(w, value.MasserMoon);
+            WriteMoonSettings(w, value.SecundaMoon);
+        }
+
+
+        static WeatherSettingsDef ReadWeatherSettings(BinaryReader r)
+        {
+            return new WeatherSettingsDef
+            {
+                SunriseTime = r.ReadSingle(),
+                SunsetTime = r.ReadSingle(),
+                SunriseDuration = r.ReadSingle(),
+                SunsetDuration = r.ReadSingle(),
+                HoursBetweenWeatherChanges = r.ReadSingle(),
+                PrecipGravity = r.ReadSingle(),
+                SunGlareFaderMax = r.ReadSingle(),
+                SunGlareFaderAngleMax = r.ReadSingle(),
+                SunGlareFaderColorRgba = r.ReadInt32(),
+                SunPreSunriseTime = r.ReadSingle(),
+                SunPostSunriseTime = r.ReadSingle(),
+                SunPreSunsetTime = r.ReadSingle(),
+                SunPostSunsetTime = r.ReadSingle(),
+                AmbientPreSunriseTime = r.ReadSingle(),
+                AmbientPostSunriseTime = r.ReadSingle(),
+                AmbientPreSunsetTime = r.ReadSingle(),
+                AmbientPostSunsetTime = r.ReadSingle(),
+                FogPreSunriseTime = r.ReadSingle(),
+                FogPostSunriseTime = r.ReadSingle(),
+                FogPreSunsetTime = r.ReadSingle(),
+                FogPostSunsetTime = r.ReadSingle(),
+                SkyPreSunriseTime = r.ReadSingle(),
+                SkyPostSunriseTime = r.ReadSingle(),
+                SkyPreSunsetTime = r.ReadSingle(),
+                SkyPostSunsetTime = r.ReadSingle(),
+                StarsPostSunsetStart = r.ReadSingle(),
+                StarsPreSunriseFinish = r.ReadSingle(),
+                StarsFadingDuration = r.ReadSingle(),
+                MasserMoon = ReadMoonSettings(r),
+                SecundaMoon = ReadMoonSettings(r),
+            };
+        }
+
+
+        static void WriteMoonSettings(BinaryWriter w, MoonSettingsDef value)
+        {
+            w.Write(value.Size);
+            w.Write(value.AxisOffset);
+            w.Write(value.Speed);
+            w.Write(value.DailyIncrement);
+            w.Write(value.FadeStartAngle);
+            w.Write(value.FadeEndAngle);
+            w.Write(value.MoonShadowEarlyFadeAngle);
+            w.Write(value.FadeInStart);
+            w.Write(value.FadeInFinish);
+            w.Write(value.FadeOutStart);
+            w.Write(value.FadeOutFinish);
+        }
+
+
+        static MoonSettingsDef ReadMoonSettings(BinaryReader r)
+        {
+            return new MoonSettingsDef
+            {
+                Size = r.ReadSingle(),
+                AxisOffset = r.ReadSingle(),
+                Speed = r.ReadSingle(),
+                DailyIncrement = r.ReadSingle(),
+                FadeStartAngle = r.ReadSingle(),
+                FadeEndAngle = r.ReadSingle(),
+                MoonShadowEarlyFadeAngle = r.ReadSingle(),
+                FadeInStart = r.ReadSingle(),
+                FadeInFinish = r.ReadSingle(),
+                FadeOutStart = r.ReadSingle(),
+                FadeOutFinish = r.ReadSingle(),
+            };
+        }
+
+
+        static void WriteSkyWeatherVisualSettings(BinaryWriter w, SkyWeatherVisualSettingsDef value)
+        {
+            WriteString(w, value.SunTexture);
+            WriteString(w, value.SunGlareTexture);
+            WriteString(w, value.MasserShadowTexture);
+            WriteString(w, value.SecundaShadowTexture);
+            WriteString(w, value.RainDropTexture);
+            WriteStringArray(w, value.MasserPhaseTextures);
+            WriteStringArray(w, value.SecundaPhaseTextures);
+            WriteStringArray(w, value.CloudTextures);
+            WriteStringArray(w, value.PrecipitationEffectModels);
+        }
+
+
+        static SkyWeatherVisualSettingsDef ReadSkyWeatherVisualSettings(BinaryReader r)
+        {
+            return new SkyWeatherVisualSettingsDef
+            {
+                SunTexture = ReadString(r),
+                SunGlareTexture = ReadString(r),
+                MasserShadowTexture = ReadString(r),
+                SecundaShadowTexture = ReadString(r),
+                RainDropTexture = ReadString(r),
+                MasserPhaseTextures = ReadStringArray(r),
+                SecundaPhaseTextures = ReadStringArray(r),
+                CloudTextures = ReadStringArray(r),
+                PrecipitationEffectModels = ReadStringArray(r),
+            };
+        }
+
+
+        static void WriteWeatherDefinition(BinaryWriter w, WeatherDefinitionDef value)
+        {
+            w.Write((byte)value.Kind);
+            WriteString(w, value.Id);
+            WriteString(w, value.CloudTexture);
+            WriteWeatherColorSet(w, value.SkyColor);
+            WriteWeatherColorSet(w, value.FogColor);
+            WriteWeatherColorSet(w, value.AmbientColor);
+            WriteWeatherColorSet(w, value.SunColor);
+            w.Write(value.SunDiscSunsetColorRgba);
+            w.Write(value.LandFogDayDepth);
+            w.Write(value.LandFogNightDepth);
+            w.Write(value.WindSpeed);
+            w.Write(value.CloudSpeed);
+            w.Write(value.GlareView);
+            w.Write(value.CloudsMaximumPercent);
+            w.Write(value.TransitionDelta);
+            w.Write(value.RainSpeed);
+            w.Write(value.RainEntranceSpeed);
+            w.Write(value.RainMaxRaindrops);
+            w.Write(value.RainDiameter);
+            w.Write(value.RainThreshold);
+            w.Write(value.RainMinHeight);
+            w.Write(value.RainMaxHeight);
+            w.Write(value.UsingPrecip);
+            w.Write(value.IsStorm);
+            WriteString(w, value.RainLoopSoundId);
+            WriteString(w, value.AmbientLoopSoundId);
+            w.Write(value.ThunderFrequency);
+            w.Write(value.ThunderThreshold);
+            w.Write(value.FlashDecrement);
+            WriteString(w, value.ThunderSoundId0);
+            WriteString(w, value.ThunderSoundId1);
+            WriteString(w, value.ThunderSoundId2);
+            WriteString(w, value.ThunderSoundId3);
+        }
+
+
+        static WeatherDefinitionDef ReadWeatherDefinition(BinaryReader r)
+        {
+            return new WeatherDefinitionDef
+            {
+                Kind = (WeatherKind)r.ReadByte(),
+                Id = ReadString(r),
+                CloudTexture = ReadString(r),
+                SkyColor = ReadWeatherColorSet(r),
+                FogColor = ReadWeatherColorSet(r),
+                AmbientColor = ReadWeatherColorSet(r),
+                SunColor = ReadWeatherColorSet(r),
+                SunDiscSunsetColorRgba = r.ReadInt32(),
+                LandFogDayDepth = r.ReadSingle(),
+                LandFogNightDepth = r.ReadSingle(),
+                WindSpeed = r.ReadSingle(),
+                CloudSpeed = r.ReadSingle(),
+                GlareView = r.ReadSingle(),
+                CloudsMaximumPercent = r.ReadSingle(),
+                TransitionDelta = r.ReadSingle(),
+                RainSpeed = r.ReadSingle(),
+                RainEntranceSpeed = r.ReadSingle(),
+                RainMaxRaindrops = r.ReadInt32(),
+                RainDiameter = r.ReadSingle(),
+                RainThreshold = r.ReadSingle(),
+                RainMinHeight = r.ReadSingle(),
+                RainMaxHeight = r.ReadSingle(),
+                UsingPrecip = r.ReadByte(),
+                IsStorm = r.ReadByte(),
+                RainLoopSoundId = ReadString(r),
+                AmbientLoopSoundId = ReadString(r),
+                ThunderFrequency = r.ReadSingle(),
+                ThunderThreshold = r.ReadSingle(),
+                FlashDecrement = r.ReadSingle(),
+                ThunderSoundId0 = ReadString(r),
+                ThunderSoundId1 = ReadString(r),
+                ThunderSoundId2 = ReadString(r),
+                ThunderSoundId3 = ReadString(r),
+            };
+        }
+
+
+        static void WriteWeatherColorSet(BinaryWriter w, WeatherColorSetDef value)
+        {
+            w.Write(value.SunriseRgba);
+            w.Write(value.DayRgba);
+            w.Write(value.SunsetRgba);
+            w.Write(value.NightRgba);
+        }
+
+
+        static WeatherColorSetDef ReadWeatherColorSet(BinaryReader r)
+        {
+            return new WeatherColorSetDef
+            {
+                SunriseRgba = r.ReadInt32(),
+                DayRgba = r.ReadInt32(),
+                SunsetRgba = r.ReadInt32(),
+                NightRgba = r.ReadInt32(),
+            };
+        }
+
+
         static void WriteArray<T>(BinaryWriter w, T[] values, Action<BinaryWriter, T> writeElement)
         {
             int count = values?.Length ?? 0;

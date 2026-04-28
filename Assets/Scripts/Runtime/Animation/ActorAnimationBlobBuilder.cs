@@ -220,11 +220,12 @@ namespace VVardenfell.Runtime.Animation
             {
                 var skeleton = skeletons[i];
                 var bones = skeleton?.Bones ?? Array.Empty<ActorSkeletonBoneDef>();
+                int accumulationBoneIndex = ResolveAccumulationBoneIndex(bones, skeleton?.AccumulationBoneIndex ?? -1);
                 dstSkeletons[i] = new ActorSkeletonBlob
                 {
                     ModelPath = Fixed128(ActorAnimationHash.NormalizePath(skeleton?.ModelPath)),
-                    AccumulationBoneIndex = skeleton?.AccumulationBoneIndex ?? -1,
-                    AccumulationSubtreeEndIndex = ResolveSubtreeEnd(bones, skeleton?.AccumulationBoneIndex ?? -1),
+                    AccumulationBoneIndex = accumulationBoneIndex,
+                    AccumulationSubtreeEndIndex = ResolveSubtreeEnd(bones, accumulationBoneIndex),
                     FirstBoneIndex = cursor,
                     BoneCount = bones.Length,
                 };
@@ -531,6 +532,22 @@ namespace VVardenfell.Runtime.Animation
             }
 
             return matrices;
+        }
+
+        static int ResolveAccumulationBoneIndex(ActorSkeletonBoneDef[] bones, int cachedIndex)
+        {
+            if (bones == null || bones.Length == 0)
+                return -1;
+
+            int bip01 = FindBoneIndex(bones, "Bip01");
+            if (bip01 >= 0)
+                return bip01;
+
+            int rootBone = FindBoneIndex(bones, "Root Bone");
+            if (rootBone >= 0)
+                return rootBone;
+
+            return (uint)cachedIndex < (uint)bones.Length ? cachedIndex : -1;
         }
 
         static bool IsKnownLoopingGroup(FixedString64Bytes group)

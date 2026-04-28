@@ -17,7 +17,7 @@ namespace VVardenfell.Runtime.Shell
 
             return new StatsWindowViewModel
             {
-                NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
+                NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
                 CharacterName = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ToDisplay(playerStats.Identity.CharacterName, "Player") : "--",
                 HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f,
                 HealthText = playerStats.HasPlayer

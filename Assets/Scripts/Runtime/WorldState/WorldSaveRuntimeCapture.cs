@@ -47,6 +47,8 @@ namespace VVardenfell.Runtime.WorldState
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
             var transition = entityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
+            var timePayload = CaptureTimePayload(entityManager);
+            var weatherPayload = CaptureWeatherPayload(entityManager);
 
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var journalEntries = new WorldJournalEntry[journal.Length];
@@ -94,8 +96,66 @@ namespace VVardenfell.Runtime.WorldState
                 ActiveMagicEffects = activeMagicEffects,
                 ExteriorMapDiscovery = exteriorMapDiscovery,
                 GlobalMapOverlay = globalMapOverlay,
+                Time = timePayload,
+                Weather = weatherPayload,
             };
             return true;
+        }
+
+        static MorrowindTimeSavePayload CaptureTimePayload(EntityManager entityManager)
+        {
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindTimeState>(entityManager);
+            if (entity == Entity.Null)
+            {
+                var fallback = MorrowindTimeBootstrapSystem.CreateDefaultTime();
+                return ToPayload(fallback);
+            }
+
+            return ToPayload(entityManager.GetComponentData<MorrowindTimeState>(entity));
+        }
+
+        static MorrowindWeatherSavePayload CaptureWeatherPayload(EntityManager entityManager)
+        {
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindWeatherState>(entityManager);
+            if (entity == Entity.Null)
+                return ToPayload(MorrowindTimeBootstrapSystem.CreateDefaultWeather());
+
+            return ToPayload(entityManager.GetComponentData<MorrowindWeatherState>(entity));
+        }
+
+        static MorrowindTimeSavePayload ToPayload(MorrowindTimeState time)
+        {
+            return new MorrowindTimeSavePayload
+            {
+                GameHour = time.GameHour,
+                DaysPassed = time.DaysPassed,
+                Day = time.Day,
+                Month = time.Month,
+                Year = time.Year,
+                TimeScale = time.TimeScale,
+                SimulationTimeScale = time.SimulationTimeScale,
+            };
+        }
+
+        static MorrowindWeatherSavePayload ToPayload(MorrowindWeatherState weather)
+        {
+            return new MorrowindWeatherSavePayload
+            {
+                CurrentWeather = weather.CurrentWeather,
+                NextWeather = weather.NextWeather,
+                Transition = weather.Transition,
+                TransitionDelta = weather.TransitionDelta,
+                HoursUntilNextChange = weather.HoursUntilNextChange,
+                RegionHandleValue = weather.RegionHandleValue,
+                RandomState = weather.RandomState,
+                ForcedWeather = weather.ForcedWeather,
+                SecondsUntilThunder = weather.SecondsUntilThunder,
+                LightningBrightness = weather.LightningBrightness,
+                ThunderSequence = weather.ThunderSequence,
+                LastThunderSoundIndex = weather.LastThunderSoundIndex,
+                Initialized = weather.Initialized,
+                Transitioning = weather.Transitioning,
+            };
         }
 
         static LocalMapDiscoveryTilePayload[] CaptureExteriorMapDiscovery(EntityManager entityManager)

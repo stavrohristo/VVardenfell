@@ -138,7 +138,7 @@ namespace VVardenfell.Runtime.Shell
             var mode = state.Mode == (byte)MapWindowMode.Global ? MapWindowMode.Global : MapWindowMode.Local;
             return new MapWindowViewModel
             {
-                NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
+                NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
                 Title = "Map",
                 Mode = mode,
                 GlobalEnabled = !location.InteriorActive,

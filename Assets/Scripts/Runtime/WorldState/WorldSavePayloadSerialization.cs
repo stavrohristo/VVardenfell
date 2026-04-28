@@ -6,13 +6,15 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.WorldState
 {
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 9;
+        const int PayloadVersion = 10;
+        const int LegacyPayloadVersion = 9;
 
         static void ValidatePayloadHeader(BinaryReader r)
         {
@@ -21,7 +23,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion)
+            if (version != PayloadVersion && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
         }
 
@@ -98,6 +100,9 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < payload.JournalEntries.Length; i++)
                     WriteJournalEntry(w, payload.JournalEntries[i]);
             }
+
+            WriteTimePayload(w, payload.Time);
+            WriteWeatherPayload(w, payload.Weather);
         }
 
         static WorldSavePayload ReadPayload(BinaryReader r)
@@ -107,7 +112,7 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion)
+            if (version != PayloadVersion && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
 
             var payload = new WorldSavePayload
@@ -152,7 +157,117 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < journalCount; i++)
                 payload.JournalEntries[i] = ReadJournalEntry(r);
 
+            if (version >= PayloadVersion)
+            {
+                payload.Time = ReadTimePayload(r);
+                payload.Weather = ReadWeatherPayload(r);
+            }
+            else
+            {
+                payload.Time = ToSavePayload(MorrowindTimeBootstrapSystem.CreateDefaultTime());
+                payload.Weather = ToSavePayload(MorrowindTimeBootstrapSystem.CreateDefaultWeather());
+            }
+
             return payload;
+        }
+
+        static void WriteTimePayload(BinaryWriter w, in MorrowindTimeSavePayload value)
+        {
+            w.Write(value.GameHour);
+            w.Write(value.DaysPassed);
+            w.Write(value.Day);
+            w.Write(value.Month);
+            w.Write(value.Year);
+            w.Write(value.TimeScale);
+            w.Write(value.SimulationTimeScale);
+        }
+
+        static MorrowindTimeSavePayload ReadTimePayload(BinaryReader r)
+        {
+            return new MorrowindTimeSavePayload
+            {
+                GameHour = r.ReadSingle(),
+                DaysPassed = r.ReadInt32(),
+                Day = r.ReadInt32(),
+                Month = r.ReadInt32(),
+                Year = r.ReadInt32(),
+                TimeScale = r.ReadSingle(),
+                SimulationTimeScale = r.ReadSingle(),
+            };
+        }
+
+        static void WriteWeatherPayload(BinaryWriter w, in MorrowindWeatherSavePayload value)
+        {
+            w.Write(value.CurrentWeather);
+            w.Write(value.NextWeather);
+            w.Write(value.Transition);
+            w.Write(value.TransitionDelta);
+            w.Write(value.HoursUntilNextChange);
+            w.Write(value.RegionHandleValue);
+            w.Write(value.RandomState);
+            w.Write(value.ForcedWeather);
+            w.Write(value.SecondsUntilThunder);
+            w.Write(value.LightningBrightness);
+            w.Write(value.ThunderSequence);
+            w.Write(value.LastThunderSoundIndex);
+            w.Write(value.Initialized);
+            w.Write(value.Transitioning);
+        }
+
+        static MorrowindWeatherSavePayload ReadWeatherPayload(BinaryReader r)
+        {
+            return new MorrowindWeatherSavePayload
+            {
+                CurrentWeather = r.ReadInt32(),
+                NextWeather = r.ReadInt32(),
+                Transition = r.ReadSingle(),
+                TransitionDelta = r.ReadSingle(),
+                HoursUntilNextChange = r.ReadSingle(),
+                RegionHandleValue = r.ReadInt32(),
+                RandomState = r.ReadUInt32(),
+                ForcedWeather = r.ReadInt32(),
+                SecondsUntilThunder = r.ReadSingle(),
+                LightningBrightness = r.ReadSingle(),
+                ThunderSequence = r.ReadUInt32(),
+                LastThunderSoundIndex = r.ReadInt32(),
+                Initialized = r.ReadByte(),
+                Transitioning = r.ReadByte(),
+            };
+        }
+
+        static MorrowindTimeSavePayload ToSavePayload(MorrowindTimeState time)
+        {
+            return new MorrowindTimeSavePayload
+            {
+                GameHour = time.GameHour,
+                DaysPassed = time.DaysPassed,
+                Day = time.Day,
+                Month = time.Month,
+                Year = time.Year,
+                TimeScale = time.TimeScale,
+                SimulationTimeScale = time.SimulationTimeScale,
+            };
+        }
+
+        static MorrowindWeatherSavePayload ToSavePayload(MorrowindWeatherState weather)
+        {
+            return new MorrowindWeatherSavePayload
+            {
+                CurrentWeather = weather.CurrentWeather,
+                NextWeather = weather.NextWeather,
+                Transition = weather.Transition,
+                TransitionDelta = weather.TransitionDelta,
+                HoursUntilNextChange = weather.HoursUntilNextChange,
+                RegionHandleValue = weather.RegionHandleValue,
+                RandomState = weather.RandomState,
+                ForcedWeather = weather.ForcedWeather,
+                SecondsUntilThunder = weather.SecondsUntilThunder,
+                LightningBrightness = weather.LightningBrightness,
+                ThunderSequence = weather.ThunderSequence,
+                LastThunderSoundIndex = weather.LastThunderSoundIndex,
+                Initialized = weather.Initialized,
+                Transitioning = weather.Transitioning,
+            };
         }
 
         static void WriteInventoryEntry(BinaryWriter w, in PlayerInventoryItem value)
@@ -207,7 +322,7 @@ namespace VVardenfell.Runtime.WorldState
                 Rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
                 Scale = r.ReadSingle(),
                 ExteriorCell = new int2(r.ReadInt32(), r.ReadInt32()),
-                InteriorCellId = ToFixed128(r.ReadString()),
+                InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(r.ReadString()),
                 IsInterior = r.ReadByte(),
                 PersistencePolicy = r.ReadByte(),
             };
@@ -345,11 +460,11 @@ namespace VVardenfell.Runtime.WorldState
         {
             return new ActorIdentitySet
             {
-                CharacterName = ToFixed64(r.ReadString()),
+                CharacterName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 Level = r.ReadInt32(),
-                RaceName = ToFixed64(r.ReadString()),
-                ClassName = ToFixed64(r.ReadString()),
-                BirthSignName = ToFixed64(r.ReadString()),
+                RaceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                ClassName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                BirthSignName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 Reputation = r.ReadInt32(),
             };
         }
@@ -391,8 +506,8 @@ namespace VVardenfell.Runtime.WorldState
                 TimeLeftSeconds = r.ReadSingle(),
                 Applied = r.ReadByte(),
                 SourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte(),
-                SourceName = ToFixed64(r.ReadString()),
-                SourceId = ToFixed64(r.ReadString()),
+                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
             };
         }
 
@@ -479,26 +594,6 @@ namespace VVardenfell.Runtime.WorldState
                 Kind = (ContentReferenceKind)r.ReadByte(),
                 HandleValue = r.ReadInt32(),
             };
-        }
-
-        static FixedString64Bytes ToFixed64(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            var result = default(FixedString64Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
-
-        static FixedString128Bytes ToFixed128(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
         }
 
         static int ReadCount(BinaryReader r, string label)

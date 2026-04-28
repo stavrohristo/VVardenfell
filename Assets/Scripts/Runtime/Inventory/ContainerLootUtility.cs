@@ -167,17 +167,6 @@ namespace VVardenfell.Runtime.Inventory
             return "Container";
         }
 
-        public static FixedString512Bytes ToFixedDetails(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            if (value.Length > 511)
-                value = value.Substring(0, 511);
-
-            return new FixedString512Bytes(value);
-        }
-
         public static void MaterializeContainerContents(
             RuntimeContentDatabase contentDb,
             DynamicBuffer<ContainerSessionItem> items,

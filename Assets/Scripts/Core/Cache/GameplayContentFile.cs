@@ -735,6 +735,127 @@ namespace VVardenfell.Core.Cache
         public float MaxSecondsBetweenEnvironmentalSounds;
     }
 
+    public enum WeatherKind : byte
+    {
+        Clear = 0,
+        Cloudy = 1,
+        Foggy = 2,
+        Overcast = 3,
+        Rain = 4,
+        Thunderstorm = 5,
+        Ashstorm = 6,
+        Blight = 7,
+        Snow = 8,
+        Blizzard = 9,
+    }
+
+    public struct WeatherColorSetDef
+    {
+        public int SunriseRgba;
+        public int DayRgba;
+        public int SunsetRgba;
+        public int NightRgba;
+    }
+
+    public struct WeatherDefinitionDef
+    {
+        public WeatherKind Kind;
+        public string Id;
+        public string CloudTexture;
+        public WeatherColorSetDef SkyColor;
+        public WeatherColorSetDef FogColor;
+        public WeatherColorSetDef AmbientColor;
+        public WeatherColorSetDef SunColor;
+        public int SunDiscSunsetColorRgba;
+        public float LandFogDayDepth;
+        public float LandFogNightDepth;
+        public float WindSpeed;
+        public float CloudSpeed;
+        public float GlareView;
+        public float CloudsMaximumPercent;
+        public float TransitionDelta;
+        public float RainSpeed;
+        public float RainEntranceSpeed;
+        public int RainMaxRaindrops;
+        public float RainDiameter;
+        public float RainThreshold;
+        public float RainMinHeight;
+        public float RainMaxHeight;
+        public byte UsingPrecip;
+        public byte IsStorm;
+        public string RainLoopSoundId;
+        public string AmbientLoopSoundId;
+        public float ThunderFrequency;
+        public float ThunderThreshold;
+        public float FlashDecrement;
+        public string ThunderSoundId0;
+        public string ThunderSoundId1;
+        public string ThunderSoundId2;
+        public string ThunderSoundId3;
+    }
+
+    public struct WeatherSettingsDef
+    {
+        public float SunriseTime;
+        public float SunsetTime;
+        public float SunriseDuration;
+        public float SunsetDuration;
+        public float HoursBetweenWeatherChanges;
+        public float PrecipGravity;
+        public float SunGlareFaderMax;
+        public float SunGlareFaderAngleMax;
+        public int SunGlareFaderColorRgba;
+        public float SunPreSunriseTime;
+        public float SunPostSunriseTime;
+        public float SunPreSunsetTime;
+        public float SunPostSunsetTime;
+        public float AmbientPreSunriseTime;
+        public float AmbientPostSunriseTime;
+        public float AmbientPreSunsetTime;
+        public float AmbientPostSunsetTime;
+        public float FogPreSunriseTime;
+        public float FogPostSunriseTime;
+        public float FogPreSunsetTime;
+        public float FogPostSunsetTime;
+        public float SkyPreSunriseTime;
+        public float SkyPostSunriseTime;
+        public float SkyPreSunsetTime;
+        public float SkyPostSunsetTime;
+        public float StarsPostSunsetStart;
+        public float StarsPreSunriseFinish;
+        public float StarsFadingDuration;
+        public MoonSettingsDef MasserMoon;
+        public MoonSettingsDef SecundaMoon;
+    }
+
+    public struct MoonSettingsDef
+    {
+        public float Size;
+        public float AxisOffset;
+        public float Speed;
+        public float DailyIncrement;
+        public float FadeStartAngle;
+        public float FadeEndAngle;
+        public float MoonShadowEarlyFadeAngle;
+        public float FadeInStart;
+        public float FadeInFinish;
+        public float FadeOutStart;
+        public float FadeOutFinish;
+    }
+
+    public struct SkyWeatherVisualSettingsDef
+    {
+        public string SunTexture;
+        public string SunGlareTexture;
+        public string MasserShadowTexture;
+        public string SecundaShadowTexture;
+        public string RainDropTexture;
+        public string[] MasserPhaseTextures;
+        public string[] SecundaPhaseTextures;
+        public string[] CloudTextures;
+        public string[] PrecipitationEffectModels;
+    }
+
     public sealed class GameplayContentData
     {
         public ActorDef[] Actors = Array.Empty<ActorDef>();
@@ -766,6 +887,9 @@ namespace VVardenfell.Core.Cache
         public RegionSoundRefDef[] RegionSoundRefs = Array.Empty<RegionSoundRefDef>();
         public MusicTrackDef[] MusicTracks = Array.Empty<MusicTrackDef>();
         public AmbientSettingsDef AmbientSettings;
+        public WeatherSettingsDef WeatherSettings;
+        public WeatherDefinitionDef[] WeatherDefinitions = Array.Empty<WeatherDefinitionDef>();
+        public SkyWeatherVisualSettingsDef SkyWeatherVisualSettings;
         public GenericRecordDef[] GameSettings = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Globals = Array.Empty<GenericRecordDef>();
         public ClassDef[] Classes = Array.Empty<ClassDef>();
@@ -834,6 +958,9 @@ namespace VVardenfell.Core.Cache
             WriteRegionSoundRefArray(w, data?.RegionSoundRefs);
             WriteMusicTrackArray(w, data?.MusicTracks);
             WriteAmbientSettings(w, data?.AmbientSettings ?? default);
+            WriteWeatherSettings(w, data?.WeatherSettings ?? default);
+            WriteWeatherDefinitionArray(w, data?.WeatherDefinitions);
+            WriteSkyWeatherVisualSettings(w, data?.SkyWeatherVisualSettings ?? default);
             WriteGenericRecordArray(w, data?.GameSettings);
             WriteGenericRecordArray(w, data?.Globals);
             WriteClassArray(w, data?.Classes);
@@ -907,6 +1034,9 @@ namespace VVardenfell.Core.Cache
                 RegionSoundRefs = ReadRegionSoundRefArray(r),
                 MusicTracks = ReadMusicTrackArray(r),
                 AmbientSettings = ReadAmbientSettings(r),
+                WeatherSettings = ReadWeatherSettings(r),
+                WeatherDefinitions = ReadWeatherDefinitionArray(r),
+                SkyWeatherVisualSettings = ReadSkyWeatherVisualSettings(r),
                 GameSettings = ReadGenericRecordArray(r),
                 Globals = ReadGenericRecordArray(r),
                 Classes = ReadClassArray(r),

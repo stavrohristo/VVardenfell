@@ -57,6 +57,7 @@ namespace VVardenfell.Runtime.Cache
         public MaterialRegistry Registry { get; private set; }
         public RuntimeContentDatabase ContentDatabase { get; private set; }
 
+        Dictionary<string, int> _textureIndexByPath;
         Dictionary<ulong, int> _actorVisualRecipesByActorAndView;
         Dictionary<ulong, int> _equipmentVisualsByItemRigViewAndVariant;
 
@@ -209,6 +210,22 @@ namespace VVardenfell.Runtime.Cache
             return visual != null;
         }
 
+        public bool TryGetTextureByPath(string sourcePath, out Texture2D texture)
+        {
+            texture = null;
+            if (string.IsNullOrWhiteSpace(sourcePath) || _textureIndexByPath == null)
+                return false;
+
+            if (!_textureIndexByPath.TryGetValue(NormalizeTexturePath(sourcePath), out int index))
+                return false;
+
+            if ((uint)index >= (uint)(Textures?.Length ?? 0))
+                return false;
+
+            texture = Textures[index];
+            return texture != null;
+        }
+
         void BuildActorVisualLookup()
         {
             var recipes = ActorAnimationCatalog?.ActorVisualRecipes ?? Array.Empty<ActorVisualRecipeDef>();
@@ -309,6 +326,7 @@ namespace VVardenfell.Runtime.Cache
         {
             var sw = Stopwatch.StartNew();
             var texHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
+            BuildTexturePathLookup(texHashes);
             Textures = new Texture2D[texHashes.Length];
             progress?.Report("Loading textures", 0, texHashes.Length);
 
@@ -334,6 +352,57 @@ namespace VVardenfell.Runtime.Cache
 
             sw.Stop();
             progress?.CompleteStage("Textures ready");
+        }
+
+        void BuildTexturePathLookup(string[] texHashes)
+        {
+            _textureIndexByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var indexByHash = new Dictionary<string, int>(texHashes?.Length ?? 0, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; texHashes != null && i < texHashes.Length; i++)
+            {
+                string hash = texHashes[i];
+                if (!string.IsNullOrEmpty(hash) && !indexByHash.ContainsKey(hash))
+                    indexByHash[hash] = i;
+            }
+
+            var catalog = Importer.Bake.TextureBakery.ReadCatalog(CachePaths.TextureCatalog);
+            for (int i = 0; i < catalog.Length; i++)
+            {
+                if (!indexByHash.TryGetValue(catalog[i].HashHex, out int textureIndex))
+                    continue;
+
+                RegisterTexturePath(catalog[i].ResolvedPath, textureIndex);
+            }
+        }
+
+        void RegisterTexturePath(string path, int textureIndex)
+        {
+            string normalized = NormalizeTexturePath(path);
+            if (string.IsNullOrEmpty(normalized))
+                return;
+
+            _textureIndexByPath[normalized] = textureIndex;
+            _textureIndexByPath[normalized.Replace('\\', '/')] = textureIndex;
+
+            int slash = normalized.LastIndexOf('\\');
+            if (slash >= 0 && slash + 1 < normalized.Length)
+                _textureIndexByPath[normalized.Substring(slash + 1)] = textureIndex;
+        }
+
+        static string NormalizeTexturePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            string p = path.Trim().ToLowerInvariant().Replace('/', '\\');
+            while (p.Contains("\\\\", StringComparison.Ordinal))
+                p = p.Replace("\\\\", "\\");
+            if (p.StartsWith("\\", StringComparison.Ordinal))
+                p = p.Substring(1);
+            if (!p.StartsWith("textures\\", StringComparison.Ordinal) && !p.StartsWith("bookart\\", StringComparison.Ordinal))
+                p = "textures\\" + p;
+
+            return p;
         }
 
         private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)

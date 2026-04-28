@@ -1,6 +1,8 @@
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
@@ -22,6 +24,13 @@ namespace VVardenfell.Runtime.Streaming
                 var entity = EntityManager.CreateEntity();
                 EntityManager.SetName(entity, "VVardenfell.DayCycleState");
                 EntityManager.AddComponentData(entity, CreateDefaultDayCycle());
+            }
+
+            if (!SystemAPI.HasSingleton<ActiveSkyWeatherState>())
+            {
+                var entity = EntityManager.CreateEntity();
+                EntityManager.SetName(entity, "VVardenfell.SkyWeatherState");
+                EntityManager.AddComponentData(entity, CreateFallbackSkyWeather());
             }
         }
 
@@ -67,31 +76,36 @@ namespace VVardenfell.Runtime.Streaming
 
         public static MorrowindDayCycleState CreateDefaultDayCycle()
         {
+            var settings = RuntimeContentDatabase.Active?.Data?.WeatherSettings ?? default;
+            if (settings.SunriseTime <= 0f && settings.SunsetTime <= 0f)
+                settings = MorrowindDayCycleUtility.CreateFallbackWeatherSettings(default);
+
             return new MorrowindDayCycleState
             {
-                GameHour = 12f,
-                DaysPassed = 1,
-                GameHoursPerSecond = 0f,
+                SunriseTime = settings.SunriseTime > 0f ? settings.SunriseTime : 6f,
+                SunsetTime = settings.SunsetTime > 0f ? settings.SunsetTime : 18f,
+                SunriseDuration = settings.SunriseDuration > 0f ? settings.SunriseDuration : 2f,
+                SunsetDuration = settings.SunsetDuration > 0f ? settings.SunsetDuration : 2f,
 
-                SunriseTime = 6f,
-                SunsetTime = 18f,
-                SunriseDuration = 2f,
-                SunsetDuration = 2f,
+                SunPreSunriseTime = settings.SunPreSunriseTime,
+                SunPostSunriseTime = settings.SunPostSunriseTime,
+                SunPreSunsetTime = settings.SunPreSunsetTime > 0f ? settings.SunPreSunsetTime : 1f,
+                SunPostSunsetTime = settings.SunPostSunsetTime > 0f ? settings.SunPostSunsetTime : 1.25f,
 
-                SunPreSunriseTime = 0f,
-                SunPostSunriseTime = 0f,
-                SunPreSunsetTime = 1f,
-                SunPostSunsetTime = 1.25f,
+                AmbientPreSunriseTime = settings.AmbientPreSunriseTime > 0f ? settings.AmbientPreSunriseTime : 0.5f,
+                AmbientPostSunriseTime = settings.AmbientPostSunriseTime > 0f ? settings.AmbientPostSunriseTime : 2f,
+                AmbientPreSunsetTime = settings.AmbientPreSunsetTime > 0f ? settings.AmbientPreSunsetTime : 1f,
+                AmbientPostSunsetTime = settings.AmbientPostSunsetTime > 0f ? settings.AmbientPostSunsetTime : 1.25f,
 
-                AmbientPreSunriseTime = 0.5f,
-                AmbientPostSunriseTime = 2f,
-                AmbientPreSunsetTime = 1f,
-                AmbientPostSunsetTime = 1.25f,
+                FogPreSunriseTime = settings.FogPreSunriseTime > 0f ? settings.FogPreSunriseTime : 0.5f,
+                FogPostSunriseTime = settings.FogPostSunriseTime > 0f ? settings.FogPostSunriseTime : 1f,
+                FogPreSunsetTime = settings.FogPreSunsetTime > 0f ? settings.FogPreSunsetTime : 2f,
+                FogPostSunsetTime = settings.FogPostSunsetTime > 0f ? settings.FogPostSunsetTime : 1f,
 
-                FogPreSunriseTime = 0.5f,
-                FogPostSunriseTime = 1f,
-                FogPreSunsetTime = 2f,
-                FogPostSunsetTime = 1f,
+                SkyPreSunriseTime = settings.SkyPreSunriseTime > 0f ? settings.SkyPreSunriseTime : 0.5f,
+                SkyPostSunriseTime = settings.SkyPostSunriseTime > 0f ? settings.SkyPostSunriseTime : 0.5f,
+                SkyPreSunsetTime = settings.SkyPreSunsetTime > 0f ? settings.SkyPreSunsetTime : 1f,
+                SkyPostSunsetTime = settings.SkyPostSunsetTime > 0f ? settings.SkyPostSunsetTime : 1f,
 
                 AmbientSunriseColorRgb = Rgb(47, 66, 96),
                 AmbientDayColorRgb = Rgb(137, 140, 160),
@@ -111,6 +125,46 @@ namespace VVardenfell.Runtime.Streaming
                 ExteriorSunIntensityScale = 1.15f,
                 ExteriorDayFogDensity = 0.18f,
                 ExteriorNightFogDensity = 0.36f,
+                SkySunPitchOffsetDegrees = 0f,
+                MainLightIntensityScale = 1f,
+                MoonMaxOpacity = 1f,
+                StarMaxOpacity = 1f,
+                PrecipitationIntensityScale = 1f,
+                LightningIntensityScale = 1f,
+            };
+        }
+
+        public static ActiveSkyWeatherState CreateFallbackSkyWeather()
+        {
+            return new ActiveSkyWeatherState
+            {
+                SkyColorRgb = new float3(0.37f, 0.53f, 0.8f),
+                SunDiscColorRgb = new float3(1f, 0.95f, 0.85f),
+                SkySunWorldDirection = math.up(),
+                UnityLightDirection = math.up(),
+                MasserWorldDirection = math.normalize(new float3(0.35f, 0.8f, 0.45f)),
+                SecundaWorldDirection = math.normalize(new float3(-0.45f, 0.7f, 0.55f)),
+                MoonOpacity = 0f,
+                MasserOpacity = 0f,
+                SecundaOpacity = 0f,
+                MasserShadowBlend = 0f,
+                SecundaShadowBlend = 0f,
+                MasserSize = 55f,
+                SecundaSize = 20f,
+                MasserPhase = 0,
+                SecundaPhase = 0,
+                StarOpacity = 0f,
+                StarRotationDegrees = 0f,
+                SunDiscOpacity = 1f,
+                CloudOpacity = 0f,
+                CloudSpeed = 0f,
+                CloudUvOffset = 0f,
+                CurrentCloudTextureIndex = (int)WeatherKind.Clear,
+                NextCloudTextureIndex = (int)WeatherKind.Clear,
+                WindSpeed = 0f,
+                StormDirection = math.normalize(new float3(1f, 0f, 0.35f)),
+                WeatherKind = (int)WeatherKind.Clear,
+                NextWeatherKind = (int)WeatherKind.Clear,
             };
         }
 

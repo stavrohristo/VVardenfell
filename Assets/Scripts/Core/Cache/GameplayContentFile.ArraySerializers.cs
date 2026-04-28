@@ -192,5 +192,13 @@ namespace VVardenfell.Core.Cache
         static MusicTrackDef[] ReadMusicTrackArray(BinaryReader r)
             => ReadArray<MusicTrackDef>(r, ReadMusicTrack);
 
+
+        static void WriteWeatherDefinitionArray(BinaryWriter w, WeatherDefinitionDef[] values)
+            => WriteArray<WeatherDefinitionDef>(w, values, WriteWeatherDefinition);
+
+
+        static WeatherDefinitionDef[] ReadWeatherDefinitionArray(BinaryReader r)
+            => ReadArray<WeatherDefinitionDef>(r, ReadWeatherDefinition);
+
         }
     }

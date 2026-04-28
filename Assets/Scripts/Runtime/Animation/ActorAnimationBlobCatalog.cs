@@ -219,6 +219,7 @@ namespace VVardenfell.Runtime.Animation
         public ulong ClipHash;
         public int ClipIndex;
         public int RigFamilyIndex;
+        public float Velocity;
         public float StartTime;
         public float LoopStartTime;
         public float LoopStopTime;

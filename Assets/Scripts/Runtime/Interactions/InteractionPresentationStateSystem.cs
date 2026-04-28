@@ -32,7 +32,7 @@ namespace VVardenfell.Runtime.Interactions
                 if (!string.IsNullOrWhiteSpace(prompt))
                 {
                     presentation.ShowFocus = 1;
-                    presentation.FocusText = ToFixedString(prompt);
+                    presentation.FocusText = RuntimeFixedStringUtility.ToFixed128OrDefault(prompt);
                 }
             }
 
@@ -61,15 +61,5 @@ namespace VVardenfell.Runtime.Interactions
             return InteractionMetadataResolver.BuildFocusPrompt(contentDb, EntityManager, focus);
         }
 
-        static FixedString128Bytes ToFixedString(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            if (value.Length > 127)
-                value = value.Substring(0, 127);
-
-            return new FixedString128Bytes(value);
-        }
     }
 }

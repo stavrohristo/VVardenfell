@@ -30,7 +30,7 @@ namespace VVardenfell.Runtime.Inventory
             state.OpenPlacedRefId = placedRefId;
             state.Definition = definition;
             state.PreserveInventoryOnClose = (byte)(inventoryWasAlreadyOpen ? 1 : 0);
-            state.Title = ToFixedTitle(title);
+            state.Title = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(title);
         }
 
         public static void CloseContainer(ref RuntimeShellState shell, ref ContainerWindowState state)
@@ -49,15 +49,5 @@ namespace VVardenfell.Runtime.Inventory
             state.SelectedItemDetailsText = default;
         }
 
-        static FixedString128Bytes ToFixedTitle(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            if (value.Length > 127)
-                value = value.Substring(0, 127);
-
-            return new FixedString128Bytes(value);
-        }
     }
 }

@@ -2,47 +2,50 @@ using Unity.Entities;
 using Unity.Collections;
 using UnityEngine;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Shell;
 
 namespace VVardenfell.Runtime.UI.Shell
 {
     public static class RuntimeShellRequestBridge
     {
+        delegate void RequestMutation<T>(ref T request)
+            where T : unmanaged, IComponentData;
+
+        delegate void SaveLoadRequestMutation(ref SaveLoadBrowserRequest request, in SaveLoadBrowserState state);
+
         public static bool TryRequestAction(RuntimeShellMenuActionId action, out string error)
         {
-            if (!TryGetRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<RuntimeShellActionRequest>(entity);
-            request.Pending = 1;
-            request.DismissModal = 0;
-            request.Action = (byte)action;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                (ref RuntimeShellActionRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.DismissModal = 0;
+                    request.Action = (byte)action;
+                },
+                out error);
         }
 
         public static bool TryDismissModal(out string error)
         {
-            if (!TryGetRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<RuntimeShellActionRequest>(entity);
-            request.DismissModal = 1;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.DismissModal = 1;
+                },
+                out error);
         }
 
         public static bool TryCloseOptions(out string error)
         {
-            if (!TryGetRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<RuntimeShellActionRequest>(entity);
-            request.CloseOptions = 1;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.CloseOptions = 1;
+                },
+                out error);
         }
 
         /// <summary>
@@ -59,323 +62,284 @@ namespace VVardenfell.Runtime.UI.Shell
                 return false;
             }
 
-            if (!TryGetRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<RuntimeShellActionRequest>(entity);
-            request.PendingPinToggle = 1;
-            request.PinWindow = (byte)window;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                (ref RuntimeShellActionRequest request) =>
+                {
+                    request.PendingPinToggle = 1;
+                    request.PinWindow = (byte)window;
+                },
+                out error);
         }
 
         public static bool TrySaveLoadSelectSlot(string slotId, out string error)
         {
-            if (!TryGetSaveLoadRequestSingleton(out var em, out Entity requestEntity, out Entity stateEntity, out error))
-                return false;
-
-            var request = em.GetComponentData<SaveLoadBrowserRequest>(requestEntity);
-            request.Pending = 1;
-            request.Action = (byte)SaveLoadBrowserPendingAction.SelectSlot;
-            request.SlotId = ToFixed128(slotId);
-            em.SetComponentData(requestEntity, request);
-            error = null;
-            return true;
+            return TryMutateSaveLoadRequest(
+                (ref SaveLoadBrowserRequest request, in SaveLoadBrowserState state) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)SaveLoadBrowserPendingAction.SelectSlot;
+                    request.SlotId = RuntimeFixedStringUtility.ToFixed128OrDefault(slotId);
+                },
+                out error);
         }
 
         public static bool TrySaveLoadSetName(string value, out string error)
         {
-            if (!TryGetSaveLoadRequestSingleton(out var em, out Entity requestEntity, out Entity stateEntity, out error))
-                return false;
-
-            var request = em.GetComponentData<SaveLoadBrowserRequest>(requestEntity);
-            request.Pending = 1;
-            request.Action = (byte)SaveLoadBrowserPendingAction.SetName;
-            request.SaveName = ToFixed64(value);
-            em.SetComponentData(requestEntity, request);
-            error = null;
-            return true;
+            return TryMutateSaveLoadRequest(
+                (ref SaveLoadBrowserRequest request, in SaveLoadBrowserState state) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)SaveLoadBrowserPendingAction.SetName;
+                    request.SaveName = RuntimeFixedStringUtility.ToFixed64OrDefault(value);
+                },
+                out error);
         }
 
         public static bool TrySaveLoadAction(SaveLoadBrowserPendingAction action, out string error)
         {
-            if (!TryGetSaveLoadRequestSingleton(out var em, out Entity requestEntity, out Entity stateEntity, out error))
-                return false;
-
-            var state = em.GetComponentData<SaveLoadBrowserState>(stateEntity);
-            var request = em.GetComponentData<SaveLoadBrowserRequest>(requestEntity);
-            request.Pending = 1;
-            request.Action = (byte)action;
-            request.SlotId = state.SelectedSlotId;
-            request.SaveName = state.DraftSaveName;
-            em.SetComponentData(requestEntity, request);
-            error = null;
-            return true;
+            return TryMutateSaveLoadRequest(
+                (ref SaveLoadBrowserRequest request, in SaveLoadBrowserState state) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)action;
+                    request.SlotId = state.SelectedSlotId;
+                    request.SaveName = state.DraftSaveName;
+                },
+                out error);
         }
 
         public static bool TrySelectInventoryItem(int inventoryIndex, out string error)
         {
-            if (!TryGetInventoryRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<InventoryWindowRequest>(entity);
-            request.PendingSelectionChange = 1;
-            request.SelectedInventoryIndex = inventoryIndex;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<InventoryWindowRequest>(
+                "Inventory window request state",
+                (ref InventoryWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedInventoryIndex = inventoryIndex;
+                },
+                out error);
         }
 
         public static bool TrySetInventoryCategory(InventoryWindowCategory category, out string error)
         {
-            if (!TryGetInventoryRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<InventoryWindowRequest>(entity);
-            request.PendingCategoryChange = 1;
-            request.ActiveCategory = (byte)category;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<InventoryWindowRequest>(
+                "Inventory window request state",
+                (ref InventoryWindowRequest request) =>
+                {
+                    request.PendingCategoryChange = 1;
+                    request.ActiveCategory = (byte)category;
+                },
+                out error);
         }
 
         public static bool TrySetInventoryFilterText(string text, out string error)
         {
-            if (!TryGetInventoryRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
             if (text != null && text.Length > 63)
                 text = text.Substring(0, 63);
 
-            var request = em.GetComponentData<InventoryWindowRequest>(entity);
-            request.PendingFilterTextChange = 1;
-            request.FilterText = string.IsNullOrEmpty(text) ? default : text;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<InventoryWindowRequest>(
+                "Inventory window request state",
+                (ref InventoryWindowRequest request) =>
+                {
+                    request.PendingFilterTextChange = 1;
+                    request.FilterText = string.IsNullOrEmpty(text) ? default : text;
+                },
+                out error);
         }
 
         public static bool TrySetInventoryWindowRect(Rect normalizedRect, out string error)
         {
-            if (!TryGetInventoryRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<InventoryWindowRequest>(entity);
-            request.PendingRectUpdate = 1;
-            request.NormalizedX = normalizedRect.x;
-            request.NormalizedY = normalizedRect.y;
-            request.NormalizedWidth = normalizedRect.width;
-            request.NormalizedHeight = normalizedRect.height;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<InventoryWindowRequest>(
+                "Inventory window request state",
+                (ref InventoryWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
         }
 
         public static bool TrySelectContainerItem(int itemIndex, out string error)
         {
-            if (!TryGetContainerRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<ContainerWindowRequest>(entity);
-            request.PendingSelectionChange = 1;
-            request.SelectedItemIndex = itemIndex;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<ContainerWindowRequest>(
+                "Container window request state",
+                (ref ContainerWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedItemIndex = itemIndex;
+                },
+                out error);
         }
 
         public static bool TryTakeSelectedContainerItem(out string error)
         {
-            if (!TryGetContainerRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<ContainerWindowRequest>(entity);
-            request.PendingTakeSelected = 1;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<ContainerWindowRequest>(
+                "Container window request state",
+                static (ref ContainerWindowRequest request) =>
+                {
+                    request.PendingTakeSelected = 1;
+                },
+                out error);
         }
 
         public static bool TryTakeAllContainerItems(out string error)
         {
-            if (!TryGetContainerRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<ContainerWindowRequest>(entity);
-            request.PendingTakeAll = 1;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<ContainerWindowRequest>(
+                "Container window request state",
+                static (ref ContainerWindowRequest request) =>
+                {
+                    request.PendingTakeAll = 1;
+                },
+                out error);
         }
 
         public static bool TryCloseContainer(out string error)
         {
-            if (!TryGetContainerRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<ContainerWindowRequest>(entity);
-            request.PendingClose = 1;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<ContainerWindowRequest>(
+                "Container window request state",
+                static (ref ContainerWindowRequest request) =>
+                {
+                    request.PendingClose = 1;
+                },
+                out error);
         }
 
         public static bool TrySetContainerWindowRect(Rect normalizedRect, out string error)
         {
-            if (!TryGetContainerRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<ContainerWindowRequest>(entity);
-            request.PendingRectUpdate = 1;
-            request.NormalizedX = normalizedRect.x;
-            request.NormalizedY = normalizedRect.y;
-            request.NormalizedWidth = normalizedRect.width;
-            request.NormalizedHeight = normalizedRect.height;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<ContainerWindowRequest>(
+                "Container window request state",
+                (ref ContainerWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
         }
 
         public static bool TrySetStatsWindowRect(Rect normalizedRect, out string error)
         {
-            if (!TryGetStatsRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<StatsWindowRequest>(entity);
-            request.PendingRectUpdate = 1;
-            request.NormalizedX = normalizedRect.x;
-            request.NormalizedY = normalizedRect.y;
-            request.NormalizedWidth = normalizedRect.width;
-            request.NormalizedHeight = normalizedRect.height;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<StatsWindowRequest>(
+                "Stats window request state",
+                (ref StatsWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
         }
 
         public static bool TrySetSpellWindowRect(Rect normalizedRect, out string error)
         {
-            if (!TryGetSpellRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<SpellWindowRequest>(entity);
-            request.PendingRectUpdate = 1;
-            request.NormalizedX = normalizedRect.x;
-            request.NormalizedY = normalizedRect.y;
-            request.NormalizedWidth = normalizedRect.width;
-            request.NormalizedHeight = normalizedRect.height;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
         }
 
         public static bool TrySelectSpell(int spellIndex, out string error)
         {
-            if (!TryGetSpellRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<SpellWindowRequest>(entity);
-            request.PendingSelectionChange = 1;
-            request.SelectedSpellIndex = spellIndex;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedSpellIndex = spellIndex;
+                },
+                out error);
         }
 
         public static bool TrySetSpellFilterText(string text, out string error)
         {
-            if (!TryGetSpellRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
             if (text != null && text.Length > 63)
                 text = text.Substring(0, 63);
 
-            var request = em.GetComponentData<SpellWindowRequest>(entity);
-            request.PendingFilterTextChange = 1;
-            request.FilterText = string.IsNullOrEmpty(text) ? default : text;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    request.PendingFilterTextChange = 1;
+                    request.FilterText = string.IsNullOrEmpty(text) ? default : text;
+                },
+                out error);
         }
 
         public static bool TrySetMapWindowRect(Rect normalizedRect, out string error)
         {
-            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<MapWindowRequest>(entity);
-            request.PendingRectUpdate = 1;
-            request.NormalizedX = normalizedRect.x;
-            request.NormalizedY = normalizedRect.y;
-            request.NormalizedWidth = normalizedRect.width;
-            request.NormalizedHeight = normalizedRect.height;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<MapWindowRequest>(
+                "Map window request state",
+                (ref MapWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
         }
 
         public static bool TrySetMapWindowMode(MapWindowMode mode, out string error)
         {
-            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<MapWindowRequest>(entity);
-            request.PendingModeChange = 1;
-            request.Mode = (byte)mode;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<MapWindowRequest>(
+                "Map window request state",
+                (ref MapWindowRequest request) =>
+                {
+                    request.PendingModeChange = 1;
+                    request.Mode = (byte)mode;
+                },
+                out error);
         }
 
         public static bool TrySetMapViewport(MapWindowMode mode, float panX, float panY, float zoom, out string error)
         {
-            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
-                return false;
-
-            var request = em.GetComponentData<MapWindowRequest>(entity);
-            request.PendingViewportChange = 1;
-            request.ViewportMode = (byte)mode;
-            request.PanX = panX;
-            request.PanY = panY;
-            request.Zoom = zoom;
-            em.SetComponentData(entity, request);
-            error = null;
-            return true;
+            return TryMutateRequest<MapWindowRequest>(
+                "Map window request state",
+                (ref MapWindowRequest request) =>
+                {
+                    request.PendingViewportChange = 1;
+                    request.ViewportMode = (byte)mode;
+                    request.PanX = panX;
+                    request.PanY = panY;
+                    request.Zoom = zoom;
+                },
+                out error);
         }
 
         public static bool TryCenterMapOnPlayer(out string error)
         {
-            if (!TryGetMapRequestSingleton(out var em, out Entity entity, out error))
+            return TryMutateRequest<MapWindowRequest>(
+                "Map window request state",
+                static (ref MapWindowRequest request) =>
+                {
+                    request.PendingCenterOnPlayer = 1;
+                },
+                out error);
+        }
+
+        static bool TryMutateRequest<T>(
+            string label,
+            RequestMutation<T> mutate,
+            out string error)
+            where T : unmanaged, IComponentData
+        {
+            if (!TryGetSingleton<T>(label, out var entityManager, out Entity entity, out error))
                 return false;
 
-            var request = em.GetComponentData<MapWindowRequest>(entity);
-            request.PendingCenterOnPlayer = 1;
-            em.SetComponentData(entity, request);
+            var request = entityManager.GetComponentData<T>(entity);
+            mutate(ref request);
+            entityManager.SetComponentData(entity, request);
             error = null;
             return true;
         }
 
-        static bool TryGetRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
+        static bool TryMutateSaveLoadRequest(
+            SaveLoadRequestMutation mutate,
+            out string error)
         {
-            requestEntity = Entity.Null;
-            entityManager = default;
-
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
+            if (!TryGetSaveLoadRequestSingleton(out var entityManager, out Entity requestEntity, out Entity stateEntity, out error))
                 return false;
-            }
 
-            entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeShellActionRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Runtime shell request state is not ready.";
-                return false;
-            }
-
-            requestEntity = query.GetSingletonEntity();
+            var state = entityManager.GetComponentData<SaveLoadBrowserState>(stateEntity);
+            var request = entityManager.GetComponentData<SaveLoadBrowserRequest>(requestEntity);
+            mutate(ref request, state);
+            entityManager.SetComponentData(requestEntity, request);
             error = null;
             return true;
         }
@@ -386,57 +350,23 @@ namespace VVardenfell.Runtime.UI.Shell
             stateEntity = Entity.Null;
             entityManager = default;
 
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
+            if (!TryGetSingleton<SaveLoadBrowserRequest>("Save/load browser request state", out entityManager, out requestEntity, out error))
                 return false;
-            }
-
-            entityManager = world.EntityManager;
-            using var requestQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<SaveLoadBrowserRequest>());
-            if (requestQuery.IsEmptyIgnoreFilter)
-            {
-                error = "Save/load browser request state is not ready.";
+            if (!TryGetSingleton<SaveLoadBrowserState>("Save/load browser state", out _, out stateEntity, out error))
                 return false;
-            }
 
-            using var stateQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<SaveLoadBrowserState>());
-            if (stateQuery.IsEmptyIgnoreFilter)
-            {
-                error = "Save/load browser state is not ready.";
-                return false;
-            }
-
-            requestEntity = requestQuery.GetSingletonEntity();
-            stateEntity = stateQuery.GetSingletonEntity();
             error = null;
             return true;
         }
 
-        static FixedString128Bytes ToFixed128(string value)
+        static bool TryGetSingleton<T>(
+            string label,
+            out EntityManager entityManager,
+            out Entity entity,
+            out string error)
+            where T : unmanaged, IComponentData
         {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
-
-        static FixedString64Bytes ToFixed64(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString64Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
-
-        static bool TryGetInventoryRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
-        {
-            requestEntity = Entity.Null;
+            entity = Entity.Null;
             entityManager = default;
 
             var world = World.DefaultGameObjectInjectionWorld;
@@ -447,114 +377,14 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<InventoryWindowRequest>());
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
             if (query.IsEmptyIgnoreFilter)
             {
-                error = "Inventory window request state is not ready.";
+                error = $"{label} is not ready.";
                 return false;
             }
 
-            requestEntity = query.GetSingletonEntity();
-            error = null;
-            return true;
-        }
-
-        static bool TryGetContainerRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
-        {
-            requestEntity = Entity.Null;
-            entityManager = default;
-
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
-                return false;
-            }
-
-            entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ContainerWindowRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Container window request state is not ready.";
-                return false;
-            }
-
-            requestEntity = query.GetSingletonEntity();
-            error = null;
-            return true;
-        }
-
-        static bool TryGetStatsRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
-        {
-            requestEntity = Entity.Null;
-            entityManager = default;
-
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
-                return false;
-            }
-
-            entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<StatsWindowRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Stats window request state is not ready.";
-                return false;
-            }
-
-            requestEntity = query.GetSingletonEntity();
-            error = null;
-            return true;
-        }
-
-        static bool TryGetSpellRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
-        {
-            requestEntity = Entity.Null;
-            entityManager = default;
-
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
-                return false;
-            }
-
-            entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<SpellWindowRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Spell window request state is not ready.";
-                return false;
-            }
-
-            requestEntity = query.GetSingletonEntity();
-            error = null;
-            return true;
-        }
-
-        static bool TryGetMapRequestSingleton(out EntityManager entityManager, out Entity requestEntity, out string error)
-        {
-            requestEntity = Entity.Null;
-            entityManager = default;
-
-            var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated)
-            {
-                error = "Default ECS world is not ready.";
-                return false;
-            }
-
-            entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MapWindowRequest>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                error = "Map window request state is not ready.";
-                return false;
-            }
-
-            requestEntity = query.GetSingletonEntity();
+            entity = query.GetSingletonEntity();
             error = null;
             return true;
         }

@@ -36,6 +36,8 @@ namespace VVardenfell.Core.Cache
         public int RegionSoundRefCount;
         public int MusicTrackCount;
         public int AmbientSettingsCount;
+        public int WeatherSettingsCount;
+        public int WeatherDefinitionCount;
         public int GameSettingCount;
         public int GlobalCount;
         public int ClassCount;
@@ -147,6 +149,8 @@ namespace VVardenfell.Core.Cache
             w.Write(RegionSoundRefCount);
             w.Write(MusicTrackCount);
             w.Write(AmbientSettingsCount);
+            w.Write(WeatherSettingsCount);
+            w.Write(WeatherDefinitionCount);
             w.Write(GameSettingCount);
             w.Write(GlobalCount);
             w.Write(ClassCount);
@@ -220,6 +224,8 @@ namespace VVardenfell.Core.Cache
                 manifest.RegionSoundRefCount = r.ReadInt32();
                 manifest.MusicTrackCount = r.ReadInt32();
                 manifest.AmbientSettingsCount = r.ReadInt32();
+                manifest.WeatherSettingsCount = r.ReadInt32();
+                manifest.WeatherDefinitionCount = r.ReadInt32();
                 manifest.GameSettingCount = r.ReadInt32();
                 manifest.GlobalCount = r.ReadInt32();
                 manifest.ClassCount = r.ReadInt32();

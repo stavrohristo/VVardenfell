@@ -108,6 +108,7 @@ namespace VVardenfell.Importer.Bake
             var bakeryTextures = new TextureBakery(sharedBsa, textureResolver);
             bakeryTextures.TryLoadExisting(CachePaths.TextureCatalog);
             int defaultTexIdx = bakeryTextures.AddOrGet(LtexIndex.DefaultTexturePath);
+            SeedSkyWeatherTextures(gameplayContent, bakeryTextures);
             var bakeryLayers = new TerrainLayerBakery(defaultTexIdx);
             bakeryLayers.TryLoadExisting(CachePaths.TerrainLayers);
             var bakeryCollisions = new CollisionBakery();
@@ -365,6 +366,44 @@ namespace VVardenfell.Importer.Bake
             }
             progress.Label = $"{dirtyCount}/{stagedCells.Length} cells rebuilt, {bakeryMeshes.Count} meshes, {bakeryMaterials.Count} mats, {bakeryTextures.Count} textures, {bakeryLayers.Count} terrain layers, {bakeryCollisions.Count} collisions, {bakeryActorAnimations.SkeletonCount} actor skeletons, {bakeryActorAnimations.ClipCount} actor clips";
             progress.Done = true;
+        }
+
+
+        static void SeedSkyWeatherTextures(GameplayContentData gameplayContent, TextureBakery textures)
+        {
+            if (gameplayContent == null || textures == null)
+                return;
+
+            var visual = gameplayContent.SkyWeatherVisualSettings;
+            AddTexture(textures, visual.SunTexture);
+            AddTexture(textures, visual.SunGlareTexture);
+            AddTexture(textures, visual.MasserShadowTexture);
+            AddTexture(textures, visual.SecundaShadowTexture);
+            AddTexture(textures, visual.RainDropTexture);
+            AddTextures(textures, visual.MasserPhaseTextures);
+            AddTextures(textures, visual.SecundaPhaseTextures);
+            AddTextures(textures, visual.CloudTextures);
+
+            var weather = gameplayContent.WeatherDefinitions ?? Array.Empty<WeatherDefinitionDef>();
+            for (int i = 0; i < weather.Length; i++)
+                AddTexture(textures, weather[i].CloudTexture);
+        }
+
+
+        static void AddTextures(TextureBakery textures, string[] paths)
+        {
+            if (paths == null)
+                return;
+
+            for (int i = 0; i < paths.Length; i++)
+                AddTexture(textures, paths[i]);
+        }
+
+
+        static void AddTexture(TextureBakery textures, string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path))
+                textures.AddOrGet(path);
         }
 
 

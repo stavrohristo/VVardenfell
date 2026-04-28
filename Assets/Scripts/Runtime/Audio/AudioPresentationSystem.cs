@@ -25,6 +25,7 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<MusicPlaybackStatus>();
             RequireForUpdate<InteriorAmbientState>();
             RequireForUpdate<RegionAmbientState>();
+            RequireForUpdate<WeatherAudioState>();
             RequireForUpdate<AudioTuningState>();
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
@@ -48,6 +49,7 @@ namespace VVardenfell.Runtime.Audio
             var music = SystemAPI.GetSingleton<MusicState>();
             var interiorAmbient = SystemAPI.GetSingleton<InteriorAmbientState>();
             var regionAmbient = SystemAPI.GetSingleton<RegionAmbientState>();
+            var weatherAmbient = SystemAPI.GetSingleton<WeatherAudioState>();
             var tuning = SystemAPI.GetSingleton<AudioTuningState>();
             var interactionRequests = SystemAPI.GetSingletonBuffer<InteractionAudioRequest>();
             ref var playbackStatus = ref SystemAPI.GetSingletonRW<MusicPlaybackStatus>().ValueRW;
@@ -57,6 +59,7 @@ namespace VVardenfell.Runtime.Audio
                 _service.SyncMusic(contentDb, music, tuning);
             using (k_SyncInteriorAmbient.Auto())
                 _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
+            _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
             using (k_SyncRegionContext.Auto())
                 _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
             using (k_QueueRegionEvent.Auto())

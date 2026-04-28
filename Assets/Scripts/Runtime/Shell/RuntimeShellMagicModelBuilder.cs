@@ -20,7 +20,7 @@ namespace VVardenfell.Runtime.Shell
             int spellCount = contentDb?.SpellCount ?? 0;
             var model = new SpellWindowViewModel
             {
-                NormalizedRect = new Rect(state.NormalizedX, state.NormalizedY, state.NormalizedWidth, state.NormalizedHeight),
+                NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
                 Title = "Magic",
                 FilterText = state.FilterText.ToString(),
                 FooterButtonText = "Delete",

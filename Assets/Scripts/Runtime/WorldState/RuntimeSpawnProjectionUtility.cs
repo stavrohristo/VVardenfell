@@ -333,7 +333,7 @@ namespace VVardenfell.Runtime.WorldState
                 WorldSpawner.SpawnInteriorCell(world, interiorCell, InteriorWorldOffset, transitionEntity, ref logicalLookup);
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
-                transition.ActiveInteriorCellId = ToFixed128(payload.ActiveInteriorCellId);
+                transition.ActiveInteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(payload.ActiveInteriorCellId);
                 transition.TransitionInProgress = 0;
 
                 var interactionState = entityManager.GetComponentData<InteractionRuntimeState>(runtimeEntity);
@@ -356,16 +356,6 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(streamingEntity, logicalLookup);
             entityManager.SetComponentData(transitionEntity, transition);
             return true;
-        }
-
-        static FixedString128Bytes ToFixed128(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
         }
 
         public static uint FindMaxRuntimeOrdinal(DynamicBuffer<WorldJournalEntry> journal)

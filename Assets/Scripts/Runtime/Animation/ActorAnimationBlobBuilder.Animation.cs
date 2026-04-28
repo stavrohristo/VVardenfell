@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.Animation
                     KeyCount = track?.KeyCount ?? 0,
                     BlendMask = (uint)i < (uint)blendMasks.Length
                         ? blendMasks[i]
-                        : (ushort)ActorAnimationBlendMask.Torso,
+                        : (ushort)ActorAnimationBlendMask.LowerBody,
                 };
             }
         }
@@ -106,6 +106,7 @@ namespace VVardenfell.Runtime.Animation
                     ClipHash = groups[i].ClipHash,
                     ClipIndex = groups[i].ClipIndex,
                     RigFamilyIndex = groups[i].RigFamilyIndex,
+                    Velocity = groups[i].Velocity,
                     StartTime = groups[i].StartTime,
                     LoopStartTime = groups[i].LoopStartTime,
                     LoopStopTime = groups[i].LoopStopTime,
@@ -211,52 +212,74 @@ namespace VVardenfell.Runtime.Animation
                 if (clip == null || clip.FirstTrackIndex < 0 || clip.TrackCount <= 0)
                     continue;
 
+                MaskRootIndices maskRoots = ResolveMaskRoots(bones);
                 int end = math.min(trackCount, clip.FirstTrackIndex + clip.TrackCount);
                 for (int trackIndex = clip.FirstTrackIndex; trackIndex < end; trackIndex++)
                 {
                     int boneIndex = (uint)trackIndex < (uint)targetBoneIndices.Length ? targetBoneIndices[trackIndex] : -1;
-                    string boneName = (uint)boneIndex < (uint)(bones?.Length ?? 0)
-                        ? bones[boneIndex].Name
-                        : source.Tracks[trackIndex]?.TargetName;
-                    result[trackIndex] = (ushort)ClassifyBlendMask(boneName);
+                    result[trackIndex] = (ushort)ClassifyBlendMask(bones, maskRoots, boneIndex);
                 }
             }
             return result;
         }
 
-        static ActorAnimationBlendMask ClassifyBlendMask(string name)
+        readonly struct MaskRootIndices
         {
-            string lower = string.IsNullOrWhiteSpace(name)
-                ? string.Empty
-                : name.Trim().ToLowerInvariant();
-            if (lower.Contains("l clavicle", StringComparison.Ordinal)
-                || lower.Contains("l upperarm", StringComparison.Ordinal)
-                || lower.Contains("l forearm", StringComparison.Ordinal)
-                || lower.Contains("l hand", StringComparison.Ordinal)
-                || lower.Contains("weapon bone left", StringComparison.Ordinal)
-                || lower.Contains("shield bone", StringComparison.Ordinal))
+            public readonly int Torso;
+            public readonly int LeftArm;
+            public readonly int RightArm;
+
+            public MaskRootIndices(int torso, int leftArm, int rightArm)
+            {
+                Torso = torso;
+                LeftArm = leftArm;
+                RightArm = rightArm;
+            }
+
+            public bool HasOpenMwRoots => Torso >= 0 || LeftArm >= 0 || RightArm >= 0;
+        }
+
+        static MaskRootIndices ResolveMaskRoots(ActorSkeletonBoneDef[] bones)
+        {
+            if (bones == null || bones.Length == 0)
+                return new MaskRootIndices(-1, -1, -1);
+
+            return new MaskRootIndices(
+                FindBoneIndex(bones, "Bip01 Spine1"),
+                FindBoneIndex(bones, "Bip01 L Clavicle"),
+                FindBoneIndex(bones, "Bip01 R Clavicle"));
+        }
+
+        static ActorAnimationBlendMask ClassifyBlendMask(
+            ActorSkeletonBoneDef[] bones,
+            MaskRootIndices roots,
+            int boneIndex)
+        {
+            if (bones == null
+                || !roots.HasOpenMwRoots
+                || (uint)boneIndex >= (uint)bones.Length)
+            {
+                return ActorAnimationBlendMask.LowerBody;
+            }
+
+            if (IsSelfOrDescendantOf(bones, boneIndex, roots.LeftArm))
                 return ActorAnimationBlendMask.LeftArm;
 
-            if (lower.Contains("r clavicle", StringComparison.Ordinal)
-                || lower.Contains("r upperarm", StringComparison.Ordinal)
-                || lower.Contains("r forearm", StringComparison.Ordinal)
-                || lower.Contains("r hand", StringComparison.Ordinal)
-                || lower.Contains("weapon bone", StringComparison.Ordinal))
+            if (IsSelfOrDescendantOf(bones, boneIndex, roots.RightArm))
                 return ActorAnimationBlendMask.RightArm;
 
-            if (lower.Contains("pelvis", StringComparison.Ordinal)
-                || lower.Contains("groin", StringComparison.Ordinal)
-                || lower.Contains("thigh", StringComparison.Ordinal)
-                || lower.Contains("calf", StringComparison.Ordinal)
-                || lower.Contains("ankle", StringComparison.Ordinal)
-                || lower.Contains("foot", StringComparison.Ordinal)
-                || lower.Contains("toe", StringComparison.Ordinal)
-                || lower.Contains("knee", StringComparison.Ordinal)
-                || lower.Contains("leg", StringComparison.Ordinal)
-                || lower.Contains("tail", StringComparison.Ordinal))
-                return ActorAnimationBlendMask.LowerBody;
+            if (IsSelfOrDescendantOf(bones, boneIndex, roots.Torso))
+                return ActorAnimationBlendMask.Torso;
 
-            return ActorAnimationBlendMask.Torso;
+            return ActorAnimationBlendMask.LowerBody;
+        }
+
+        static bool IsSelfOrDescendantOf(ActorSkeletonBoneDef[] bones, int boneIndex, int ancestorIndex)
+        {
+            if ((uint)ancestorIndex >= (uint)(bones?.Length ?? 0))
+                return false;
+
+            return boneIndex == ancestorIndex || IsDescendantOf(bones, boneIndex, ancestorIndex);
         }
 
         static bool IsPoseTrack(ActorAnimationTrackDef track)

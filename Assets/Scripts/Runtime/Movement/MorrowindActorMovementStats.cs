@@ -249,10 +249,10 @@ namespace VVardenfell.Runtime.Movement
 
             return new ActorIdentitySet
             {
-                CharacterName = ToFixed64(characterName),
+                CharacterName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(characterName),
                 Level = math.max(1, actor.Level),
-                RaceName = ToFixed64(actor.RaceId),
-                ClassName = ToFixed64(actor.ClassId),
+                RaceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(actor.RaceId),
+                ClassName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(actor.ClassId),
                 BirthSignName = default,
                 Reputation = actor.Reputation,
             };
@@ -691,15 +691,6 @@ namespace VVardenfell.Runtime.Movement
             return math.clamp(current, 0f, max);
         }
 
-        static FixedString64Bytes ToFixed64(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return default;
-
-            var result = default(FixedString64Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
     }
 
     public static class MorrowindPlayerSpeedResolver

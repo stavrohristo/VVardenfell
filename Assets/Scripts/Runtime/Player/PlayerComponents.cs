@@ -77,6 +77,7 @@ namespace VVardenfell.Runtime.Player
     {
         public Entity Player;
         public Entity View;
+        public byte FirstPerson;
     }
 
     public struct PlayerStanceColliders : IComponentData

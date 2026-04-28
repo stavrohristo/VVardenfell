@@ -44,28 +44,16 @@ namespace VVardenfell.Runtime.Inventory
                 selectedIndex = ContainerLootUtility.FindFirstItemIndex(items, state.OpenPlacedRefId);
 
             state.SelectedItemIndex = selectedIndex;
-            state.SelectedItemDetailsText = ContainerLootUtility.ToFixedDetails(BuildSelectedItemDetails(contentDb, items, state.OpenPlacedRefId, selectedIndex));
+            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(contentDb, items, state.OpenPlacedRefId, selectedIndex));
         }
 
         static void ApplyRequests(ref ContainerWindowState state, ref ContainerWindowRequest request)
         {
-            if (request.PendingRectUpdate != 0)
-            {
-                state.NormalizedX = Clamp01(request.NormalizedX);
-                state.NormalizedY = Clamp01(request.NormalizedY);
-                state.NormalizedWidth = ClampDimension(request.NormalizedWidth, state.NormalizedWidth);
-                state.NormalizedHeight = ClampDimension(request.NormalizedHeight, state.NormalizedHeight);
-
-                if (state.NormalizedX + state.NormalizedWidth > 1f)
-                    state.NormalizedX = Math.Max(0f, 1f - state.NormalizedWidth);
-                if (state.NormalizedY + state.NormalizedHeight > 1f)
-                    state.NormalizedY = Math.Max(0f, 1f - state.NormalizedHeight);
-            }
+            RuntimeWindowGeometryUtility.ApplyRectRequest(ref state.Rect, ref request.RectRequest);
 
             if (request.PendingSelectionChange != 0)
                 state.SelectedItemIndex = request.SelectedItemIndex;
 
-            request.PendingRectUpdate = 0;
             request.PendingSelectionChange = 0;
         }
 
@@ -95,19 +83,5 @@ namespace VVardenfell.Runtime.Inventory
             return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, Math.Max(1, entry.Count));
         }
 
-        static float Clamp01(float value)
-        {
-            if (float.IsNaN(value) || float.IsInfinity(value))
-                return 0f;
-            return Math.Clamp(value, 0f, 1f);
-        }
-
-        static float ClampDimension(float requested, float fallback)
-        {
-            if (float.IsNaN(requested) || float.IsInfinity(requested) || requested <= 0f)
-                requested = fallback > 0f ? fallback : 0.1f;
-
-            return Math.Clamp(requested, 0.1f, 1f);
-        }
     }
 }

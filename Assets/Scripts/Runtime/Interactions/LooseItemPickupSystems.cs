@@ -116,7 +116,7 @@ namespace VVardenfell.Runtime.Interactions
             activationResult.Kind = (byte)InteractableKind.LooseItem;
             activationResult.Success = 1;
             activationResult.PendingNotification = 1;
-            activationResult.NotificationText = ToFixedString($"Picked up {itemName}");
+            activationResult.NotificationText = RuntimeFixedStringUtility.ToFixed128OrDefault($"Picked up {itemName}");
 
         }
 
@@ -207,16 +207,6 @@ namespace VVardenfell.Runtime.Interactions
             ecb.Dispose();
         }
 
-        static FixedString128Bytes ToFixedString(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            if (value.Length > 127)
-                value = value.Substring(0, 127);
-
-            return new FixedString128Bytes(value);
-        }
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]

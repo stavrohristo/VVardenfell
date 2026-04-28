@@ -26,15 +26,21 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _environmentQuery;
         EntityQuery _streamingQuery;
         EntityQuery _dayCycleQuery;
+        EntityQuery _timeQuery;
+        EntityQuery _weatherQuery;
 
         protected override void OnCreate()
         {
             _environmentQuery = GetEntityQuery(ComponentType.ReadWrite<ActiveEnvironmentState>());
             _streamingQuery = GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>());
             _dayCycleQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindDayCycleState>());
+            _timeQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindTimeState>());
+            _weatherQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindWeatherState>());
             RequireForUpdate(_environmentQuery);
             RequireForUpdate(_streamingQuery);
             RequireForUpdate(_dayCycleQuery);
+            RequireForUpdate(_timeQuery);
+            RequireForUpdate(_weatherQuery);
         }
 
         protected override void OnUpdate()
@@ -45,6 +51,8 @@ namespace VVardenfell.Runtime.Streaming
             var contentDb = RuntimeContentDatabase.Active;
             var streaming = _streamingQuery.GetSingleton<StreamingConfig>();
             var dayCycle = _dayCycleQuery.GetSingleton<MorrowindDayCycleState>();
+            var time = _timeQuery.GetSingleton<MorrowindTimeState>();
+            var weather = _weatherQuery.GetSingleton<MorrowindWeatherState>();
 
             if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
@@ -83,7 +91,7 @@ namespace VVardenfell.Runtime.Streaming
 
             if (WorldResources.Cells.TryGetValue(streaming.CameraCell, out var exteriorCell) && exteriorCell != null)
             {
-                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle);
+                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle, time, weather);
                 LogEnvironmentContext(
                     isInterior: false,
                     exteriorCell: streaming.CameraCell,
@@ -93,7 +101,7 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            environment = BuildExteriorEnvironment(null, contentDb, dayCycle);
+            environment = BuildExteriorEnvironment(null, contentDb, dayCycle, time, weather);
             LogEnvironmentContext(
                 isInterior: false,
                 exteriorCell: streaming.CameraCell,
@@ -127,41 +135,31 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle)
+        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle, MorrowindTimeState time, MorrowindWeatherState weather)
         {
-            var day = MorrowindDayCycleUtility.Evaluate(dayCycle);
-            float mood = 0f;
             int regionHandleValue = 0;
             string regionId = cell?.Environment.RegionId ?? string.Empty;
 
             if (contentDb != null && contentDb.TryGetRegionHandle(regionId, out var regionHandle))
             {
-                ref readonly var region = ref contentDb.Get(regionHandle);
                 regionHandleValue = regionHandle.Value;
-
-                float total =
-                    region.ClearChance +
-                    region.CloudyChance +
-                    region.FoggyChance +
-                    region.OvercastChance +
-                    region.RainChance +
-                    region.ThunderChance +
-                    region.AshChance +
-                    region.BlightChance +
-                    region.SnowChance +
-                    region.BlizzardChance;
-
-                if (total > 0f)
-                {
-                    float cloudiness = (region.CloudyChance + region.FoggyChance + region.OvercastChance) / total;
-                    float storminess = (region.RainChance + region.ThunderChance + region.AshChance + region.BlightChance + region.SnowChance + region.BlizzardChance) / total;
-                    mood = math.saturate(cloudiness * 0.7f + storminess);
-                }
             }
 
-            float sunDimmer = math.lerp(1f, 0.45f, mood);
-            float directionalIntensity = day.SunPercent * math.max(0f, dayCycle.ExteriorSunIntensityScale) * sunDimmer;
-            float fogDensity = math.saturate(day.FogDensity);
+            var current = ResolveWeather(contentDb, weather.CurrentWeather);
+            var next = ResolveWeather(contentDb, weather.NextWeather);
+            var weatherSettings = contentDb?.Data?.WeatherSettings ?? MorrowindDayCycleUtility.CreateFallbackWeatherSettings(dayCycle);
+            var currentEval = MorrowindDayCycleUtility.EvaluateWeather(dayCycle, weatherSettings, current, time.GameHour);
+            var nextEval = MorrowindDayCycleUtility.EvaluateWeather(dayCycle, weatherSettings, next, time.GameHour);
+            var day = MorrowindDayCycleUtility.Lerp(currentEval, nextEval, weather.Transition);
+
+            float windDimmer = math.saturate(math.lerp(current.WindSpeed, next.WindSpeed, weather.Transition));
+            float sunDimmer = math.lerp(1f, 0.35f, windDimmer);
+            float directionalIntensity = day.SunPercent
+                * math.max(0f, dayCycle.ExteriorSunIntensityScale)
+                * math.max(0f, dayCycle.MainLightIntensityScale)
+                * sunDimmer;
+            float baseFogDensity = math.lerp(dayCycle.ExteriorDayFogDensity, dayCycle.ExteriorNightFogDensity, 1f - day.SunPercent);
+            float fogDensity = math.saturate(math.max(baseFogDensity, day.FogDepth / 3f));
             ComputeFogRange(fogDensity, isInterior: false, out float fogNear, out float fogFar);
 
             return new ActiveEnvironmentState
@@ -178,6 +176,14 @@ namespace VVardenfell.Runtime.Streaming
                 RegionHandleValue = regionHandleValue,
                 IsInterior = 0,
             };
+        }
+
+        static WeatherDefinitionDef ResolveWeather(RuntimeContentDatabase contentDb, int index)
+        {
+            var defs = contentDb?.Data?.WeatherDefinitions;
+            if (defs != null && (uint)index < (uint)defs.Length)
+                return defs[index];
+            return MorrowindDayCycleUtility.CreateFallbackClearWeather();
         }
 
         static float3 DecodeRgb(uint value)

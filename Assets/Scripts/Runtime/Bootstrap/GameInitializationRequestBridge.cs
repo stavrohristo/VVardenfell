@@ -159,7 +159,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
             em.SetComponentData(entity, new LoadGameInitializationSingleton
             {
-                SlotId = ToFixed128(slotId),
+                SlotId = RuntimeFixedStringUtility.ToFixed128OrDefault(slotId),
             });
 
             error = null;
@@ -219,7 +219,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 RuntimeMode = (byte)BootstrapController.CurrentRuntimeMode,
                 SpawnLocalPlayer = (byte)(ShouldSpawnLocalPlayerForCurrentMode() ? 1 : 0),
                 HasSerializedSavePayload = hasSerializedSavePayload,
-                SerializedSavePayloadStatus = ToFixed128(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
+                SerializedSavePayloadStatus = RuntimeFixedStringUtility.ToFixed128OrDefault(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });
             PopulateInitializationSpellbook(em.AddBuffer<PlayerKnownSpell>(initEntity), knownSpells);
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
@@ -282,14 +282,5 @@ namespace VVardenfell.Runtime.Bootstrap
             }
         }
 
-        static FixedString128Bytes ToFixed128(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return default;
-
-            var result = default(FixedString128Bytes);
-            result.CopyFromTruncated(value);
-            return result;
-        }
     }
 }

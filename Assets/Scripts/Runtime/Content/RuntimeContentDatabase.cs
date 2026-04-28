@@ -65,6 +65,7 @@ namespace VVardenfell.Runtime.Content
         public int RegionCount => Data.Regions.Length;
         public int MusicTrackCount => Data.MusicTracks.Length;
         public int AmbientSettingsCount => Manifest?.AmbientSettingsCount ?? 0;
+        public int WeatherDefinitionCount => Data.WeatherDefinitions?.Length ?? 0;
         public int GameSettingCount => Data.GameSettings.Length;
         public int GlobalCount => Data.Globals.Length;
         public int ClassCount => Data.Classes.Length;
@@ -225,6 +226,10 @@ namespace VVardenfell.Runtime.Content
         public ref readonly RegionDef Get(RegionDefHandle handle) => ref Data.Regions[handle.Index];
         public ref readonly MusicTrackDef Get(MusicTrackDefHandle handle) => ref Data.MusicTracks[handle.Index];
         public ref readonly AmbientSettingsDef GetAmbientSettings() => ref Data.AmbientSettings;
+        public ref readonly WeatherSettingsDef GetWeatherSettings() => ref Data.WeatherSettings;
+        public ref readonly SkyWeatherVisualSettingsDef GetSkyWeatherVisualSettings() => ref Data.SkyWeatherVisualSettings;
+        public ReadOnlySpan<WeatherDefinitionDef> GetWeatherDefinitions()
+            => Data.WeatherDefinitions == null ? ReadOnlySpan<WeatherDefinitionDef>.Empty : new ReadOnlySpan<WeatherDefinitionDef>(Data.WeatherDefinitions);
         public ref readonly GenericRecordDef GetGameSetting(GenericRecordDefHandle handle) => ref Data.GameSettings[handle.Index];
         public ref readonly GenericRecordDef GetStatic(GenericRecordDefHandle handle) => ref Data.Statics[handle.Index];
         public ref readonly ClassDef GetClass(GenericRecordDefHandle handle) => ref Data.Classes[handle.Index];

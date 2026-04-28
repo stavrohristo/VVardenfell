@@ -111,7 +111,6 @@ namespace VVardenfell.Runtime.Animation
                 var sampledPoseBuffer = ecb.AddBuffer<ActorSampledBonePose>(entity);
                 PopulateSampledPoseBuffer(sampledPoseBuffer, boneCount);
                 var skinMeshBuffer = ecb.AddBuffer<ActorSkinMesh>(entity);
-                var rigidEquipmentBuffer = ecb.AddBuffer<ActorRigidEquipment>(entity);
                 bool hasEquipment = EntityManager.HasBuffer<ActorEquipmentSlot>(entity);
                 DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
@@ -119,8 +118,6 @@ namespace VVardenfell.Runtime.Animation
                 bool isBeast = isNpc && IsBeastRace(contentDb, actor.RaceId);
                 PopulateSkinMeshBuffer(
                     skinMeshBuffer,
-                    rigidEquipmentBuffer,
-                    boneBuffer,
                     ref catalog,
                     cache,
                     contentDb,
@@ -131,23 +128,37 @@ namespace VVardenfell.Runtime.Animation
                     recipe,
                     hasEquipment,
                     equipmentBuffer);
+
+                using var rigidEquipment = new NativeList<ActorRigidEquipment>(Allocator.Temp);
                 PopulateRigidEquipment(
                     ref ecb,
                     entity,
-                    rigidEquipmentBuffer,
+                    rigidEquipment,
                     ref catalog,
                     skeletonIndex,
                     contentDb,
                     hasEquipment,
                     equipmentBuffer);
-                var attachmentBoneBuffer = ecb.AddBuffer<ActorAttachmentBone>(entity);
-                PopulateAttachmentBoneBuffer(
-                    attachmentBoneBuffer,
-                    ref catalog,
-                    skeletonIndex,
-                    rigidEquipmentBuffer);
+                if (rigidEquipment.Length > 0)
+                {
+                    var rigidEquipmentBuffer = ecb.AddBuffer<ActorRigidEquipment>(entity);
+                    for (int i = 0; i < rigidEquipment.Length; i++)
+                        rigidEquipmentBuffer.Add(rigidEquipment[i]);
+
+                    using var attachmentBones = new NativeList<ActorAttachmentBone>(Allocator.Temp);
+                    PopulateAttachmentBones(
+                        attachmentBones,
+                        ref catalog,
+                        skeletonIndex,
+                        rigidEquipment);
+                    if (attachmentBones.Length > 0)
+                    {
+                        var attachmentBoneBuffer = ecb.AddBuffer<ActorAttachmentBone>(entity);
+                        for (int i = 0; i < attachmentBones.Length; i++)
+                            attachmentBoneBuffer.Add(attachmentBones[i]);
+                    }
+                }
                 ecb.AddComponent(entity, BuildLocalBounds(skinMeshBuffer, ref catalog));
-                ecb.AddBuffer<ActorAnimationOverlayState>(entity);
             }
 
             ecb.Playback(EntityManager);
@@ -209,37 +220,45 @@ namespace VVardenfell.Runtime.Animation
             };
         }
 
-        static void PopulateAttachmentBoneBuffer(
-            DynamicBuffer<ActorAttachmentBone> attachmentBones,
+        static void PopulateAttachmentBones(
+            NativeList<ActorAttachmentBone> attachmentBones,
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,
-            DynamicBuffer<ActorRigidEquipment> rigidEquipment)
+            NativeList<ActorRigidEquipment> rigidEquipment)
         {
             int boneCount = ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
             if (boneCount == 0 || rigidEquipment.Length == 0)
                 return;
 
-            var included = new bool[boneCount];
-            var skeleton = new ActorSkeleton { SkeletonIndex = skeletonIndex, BoneCount = boneCount };
-            for (int i = 0; i < rigidEquipment.Length; i++)
+            var included = new NativeArray<byte>(boneCount, Allocator.Temp);
+            try
             {
-                int boneIndex = rigidEquipment[i].AttachBoneIndex;
-                while ((uint)boneIndex < (uint)boneCount && !included[boneIndex])
+                var skeleton = new ActorSkeleton { SkeletonIndex = skeletonIndex, BoneCount = boneCount };
+                for (int i = 0; i < rigidEquipment.Length; i++)
                 {
-                    included[boneIndex] = true;
-                    boneIndex = ActorAnimationCatalogRuntimeUtility.ResolveParentIndex(ref catalog, skeleton, boneIndex);
+                    int boneIndex = rigidEquipment[i].AttachBoneIndex;
+                    while ((uint)boneIndex < (uint)boneCount && included[boneIndex] == 0)
+                    {
+                        included[boneIndex] = 1;
+                        boneIndex = ActorAnimationCatalogRuntimeUtility.ResolveParentIndex(ref catalog, skeleton, boneIndex);
+                    }
+                }
+
+                for (int boneIndex = 0; boneIndex < boneCount; boneIndex++)
+                {
+                    if (included[boneIndex] == 0)
+                        continue;
+
+                    attachmentBones.Add(new ActorAttachmentBone
+                    {
+                        BoneIndex = boneIndex,
+                    });
                 }
             }
-
-            for (int boneIndex = 0; boneIndex < included.Length; boneIndex++)
+            finally
             {
-                if (!included[boneIndex])
-                    continue;
-
-                attachmentBones.Add(new ActorAttachmentBone
-                {
-                    BoneIndex = boneIndex,
-                });
+                if (included.IsCreated)
+                    included.Dispose();
             }
         }
 
@@ -277,8 +296,6 @@ namespace VVardenfell.Runtime.Animation
 
         static int PopulateSkinMeshBuffer(
             DynamicBuffer<ActorSkinMesh> buffer,
-            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
-            DynamicBuffer<ActorBone> bones,
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
             RuntimeContentDatabase contentDb,
@@ -514,7 +531,7 @@ namespace VVardenfell.Runtime.Animation
         void PopulateRigidEquipment(
             ref EntityCommandBuffer ecb,
             Entity actorEntity,
-            DynamicBuffer<ActorRigidEquipment> rigidEquipment,
+            NativeList<ActorRigidEquipment> rigidEquipment,
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,
             RuntimeContentDatabase contentDb,

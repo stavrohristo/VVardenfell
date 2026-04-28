@@ -613,6 +613,77 @@ namespace VVardenfell.Runtime.WorldState
             spawnState.NextRuntimeRefId = math.max(payload.NextRuntimeRefId, maxRuntimeOrdinal);
             spawnState.NextRequestSequence = 0u;
             entityManager.SetComponentData(spawnEntity, spawnState);
+
+            ApplyTimePayload(entityManager, payload.Time);
+            ApplyWeatherPayload(entityManager, payload.Weather);
+        }
+
+        static void ApplyTimePayload(EntityManager entityManager, MorrowindTimeSavePayload payload)
+        {
+            MorrowindTimeState time = payload.TimeScale > 0f
+                ? new MorrowindTimeState
+                {
+                    GameHour = payload.GameHour,
+                    DaysPassed = payload.DaysPassed,
+                    Day = payload.Day,
+                    Month = payload.Month,
+                    Year = payload.Year,
+                    TimeScale = payload.TimeScale,
+                    SimulationTimeScale = payload.SimulationTimeScale > 0f ? payload.SimulationTimeScale : 1f,
+                }
+                : MorrowindTimeBootstrapSystem.CreateDefaultTime();
+
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindTimeState>(entityManager);
+            if (entity == Entity.Null)
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                entity = ecb.CreateEntity();
+                ecb.SetName(entity, new FixedString64Bytes("VVardenfell.TimeState"));
+                ecb.AddComponent(entity, time);
+                ecb.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
+                PlaybackAndDispose(entityManager, ref ecb);
+                return;
+            }
+
+            entityManager.SetComponentData(entity, time);
+            if (entityManager.HasBuffer<MorrowindTimeAdvanceRequest>(entity))
+                entityManager.GetBuffer<MorrowindTimeAdvanceRequest>(entity).Clear();
+        }
+
+        static void ApplyWeatherPayload(EntityManager entityManager, MorrowindWeatherSavePayload payload)
+        {
+            MorrowindWeatherState weather = payload.Initialized != 0
+                ? new MorrowindWeatherState
+                {
+                    CurrentWeather = payload.CurrentWeather,
+                    NextWeather = payload.NextWeather,
+                    Transition = payload.Transition,
+                    TransitionDelta = payload.TransitionDelta,
+                    HoursUntilNextChange = payload.HoursUntilNextChange,
+                    RegionHandleValue = payload.RegionHandleValue,
+                    RandomState = payload.RandomState,
+                    ForcedWeather = payload.ForcedWeather,
+                    SecondsUntilThunder = payload.SecondsUntilThunder,
+                    LightningBrightness = payload.LightningBrightness,
+                    ThunderSequence = payload.ThunderSequence,
+                    LastThunderSoundIndex = payload.LastThunderSoundIndex,
+                    Initialized = payload.Initialized,
+                    Transitioning = payload.Transitioning,
+                }
+                : MorrowindTimeBootstrapSystem.CreateDefaultWeather();
+
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindWeatherState>(entityManager);
+            if (entity == Entity.Null)
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                entity = ecb.CreateEntity();
+                ecb.SetName(entity, new FixedString64Bytes("VVardenfell.WeatherState"));
+                ecb.AddComponent(entity, weather);
+                PlaybackAndDispose(entityManager, ref ecb);
+                return;
+            }
+
+            entityManager.SetComponentData(entity, weather);
         }
 
         static void PlaybackAndDispose(EntityManager entityManager, ref EntityCommandBuffer ecb)
