@@ -139,13 +139,10 @@ namespace VVardenfell.Runtime.Player
                 if (visual.ValueRO.Player != player)
                     continue;
 
-                bool firstPerson = visual.ValueRO.FirstPerson != 0;
-                float3 position = firstPerson ? pose.ViewPosition : pose.BodyPosition;
-                quaternion rotation = firstPerson ? pose.ViewRotation : pose.BodyRotation;
-                transform.ValueRW = LocalTransform.FromPositionRotationScale(position, rotation, playerTransform.Scale);
+                transform.ValueRW = LocalTransform.FromPositionRotationScale(pose.BodyPosition, pose.BodyRotation, playerTransform.Scale);
                 localToWorld.ValueRW = new LocalToWorld
                 {
-                    Value = float4x4.TRS(position, rotation, new float3(playerTransform.Scale)),
+                    Value = float4x4.TRS(pose.BodyPosition, pose.BodyRotation, new float3(playerTransform.Scale)),
                 };
             }
         }

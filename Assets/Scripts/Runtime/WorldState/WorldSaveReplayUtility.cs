@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -271,7 +272,7 @@ namespace VVardenfell.Runtime.WorldState
             error = null;
             if (payload.InteriorActive
                 && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId)
-                && (!WorldResources.InteriorCells.TryGetValue(payload.ActiveInteriorCellId, out CellData cell) || cell == null))
+                && !WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(payload.ActiveInteriorCellId), out CellData cell))
             {
                 error = $"Save references missing interior '{payload.ActiveInteriorCellId}'.";
                 return false;

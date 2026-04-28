@@ -1,4 +1,3 @@
-using Unity.Collections;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -15,63 +14,34 @@ namespace VVardenfell.Runtime.Animation
             {
                 if (equipment.Type == 9)
                 {
-                    int leftWeaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone left"));
+                    int leftWeaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, ActorSkeletonNameHash.WeaponBoneLeft);
                     if (leftWeaponBone >= 0)
                         return leftWeaponBone;
                 }
 
-                int weaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("weapon bone"));
+                int weaponBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, ActorSkeletonNameHash.WeaponBone);
                 return weaponBone >= 0
                     ? weaponBone
-                    : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 r hand"));
+                    : ResolveAttachBoneIndex(ref catalog, skeletonIndex, ActorSkeletonNameHash.Bip01RHand);
             }
 
-            int shieldBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("shield bone"));
+            int shieldBone = ResolveAttachBoneIndex(ref catalog, skeletonIndex, ActorSkeletonNameHash.ShieldBone);
             return shieldBone >= 0
                 ? shieldBone
-                : ResolveAttachBoneIndex(ref catalog, skeletonIndex, new FixedString64Bytes("bip01 l forearm"));
+                : ResolveAttachBoneIndex(ref catalog, skeletonIndex, ActorSkeletonNameHash.Bip01LForearm);
         }
 
         static int ResolveAttachBoneIndex(
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,
-            FixedString64Bytes name)
+            ulong nameHash)
         {
-            if (name.IsEmpty)
-                return -1;
-
             var skeleton = new ActorSkeleton
             {
                 SkeletonIndex = skeletonIndex,
                 BoneCount = ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex),
             };
-            for (int i = 0; i < skeleton.BoneCount; i++)
-            {
-                var boneName = ActorAnimationCatalogRuntimeUtility.ResolveBoneName(ref catalog, skeleton, i);
-                if (FixedStringEqualsIgnoreCase(boneName, name))
-                    return i;
-            }
-
-            return -1;
+            return ActorSkeletonUtility.ResolveBoneIndex(ref catalog, skeleton, nameHash);
         }
-
-        static bool FixedStringEqualsIgnoreCase(FixedString64Bytes a, FixedString64Bytes b)
-        {
-            if (a.Length != b.Length)
-                return false;
-
-            for (int i = 0; i < a.Length; i++)
-            {
-                if (ToAsciiLower(a[i]) != ToAsciiLower(b[i]))
-                    return false;
-            }
-
-            return true;
-        }
-
-        static byte ToAsciiLower(byte value)
-            => value >= (byte)'A' && value <= (byte)'Z'
-                ? (byte)(value + 32)
-                : value;
     }
 }

@@ -87,10 +87,12 @@ namespace VVardenfell.Runtime.Interactions
 
         static string ResolveInteriorDoorPromptName(in DoorInteractable door)
         {
-            string destinationCellId = door.DestinationCellId.ToString();
-            if (WorldResources.InteriorCells.TryGetValue(destinationCellId, out CellData destinationCell) && destinationCell != null)
+            if (WorldResources.TryGetInteriorCell(door.DestinationCellHash, out CellData destinationCell))
                 return TrimInteriorCellPromptName(destinationCell.CellId);
 
+            string destinationCellId = WorldResources.ResolveInteriorCellId(door.DestinationCellHash);
+            if (string.IsNullOrWhiteSpace(destinationCellId))
+                destinationCellId = door.DestinationCellId.ToString();
             return TrimInteriorCellPromptName(destinationCellId);
         }
 

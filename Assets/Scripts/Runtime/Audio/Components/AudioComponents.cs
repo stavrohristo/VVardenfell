@@ -56,6 +56,7 @@ namespace VVardenfell.Runtime.Components
     {
         public SoundDefHandle ResolvedSound;
         public FixedString128Bytes InteriorCellId;
+        public ulong InteriorCellHash;
         public uint SourcePlacedRefId;
         public float3 SourcePosition;
         public float MinDistance;

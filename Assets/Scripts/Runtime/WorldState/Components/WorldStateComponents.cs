@@ -55,6 +55,7 @@ namespace VVardenfell.Runtime.Components
         public float Scale;
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
+        public ulong InteriorCellHash;
         public byte IsInterior;
         public byte PersistencePolicy;
     }
@@ -68,6 +69,7 @@ namespace VVardenfell.Runtime.Components
         public float Scale;
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
+        public ulong InteriorCellHash;
         public Entity LogicalEntity;
         public byte IsInterior;
         public byte PersistencePolicy;
@@ -101,6 +103,7 @@ namespace VVardenfell.Runtime.Components
         public float Scale;
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
+        public ulong InteriorCellHash;
         public byte IsInterior;
         public byte PersistencePolicy;
     }

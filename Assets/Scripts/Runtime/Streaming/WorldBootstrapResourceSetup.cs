@@ -10,6 +10,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -238,6 +239,10 @@ namespace VVardenfell.Runtime.Streaming
             WorldResources.Cells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
             WorldResources.InteriorCells.Clear();
             WorldResources.InteriorCells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
+            WorldResources.InteriorCellsByHash.Clear();
+            WorldResources.InteriorCellsByHash.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
+            WorldResources.InteriorCellIdsByHash.Clear();
+            WorldResources.InteriorCellIdsByHash.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
             int installed = 0;
             for (int i = 0; i < cache.Manifest.CellGrid.Length; i++)
             {
@@ -274,6 +279,20 @@ namespace VVardenfell.Runtime.Streaming
                 string cellId = cache.Manifest.InteriorCellIds[i] ?? string.Empty;
                 if (!WorldResources.InteriorCells.ContainsKey(cellId))
                     WorldResources.InteriorCells[cellId] = data;
+                ulong cellHash = InteriorCellIdHash.Hash(cellId);
+                if (cellHash != 0UL)
+                {
+                    if (WorldResources.InteriorCellsByHash.TryGetValue(cellHash, out var existing) && !ReferenceEquals(existing, data))
+                    {
+                        string existingId = WorldResources.ResolveInteriorCellId(cellHash);
+                        Debug.LogWarning($"[VVardenfell][Streaming] interior cell hash collision between '{existingId}' and '{cellId}'; keeping the first hash mapping.");
+                    }
+                    else
+                    {
+                        WorldResources.InteriorCellsByHash[cellHash] = data;
+                        WorldResources.InteriorCellIdsByHash[cellHash] = cellId;
+                    }
+                }
                 installed++;
                 if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
                 {

@@ -108,6 +108,31 @@ namespace VVardenfell.Runtime.Streaming
         public static int ResolvePrecipitationKind(in WeatherDefinitionDef weather)
             => weather.UsingPrecip != 0 ? (int)weather.Kind : (int)WeatherKind.Clear;
 
+        public static float ResolveOpenMwRainEmissionRate(float maxRaindrops, float rainEntranceSpeed)
+            => math.max(0f, maxRaindrops) / math.max(0.1f, rainEntranceSpeed) * 20f;
+
+        public static float ResolveOpenMwRainAlpha(float precipitationAlpha)
+            => math.saturate(precipitationAlpha) * 0.6f;
+
+        public static float ResolveRainPresentationWorldScale(float worldScale)
+            => worldScale > 0f ? worldScale : 1f / 64f;
+
+        public static float3 ResolveOpenMwRainVelocity(float rainSpeed, float windSpeed, float worldScale)
+        {
+            float scaledRainSpeed = rainSpeed > 100f
+                ? rainSpeed * ResolveRainPresentationWorldScale(worldScale)
+                : rainSpeed;
+            scaledRainSpeed = math.max(4f, scaledRainSpeed);
+            float angle = -math.atan(math.max(0f, windSpeed) / 50f);
+            return new float3(0f, scaledRainSpeed * math.sin(angle), -scaledRainSpeed / math.max(0.001f, math.cos(angle)));
+        }
+
+        public static float ResolveRainPresentationSize(float worldScale, float particleSizeScale)
+            => math.max(0.025f, 10f * ResolveRainPresentationWorldScale(worldScale) * math.max(0.01f, particleSizeScale));
+
+        public static float ResolveRainPresentationRange(float morrowindUnits, float worldScale, float fallbackMeters)
+            => morrowindUnits > 0f ? morrowindUnits * ResolveRainPresentationWorldScale(worldScale) : fallbackMeters;
+
         public static bool TryResolveThunder(
             in WeatherDefinitionDef weather,
             float transitionRatio,

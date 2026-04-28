@@ -9,6 +9,7 @@ using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
@@ -52,8 +53,7 @@ namespace VVardenfell.Runtime.Interactions
             CellData cell = null;
             if (location.IsInterior != 0)
             {
-                string interiorCellId = location.InteriorCellId.ToString();
-                if (!WorldResources.InteriorCells.TryGetValue(interiorCellId, out cell) || cell == null)
+                if (!WorldResources.TryGetInteriorCell(location.InteriorCellHash, out cell))
                     return false;
             }
             else
@@ -78,6 +78,7 @@ namespace VVardenfell.Runtime.Interactions
                 {
                     IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
                     DestinationCellId = new FixedString128Bytes(door.DestinationCellId ?? string.Empty),
+                    DestinationCellHash = InteriorCellIdHash.Hash(door.DestinationCellId),
                     DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
                     DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
                 };
@@ -182,13 +183,13 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            bool goesToInterior = door.DestinationCellId.Length > 0;
+            bool goesToInterior = door.DestinationCellHash != 0UL;
             CellData destinationInterior = null;
             if (goesToInterior)
             {
-                string destinationCellId = door.DestinationCellId.ToString();
-                if (!WorldResources.InteriorCells.TryGetValue(destinationCellId, out destinationInterior) || destinationInterior == null)
+                if (!WorldResources.TryGetInteriorCell(door.DestinationCellHash, out destinationInterior))
                 {
+                    string destinationCellId = door.DestinationCellId.ToString();
                     Debug.LogWarning($"[VVardenfell][Streaming] teleport destination interior '{destinationCellId}' was not preloaded; transition aborted.");
                     transition.TransitionInProgress = 0;
                     ClearFocus();
@@ -213,6 +214,7 @@ namespace VVardenfell.Runtime.Interactions
                 configRef.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
                 transition.ActiveInteriorCellId = door.DestinationCellId;
+                transition.ActiveInteriorCellHash = door.DestinationCellHash;
                 ref var runtimeState = ref SystemAPI.GetSingletonRW<InteractionRuntimeState>().ValueRW;
                 runtimeState.PendingPickedItemPrune = 1;
             }
@@ -222,6 +224,7 @@ namespace VVardenfell.Runtime.Interactions
                 configRef.ExteriorStreamingPaused = false;
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
+                transition.ActiveInteriorCellHash = 0UL;
             }
 
             float3 destinationPosition = door.DestinationPosition + (goesToInterior ? InteriorWorldOffset : float3.zero);

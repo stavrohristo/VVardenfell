@@ -8,6 +8,7 @@ using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -554,7 +555,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 attachDoor = !isInterior
                     ? TryResolveDoorInteractable(exteriorCell, entry.PlacedRefId, out door)
-                    : TryResolveInteriorDoorInteractable(entry.PlacedRefId, interiorCellId, out door);
+                    : TryResolveInteriorDoorInteractable(entry.PlacedRefId, InteriorCellIdHash.Hash(interiorCellId), out door);
             }
 
             return new LogicalRefEntityDescriptor
@@ -592,12 +593,12 @@ namespace VVardenfell.Runtime.Streaming
             return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
         }
 
-        static bool TryResolveInteriorDoorInteractable(uint placedRefId, FixedString128Bytes interiorCellId, out DoorInteractable doorInteractable)
+        static bool TryResolveInteriorDoorInteractable(uint placedRefId, ulong interiorCellHash, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
             if (placedRefId == 0u)
                 return false;
-            if (!WorldResources.InteriorCells.TryGetValue(interiorCellId.ToString(), out var cell) || cell == null)
+            if (!WorldResources.TryGetInteriorCell(interiorCellHash, out var cell))
                 return false;
             return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
         }
@@ -627,6 +628,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
                 DestinationCellId = new FixedString128Bytes(door.DestinationCellId ?? string.Empty),
+                DestinationCellHash = InteriorCellIdHash.Hash(door.DestinationCellId),
                 DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
                 DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
             };

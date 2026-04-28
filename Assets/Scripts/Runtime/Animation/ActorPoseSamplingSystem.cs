@@ -121,7 +121,44 @@ namespace VVardenfell.Runtime.Animation
             if (!ActorAnimationPlaybackUtility.IsActive(animation.Playback))
                 return;
 
-            SamplePlaybackForMask(ref catalog, skeleton, bones, sampled, animation.Playback.ClipIndex, animation.Playback.Time, 1f, mask, hasPreviousLayer: false);
+            if (animation.TransitionActive != 0
+                && ActorAnimationPlaybackUtility.CanSample(animation.TransitionPlayback)
+                && animation.TransitionDuration > 0f)
+            {
+                float transitionWeight = math.saturate(animation.TransitionTime / animation.TransitionDuration);
+                SamplePlaybackForMask(
+                    ref catalog,
+                    skeleton,
+                    bones,
+                    sampled,
+                    animation.TransitionPlayback.ClipIndex,
+                    animation.TransitionPlayback.Time,
+                    1f,
+                    mask,
+                    hasPreviousLayer: false);
+                SamplePlaybackForMask(
+                    ref catalog,
+                    skeleton,
+                    bones,
+                    sampled,
+                    animation.Playback.ClipIndex,
+                    animation.Playback.Time,
+                    transitionWeight,
+                    mask,
+                    hasPreviousLayer: true);
+                return;
+            }
+
+            SamplePlaybackForMask(
+                ref catalog,
+                skeleton,
+                bones,
+                sampled,
+                animation.Playback.ClipIndex,
+                animation.Playback.Time,
+                1f,
+                mask,
+                hasPreviousLayer: false);
         }
 
         static void SampleBestOverlayForMask(

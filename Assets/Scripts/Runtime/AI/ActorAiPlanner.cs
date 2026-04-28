@@ -44,7 +44,7 @@ namespace VVardenfell.Runtime.AI
         public int PathGridIndex;
         public int GridX;
         public int GridY;
-        public uint InteriorCellHash;
+        public ulong InteriorCellHash;
         public byte IsResolved;
         public byte IsInterior;
     }
@@ -153,7 +153,7 @@ namespace VVardenfell.Runtime.AI
             {
                 if (location.ValueRO.IsInterior != 0)
                 {
-                    SyncInteriorAnchor(contentDb, location.ValueRO.InteriorCellId, anchor);
+                    SyncInteriorAnchor(contentDb, location.ValueRO.InteriorCellHash, anchor);
                 }
                 else
                 {
@@ -177,7 +177,7 @@ namespace VVardenfell.Runtime.AI
                 PathGridIndex = -1,
                 GridX = coord.x,
                 GridY = coord.y,
-                InteriorCellHash = 0u,
+                InteriorCellHash = 0UL,
                 IsInterior = 0,
             };
             if (contentDb.TryGetExteriorPathGridHandle(coord.x, coord.y, out var handle) && handle.IsValid)
@@ -189,9 +189,8 @@ namespace VVardenfell.Runtime.AI
             current = next;
         }
 
-        static void SyncInteriorAnchor(RuntimeContentDatabase contentDb, FixedString128Bytes interiorCellId, RefRW<ActorAiNavigationAnchor> anchor)
+        static void SyncInteriorAnchor(RuntimeContentDatabase contentDb, ulong interiorCellHash, RefRW<ActorAiNavigationAnchor> anchor)
         {
-            uint interiorCellHash = HashInteriorCellId(interiorCellId);
             ref var current = ref anchor.ValueRW;
             if (current.IsInterior != 0 && current.InteriorCellHash == interiorCellHash)
             {
@@ -204,25 +203,13 @@ namespace VVardenfell.Runtime.AI
                 InteriorCellHash = interiorCellHash,
                 IsInterior = 1,
             };
-            if (contentDb.TryGetInteriorPathGridHandle(interiorCellId.ToString(), out var handle) && handle.IsValid)
+            if (contentDb.TryGetInteriorPathGridHandle(interiorCellHash, out var handle) && handle.IsValid)
             {
                 next.PathGridIndex = handle.Index;
                 next.IsResolved = 1;
             }
 
             current = next;
-        }
-
-        static uint HashInteriorCellId(FixedString128Bytes interiorCellId)
-        {
-            uint hash = 2166136261u;
-            for (int i = 0; i < interiorCellId.Length; i++)
-            {
-                hash ^= interiorCellId[i];
-                hash *= 16777619u;
-            }
-
-            return hash == 0u ? 1u : hash;
         }
     }
 

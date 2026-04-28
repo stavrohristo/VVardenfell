@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
@@ -51,6 +52,7 @@ namespace VVardenfell.Runtime.WorldRefs
             {
                 ExteriorCell = descriptor.ExteriorCell,
                 InteriorCellId = descriptor.InteriorCellId,
+                InteriorCellHash = descriptor.IsInterior ? InteriorCellIdHash.Hash(descriptor.InteriorCellId) : 0UL,
                 IsInterior = (byte)(descriptor.IsInterior ? 1 : 0),
             });
             ecb.AddBuffer<LogicalRefChild>(logicalEntity);

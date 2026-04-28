@@ -10,6 +10,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bsa;
 using VVardenfell.Importer.Esm;
+using VVardenfell.Importer.Nif;
 
 namespace VVardenfell.Importer.Bake
 {
@@ -222,7 +223,7 @@ namespace VVardenfell.Importer.Bake
             {
                 SunTexture = "textures/tx_sun_05.dds",
                 SunGlareTexture = "textures/tx_sun_flash_grey_05.dds",
-                StarTexture = "textures/tx_stars_01.dds",
+                StarTexture = ResolveSkyNightStarTexture(installPath),
                 MasserShadowTexture = "textures/tx_mooncircle_full_m.dds",
                 SecundaShadowTexture = "textures/tx_mooncircle_full_s.dds",
                 RainDropTexture = "textures/tx_raindrop_01.dds",
@@ -246,6 +247,69 @@ namespace VVardenfell.Importer.Bake
                     "meshes/blizzard.nif",
                 },
             };
+        }
+
+
+        static string ResolveSkyNightStarTexture(string installPath)
+        {
+            const string skyNight01 = "meshes/sky_night_01.nif";
+            const string skyNight02 = "meshes/sky_night_02.nif";
+
+            string bsaPath = Path.Combine(installPath ?? string.Empty, "Data Files", "Morrowind.bsa");
+            if (!File.Exists(bsaPath))
+                throw new InvalidOperationException($"Required Morrowind archive missing while resolving sky stars: {bsaPath}");
+
+            using var bsa = BsaArchive.Open(bsaPath);
+            var resolver = new TexturePathResolver(bsa);
+            var entries = new Dictionary<string, BsaEntry>(bsa.Entries.Length, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < bsa.Entries.Length; i++)
+                entries[bsa.Entries[i].Name] = bsa.Entries[i];
+
+            if (TryResolveFirstModelTexture(bsa, resolver, entries, skyNight01, out string texture))
+                return texture;
+            if (TryResolveFirstModelTexture(bsa, resolver, entries, skyNight02, out texture))
+                return texture;
+
+            throw new InvalidOperationException(
+                "Required OpenMW star texture could not be resolved from sky night meshes. "
+                + $"Checked '{skyNight01}' and '{skyNight02}'.");
+        }
+
+
+        static bool TryResolveFirstModelTexture(
+            BsaArchive bsa,
+            TexturePathResolver resolver,
+            Dictionary<string, BsaEntry> entries,
+            string modelPath,
+            out string resolvedTexturePath)
+        {
+            resolvedTexturePath = string.Empty;
+            string normalizedModelPath = ActorVisualContentRules.NormalizeModelPath(modelPath, lowerInvariant: true);
+            if (!entries.TryGetValue(normalizedModelPath, out var entry))
+                return false;
+
+            var nif = NifFile.Parse(normalizedModelPath, bsa.Read(entry));
+            for (int i = 0; i < nif.Records.Length; i++)
+            {
+                if (nif.Records[i] is not NiSourceTexture texture
+                    || !texture.External
+                    || string.IsNullOrWhiteSpace(texture.FileName))
+                {
+                    continue;
+                }
+
+                if (!resolver.TryResolve(texture.FileName, out _, out string resolved))
+                {
+                    throw new InvalidOperationException(
+                        $"Sky star mesh '{normalizedModelPath}' references texture '{texture.FileName}', "
+                        + "but that texture could not be resolved from Morrowind.bsa.");
+                }
+
+                resolvedTexturePath = resolved.Replace('\\', '/');
+                return true;
+            }
+
+            return false;
         }
 
 

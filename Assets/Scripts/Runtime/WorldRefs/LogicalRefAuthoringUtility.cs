@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using Unity.Physics;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
@@ -354,7 +355,9 @@ namespace VVardenfell.Runtime.Components
 
             if (isInterior)
             {
-                if (contentDb.TryGetInteriorPathGridHandle(interiorCellId.ToString(), out var handle) && handle.IsValid)
+                ulong interiorCellHash = InteriorCellIdHash.Hash(interiorCellId);
+                anchor.InteriorCellHash = interiorCellHash;
+                if (contentDb.TryGetInteriorPathGridHandle(interiorCellHash, out var handle) && handle.IsValid)
                 {
                     anchor.PathGridIndex = handle.Index;
                     anchor.IsResolved = 1;

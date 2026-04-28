@@ -77,6 +77,7 @@ namespace VVardenfell.Runtime.Animation
                         LoopCount = uint.MaxValue,
                     },
                 });
+                ecb.AddComponent(entity, new ActorJumpAnimationState());
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);
@@ -97,6 +98,9 @@ namespace VVardenfell.Runtime.Animation
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
                     : default;
                 bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(contentDb, actor.RaceId);
+                uint hiddenPartMask = EntityManager.HasComponent<ActorHiddenVisualPartMask>(entity)
+                    ? EntityManager.GetComponentData<ActorHiddenVisualPartMask>(entity).Mask
+                    : 0u;
                 PopulateSkinMeshBuffer(
                     skinMeshBuffer,
                     ref catalog,
@@ -107,6 +111,7 @@ namespace VVardenfell.Runtime.Animation
                     isBeast,
                     firstPerson,
                     recipe,
+                    hiddenPartMask,
                     hasEquipment,
                     equipmentBuffer);
 
@@ -285,6 +290,7 @@ namespace VVardenfell.Runtime.Animation
             bool isBeast,
             bool firstPerson,
             ActorVisualRecipeDef recipe,
+            uint hiddenPartMask,
             bool hasEquipment,
             DynamicBuffer<ActorEquipmentSlot> equipment)
         {
@@ -305,10 +311,11 @@ namespace VVardenfell.Runtime.Animation
                     isBeast,
                     firstPerson,
                     equipment,
+                    hiddenPartMask,
                     ref coveredParts);
             }
 
-            added += AddBakedActorVisualRecipe(buffer, ref catalog, cache, recipe, coveredParts);
+            added += AddBakedActorVisualRecipe(buffer, ref catalog, cache, recipe, coveredParts, hiddenPartMask);
             return added;
         }
 
@@ -322,6 +329,7 @@ namespace VVardenfell.Runtime.Animation
             bool isBeast,
             bool firstPerson,
             DynamicBuffer<ActorEquipmentSlot> equipment,
+            uint hiddenPartMask,
             ref uint coveredParts)
         {
             int added = 0;
@@ -359,6 +367,11 @@ namespace VVardenfell.Runtime.Animation
                     var entry = cache.ActorAnimationCatalog.EquipmentVisualEntries[entryIndex];
                     var part = (ActorVisualPartReference)(byte)entry.PartReference;
                     uint mask = ActorVisualContentRules.PartMask(part);
+                    if ((hiddenPartMask & mask) != 0)
+                    {
+                        coveredParts |= mask;
+                        continue;
+                    }
                     if ((coveredParts & mask) != 0)
                         continue;
 
@@ -381,7 +394,8 @@ namespace VVardenfell.Runtime.Animation
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
             ActorVisualRecipeDef recipe,
-            uint coveredParts)
+            uint coveredParts,
+            uint hiddenPartMask)
         {
             int added = 0;
             int entryEnd = math.min(
@@ -391,6 +405,8 @@ namespace VVardenfell.Runtime.Animation
             {
                 var entry = cache.ActorAnimationCatalog.ActorVisualRecipeEntries[entryIndex];
                 uint mask = ActorVisualContentRules.PartMask(entry.PartReference);
+                if ((hiddenPartMask & mask) != 0)
+                    continue;
                 if ((coveredParts & mask) != 0)
                     continue;
 

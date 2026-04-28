@@ -2,6 +2,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Transforms;
+using System;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.Player
                     ComponentType.ReadWrite<PlayerCharacterState>(),
                     ComponentType.ReadWrite<MorrowindMovementInput>(),
                     ComponentType.ReadWrite<MorrowindMovementState>(),
+                    ComponentType.ReadOnly<PlayerStanceColliders>(),
                     ComponentType.ReadOnly<MorrowindMovementSpeed>(),
                 }
             });
@@ -62,6 +64,7 @@ namespace VVardenfell.Runtime.Player
             var legacyStateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
             var inputRef = _playerQuery.GetSingletonRW<MorrowindMovementInput>();
             var movementStateRef = _playerQuery.GetSingletonRW<MorrowindMovementState>();
+            var stanceColliders = _playerQuery.GetSingleton<PlayerStanceColliders>();
             var movementSpeed = _playerQuery.GetSingleton<MorrowindMovementSpeed>();
             var settings = SystemAPI.GetSingleton<MorrowindMovementSettings>();
 
@@ -79,7 +82,26 @@ namespace VVardenfell.Runtime.Player
             if (view.ControlledCharacter != playerEntity)
                 return;
 
-            view.LocalEyeOffset = new float3(0f, characterRef.ValueRO.StandingEyeHeight, 0f);
+            bool crouched = ResolveCrouchedState(
+                physicsWorld.CollisionWorld,
+                stanceColliders,
+                characterRef.ValueRO,
+                playerTransform.Position,
+                playerTransform.Rotation,
+                legacyState.Crouched,
+                movementInput.SneakHeld);
+            movementInput.SneakHeld = crouched;
+            control.CrouchHeld = crouched;
+            PhysicsCollider activeCollider = new PhysicsCollider
+            {
+                Value = crouched ? stanceColliders.Crouching : stanceColliders.Standing,
+            };
+            colliderRef.ValueRW = activeCollider;
+
+            float eyeHeight = crouched
+                ? characterRef.ValueRO.CrouchingEyeHeight
+                : characterRef.ValueRO.StandingEyeHeight;
+            view.LocalEyeOffset = new float3(0f, eyeHeight, 0f);
             viewTransformRef.ValueRW = LocalTransform.FromPositionRotationScale(
                 view.LocalEyeOffset,
                 view.LocalViewRotation,
@@ -87,7 +109,7 @@ namespace VVardenfell.Runtime.Player
 
             float3 position = playerTransform.Position;
             quaternion rotation = playerTransform.Rotation;
-            PhysicsCollider playerCollider = colliderRef.ValueRO;
+            PhysicsCollider playerCollider = activeCollider;
             bool previousGrounded = legacyState.Grounded;
 
             var result = MorrowindActorMovementSolver.Solve(
@@ -107,7 +129,7 @@ namespace VVardenfell.Runtime.Player
             legacyState.WasGrounded = previousGrounded;
             legacyState.Grounded = movementState.Grounded;
             legacyState.WorldVelocity = movementState.LastVelocity;
-            legacyState.Crouched = false;
+            legacyState.Crouched = crouched;
             legacyState.Sprinting = movementInput.RunHeld && !movementInput.SneakHeld && movementState.SpeedFactor > 0f;
             if (legacyState.Grounded)
             {
@@ -129,6 +151,46 @@ namespace VVardenfell.Runtime.Player
             {
                 Value = float4x4.TRS(position, rotation, new float3(playerTransform.Scale))
             };
+        }
+
+        static bool ResolveCrouchedState(
+            in CollisionWorld world,
+            in PlayerStanceColliders stanceColliders,
+            in PlayerCharacterComponent character,
+            float3 position,
+            quaternion rotation,
+            bool currentlyCrouched,
+            bool crouchRequested)
+        {
+            if (!stanceColliders.Standing.IsCreated || !stanceColliders.Crouching.IsCreated)
+                throw new InvalidOperationException("[VVardenfell] player crouch requires both standing and crouching stance colliders.");
+
+            if (crouchRequested)
+                return true;
+
+            if (!currentlyCrouched)
+                return false;
+
+            return !CanStand(world, stanceColliders, character, position, rotation);
+        }
+
+        static bool CanStand(
+            in CollisionWorld world,
+            in PlayerStanceColliders stanceColliders,
+            in PlayerCharacterComponent character,
+            float3 position,
+            quaternion rotation)
+        {
+            float standDelta = character.StandingHeight - character.CrouchingHeight;
+            if (standDelta <= 0f)
+                return true;
+
+            var input = new ColliderCastInput(
+                stanceColliders.Crouching,
+                position,
+                position + new float3(0f, standDelta, 0f),
+                rotation);
+            return !world.CastCollider(input);
         }
     }
 }

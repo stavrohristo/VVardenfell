@@ -234,13 +234,15 @@ namespace VVardenfell.Runtime.Animation
                 for (int j = 0; j < bones.Length; j++)
                 {
                     var bone = bones[j];
+                    FixedString64Bytes boneName = Fixed64(NormalizeNodeName(bone.Name));
                     quaternion rotation = new(bone.RotX, bone.RotY, bone.RotZ, bone.RotW);
                     if (math.lengthsq(rotation.value) <= 0.000001f)
                         rotation = quaternion.identity;
 
                     dstBones[cursor++] = new ActorSkeletonBoneBlob
                     {
-                        Name = Fixed64(NormalizeNodeName(bone.Name)),
+                        Name = boneName,
+                        NameHash = ActorSkeletonNameHash.Hash(boneName),
                         ParentIndex = bone.ParentIndex,
                         SourceRecordIndex = bone.SourceRecordIndex,
                         BindPosition = new float3(bone.PosX, bone.PosY, bone.PosZ),
@@ -561,6 +563,8 @@ namespace VVardenfell.Runtime.Animation
                    || EqualsAscii(group, Fixed64("idle7"))
                    || EqualsAscii(group, Fixed64("idle8"))
                    || EqualsAscii(group, Fixed64("idle9"))
+                   || EqualsAscii(group, Fixed64("idlesneak"))
+                   || EqualsAscii(group, Fixed64("jump"))
                    || StartsWithAscii(group, Fixed64("walk"))
                    || StartsWithAscii(group, Fixed64("run"))
                    || StartsWithAscii(group, Fixed64("sneak"))

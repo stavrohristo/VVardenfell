@@ -3,6 +3,7 @@ using System.IO;
 using Unity.Collections;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
@@ -367,19 +368,31 @@ namespace VVardenfell.Runtime.WorldState
 
         static WorldJournalEntry ReadJournalEntry(BinaryReader r)
         {
+            uint sequence = r.ReadUInt32();
+            byte kind = r.ReadByte();
+            uint placedRefId = r.ReadUInt32();
+            uint runtimeRefId = r.ReadUInt32();
+            ContentReference content = ReadContentReference(r);
+            int deltaCount = r.ReadInt32();
+            float3 position = new float3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+            quaternion rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+            float scale = r.ReadSingle();
+            int2 exteriorCell = new int2(r.ReadInt32(), r.ReadInt32());
+            FixedString128Bytes interiorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(r.ReadString());
             return new WorldJournalEntry
             {
-                Sequence = r.ReadUInt32(),
-                Kind = r.ReadByte(),
-                PlacedRefId = r.ReadUInt32(),
-                RuntimeRefId = r.ReadUInt32(),
-                Content = ReadContentReference(r),
-                DeltaCount = r.ReadInt32(),
-                Position = new float3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
-                Rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
-                Scale = r.ReadSingle(),
-                ExteriorCell = new int2(r.ReadInt32(), r.ReadInt32()),
-                InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(r.ReadString()),
+                Sequence = sequence,
+                Kind = kind,
+                PlacedRefId = placedRefId,
+                RuntimeRefId = runtimeRefId,
+                Content = content,
+                DeltaCount = deltaCount,
+                Position = position,
+                Rotation = rotation,
+                Scale = scale,
+                ExteriorCell = exteriorCell,
+                InteriorCellId = interiorCellId,
+                InteriorCellHash = InteriorCellIdHash.Hash(interiorCellId),
                 IsInterior = r.ReadByte(),
                 PersistencePolicy = r.ReadByte(),
             };

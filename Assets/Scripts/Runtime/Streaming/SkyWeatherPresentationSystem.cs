@@ -65,8 +65,13 @@ namespace VVardenfell.Runtime.Streaming
             const float MinimumMoonOpacity = 0.03f;
             const float DefaultMoonBrightness = 2.75f;
             const float DefaultMoonEmission = 1.35f;
+            const float DefaultMoonMaskScale = 1f;
             const float DefaultStarBrightness = 1.6f;
             const float DefaultStarTextureOpacity = 1f;
+            const float DefaultStarTextureScale = 7f;
+            const float DefaultPrecipitationEmissionScale = 1f;
+            const float DefaultPrecipitationWorldScale = 1f / 64f;
+            const float DefaultPrecipitationParticleSizeScale = 1f;
 
             readonly Shader _shader;
             readonly Shader _skyboxShader;
@@ -178,7 +183,7 @@ namespace VVardenfell.Runtime.Streaming
                 Vector3 cameraPosition = camera.transform.position;
                 _rootTransform.position = cameraPosition;
                 SetSkyRigRenderersEnabled(false);
-                ApplyPrecipitation(sky, camera);
+                ApplyPrecipitation(sky, settings, camera);
             }
 
             public void Dispose()
@@ -279,8 +284,10 @@ namespace VVardenfell.Runtime.Streaming
                 float secundaOpacity = exterior && sky.SecundaOpacity > 0.001f ? math.max(MinimumMoonOpacity, math.saturate(sky.SecundaOpacity)) : 0f;
                 float moonBrightness = settings.MoonBrightnessScale > 0f ? settings.MoonBrightnessScale : DefaultMoonBrightness;
                 float moonEmission = settings.MoonEmissionScale > 0f ? settings.MoonEmissionScale : DefaultMoonEmission;
+                float moonMaskScale = settings.MoonMaskScale > 0f ? settings.MoonMaskScale : DefaultMoonMaskScale;
                 float starBrightness = settings.StarBrightnessScale > 0f ? settings.StarBrightnessScale : DefaultStarBrightness;
                 float starTextureOpacity = settings.StarTextureOpacityScale > 0f ? settings.StarTextureOpacityScale : DefaultStarTextureOpacity;
+                float starTextureScale = settings.StarTextureScale > 0f ? settings.StarTextureScale : DefaultStarTextureScale;
 
                 _skyboxMaterial.SetColor(k_SkyboxSkyColorId, ToColor(sky.SkyColorRgb));
                 _skyboxMaterial.SetColor(k_SkyboxSunDiscColorId, ToColor(sky.SunDiscColorRgb));
@@ -297,8 +304,8 @@ namespace VVardenfell.Runtime.Streaming
                 _skyboxMaterial.SetVector(k_SkyboxMasserDirectionId, ToVector4(math.normalizesafe(sky.MasserWorldDirection, math.up()), math.radians(math.max(1.4f, sky.MasserSize * MoonAngularDegreesScale))));
                 _skyboxMaterial.SetVector(k_SkyboxSecundaDirectionId, ToVector4(math.normalizesafe(sky.SecundaWorldDirection, math.up()), math.radians(math.max(1.1f, sky.SecundaSize * MoonAngularDegreesScale))));
                 _skyboxMaterial.SetVector(k_SkyboxMoonWeatherId, new Vector4(masserOpacity, secundaOpacity, sky.MasserShadowBlend, sky.SecundaShadowBlend));
-                _skyboxMaterial.SetVector(k_SkyboxMoonPresentationId, new Vector4(moonBrightness, moonEmission, 0f, 0f));
-                _skyboxMaterial.SetVector(k_SkyboxStarPresentationId, new Vector4(starBrightness, starTextureOpacity, 0f, 0f));
+                _skyboxMaterial.SetVector(k_SkyboxMoonPresentationId, new Vector4(moonBrightness, moonEmission, moonMaskScale, 0f));
+                _skyboxMaterial.SetVector(k_SkyboxStarPresentationId, new Vector4(starBrightness, starTextureOpacity, starTextureScale, 0f));
                 _skyboxMaterial.SetVector(k_SkyboxCloudWeatherId, new Vector4(cloudOpacity, sky.CloudUvOffset, sky.CloudSpeed, sky.WeatherTransition));
                 _skyboxMaterial.SetVector(k_SkyboxWeatherId, new Vector4(sky.StarRotationDegrees, exterior ? sky.StarOpacity : 0f, exterior ? sky.SunDiscOpacity : 0f, sky.LightningBrightness));
             }
@@ -399,7 +406,7 @@ namespace VVardenfell.Runtime.Streaming
                 ApplyBillboard(transform, renderer, material, camera, direction, math.max(12f, size * MoonScale), phases[phaseIndex], color, presentationAlpha);
             }
 
-            void ApplyPrecipitation(in ActiveSkyWeatherState sky, Camera camera)
+            void ApplyPrecipitation(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, Camera camera)
             {
                 bool active = sky.PrecipitationIntensity > 0.001f;
                 if (active)
@@ -407,24 +414,32 @@ namespace VVardenfell.Runtime.Streaming
 
                 var emission = _precipitation.emission;
                 float maxDrops = sky.RainMaxRaindrops > 0 ? sky.RainMaxRaindrops : 950f;
-                emission.rateOverTime = active ? math.lerp(80f, maxDrops, math.saturate(sky.PrecipitationIntensity * math.max(0f, sky.PrecipitationAlpha))) : 0f;
+                float entranceSpeed = sky.RainEntranceSpeed > 0f ? sky.RainEntranceSpeed : 7f;
+                float targetRate = maxDrops / math.max(0.1f, entranceSpeed) * 20f;
+                float emissionScale = settings.PrecipitationEmissionScale > 0f ? settings.PrecipitationEmissionScale : DefaultPrecipitationEmissionScale;
+                float precipitationAmount = math.saturate(sky.PrecipitationIntensity * math.max(0f, sky.PrecipitationAlpha));
+                emission.rateOverTime = active ? math.max(80f, targetRate) * precipitationAmount * emissionScale : 0f;
                 _precipitation.transform.position = camera.transform.position;
 
                 var main = _precipitation.main;
-                main.startSpeed = math.max(4f, sky.RainSpeed);
-                main.startSize = ResolvePrecipitationSize(sky);
+                float worldScale = settings.PrecipitationWorldScale > 0f ? settings.PrecipitationWorldScale : DefaultPrecipitationWorldScale;
+                float particleSizeScale = settings.PrecipitationParticleSizeScale > 0f ? settings.PrecipitationParticleSizeScale : DefaultPrecipitationParticleSizeScale;
+                main.maxParticles = math.max(2400, (int)math.ceil(math.max(maxDrops, targetRate) * 2f));
+                main.startSpeed = ResolvePrecipitationSpeed(sky, worldScale);
+                main.startSize = ResolvePrecipitationSize(sky, worldScale, particleSizeScale);
 
                 var shape = _precipitation.shape;
-                float minHeight = sky.RainMinHeight > 0f ? sky.RainMinHeight : 8f;
-                float maxHeight = sky.RainMaxHeight > minHeight ? sky.RainMaxHeight : minHeight + 12f;
+                float minHeight = sky.RainMinHeight > 0f ? sky.RainMinHeight * worldScale : 8f;
+                float maxHeight = sky.RainMaxHeight > sky.RainMinHeight ? sky.RainMaxHeight * worldScale : minHeight + 12f;
+                float footprint = sky.RainDiameter > 0f ? math.max(12f, sky.RainDiameter * worldScale) : 70f;
                 shape.position = new Vector3(0f, math.lerp(minHeight, maxHeight, 0.5f), 0f);
-                shape.scale = new Vector3(70f, math.max(4f, maxHeight - minHeight), 70f);
+                shape.scale = new Vector3(footprint, math.max(4f, maxHeight - minHeight), footprint);
 
                 var velocity = _precipitation.velocityOverLifetime;
                 float3 storm = math.normalizesafe(sky.StormDirection, new float3(1f, 0f, 0f));
                 float lateral = sky.IsStorm != 0 ? math.max(1f, sky.WindSpeed * 0.12f) : 0f;
                 velocity.x = new ParticleSystem.MinMaxCurve(storm.x * lateral);
-                velocity.y = new ParticleSystem.MinMaxCurve(-math.max(4f, sky.RainSpeed));
+                velocity.y = new ParticleSystem.MinMaxCurve(-ResolvePrecipitationSpeed(sky, worldScale));
                 velocity.z = new ParticleSystem.MinMaxCurve(storm.z * lateral);
 
                 if (active && !_precipitation.isPlaying)
@@ -433,9 +448,16 @@ namespace VVardenfell.Runtime.Streaming
                     _precipitation.Stop(true, ParticleSystemStopBehavior.StopEmitting);
             }
 
-            static float ResolvePrecipitationSize(in ActiveSkyWeatherState sky)
+            static float ResolvePrecipitationSpeed(in ActiveSkyWeatherState sky, float worldScale)
             {
-                float baseSize = sky.RainDiameter > 0f ? sky.RainDiameter * 0.015f : 0.055f;
+                if (sky.RainSpeed > 100f)
+                    return math.max(4f, sky.RainSpeed * worldScale);
+                return math.max(4f, sky.RainSpeed);
+            }
+
+            static float ResolvePrecipitationSize(in ActiveSkyWeatherState sky, float worldScale, float particleSizeScale)
+            {
+                float baseSize = 10f * worldScale * particleSizeScale;
                 WeatherKind kind = (WeatherKind)sky.PrecipitationKind;
                 return kind switch
                 {

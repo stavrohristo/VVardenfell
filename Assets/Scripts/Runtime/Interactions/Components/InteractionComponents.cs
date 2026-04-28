@@ -45,6 +45,7 @@ namespace VVardenfell.Runtime.Components
     {
         public byte IsTeleport;
         public FixedString128Bytes DestinationCellId;
+        public ulong DestinationCellHash;
         public float3 DestinationPosition;
         public quaternion DestinationRotation;
     }

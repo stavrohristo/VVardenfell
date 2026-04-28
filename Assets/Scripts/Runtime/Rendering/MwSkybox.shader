@@ -17,7 +17,7 @@ Shader "VVardenfell/MwSkybox"
         _MasserDirection ("Masser Direction", Vector) = (0, 1, 0, 0)
         _SecundaDirection ("Secunda Direction", Vector) = (0, 1, 0, 0)
         _MoonWeather ("Moon Weather", Vector) = (0, 0, 0, 0)
-        _MoonPresentation ("Moon Presentation", Vector) = (2.75, 1.35, 0, 0)
+        _MoonPresentation ("Moon Presentation", Vector) = (2.75, 1.35, 1, 0)
         _StarPresentation ("Star Presentation", Vector) = (1.6, 1, 0, 0)
         _CloudWeather ("Cloud Weather", Vector) = (0, 0, 0, 0)
         _SkyWeather ("Sky Weather", Vector) = (0, 0, 0, 0)
@@ -99,6 +99,25 @@ Shader "VVardenfell/MwSkybox"
                 const float invTwoPi = 0.15915494309189535;
                 const float invPi = 0.3183098861837907;
                 return float2(atan2(direction.x, direction.z) * invTwoPi + 0.5, asin(clamp(direction.y, -1.0, 1.0)) * invPi + 0.5);
+            }
+
+            float2 RotateUv(float2 value, float radians)
+            {
+                float s = sin(radians);
+                float c = cos(radians);
+                return float2(value.x * c - value.y * s, value.x * s + value.y * c);
+            }
+
+            float2 DirectionToStarDomeUv(float3 direction, float rotationDegrees, float textureScale)
+            {
+                float2 horizontal = direction.xz;
+                float len = max(length(horizontal), 0.0001);
+                float zenithAngle = acos(clamp(direction.y, 0.0, 1.0));
+                float radius = saturate(zenithAngle * 0.6366197723675813);
+                float2 dome = horizontal / len * radius;
+                dome = RotateUv(dome, radians(rotationDegrees));
+                float scale = max(0.1, textureScale);
+                return dome * (0.5 * scale) + 0.5;
             }
 
             float Hash(float2 p)
@@ -184,6 +203,25 @@ Shader "VVardenfell/MwSkybox"
                 return saturate((luminance - 0.02) * 1.35);
             }
 
+            float MaskCoverage(float4 sample)
+            {
+                return saturate(max(sample.a, dot(sample.rgb, float3(0.299, 0.587, 0.114))));
+            }
+
+            float MoonStarOcclusion(
+                Texture2D maskTex,
+                SamplerState maskSampler,
+                float3 direction,
+                float3 moonDir,
+                float radius,
+                float alpha)
+            {
+                float maskScale = max(1.0, _MoonPresentation.z);
+                float4 mask = SampleDisc(maskTex, maskSampler, direction, moonDir, radius * maskScale);
+                float coverage = MaskCoverage(mask) * alpha;
+                return smoothstep(0.01, 0.045, coverage);
+            }
+
             float CloudTextureMask(Texture2D tex, SamplerState texSampler, float3 direction, float offset)
             {
                 float denominator = max(0.18, direction.y + 0.34);
@@ -208,15 +246,15 @@ Shader "VVardenfell/MwSkybox"
                 float shadowBlend)
             {
                 float4 phase = SampleDisc(phaseTex, phaseSampler, direction, moonDir, radius);
-                float discCoverage = saturate(phase.a) * alpha;
-                float phaseCoverage = TextureCoverage(phase) * discCoverage;
+                float maskScale = max(0.05, _MoonPresentation.z);
+                float4 mask = SampleDisc(maskTex, maskSampler, direction, moonDir, radius * maskScale);
                 float shadowLight = lerp(0.35, 1.0, saturate(shadowBlend));
                 float brightness = max(0.0, _MoonPresentation.x);
                 float emission = max(0.0, _MoonPresentation.y);
-                float3 surface = phase.rgb * discCoverage * shadowLight * brightness;
-                float3 glow = phase.rgb * phaseCoverage * emission;
-                float3 moonLight = surface + glow;
-                return sky + moonLight;
+                float maskCoverage = MaskCoverage(mask) * alpha;
+                float3 moonSurface = phase.rgb * shadowLight * brightness;
+                float3 moonGlow = phase.rgb * TextureCoverage(phase) * maskCoverage * emission;
+                return lerp(sky, moonSurface + moonGlow, maskCoverage);
             }
 
             half4 frag(Varyings input) : SV_Target
@@ -265,20 +303,22 @@ Shader "VVardenfell/MwSkybox"
                 cloudColor = lerp(cloudColor, float3(1, 1, 1), lightning * 0.55);
                 sky = lerp(sky, cloudColor, cloudAlpha);
 
-                float starOpacity = saturate(_SkyWeather.y);
-                float2 starUv = DirectionToLatLong(direction);
-                starUv.x += _SkyWeather.x / 360.0;
-                float4 starSample = SAMPLE_TEXTURE2D(_StarTex, sampler_StarTex, starUv);
-                float starCoverage = max(starSample.a, dot(starSample.rgb, float3(0.299, 0.587, 0.114)) * _StarPresentation.y);
-                starCoverage *= smoothstep(0.02, 0.34, direction.y);
-                sky += starSample.rgb * starCoverage * starOpacity * _StarPresentation.x;
-
                 float3 masserDir = normalize(_MasserDirection.xyz);
                 float3 secundaDir = normalize(_SecundaDirection.xyz);
                 float masserAlpha = saturate(_MoonWeather.x);
                 float secundaAlpha = saturate(_MoonWeather.y);
                 float masserRadius = max(0.012, _MasserDirection.w);
                 float secundaRadius = max(0.008, _SecundaDirection.w);
+
+                float starOpacity = saturate(_SkyWeather.y);
+                float2 starUv = DirectionToStarDomeUv(direction, _SkyWeather.x, _StarPresentation.z);
+                float4 starSample = SAMPLE_TEXTURE2D(_StarTex, sampler_StarTex, starUv);
+                float starCoverage = dot(starSample.rgb, float3(0.299, 0.587, 0.114)) * _StarPresentation.y;
+                starCoverage *= smoothstep(0.16, 0.46, direction.y);
+                float moonStarOcclusion = MoonStarOcclusion(_MasserMaskTex, sampler_MasserMaskTex, direction, masserDir, masserRadius, masserAlpha);
+                moonStarOcclusion = max(moonStarOcclusion, MoonStarOcclusion(_SecundaMaskTex, sampler_SecundaMaskTex, direction, secundaDir, secundaRadius, secundaAlpha));
+                starCoverage *= 1.0 - moonStarOcclusion;
+                sky += starSample.rgb * starCoverage * starOpacity * _StarPresentation.x;
 
                 sky = CompositeMoon(sky, _MasserTex, sampler_MasserTex, _MasserMaskTex, sampler_MasserMaskTex, direction, masserDir, masserRadius, masserAlpha, _MoonWeather.z);
                 sky = CompositeMoon(sky, _SecundaTex, sampler_SecundaTex, _SecundaMaskTex, sampler_SecundaMaskTex, direction, secundaDir, secundaRadius, secundaAlpha, _MoonWeather.w);

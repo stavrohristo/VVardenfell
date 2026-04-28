@@ -59,8 +59,7 @@ namespace VVardenfell.Runtime.Streaming
                 var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
                 if (transition.InteriorActive != 0)
                 {
-                    string interiorCellId = transition.ActiveInteriorCellId.ToString();
-                    if (WorldResources.InteriorCells.TryGetValue(interiorCellId, out var interiorCell) && interiorCell != null)
+                    if (WorldResources.TryGetInteriorCell(transition.ActiveInteriorCellHash, out var interiorCell))
                     {
                         environment = BuildInteriorEnvironment(interiorCell);
                         LogEnvironmentContext(

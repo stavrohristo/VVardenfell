@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -138,6 +139,9 @@ namespace VVardenfell.Runtime.WorldState
                         Scale = math.max(0.0001f, entry.Scale),
                         ExteriorCell = entry.ExteriorCell,
                         InteriorCellId = entry.InteriorCellId,
+                        InteriorCellHash = entry.InteriorCellHash != 0UL
+                            ? entry.InteriorCellHash
+                            : InteriorCellIdHash.Hash(entry.InteriorCellId),
                         LogicalEntity = Entity.Null,
                         IsInterior = entry.IsInterior,
                         PersistencePolicy = entry.PersistencePolicy,
@@ -200,6 +204,12 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < snapshot.Length; i++)
             {
                 var entry = snapshot[i];
+                if (entry.IsInterior != 0 && entry.InteriorCellHash == 0UL)
+                {
+                    entry.InteriorCellHash = InteriorCellIdHash.Hash(entry.InteriorCellId);
+                    snapshot[i] = entry;
+                }
+
                 if (entry.Alive == 0)
                 {
                     entry.LogicalEntity = Entity.Null;
@@ -215,7 +225,7 @@ namespace VVardenfell.Runtime.WorldState
                 }
 
                 bool shouldSpawn = entry.IsInterior == 0
-                    || (transition.InteriorActive != 0 && entry.InteriorCellId.Equals(transition.ActiveInteriorCellId));
+                    || (transition.InteriorActive != 0 && entry.InteriorCellHash == transition.ActiveInteriorCellHash);
                 if (!shouldSpawn)
                 {
                     entry.LogicalEntity = Entity.Null;
@@ -350,7 +360,8 @@ namespace VVardenfell.Runtime.WorldState
 
             if (payload.InteriorActive && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId))
             {
-                if (!WorldResources.InteriorCells.TryGetValue(payload.ActiveInteriorCellId, out CellData interiorCell) || interiorCell == null)
+                ulong activeInteriorCellHash = InteriorCellIdHash.Hash(payload.ActiveInteriorCellId);
+                if (!WorldResources.TryGetInteriorCell(activeInteriorCellHash, out CellData interiorCell))
                 {
                     error = $"Continue save references missing interior '{payload.ActiveInteriorCellId}'.";
                     return false;
@@ -361,6 +372,7 @@ namespace VVardenfell.Runtime.WorldState
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
                 transition.ActiveInteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(payload.ActiveInteriorCellId);
+                transition.ActiveInteriorCellHash = activeInteriorCellHash;
                 transition.TransitionInProgress = 0;
 
                 var interactionState = entityManager.GetComponentData<InteractionRuntimeState>(runtimeEntity);
@@ -371,6 +383,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
+                transition.ActiveInteriorCellHash = 0UL;
                 transition.TransitionInProgress = 0;
                 config.ExteriorStreamingPaused = false;
                 config.CameraCell = ComputeExteriorCell(payload.PlayerPosition);

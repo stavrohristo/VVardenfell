@@ -13,6 +13,13 @@ namespace VVardenfell.Runtime.Animation
     public partial struct ActorAnimationControllerSystem : ISystem
     {
         const uint InfiniteLoops = uint.MaxValue;
+        const float MainTransitionDuration = 0.12f;
+        const float MinimumJumpAirborneTime = 0.08f;
+        const float MinimumLandingGroundedTime = 0.04f;
+        const float LandingVerticalVelocityEpsilon = 0.01f;
+        const byte JumpPhaseNone = 0;
+        const byte JumpPhaseInAir = 1;
+        const byte JumpPhaseLanding = 2;
         static readonly ProfilerMarker s_Controller = new("VV.ActorAnimation.Controller");
 
         EntityQuery _movingPlaybackQuery;
@@ -30,6 +37,7 @@ namespace VVardenfell.Runtime.Animation
                     ComponentType.ReadOnly<ActorPresentation>(),
                     ComponentType.ReadOnly<MorrowindMovementState>(),
                     ComponentType.ReadWrite<ActorAnimationState>(),
+                    ComponentType.ReadWrite<ActorJumpAnimationState>(),
                 }
             });
             _idlePlaybackQuery = state.GetEntityQuery(new EntityQueryDesc
@@ -91,10 +99,11 @@ namespace VVardenfell.Runtime.Animation
             void Execute(
                 in ActorPresentation presentation,
                 in MorrowindMovementState movementState,
-                ref ActorAnimationState animation)
+                ref ActorAnimationState animation,
+                ref ActorJumpAnimationState jumpState)
             {
                 ref var catalog = ref Catalog.Value;
-                ResolveMain(ref catalog, presentation, movementState, ref animation);
+                ResolveMain(ref catalog, presentation, movementState, DeltaTime, ref animation, ref jumpState);
                 Advance(ref animation, DeltaTime);
             }
         }
@@ -110,7 +119,7 @@ namespace VVardenfell.Runtime.Animation
                 ref ActorAnimationState animation)
             {
                 ref var catalog = ref Catalog.Value;
-                ResolveIdle(ref catalog, presentation, ref animation);
+                ResolveIdle(ref catalog, presentation, sneak: false, ref animation);
                 Advance(ref animation, DeltaTime);
             }
         }
@@ -131,7 +140,9 @@ namespace VVardenfell.Runtime.Animation
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             in MorrowindMovementState movementState,
-            ref ActorAnimationState animation)
+            float deltaTime,
+            ref ActorAnimationState animation,
+            ref ActorJumpAnimationState jumpState)
         {
             ref var playback = ref animation.Playback;
             if (playback.Speed < 0f)
@@ -139,29 +150,146 @@ namespace VVardenfell.Runtime.Animation
 
             float2 localMove = movementState.LocalMove;
             bool moving = math.lengthsq(localMove) > 0.0001f;
+            if (movementState.JumpAccepted || !movementState.Grounded || jumpState.Phase == JumpPhaseInAir)
+            {
+                if (ResolveJump(ref catalog, presentation, movementState, moving, deltaTime, ref animation, ref jumpState))
+                    return;
+            }
+
             if (moving)
             {
+                jumpState.Phase = JumpPhaseNone;
                 ResolveMovementHashes(localMove, movementState.RunHeld, movementState.SneakHeld, swim: false, out ulong primary, out ulong fallback);
                 if (TryResolveGroup(ref catalog, presentation, primary, out var movement)
                     || (fallback != 0UL && TryResolveGroup(ref catalog, presentation, fallback, out movement)))
                 {
-                    StartIfNeeded(ref animation, movement, InfiniteLoops);
+                    StartIfNeeded(ref animation, movement, InfiniteLoops, MainTransitionDuration);
                     animation.Playback.Speed = ResolveMovementSpeed(movement, movementState);
                     return;
                 }
+
+                ResolveIdle(ref catalog, presentation, movementState.SneakHeld, ref animation);
+                return;
             }
 
-            ResolveIdle(ref catalog, presentation, ref animation);
+            if (ResolveJump(ref catalog, presentation, movementState, moving: false, deltaTime, ref animation, ref jumpState))
+                return;
+
+            ResolveIdle(ref catalog, presentation, movementState.SneakHeld, ref animation);
+        }
+
+        static bool ResolveJump(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            in MorrowindMovementState movementState,
+            bool moving,
+            float deltaTime,
+            ref ActorAnimationState animation,
+            ref ActorJumpAnimationState jumpState)
+        {
+            bool jumpPlaybackSampleAvailable = ActorAnimationPlaybackUtility.CanSample(animation.Playback)
+                                               && animation.Playback.GroupHash == ActorAnimationKnownGroupHashes.Jump;
+            bool jumpPlaybackPlaying = ActorAnimationPlaybackUtility.IsActive(animation.Playback)
+                                       && animation.Playback.GroupHash == ActorAnimationKnownGroupHashes.Jump;
+            if (!TryResolveGroup(ref catalog, presentation, ActorAnimationKnownGroupHashes.Jump, out var jump))
+            {
+                jumpState.Phase = JumpPhaseNone;
+                return false;
+            }
+
+            bool wantsInAir = movementState.JumpAccepted || !movementState.Grounded;
+            if (wantsInAir)
+            {
+                if (jumpState.Phase != JumpPhaseInAir || !jumpPlaybackSampleAvailable)
+                {
+                    StartInAirJump(ref animation, jump, MainTransitionDuration);
+                    animation.Playback.Speed = 1f;
+                    animation.Initialized = 1;
+                    jumpState.AirborneTime = 0f;
+                    jumpState.LandingGroundedTime = 0f;
+                }
+
+                if (!movementState.Grounded)
+                    jumpState.AirborneTime += deltaTime;
+                jumpState.LandingGroundedTime = 0f;
+
+                jumpState.Phase = JumpPhaseInAir;
+                return true;
+            }
+
+            if (jumpState.Phase == JumpPhaseInAir && jumpPlaybackSampleAvailable)
+            {
+                jumpState.LandingGroundedTime = movementState.Grounded
+                    ? jumpState.LandingGroundedTime + deltaTime
+                    : 0f;
+
+                if (!CanStartLanding(movementState, jumpState))
+                    return true;
+
+                if (moving)
+                {
+                    jumpState.Phase = JumpPhaseNone;
+                    jumpState.AirborneTime = 0f;
+                    jumpState.LandingGroundedTime = 0f;
+                    return false;
+                }
+
+                StartAt(ref animation, jump, requestedLoopCount: 0u, jump.LoopStopTime, MainTransitionDuration);
+                animation.Playback.Speed = 1f;
+                animation.Initialized = 1;
+                jumpState.Phase = JumpPhaseLanding;
+                jumpState.AirborneTime = 0f;
+                jumpState.LandingGroundedTime = 0f;
+                return true;
+            }
+
+            if (jumpState.Phase == JumpPhaseLanding && jumpPlaybackPlaying)
+                return true;
+
+            jumpState.Phase = JumpPhaseNone;
+            jumpState.AirborneTime = 0f;
+            jumpState.LandingGroundedTime = 0f;
+            return false;
+        }
+
+        static bool CanStartLanding(in MorrowindMovementState movementState, in ActorJumpAnimationState jumpState)
+        {
+            return movementState.Grounded
+                   && jumpState.AirborneTime >= MinimumJumpAirborneTime
+                   && jumpState.LandingGroundedTime >= MinimumLandingGroundedTime
+                   && movementState.LastVelocity.y <= LandingVerticalVelocityEpsilon;
+        }
+
+        static void StartInAirJump(
+            ref ActorAnimationState animation,
+            ActorAnimationGroupBlob group,
+            float transitionDuration)
+        {
+            Start(ref animation, group, requestedLoopCount: 0u, transitionDuration);
+            float holdTime = group.LoopStartTime > group.StartTime ? group.LoopStartTime : group.StartTime;
+            animation.Playback.LoopCount = 0u;
+            animation.Playback.LoopStopTime = holdTime;
+            animation.Playback.StopTime = holdTime;
+            animation.Playback.HoldAtStop = 1;
         }
 
         static void ResolveIdle(
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
+            bool sneak,
             ref ActorAnimationState animation)
         {
-            if (TryResolveGroup(ref catalog, presentation, IdleHash(), out var idle))
+            if (sneak
+                && TryResolveGroup(ref catalog, presentation, ActorAnimationKnownGroupHashes.IdleSneak, out var idleSneak))
             {
-                StartIfNeeded(ref animation, idle, InfiniteLoops);
+                StartIfNeeded(ref animation, idleSneak, InfiniteLoops, MainTransitionDuration);
+                animation.Playback.Speed = 1f;
+                return;
+            }
+
+            if (TryResolveGroup(ref catalog, presentation, ActorAnimationKnownGroupHashes.Idle, out var idle))
+            {
+                StartIfNeeded(ref animation, idle, InfiniteLoops, MainTransitionDuration);
                 animation.Playback.Speed = 1f;
             }
             else
@@ -180,13 +308,53 @@ namespace VVardenfell.Runtime.Animation
             return math.min(10f, planarSpeed / group.Velocity);
         }
 
-        static void StartIfNeeded(ref ActorAnimationState animation, ActorAnimationGroupBlob group, uint requestedLoopCount)
+        static void StartIfNeeded(
+            ref ActorAnimationState animation,
+            ActorAnimationGroupBlob group,
+            uint requestedLoopCount,
+            float transitionDuration)
         {
             if (ActorAnimationPlaybackUtility.Matches(animation.Playback, group.GroupHash, group.ClipHash))
                 return;
 
+            Start(ref animation, group, requestedLoopCount, transitionDuration);
+        }
+
+        static void Start(
+            ref ActorAnimationState animation,
+            ActorAnimationGroupBlob group,
+            uint requestedLoopCount,
+            float transitionDuration)
+        {
+            CaptureTransitionSource(ref animation, transitionDuration);
             ActorAnimationPlaybackUtility.Start(ref animation.Playback, group, requestedLoopCount);
             animation.Initialized = 1;
+        }
+
+        static void StartAt(
+            ref ActorAnimationState animation,
+            ActorAnimationGroupBlob group,
+            uint requestedLoopCount,
+            float startTime,
+            float transitionDuration)
+        {
+            CaptureTransitionSource(ref animation, transitionDuration);
+            ActorAnimationPlaybackUtility.StartAt(ref animation.Playback, group, requestedLoopCount, startTime);
+            animation.Initialized = 1;
+        }
+
+        static void CaptureTransitionSource(ref ActorAnimationState animation, float duration)
+        {
+            if (duration <= 0f || !ActorAnimationPlaybackUtility.CanSample(animation.Playback))
+            {
+                ClearTransition(ref animation);
+                return;
+            }
+
+            animation.TransitionPlayback = animation.Playback;
+            animation.TransitionTime = 0f;
+            animation.TransitionDuration = duration;
+            animation.TransitionActive = 1;
         }
 
         static void Clear(ref ActorAnimationState animation)
@@ -198,12 +366,28 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ActorAnimationPlaybackUtility.Clear(ref animation.Playback);
+            ClearTransition(ref animation);
             animation.Initialized = 1;
+        }
+
+        static void ClearTransition(ref ActorAnimationState animation)
+        {
+            ActorAnimationPlaybackUtility.Clear(ref animation.TransitionPlayback);
+            animation.TransitionTime = 0f;
+            animation.TransitionDuration = 0f;
+            animation.TransitionActive = 0;
         }
 
         static void Advance(ref ActorAnimationState animation, float deltaTime)
         {
             ActorAnimationPlaybackUtility.Advance(ref animation.Playback, deltaTime, InfiniteLoops);
+            if (animation.TransitionActive == 0)
+                return;
+
+            ActorAnimationPlaybackUtility.Advance(ref animation.TransitionPlayback, deltaTime, InfiniteLoops);
+            animation.TransitionTime += deltaTime;
+            if (animation.TransitionTime >= animation.TransitionDuration)
+                ClearTransition(ref animation);
         }
 
         static void AdvanceOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays, float deltaTime)
@@ -286,20 +470,20 @@ namespace VVardenfell.Runtime.Animation
             byte direction = ResolveDirection(localMove);
             if (swim)
             {
-                primary = MovementHash(run ? (byte)4 : (byte)3, direction);
-                fallback = MovementHash(run ? (byte)3 : (byte)0, direction);
+                primary = ActorAnimationKnownGroupHashes.Movement(run ? (byte)4 : (byte)3, direction);
+                fallback = ActorAnimationKnownGroupHashes.Movement(run ? (byte)3 : (byte)0, direction);
                 return;
             }
 
             if (sneak)
             {
-                primary = MovementHash(2, direction);
-                fallback = MovementHash(0, direction);
+                primary = ActorAnimationKnownGroupHashes.Movement(2, direction);
+                fallback = ActorAnimationKnownGroupHashes.Movement(0, direction);
                 return;
             }
 
-            primary = MovementHash(run ? (byte)1 : (byte)0, direction);
-            fallback = run ? MovementHash(0, direction) : 0UL;
+            primary = ActorAnimationKnownGroupHashes.Movement(run ? (byte)1 : (byte)0, direction);
+            fallback = run ? ActorAnimationKnownGroupHashes.Movement(0, direction) : 0UL;
         }
 
         static byte ResolveDirection(float2 localMove)
@@ -310,126 +494,6 @@ namespace VVardenfell.Runtime.Animation
             return localMove.y >= 0f ? (byte)0 : (byte)1;
         }
 
-        static ulong IdleHash()
-        {
-            FixedString64Bytes value = default;
-            AppendIdle(ref value);
-            return ActorAnimationGroupHash.Hash(value);
-        }
-
-        static ulong MovementHash(byte family, byte direction)
-        {
-            FixedString64Bytes value = default;
-            if (family == 4)
-            {
-                AppendSwim(ref value);
-                AppendRun(ref value);
-            }
-            else if (family == 3)
-            {
-                AppendSwim(ref value);
-                AppendWalk(ref value);
-            }
-            else if (family == 2)
-            {
-                AppendSneak(ref value);
-            }
-            else if (family == 1)
-            {
-                AppendRun(ref value);
-            }
-            else
-            {
-                AppendWalk(ref value);
-            }
-
-            if (direction == 1)
-                AppendBack(ref value);
-            else if (direction == 2)
-                AppendLeft(ref value);
-            else if (direction == 3)
-                AppendRight(ref value);
-            else
-                AppendForward(ref value);
-
-            return ActorAnimationGroupHash.Hash(value);
-        }
-
-        static void AppendIdle(ref FixedString64Bytes value)
-        {
-            value.Append('i');
-            value.Append('d');
-            value.Append('l');
-            value.Append('e');
-        }
-
-        static void AppendWalk(ref FixedString64Bytes value)
-        {
-            value.Append('w');
-            value.Append('a');
-            value.Append('l');
-            value.Append('k');
-        }
-
-        static void AppendRun(ref FixedString64Bytes value)
-        {
-            value.Append('r');
-            value.Append('u');
-            value.Append('n');
-        }
-
-        static void AppendSneak(ref FixedString64Bytes value)
-        {
-            value.Append('s');
-            value.Append('n');
-            value.Append('e');
-            value.Append('a');
-            value.Append('k');
-        }
-
-        static void AppendSwim(ref FixedString64Bytes value)
-        {
-            value.Append('s');
-            value.Append('w');
-            value.Append('i');
-            value.Append('m');
-        }
-
-        static void AppendForward(ref FixedString64Bytes value)
-        {
-            value.Append('f');
-            value.Append('o');
-            value.Append('r');
-            value.Append('w');
-            value.Append('a');
-            value.Append('r');
-            value.Append('d');
-        }
-
-        static void AppendBack(ref FixedString64Bytes value)
-        {
-            value.Append('b');
-            value.Append('a');
-            value.Append('c');
-            value.Append('k');
-        }
-
-        static void AppendLeft(ref FixedString64Bytes value)
-        {
-            value.Append('l');
-            value.Append('e');
-            value.Append('f');
-            value.Append('t');
-        }
-
-        static void AppendRight(ref FixedString64Bytes value)
-        {
-            value.Append('r');
-            value.Append('i');
-            value.Append('g');
-            value.Append('h');
-            value.Append('t');
-        }
     }
 }
 #else

@@ -132,6 +132,8 @@ namespace VVardenfell.Runtime.Streaming
         /// </summary>
         public static readonly Dictionary<int2, CellData> Cells = new();
         public static readonly Dictionary<string, CellData> InteriorCells = new(System.StringComparer.OrdinalIgnoreCase);
+        public static readonly Dictionary<ulong, CellData> InteriorCellsByHash = new();
+        public static readonly Dictionary<ulong, string> InteriorCellIdsByHash = new();
 
         /// <summary>
         /// Global deduped interactable-collider blobs (indexed by <see cref="RefEntry.CollisionIndex"/>).
@@ -156,6 +158,21 @@ namespace VVardenfell.Runtime.Streaming
         public static bool TryGetTerrainCollider(int2 coord, out BlobAssetReference<Collider> collider)
         {
             return TerrainColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+        }
+
+        public static bool TryGetInteriorCell(ulong cellHash, out CellData cell)
+        {
+            cell = null;
+            return cellHash != 0UL
+                   && InteriorCellsByHash.TryGetValue(cellHash, out cell)
+                   && cell != null;
+        }
+
+        public static string ResolveInteriorCellId(ulong cellHash)
+        {
+            return cellHash != 0UL && InteriorCellIdsByHash.TryGetValue(cellHash, out string id)
+                ? id
+                : string.Empty;
         }
 
         public static bool TryGetRuntimeSpawnPrefab(ContentReference content, out RuntimeSpawnPrefabDescriptor descriptor)
@@ -225,6 +242,8 @@ namespace VVardenfell.Runtime.Streaming
             foreach (var kv in InteriorCells)
                 DisposeCellResidentBlobs(kv.Value);
             InteriorCells.Clear();
+            InteriorCellsByHash.Clear();
+            InteriorCellIdsByHash.Clear();
 
             // Dispose per-cell static + terrain collider blobs before clearing the dicts.
             foreach (var kv in StaticCellColliders)

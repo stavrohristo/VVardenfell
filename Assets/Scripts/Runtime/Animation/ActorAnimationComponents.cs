@@ -42,6 +42,11 @@ namespace VVardenfell.Runtime.Animation
         public byte RigidMirrorX;
     }
 
+    public struct ActorHiddenVisualPartMask : IComponentData
+    {
+        public uint Mask;
+    }
+
     public struct ActorAnimationPlaybackState
     {
         public ulong GroupHash;
@@ -56,12 +61,24 @@ namespace VVardenfell.Runtime.Animation
         public float StopTime;
         public uint LoopCount;
         public byte Playing;
+        public byte HoldAtStop;
     }
 
     public struct ActorAnimationState : IComponentData
     {
         public ActorAnimationPlaybackState Playback;
+        public ActorAnimationPlaybackState TransitionPlayback;
+        public float TransitionTime;
+        public float TransitionDuration;
+        public byte TransitionActive;
         public byte Initialized;
+    }
+
+    public struct ActorJumpAnimationState : IComponentData
+    {
+        public float AirborneTime;
+        public float LandingGroundedTime;
+        public byte Phase;
     }
 
     public struct ActorAnimationOverlayState : IBufferElementData
@@ -76,6 +93,9 @@ namespace VVardenfell.Runtime.Animation
     {
         public static bool IsActive(in ActorAnimationPlaybackState playback)
             => playback.Playing != 0 && playback.ClipIndex >= 0;
+
+        public static bool CanSample(in ActorAnimationPlaybackState playback)
+            => playback.ClipIndex >= 0;
 
         public static bool Matches(in ActorAnimationPlaybackState playback, ulong groupHash, ulong clipHash)
             => playback.Playing != 0 && playback.GroupHash == groupHash && playback.ClipHash == clipHash;
@@ -97,6 +117,18 @@ namespace VVardenfell.Runtime.Animation
             playback.StopTime = group.StopTime;
             playback.LoopCount = group.Looping != 0 ? requestedLoopCount : 0u;
             playback.Playing = 1;
+            playback.HoldAtStop = 0;
+        }
+
+        public static void StartAt(
+            ref ActorAnimationPlaybackState playback,
+            ActorAnimationGroupBlob group,
+            uint requestedLoopCount,
+            float startTime)
+        {
+            Start(ref playback, group, requestedLoopCount);
+            playback.PreviousTime = startTime;
+            playback.Time = startTime;
         }
 
         public static void Clear(ref ActorAnimationPlaybackState playback)
@@ -112,6 +144,7 @@ namespace VVardenfell.Runtime.Animation
             playback.LoopStopTime = 0f;
             playback.StopTime = 0f;
             playback.LoopCount = 0u;
+            playback.HoldAtStop = 0;
         }
 
         public static void Advance(ref ActorAnimationPlaybackState playback, float deltaTime, uint infiniteLoops)
@@ -134,7 +167,7 @@ namespace VVardenfell.Runtime.Animation
 
             playback.Time = nextTime >= playback.StopTime ? playback.StopTime : nextTime;
             if (playback.Time >= playback.StopTime)
-                playback.Playing = 0;
+                playback.Playing = playback.HoldAtStop != 0 ? (byte)1 : (byte)0;
         }
     }
 

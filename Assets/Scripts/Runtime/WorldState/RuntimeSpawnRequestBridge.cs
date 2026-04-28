@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
 
@@ -151,6 +152,7 @@ namespace VVardenfell.Runtime.WorldState
                 Scale = Mathf.Max(0.0001f, scale),
                 ExteriorCell = exteriorCell,
                 InteriorCellId = interiorCellId,
+                InteriorCellHash = isInterior ? InteriorCellIdHash.Hash(interiorCellId) : 0UL,
                 IsInterior = (byte)(isInterior ? 1 : 0),
                 PersistencePolicy = (byte)RuntimeSpawnPersistencePolicy.CellOwnedSession,
             });

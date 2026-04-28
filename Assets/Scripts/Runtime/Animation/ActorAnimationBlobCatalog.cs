@@ -105,6 +105,7 @@ namespace VVardenfell.Runtime.Animation
     public struct ActorSkeletonBoneBlob
     {
         public FixedString64Bytes Name;
+        public ulong NameHash;
         public int ParentIndex;
         public int SourceRecordIndex;
         public float3 BindPosition;

@@ -357,6 +357,7 @@ namespace VVardenfell.Runtime.Streaming
                 PrecipitationAlpha = blended.PrecipitationAlpha,
                 PrecipitationKind = MorrowindWeatherEvaluationUtility.ResolvePrecipitationKind(dominant),
                 RainSpeed = dominant.RainSpeed,
+                RainEntranceSpeed = dominant.RainEntranceSpeed,
                 RainDiameter = dominant.RainDiameter,
                 RainMinHeight = dominant.RainMinHeight,
                 RainMaxHeight = dominant.RainMaxHeight,
@@ -398,8 +399,10 @@ namespace VVardenfell.Runtime.Streaming
 
             var random = new Unity.Mathematics.Random(weather.RandomState == 0u ? 1u : weather.RandomState);
             bool struck = MorrowindWeatherEvaluationUtility.TryResolveThunder(current, blend.ThunderCurrentRatio, elapsedSeconds, paused, ref random, out int currentSound, out float currentFlash);
+            int nextSound = 0;
+            float nextFlash = 0f;
             bool nextStruck = blend.ThunderNextRatio > 0f
-                && MorrowindWeatherEvaluationUtility.TryResolveThunder(next, blend.ThunderNextRatio, elapsedSeconds, paused, ref random, out int nextSound, out float nextFlash);
+                && MorrowindWeatherEvaluationUtility.TryResolveThunder(next, blend.ThunderNextRatio, elapsedSeconds, paused, ref random, out nextSound, out nextFlash);
 
             if (!struck && !nextStruck)
             {

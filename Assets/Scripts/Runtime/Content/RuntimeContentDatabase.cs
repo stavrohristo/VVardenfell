@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Profiling;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 
 namespace VVardenfell.Runtime.Content
 {
@@ -39,6 +40,7 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, GenericRecordDefHandle> _bodyPartsById;
         readonly Dictionary<string, GenericRecordDefHandle> _actorBodyPartsById;
         readonly Dictionary<string, GenericRecordDefHandle> _pathGridsById;
+        readonly Dictionary<ulong, GenericRecordDefHandle> _interiorPathGridsByHash;
         readonly Dictionary<long, GenericRecordDefHandle> _pathGridsByExteriorCoord;
         readonly Dictionary<string, ContentReference> _placeablesById;
         readonly int[] _itemEquipmentByItemIndex;
@@ -122,6 +124,7 @@ namespace VVardenfell.Runtime.Content
             _bodyPartsById = BuildIndex(data.BodyParts, def => def.Id, GenericRecordDefHandle.FromIndex);
             _actorBodyPartsById = BuildIndex(data.ActorBodyParts, def => def.Id, GenericRecordDefHandle.FromIndex);
             _pathGridsById = BuildIndex(data.PathGrids, def => def.Id, GenericRecordDefHandle.FromIndex);
+            _interiorPathGridsByHash = BuildInteriorPathGridHashIndex(data.PathGrids);
             _pathGridsByExteriorCoord = BuildPathGridExteriorIndex(data.PathGrids);
             _placeablesById = GameplayContentReferenceIndex.BuildPlaceableIndex(data);
             _itemEquipmentByItemIndex = BuildItemEquipmentIndex(data);
@@ -174,6 +177,11 @@ namespace VVardenfell.Runtime.Content
             => _pathGridsById.TryGetValue(ContentId.NormalizeId(id ?? string.Empty), out handle);
         public bool TryGetInteriorPathGridHandle(string cellId, out GenericRecordDefHandle handle)
             => _pathGridsById.TryGetValue(ContentId.NormalizeId(cellId ?? string.Empty), out handle);
+        public bool TryGetInteriorPathGridHandle(ulong cellHash, out GenericRecordDefHandle handle)
+        {
+            handle = default;
+            return cellHash != 0UL && _interiorPathGridsByHash.TryGetValue(cellHash, out handle);
+        }
         public bool TryGetExteriorPathGridHandle(int gridX, int gridY, out GenericRecordDefHandle handle)
             => _pathGridsByExteriorCoord.TryGetValue(PackExteriorPathGridKey(gridX, gridY), out handle);
         public bool TryGetGlobalHandle(string id, out GenericRecordDefHandle handle) => _globalsById.TryGetValue(id ?? string.Empty, out handle);
@@ -577,6 +585,25 @@ namespace VVardenfell.Runtime.Content
             {
                 if (defs[i].IsExterior != 0)
                     map[PackExteriorPathGridKey(defs[i].GridX, defs[i].GridY)] = GenericRecordDefHandle.FromIndex(i);
+            }
+
+            return map;
+        }
+
+        static Dictionary<ulong, GenericRecordDefHandle> BuildInteriorPathGridHashIndex(PathGridDef[] defs)
+        {
+            var map = new Dictionary<ulong, GenericRecordDefHandle>(defs?.Length ?? 0);
+            if (defs == null)
+                return map;
+
+            for (int i = 0; i < defs.Length; i++)
+            {
+                if (defs[i].IsExterior != 0)
+                    continue;
+
+                ulong hash = InteriorCellIdHash.Hash(defs[i].Id);
+                if (hash != 0UL && !map.ContainsKey(hash))
+                    map[hash] = GenericRecordDefHandle.FromIndex(i);
             }
 
             return map;

@@ -134,7 +134,7 @@ namespace VVardenfell.Runtime.WorldState
 
             if (request.IsInterior != 0)
             {
-                if (interiorTransition.InteriorActive == 0 || interiorTransition.ActiveInteriorCellId != request.InteriorCellId)
+                if (interiorTransition.InteriorActive == 0 || interiorTransition.ActiveInteriorCellHash != request.InteriorCellHash)
                 {
                     CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.InvalidLocation, "Runtime interior spawns currently require the requested interior to be the active loaded interior.");
                     return;
@@ -208,6 +208,7 @@ namespace VVardenfell.Runtime.WorldState
                 Scale = request.Scale,
                 ExteriorCell = request.ExteriorCell,
                 InteriorCellId = request.InteriorCellId,
+                InteriorCellHash = request.InteriorCellHash,
                 LogicalEntity = logicalEntity,
                 IsInterior = request.IsInterior,
                 PersistencePolicy = request.PersistencePolicy,

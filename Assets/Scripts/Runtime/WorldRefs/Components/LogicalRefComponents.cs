@@ -24,6 +24,7 @@ namespace VVardenfell.Runtime.Components
     {
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
+        public ulong InteriorCellHash;
         public byte IsInterior;
     }
 

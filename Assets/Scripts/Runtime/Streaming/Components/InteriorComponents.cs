@@ -9,6 +9,7 @@ namespace VVardenfell.Runtime.Components
         public byte InteriorActive;
         public byte TransitionInProgress;
         public FixedString128Bytes ActiveInteriorCellId;
+        public ulong ActiveInteriorCellHash;
     }
 
     public struct InteriorCellMember : IComponentData

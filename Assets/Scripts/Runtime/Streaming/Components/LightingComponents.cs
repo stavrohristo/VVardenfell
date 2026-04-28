@@ -87,10 +87,19 @@ namespace VVardenfell.Runtime.Components
         public float MoonMaxOpacity;
         public float MoonBrightnessScale;
         public float MoonEmissionScale;
+        public float MoonMaskScale;
         public float StarMaxOpacity;
         public float StarBrightnessScale;
         public float StarTextureOpacityScale;
+        public float StarTextureScale;
         public float PrecipitationIntensityScale;
+        public float PrecipitationEmissionScale;
+        public float PrecipitationWorldScale;
+        public float PrecipitationParticleSizeScale;
+        public float RainDepthFadeMeters;
+        public float RainDepthClipBiasMeters;
+        public float RainStreakLengthScale;
+        public float RainStreakWidthScale;
         public float LightningIntensityScale;
     }
 
@@ -193,6 +202,7 @@ namespace VVardenfell.Runtime.Components
         public float PrecipitationAlpha;
         public int PrecipitationKind;
         public float RainSpeed;
+        public float RainEntranceSpeed;
         public float RainDiameter;
         public float RainMinHeight;
         public float RainMaxHeight;

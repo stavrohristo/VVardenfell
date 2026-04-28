@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
@@ -67,9 +68,10 @@ namespace VVardenfell.Runtime.Streaming
 
         public static MorrowindWeatherState CreateDefaultWeather()
         {
+            const int playtestWeather = (int)WeatherKind.Rain;
             return new MorrowindWeatherState
             {
-                CurrentWeather = 0,
+                CurrentWeather = playtestWeather,
                 NextWeather = -1,
                 QueuedWeather = -1,
                 Transition = 0f,
@@ -78,7 +80,7 @@ namespace VVardenfell.Runtime.Streaming
                 HoursUntilNextChange = 20f,
                 WeatherUpdateHoursRemaining = 20f,
                 RandomState = 0x6E624EB7u,
-                ForcedWeather = -1,
+                ForcedWeather = playtestWeather,
             };
         }
 

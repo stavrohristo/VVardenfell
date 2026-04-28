@@ -47,7 +47,7 @@ namespace VVardenfell.Runtime.Streaming
         int _nextSlot;
         bool _hasPresentationContext;
         bool _lastInteriorActive;
-        FixedString128Bytes _lastInteriorCellId;
+        ulong _lastInteriorCellHash;
         int2 _lastCameraCell;
 
         protected override void OnCreate()
@@ -93,25 +93,25 @@ namespace VVardenfell.Runtime.Streaming
             
 
             bool interiorActive = false;
-            FixedString128Bytes activeInteriorCellId = default;
+            ulong activeInteriorCellHash = 0UL;
             if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
                 var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
                 interiorActive = transition.InteriorActive != 0;
-                activeInteriorCellId = transition.ActiveInteriorCellId;
+                activeInteriorCellHash = transition.ActiveInteriorCellHash;
             }
 
             int2 cameraCell = default;
             if (SystemAPI.HasSingleton<StreamingConfig>())
                 cameraCell = SystemAPI.GetSingleton<StreamingConfig>().CameraCell;
 
-            if (HasPresentationContextChanged(interiorActive, activeInteriorCellId, cameraCell))
+            if (HasPresentationContextChanged(interiorActive, activeInteriorCellHash, cameraCell))
             {
                 using var __ = k_ReacquireLights.Auto();
                 ReleaseAllPresentedLights();
                 _hasPresentationContext = true;
                 _lastInteriorActive = interiorActive;
-                _lastInteriorCellId = activeInteriorCellId;
+                _lastInteriorCellHash = activeInteriorCellHash;
                 _lastCameraCell = cameraCell;
             }
 
@@ -138,7 +138,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (interiorActive)
                 {
-                    if (locations[i].IsInterior == 0 || !locations[i].InteriorCellId.Equals(activeInteriorCellId))
+                    if (locations[i].IsInterior == 0 || locations[i].InteriorCellHash != activeInteriorCellHash)
                         continue;
                 }
                 else
@@ -274,7 +274,7 @@ namespace VVardenfell.Runtime.Streaming
             _lightPool.Push(presented);
         }
 
-        bool HasPresentationContextChanged(bool interiorActive, FixedString128Bytes activeInteriorCellId, int2 cameraCell)
+        bool HasPresentationContextChanged(bool interiorActive, ulong activeInteriorCellHash, int2 cameraCell)
         {
             if (!_hasPresentationContext)
                 return true;
@@ -283,7 +283,7 @@ namespace VVardenfell.Runtime.Streaming
                 return true;
 
             if (interiorActive)
-                return !_lastInteriorCellId.Equals(activeInteriorCellId);
+                return _lastInteriorCellHash != activeInteriorCellHash;
 
             return !math.all(_lastCameraCell == cameraCell);
         }

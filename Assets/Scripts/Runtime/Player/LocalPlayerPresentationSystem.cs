@@ -79,6 +79,8 @@ namespace VVardenfell.Runtime.Player
                 view,
                 actorHandle,
                 firstPerson: true,
+                actorRecipeFirstPerson: false,
+                hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
                 visible: true,
                 contentDb,
                 inventory);
@@ -88,6 +90,8 @@ namespace VVardenfell.Runtime.Player
                 view,
                 actorHandle,
                 firstPerson: false,
+                actorRecipeFirstPerson: false,
+                hiddenPartMask: 0u,
                 visible: false,
                 contentDb,
                 inventory);
@@ -111,6 +115,8 @@ namespace VVardenfell.Runtime.Player
             Entity view,
             ActorDefHandle actorHandle,
             bool firstPerson,
+            bool actorRecipeFirstPerson,
+            uint hiddenPartMask,
             bool visible,
             RuntimeContentDatabase contentDb,
             DynamicBuffer<PlayerInventoryItem> inventory)
@@ -122,8 +128,10 @@ namespace VVardenfell.Runtime.Player
             ecb.AddComponent(visual, new ActorSpawnSource
             {
                 Definition = actorHandle,
-                FirstPerson = (byte)(firstPerson ? 1 : 0),
+                FirstPerson = (byte)(actorRecipeFirstPerson ? 1 : 0),
             });
+            if (hiddenPartMask != 0u)
+                ecb.AddComponent(visual, new ActorHiddenVisualPartMask { Mask = hiddenPartMask });
             ecb.AddComponent(visual, new LocalPlayerVisual
             {
                 Player = player,
@@ -158,6 +166,10 @@ namespace VVardenfell.Runtime.Player
 
             return visual;
         }
+
+        static uint BuildFirstPersonBodyHiddenPartMask()
+            => ActorVisualContentRules.PartMask(ActorVisualPartReference.Head)
+               | ActorVisualContentRules.PartMask(ActorVisualPartReference.Hair);
 
         MorrowindMovementState ResolveInitialMovementState(Entity player)
         {

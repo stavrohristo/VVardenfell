@@ -60,6 +60,7 @@ namespace VVardenfell.Runtime.WorldState
                 Scale = spawnedRef.Scale,
                 ExteriorCell = spawnedRef.ExteriorCell,
                 InteriorCellId = spawnedRef.InteriorCellId,
+                InteriorCellHash = spawnedRef.InteriorCellHash,
                 IsInterior = spawnedRef.IsInterior,
                 PersistencePolicy = spawnedRef.PersistencePolicy,
             });
