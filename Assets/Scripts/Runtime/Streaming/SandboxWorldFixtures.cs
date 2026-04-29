@@ -20,6 +20,8 @@ namespace VVardenfell.Runtime.Streaming
         public bool GenerateActorInspectionGrid = false;
         public bool IncludeCreaturesInInspectionGrid = true;
         public bool IncludeNpcsInInspectionGrid = true;
+        public string ActorInspectionRepeatActorId = string.Empty;
+        public int ActorInspectionRepeatActorCount = 0;
         public int ActorInspectionGridColumns = 60;
         public float ActorInspectionGridSpacing = 1.75f;
         public int2 ActorInspectionExteriorCell = new(-2, -9);
@@ -87,6 +89,8 @@ namespace VVardenfell.Runtime.Streaming
             GenerateActorInspectionGrid = true,
             IncludeCreaturesInInspectionGrid = true,
             IncludeNpcsInInspectionGrid = true,
+            ActorInspectionRepeatActorId = "chargen boat guard 2",
+            ActorInspectionRepeatActorCount = 3000,
             ActorInspectionGridColumns = 60,
             ActorInspectionGridSpacing = 1.75f,
             ActorInspectionExteriorCell = new int2(-2, -9),
@@ -194,6 +198,12 @@ namespace VVardenfell.Runtime.Streaming
             var result = new List<SandboxSpawnSpec>(authored.Length + contentDb.ActorCount);
             result.AddRange(authored);
 
+            if (!string.IsNullOrWhiteSpace(profile.ActorInspectionRepeatActorId))
+            {
+                AppendRepeatedActorInspectionGrid(contentDb, profile, exteriorCells, result);
+                return result.ToArray();
+            }
+
             int generated = 0;
             for (int i = 0; i < contentDb.ActorCount; i++)
             {
@@ -224,8 +234,48 @@ namespace VVardenfell.Runtime.Streaming
                 generated++;
             }
 
-            Debug.Log($"[VVardenfell][Sandbox] generated actor inspection grid with {generated} actors in exterior cell ({profile.ActorInspectionExteriorCell.x},{profile.ActorInspectionExteriorCell.y}).");
             return result.ToArray();
+        }
+
+        static void AppendRepeatedActorInspectionGrid(
+            RuntimeContentDatabase contentDb,
+            SandboxWorldProfile profile,
+            Dictionary<int2, CellData> exteriorCells,
+            List<SandboxSpawnSpec> result)
+        {
+            string actorId = profile.ActorInspectionRepeatActorId ?? string.Empty;
+            if (!contentDb.TryGetActorHandle(actorId, out var actorHandle) || !actorHandle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Sandbox] repeated actor inspection grid requested missing actor id '{actorId}'.");
+
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            if (actor.Kind != ActorDefKind.Npc)
+                throw new InvalidOperationException($"[VVardenfell][Sandbox] repeated actor inspection grid requires an NPC actor, but '{actorId}' is '{actor.Kind}'.");
+
+            int count = Math.Max(0, profile.ActorInspectionRepeatActorCount);
+            for (int generated = 0; generated < count; generated++)
+            {
+                int column = generated % Math.Max(1, profile.ActorInspectionGridColumns);
+                int row = generated / Math.Max(1, profile.ActorInspectionGridColumns);
+                float localX = profile.ActorInspectionGridOrigin.x + column * profile.ActorInspectionGridSpacing;
+                float localZ = profile.ActorInspectionGridOrigin.y + row * profile.ActorInspectionGridSpacing;
+                float height = ResolveInspectionGridHeight(profile, exteriorCells, localX, localZ);
+                var position = SandboxWorldFixtures.ExteriorCellPosition(
+                    profile.ActorInspectionExteriorCell,
+                    localX,
+                    height,
+                    localZ);
+
+                result.Add(new SandboxSpawnSpec
+                {
+                    ContentId = actor.Id ?? string.Empty,
+                    Position = position,
+                    Rotation = quaternion.identity,
+                    Scale = 1f,
+                    IsInterior = false,
+                    ExteriorCell = profile.ActorInspectionExteriorCell,
+                });
+            }
+
         }
 
         static float ResolveInspectionGridHeight(

@@ -266,11 +266,11 @@ namespace VVardenfell.Runtime.Player
                 EntityManager.SetComponentData(controlEntity, control);
             }
 
-            SetVisualVisible(state.FirstPersonVisual, state.Mode == PlayerViewMode.FirstPerson);
-            SetVisualVisible(state.ThirdPersonVisual, state.Mode == PlayerViewMode.ThirdPerson);
+            SetVisualGpuActive(state.FirstPersonVisual);
+            SetVisualGpuActive(state.ThirdPersonVisual);
         }
 
-        void SetVisualVisible(Entity entity, bool visible)
+        void SetVisualGpuActive(Entity entity)
         {
             if (entity == Entity.Null
                 || !EntityManager.Exists(entity)
@@ -279,7 +279,7 @@ namespace VVardenfell.Runtime.Player
                 return;
             }
 
-            EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, visible);
+            EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, true);
         }
     }
 }

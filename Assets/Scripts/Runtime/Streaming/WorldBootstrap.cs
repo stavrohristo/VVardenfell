@@ -11,7 +11,6 @@ using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.WorldState;
-using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -39,7 +38,6 @@ namespace VVardenfell.Runtime.Streaming
 
         public static IEnumerator InstallIncremental(CacheLoader cache, RuntimeLoadProgress progress, WorldBootstrapOptions options)
         {
-            var installSw = Stopwatch.StartNew();
             var world = World.DefaultGameObjectInjectionWorld;
             var em = world.EntityManager;
 
@@ -52,7 +50,6 @@ namespace VVardenfell.Runtime.Streaming
             var pendingPhysicsUnload = default(PendingCellPhysicsUnload);
             Task<WorldBootstrapPreloadResult> preloadTask = null;
             Task<WorldBootstrapCollisionLoadResult> collisionTask = null;
-            Stopwatch backgroundReadSw = null;
             bool singletonInstalled = false;
 
             try
@@ -70,7 +67,6 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
-                backgroundReadSw = Stopwatch.StartNew();
                 preloadTask = Task.Run(() => options.IsSandbox
                     ? WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active)
                     : WorldBootstrapPreloadUtility.PreloadCells(cache));
@@ -92,8 +88,6 @@ namespace VVardenfell.Runtime.Streaming
 
                 var preload = preloadTask.GetAwaiter().GetResult();
                 var collisionLoad = collisionTask.GetAwaiter().GetResult();
-                backgroundReadSw.Stop();
-                UnityEngine.Debug.Log($"[VVardenfell][BootTiming] detail=BackgroundPreload segment='cache reads overlapped' deltaMs={backgroundReadSw.ElapsedMilliseconds} elapsedMs={backgroundReadSw.ElapsedMilliseconds}");
 
                 var firstPreloadFailure = WorldBootstrapPreloadUtility.GetFirstPreloadFailure(preload);
                 if (firstPreloadFailure != null)
@@ -148,8 +142,7 @@ namespace VVardenfell.Runtime.Streaming
                         ref loadedMap,
                         ref logicalRefLookup,
                         active: true,
-                        gateTerrainByRadius: DefaultGateTerrainByRadius,
-                        emitTiming: true);
+                        gateTerrainByRadius: DefaultGateTerrainByRadius);
                     progress?.Report("Start cell ready", 1, 1);
                     progress?.CompleteStage();
                     yield return null;
@@ -207,8 +200,6 @@ namespace VVardenfell.Runtime.Streaming
                         pendingPhysicsUnload);
                 }
             }
-
-            installSw.Stop();
         }
 
         internal static float3 DefaultPlayerSpawnPosition()

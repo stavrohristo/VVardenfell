@@ -2,9 +2,9 @@ using System;
 using System.Collections;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Mathematics;
@@ -80,15 +80,13 @@ namespace VVardenfell.Runtime.Cache
 
         public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
         {
-            var totalSw = Stopwatch.StartNew();
-            Task<(ActorAnimationCatalogData Data, long ElapsedMs)> actorAnimationCatalogTask = null;
-            Task<(MeshPayload[] Payloads, long ElapsedMs)> meshPayloadTask = null;
-            Task<(TexturePayload[] Payloads, long ElapsedMs)> texturePayloadTask = null;
+            Task<ActorAnimationCatalogData> actorAnimationCatalogTask = null;
+            Task<MeshPayload[]> meshPayloadTask = null;
+            Task<TexturePayload[]> texturePayloadTask = null;
+            TexturePayloadReadState texturePayloadState = null;
             string[] textureHashes = null;
 
             progress?.BeginStage("Manifest + metadata", "Reading manifest", 1);
-            var manifestSw = Stopwatch.StartNew();
-            long metadataLastMs = 0;
             k_Manifest.Begin();
             try
             {
@@ -97,37 +95,29 @@ namespace VVardenfell.Runtime.Cache
                 if (manifest.FormatVersion != CacheFormat.FormatVersion)
                     throw new InvalidDataException($"manifest.bin format mismatch (found {manifest.FormatVersion}, expected {CacheFormat.FormatVersion}); rebake required.");
                 Manifest = manifest;
-                LogMetadataTiming("manifest", manifestSw, ref metadataLastMs);
                 MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
-                LogMetadataTiming("mesh names", manifestSw, ref metadataLastMs);
                 meshPayloadTask = Task.Run(ReadMeshPayloadsOnWorker);
-                LogMetadataTiming("mesh payload read scheduled", manifestSw, ref metadataLastMs);
                 textureHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
                 BuildTexturePathLookup(textureHashes);
-                texturePayloadTask = Task.Run(() => ReadTexturePayloadsOnWorker(textureHashes));
-                LogMetadataTiming("texture payload read scheduled", manifestSw, ref metadataLastMs);
+                texturePayloadState = new TexturePayloadReadState(textureHashes.Length);
+                texturePayloadTask = StartLongRunningTask(() => ReadTexturePayloadsOnWorker(textureHashes, texturePayloadState));
                 if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
                     throw new InvalidDataException("render_shards.bin unreadable");
                 RenderShardCatalog = renderShardCatalog;
-                LogMetadataTiming("render shards", manifestSw, ref metadataLastMs);
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
-                LogMetadataTiming("model prefabs", manifestSw, ref metadataLastMs);
                 actorAnimationCatalogTask = Task.Run(ReadActorAnimationCatalogOnWorker);
-                LogMetadataTiming("actor animation catalog scheduled", manifestSw, ref metadataLastMs);
             }
             finally
             {
                 k_Manifest.End();
             }
-            manifestSw.Stop();
             progress?.Report("Manifest ready", 1, 1);
             progress?.CompleteStage();
             yield return null;
 
             progress?.BeginStage("Gameplay content", "Loading gameplay content database", 1);
-            var gameplaySw = Stopwatch.StartNew();
             k_GameplayContent.Begin();
             try
             {
@@ -140,7 +130,6 @@ namespace VVardenfell.Runtime.Cache
             {
                 k_GameplayContent.End();
             }
-            gameplaySw.Stop();
             progress?.Report(
                 $"Gameplay content ready: {ContentDatabase.ActorCount} actors, {ContentDatabase.LightCount} lights, {ContentDatabase.SoundCount} sounds, {ContentDatabase.PathGridNavigationNodeCount} path nodes",
                 1,
@@ -149,7 +138,7 @@ namespace VVardenfell.Runtime.Cache
             yield return null;
 
             progress?.BeginStage("Texture decode/load", "Loading textures", 0);
-            yield return LoadTexturesIncremental(progress, textureHashes, texturePayloadTask);
+            yield return LoadTexturesIncremental(progress, textureHashes, texturePayloadTask, texturePayloadState);
 
             progress?.BeginStage("Mesh deserialization", "Preparing meshes", 0);
             yield return ReadMeshesIncremental(progress, meshPayloadTask);
@@ -158,7 +147,6 @@ namespace VVardenfell.Runtime.Cache
             yield return BuildBucketedRefArraysIncremental(progress);
 
             progress?.BeginStage("Terrain layer arrays", "Preparing terrain layers", 1);
-            var terrainSw = Stopwatch.StartNew();
             if (File.Exists(CachePaths.TerrainLayers))
             {
                 k_TerrainLayers.Begin();
@@ -178,7 +166,6 @@ namespace VVardenfell.Runtime.Cache
                 progress?.CompleteStage();
                 yield return null;
             }
-            terrainSw.Stop();
 
             progress?.BeginStage("Actor animation metadata", "Waiting for actor animation catalog", 1);
             while (actorAnimationCatalogTask != null && !actorAnimationCatalogTask.IsCompleted)
@@ -188,34 +175,19 @@ namespace VVardenfell.Runtime.Cache
             }
 
             var actorAnimationCatalog = actorAnimationCatalogTask?.GetAwaiter().GetResult();
-            Debug.Log($"[VVardenfell][BootTiming] detail=ActorAnimationMetadata segment='catalog background read' deltaMs={actorAnimationCatalog?.ElapsedMs ?? 0} elapsedMs={actorAnimationCatalog?.ElapsedMs ?? 0}");
-            if (actorAnimationCatalog?.Data == null)
+            if (actorAnimationCatalog == null)
                 Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
-            ActorAnimationCatalog = actorAnimationCatalog?.Data ?? new ActorAnimationCatalogData();
-            var lookupSw = Stopwatch.StartNew();
+            ActorAnimationCatalog = actorAnimationCatalog ?? new ActorAnimationCatalogData();
             BuildActorVisualLookup();
-            lookupSw.Stop();
-            Debug.Log($"[VVardenfell][BootTiming] detail=ActorAnimationMetadata segment='actor visual lookup' deltaMs={lookupSw.ElapsedMilliseconds} elapsedMs={lookupSw.ElapsedMilliseconds}");
             progress?.Report("Actor animation catalog ready", 1, 1);
             progress?.CompleteStage("Actor animation catalog ready");
             yield return null;
-
-            totalSw.Stop();
         }
 
-        static (ActorAnimationCatalogData Data, long ElapsedMs) ReadActorAnimationCatalogOnWorker()
+        static ActorAnimationCatalogData ReadActorAnimationCatalogOnWorker()
         {
-            var sw = Stopwatch.StartNew();
-            bool loaded = ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog, emitTiming: false);
-            sw.Stop();
-            return (loaded ? actorAnimationCatalog : null, sw.ElapsedMilliseconds);
-        }
-
-        static void LogMetadataTiming(string segment, Stopwatch stopwatch, ref long lastMs)
-        {
-            long elapsedMs = stopwatch.ElapsedMilliseconds;
-            Debug.Log($"[VVardenfell][BootTiming] detail=ManifestMetadata segment='{segment}' deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
-            lastMs = elapsedMs;
+            bool loaded = ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog);
+            return loaded ? actorAnimationCatalog : null;
         }
 
         public bool TryGetActorVisualRecipe(ContentId actorContentId, bool firstPerson, out ActorVisualRecipeDef recipe)
@@ -329,9 +301,8 @@ namespace VVardenfell.Runtime.Cache
 
         private IEnumerator ReadMeshesIncremental(
             RuntimeLoadProgress progress,
-            Task<(MeshPayload[] Payloads, long ElapsedMs)> meshPayloadTask)
+            Task<MeshPayload[]> meshPayloadTask)
         {
-            var sw = Stopwatch.StartNew();
             if (meshPayloadTask == null)
                 throw new InvalidDataException("mesh payload task was not scheduled");
 
@@ -341,10 +312,7 @@ namespace VVardenfell.Runtime.Cache
                 yield return null;
             }
 
-            var result = meshPayloadTask.GetAwaiter().GetResult();
-            Debug.Log($"[VVardenfell][BootTiming] detail=MeshDeserialization segment='payload background read' deltaMs={result.ElapsedMs} elapsedMs={result.ElapsedMs}");
-
-            var payloads = result.Payloads;
+            var payloads = meshPayloadTask.GetAwaiter().GetResult();
             Meshes = new Mesh[payloads.Length];
             progress?.Report("Uploading meshes", 0, payloads.Length);
             for (int i = 0; i < payloads.Length; i++)
@@ -368,16 +336,15 @@ namespace VVardenfell.Runtime.Cache
                 }
             }
 
-            sw.Stop();
             progress?.CompleteStage("Meshes ready");
         }
 
         private IEnumerator LoadTexturesIncremental(
             RuntimeLoadProgress progress,
             string[] texHashes,
-            Task<(TexturePayload[] Payloads, long ElapsedMs)> texturePayloadTask)
+            Task<TexturePayload[]> texturePayloadTask,
+            TexturePayloadReadState texturePayloadState)
         {
-            var sw = Stopwatch.StartNew();
             if (texHashes == null)
                 throw new InvalidDataException("texture hash table was not loaded");
             if (texturePayloadTask == null)
@@ -385,13 +352,13 @@ namespace VVardenfell.Runtime.Cache
 
             while (!texturePayloadTask.IsCompleted)
             {
-                progress?.Report("Waiting for texture payload read", 0, texHashes.Length);
+                int completed = texturePayloadState != null ? Volatile.Read(ref texturePayloadState.Completed) : 0;
+                int total = texturePayloadState != null ? texturePayloadState.Total : texHashes.Length;
+                progress?.Report($"Reading texture payloads {completed}/{total}", completed, total);
                 yield return null;
             }
 
-            var payloadResult = texturePayloadTask.GetAwaiter().GetResult();
-            Debug.Log($"[VVardenfell][BootTiming] detail=TextureLoad segment='payload background read' deltaMs={payloadResult.ElapsedMs} elapsedMs={payloadResult.ElapsedMs}");
-            var payloads = payloadResult.Payloads;
+            var payloads = texturePayloadTask.GetAwaiter().GetResult();
             if (payloads.Length != texHashes.Length)
                 throw new InvalidDataException($"texture payload count mismatch ({payloads.Length} != {texHashes.Length}).");
 
@@ -418,7 +385,6 @@ namespace VVardenfell.Runtime.Cache
                 }
             }
 
-            sw.Stop();
             progress?.CompleteStage("Textures ready");
         }
 
@@ -475,7 +441,6 @@ namespace VVardenfell.Runtime.Cache
 
         private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)
         {
-            var sw = Stopwatch.StartNew();
             var matRecords = Importer.Bake.MaterialBakery.ReadAll(CachePaths.Materials);
             var refShader = Shader.Find("VVardenfell/MwRef");
             if (refShader == null)
@@ -733,7 +698,6 @@ namespace VVardenfell.Runtime.Cache
                 UnityEngine.Object.Destroy(white);
             }
 
-            sw.Stop();
         }
 
         private static string MaterialNameForFlags(uint flags, int index)
@@ -783,10 +747,20 @@ namespace VVardenfell.Runtime.Cache
         private static string[] TextureBakeryReadOrder(string indexPath)
             => Importer.Bake.TextureBakery.ReadIndex(indexPath);
 
-        static (TexturePayload[] Payloads, long ElapsedMs) ReadTexturePayloadsOnWorker(string[] texHashes)
+        static Task<T> StartLongRunningTask<T>(Func<T> action)
+            => Task.Factory.StartNew(
+                action,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+
+        static TexturePayload[] ReadTexturePayloadsOnWorker(
+            string[] texHashes,
+            TexturePayloadReadState state)
         {
-            var sw = Stopwatch.StartNew();
             var payloads = new TexturePayload[texHashes?.Length ?? 0];
+            if (state != null)
+                Volatile.Write(ref state.Total, payloads.Length);
             for (int i = 0; i < payloads.Length; i++)
             {
                 string hashHex = texHashes[i];
@@ -798,6 +772,8 @@ namespace VVardenfell.Runtime.Cache
                         HashHex = hashHex,
                         Error = "file missing",
                     };
+                    if (state != null)
+                        Volatile.Write(ref state.Completed, i + 1);
                     continue;
                 }
 
@@ -817,10 +793,12 @@ namespace VVardenfell.Runtime.Cache
                         Error = ex.Message,
                     };
                 }
+
+                if (state != null)
+                    Volatile.Write(ref state.Completed, i + 1);
             }
 
-            sw.Stop();
-            return (payloads, sw.ElapsedMilliseconds);
+            return payloads;
         }
 
         private static Texture2D LoadTexture(TexturePayload payload)
@@ -853,9 +831,19 @@ namespace VVardenfell.Runtime.Cache
             public string Error;
         }
 
-        static (MeshPayload[] Payloads, long ElapsedMs) ReadMeshPayloadsOnWorker()
+        sealed class TexturePayloadReadState
         {
-            var sw = Stopwatch.StartNew();
+            public TexturePayloadReadState(int total)
+            {
+                Total = total;
+            }
+
+            public int Total;
+            public int Completed;
+        }
+
+        static MeshPayload[] ReadMeshPayloadsOnWorker()
+        {
             if (!File.Exists(CachePaths.Meshes))
                 throw new InvalidDataException("meshes.bin missing");
 
@@ -888,8 +876,7 @@ namespace VVardenfell.Runtime.Cache
                 throw;
             }
 
-            sw.Stop();
-            return (payloads, sw.ElapsedMilliseconds);
+            return payloads;
         }
 
         private static MeshPayload ReadOneMeshPayload(BinaryReader r, string name)

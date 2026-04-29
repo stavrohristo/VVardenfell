@@ -16,7 +16,6 @@ using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
-using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -144,7 +143,6 @@ namespace VVardenfell.Runtime.Streaming
             WorldResources.RefPrefabs = new Entity[rmas.Length];
 
             progress?.BeginStage("Ref prefab build", "Creating ref prefabs", rmas.Length);
-            var prefabBuildSw = Stopwatch.StartNew();
             if (rmas.Length > 0)
             {
                 k_RefPrefabs.Begin();
@@ -159,7 +157,6 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             progress?.Report($"Creating ref prefabs {rmas.Length}/{rmas.Length}", rmas.Length, rmas.Length);
-            prefabBuildSw.Stop();
             progress?.CompleteStage("Ref prefabs ready");
             yield return null;
         }

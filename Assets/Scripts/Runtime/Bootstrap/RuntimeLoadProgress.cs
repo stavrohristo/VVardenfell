@@ -1,6 +1,4 @@
-using System.Collections;
 using System.Diagnostics;
-using UnityDebug = UnityEngine.Debug;
 
 namespace VVardenfell.Runtime.Bootstrap
 {
@@ -69,7 +67,6 @@ namespace VVardenfell.Runtime.Bootstrap
             if (Total > 0)
                 Current = Total;
             _stageStopwatch.Stop();
-            LogStageTiming("complete");
         }
 
         public void Complete(string stage = "Ready", string label = "Bootstrap complete")
@@ -89,7 +86,6 @@ namespace VVardenfell.Runtime.Bootstrap
             Done = true;
             Error = null;
             _stageStopwatch.Stop();
-            LogStageTiming("complete");
         }
 
         public void Fail(string error)
@@ -97,28 +93,7 @@ namespace VVardenfell.Runtime.Bootstrap
             Error = error;
             Done = false;
             _stageStopwatch.Stop();
-            LogStageTiming("fail");
-        }
-
-        void LogStageTiming(string result)
-        {
-            UnityDebug.Log(
-                $"[VVardenfell][BootTiming] result={result} stage='{Stage}' label='{Label}' current={Current} total={Total} elapsedMs={_stageStopwatch.ElapsedMilliseconds}");
         }
     }
 
-    public static class RuntimeCoroutinePump
-    {
-        public static void RunToCompletion(IEnumerator routine)
-        {
-            if (routine == null)
-                return;
-
-            while (routine.MoveNext())
-            {
-                if (routine.Current is IEnumerator nested)
-                    RunToCompletion(nested);
-            }
-        }
-    }
 }
