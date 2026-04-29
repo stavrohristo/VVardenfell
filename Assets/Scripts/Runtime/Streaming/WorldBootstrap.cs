@@ -50,6 +50,9 @@ namespace VVardenfell.Runtime.Streaming
             var unloadList = default(UnloadList);
             var pendingPhysicsLoad = default(PendingCellPhysicsLoad);
             var pendingPhysicsUnload = default(PendingCellPhysicsUnload);
+            Task<WorldBootstrapPreloadResult> preloadTask = null;
+            Task<WorldBootstrapCollisionLoadResult> collisionTask = null;
+            Stopwatch backgroundReadSw = null;
             bool singletonInstalled = false;
 
             try
@@ -67,18 +70,19 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
+                backgroundReadSw = Stopwatch.StartNew();
+                preloadTask = Task.Run(() => options.IsSandbox
+                    ? WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active)
+                    : WorldBootstrapPreloadUtility.PreloadCells(cache));
+                collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
+
                 if (!options.IsSandbox)
                 {
                     foreach (var step in WorldBootstrapResourceSetup.InstallRenderShardRefPrefabs(em, progress))
                         yield return step;
                 }
 
-                progress?.BeginStage("Background preload", "Scheduling cell preload and collider load", 2);
-                var preloadTask = Task.Run(() => options.IsSandbox
-                    ? WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active)
-                    : WorldBootstrapPreloadUtility.PreloadCells(cache));
-                var collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
-
+                progress?.BeginStage("Background preload", "Waiting for cell preload and collider load", 2);
                 while (!preloadTask.IsCompleted || !collisionTask.IsCompleted)
                 {
                     int completed = (preloadTask.IsCompleted ? 1 : 0) + (collisionTask.IsCompleted ? 1 : 0);
@@ -88,6 +92,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 var preload = preloadTask.GetAwaiter().GetResult();
                 var collisionLoad = collisionTask.GetAwaiter().GetResult();
+                backgroundReadSw.Stop();
+                UnityEngine.Debug.Log($"[VVardenfell][BootTiming] detail=BackgroundPreload segment='cache reads overlapped' deltaMs={backgroundReadSw.ElapsedMilliseconds} elapsedMs={backgroundReadSw.ElapsedMilliseconds}");
 
                 var firstPreloadFailure = WorldBootstrapPreloadUtility.GetFirstPreloadFailure(preload);
                 if (firstPreloadFailure != null)

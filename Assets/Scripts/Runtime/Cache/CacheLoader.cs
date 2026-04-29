@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Rendering;
@@ -80,6 +81,10 @@ namespace VVardenfell.Runtime.Cache
         public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
         {
             var totalSw = Stopwatch.StartNew();
+            Task<(ActorAnimationCatalogData Data, long ElapsedMs)> actorAnimationCatalogTask = null;
+            Task<(MeshPayload[] Payloads, long ElapsedMs)> meshPayloadTask = null;
+            Task<(TexturePayload[] Payloads, long ElapsedMs)> texturePayloadTask = null;
+            string[] textureHashes = null;
 
             progress?.BeginStage("Manifest + metadata", "Reading manifest", 1);
             var manifestSw = Stopwatch.StartNew();
@@ -95,6 +100,12 @@ namespace VVardenfell.Runtime.Cache
                 LogMetadataTiming("manifest", manifestSw, ref metadataLastMs);
                 MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
                 LogMetadataTiming("mesh names", manifestSw, ref metadataLastMs);
+                meshPayloadTask = Task.Run(ReadMeshPayloadsOnWorker);
+                LogMetadataTiming("mesh payload read scheduled", manifestSw, ref metadataLastMs);
+                textureHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
+                BuildTexturePathLookup(textureHashes);
+                texturePayloadTask = Task.Run(() => ReadTexturePayloadsOnWorker(textureHashes));
+                LogMetadataTiming("texture payload read scheduled", manifestSw, ref metadataLastMs);
                 if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
                     throw new InvalidDataException("render_shards.bin unreadable");
                 RenderShardCatalog = renderShardCatalog;
@@ -103,12 +114,8 @@ namespace VVardenfell.Runtime.Cache
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
                 LogMetadataTiming("model prefabs", manifestSw, ref metadataLastMs);
-                if (!ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog))
-                    Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
-                ActorAnimationCatalog = actorAnimationCatalog ?? new ActorAnimationCatalogData();
-                LogMetadataTiming("actor animation catalog", manifestSw, ref metadataLastMs);
-                BuildActorVisualLookup();
-                LogMetadataTiming("actor visual lookup", manifestSw, ref metadataLastMs);
+                actorAnimationCatalogTask = Task.Run(ReadActorAnimationCatalogOnWorker);
+                LogMetadataTiming("actor animation catalog scheduled", manifestSw, ref metadataLastMs);
             }
             finally
             {
@@ -141,11 +148,11 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage();
             yield return null;
 
-            progress?.BeginStage("Mesh deserialization", "Reading meshes", 0);
-            yield return ReadMeshesIncremental(progress);
-
             progress?.BeginStage("Texture decode/load", "Loading textures", 0);
-            yield return LoadTexturesIncremental(progress);
+            yield return LoadTexturesIncremental(progress, textureHashes, texturePayloadTask);
+
+            progress?.BeginStage("Mesh deserialization", "Preparing meshes", 0);
+            yield return ReadMeshesIncremental(progress, meshPayloadTask);
 
             progress?.BeginStage("Ref shards + materials", "Building reference shards", 0);
             yield return BuildBucketedRefArraysIncremental(progress);
@@ -173,7 +180,35 @@ namespace VVardenfell.Runtime.Cache
             }
             terrainSw.Stop();
 
+            progress?.BeginStage("Actor animation metadata", "Waiting for actor animation catalog", 1);
+            while (actorAnimationCatalogTask != null && !actorAnimationCatalogTask.IsCompleted)
+            {
+                progress?.Report("Waiting for actor animation catalog", 0, 1);
+                yield return null;
+            }
+
+            var actorAnimationCatalog = actorAnimationCatalogTask?.GetAwaiter().GetResult();
+            Debug.Log($"[VVardenfell][BootTiming] detail=ActorAnimationMetadata segment='catalog background read' deltaMs={actorAnimationCatalog?.ElapsedMs ?? 0} elapsedMs={actorAnimationCatalog?.ElapsedMs ?? 0}");
+            if (actorAnimationCatalog?.Data == null)
+                Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
+            ActorAnimationCatalog = actorAnimationCatalog?.Data ?? new ActorAnimationCatalogData();
+            var lookupSw = Stopwatch.StartNew();
+            BuildActorVisualLookup();
+            lookupSw.Stop();
+            Debug.Log($"[VVardenfell][BootTiming] detail=ActorAnimationMetadata segment='actor visual lookup' deltaMs={lookupSw.ElapsedMilliseconds} elapsedMs={lookupSw.ElapsedMilliseconds}");
+            progress?.Report("Actor animation catalog ready", 1, 1);
+            progress?.CompleteStage("Actor animation catalog ready");
+            yield return null;
+
             totalSw.Stop();
+        }
+
+        static (ActorAnimationCatalogData Data, long ElapsedMs) ReadActorAnimationCatalogOnWorker()
+        {
+            var sw = Stopwatch.StartNew();
+            bool loaded = ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog, emitTiming: false);
+            sw.Stop();
+            return (loaded ? actorAnimationCatalog : null, sw.ElapsedMilliseconds);
         }
 
         static void LogMetadataTiming(string segment, Stopwatch stopwatch, ref long lastMs)
@@ -292,42 +327,43 @@ namespace VVardenfell.Runtime.Cache
             hash *= 1099511628211UL;
         }
 
-        private IEnumerator ReadMeshesIncremental(RuntimeLoadProgress progress)
+        private IEnumerator ReadMeshesIncremental(
+            RuntimeLoadProgress progress,
+            Task<(MeshPayload[] Payloads, long ElapsedMs)> meshPayloadTask)
         {
             var sw = Stopwatch.StartNew();
-            if (!File.Exists(CachePaths.Meshes))
-                throw new InvalidDataException("meshes.bin missing");
+            if (meshPayloadTask == null)
+                throw new InvalidDataException("mesh payload task was not scheduled");
 
-            using var fs = File.OpenRead(CachePaths.Meshes);
-            using var r = new BinaryReader(fs);
-            if (r.ReadUInt32() != Importer.Bake.MeshBakery.MagicMesh)
-                throw new InvalidDataException("meshes.bin magic mismatch");
+            while (!meshPayloadTask.IsCompleted)
+            {
+                progress?.Report("Waiting for mesh payload read", 0, 1);
+                yield return null;
+            }
 
-            uint count = r.ReadUInt32();
-            progress?.Report("Reading mesh table", 0, (int)count);
+            var result = meshPayloadTask.GetAwaiter().GetResult();
+            Debug.Log($"[VVardenfell][BootTiming] detail=MeshDeserialization segment='payload background read' deltaMs={result.ElapsedMs} elapsedMs={result.ElapsedMs}");
 
-            var offsets = new ulong[count];
-            for (int i = 0; i < count; i++)
-                offsets[i] = r.ReadUInt64();
-
-            Meshes = new Mesh[count];
-            for (int i = 0; i < count; i++)
+            var payloads = result.Payloads;
+            Meshes = new Mesh[payloads.Length];
+            progress?.Report("Uploading meshes", 0, payloads.Length);
+            for (int i = 0; i < payloads.Length; i++)
             {
                 k_Meshes.Begin();
                 try
                 {
-                    fs.Position = (long)offsets[i];
-                    Meshes[i] = ReadOneMesh(r, $"BakedMesh{i}");
+                    Meshes[i] = UploadMeshPayload(payloads[i]);
                 }
                 finally
                 {
                     k_Meshes.End();
+                    payloads[i].Dispose();
                 }
 
                 int completed = i + 1;
-                if (completed == count || (completed % MeshBatchSize) == 0)
+                if (completed == payloads.Length || (completed % MeshBatchSize) == 0)
                 {
-                    progress?.Report($"Reading meshes {completed}/{count}", completed, (int)count);
+                    progress?.Report($"Uploading meshes {completed}/{payloads.Length}", completed, payloads.Length);
                     yield return null;
                 }
             }
@@ -336,11 +372,29 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage("Meshes ready");
         }
 
-        private IEnumerator LoadTexturesIncremental(RuntimeLoadProgress progress)
+        private IEnumerator LoadTexturesIncremental(
+            RuntimeLoadProgress progress,
+            string[] texHashes,
+            Task<(TexturePayload[] Payloads, long ElapsedMs)> texturePayloadTask)
         {
             var sw = Stopwatch.StartNew();
-            var texHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
-            BuildTexturePathLookup(texHashes);
+            if (texHashes == null)
+                throw new InvalidDataException("texture hash table was not loaded");
+            if (texturePayloadTask == null)
+                throw new InvalidDataException("texture payload task was not scheduled");
+
+            while (!texturePayloadTask.IsCompleted)
+            {
+                progress?.Report("Waiting for texture payload read", 0, texHashes.Length);
+                yield return null;
+            }
+
+            var payloadResult = texturePayloadTask.GetAwaiter().GetResult();
+            Debug.Log($"[VVardenfell][BootTiming] detail=TextureLoad segment='payload background read' deltaMs={payloadResult.ElapsedMs} elapsedMs={payloadResult.ElapsedMs}");
+            var payloads = payloadResult.Payloads;
+            if (payloads.Length != texHashes.Length)
+                throw new InvalidDataException($"texture payload count mismatch ({payloads.Length} != {texHashes.Length}).");
+
             Textures = new Texture2D[texHashes.Length];
             progress?.Report("Loading textures", 0, texHashes.Length);
 
@@ -349,7 +403,7 @@ namespace VVardenfell.Runtime.Cache
                 k_Textures.Begin();
                 try
                 {
-                    Textures[i] = LoadTexture(CachePaths.TextureFile(texHashes[i]), texHashes[i]);
+                    Textures[i] = LoadTexture(payloads[i]);
                 }
                 finally
                 {
@@ -729,24 +783,116 @@ namespace VVardenfell.Runtime.Cache
         private static string[] TextureBakeryReadOrder(string indexPath)
             => Importer.Bake.TextureBakery.ReadIndex(indexPath);
 
-        private static Texture2D LoadTexture(string path, string hashHex)
+        static (TexturePayload[] Payloads, long ElapsedMs) ReadTexturePayloadsOnWorker(string[] texHashes)
         {
-            if (!File.Exists(path))
+            var sw = Stopwatch.StartNew();
+            var payloads = new TexturePayload[texHashes?.Length ?? 0];
+            for (int i = 0; i < payloads.Length; i++)
+            {
+                string hashHex = texHashes[i];
+                string path = CachePaths.TextureFile(hashHex);
+                if (!File.Exists(path))
+                {
+                    payloads[i] = new TexturePayload
+                    {
+                        HashHex = hashHex,
+                        Error = "file missing",
+                    };
+                    continue;
+                }
+
+                try
+                {
+                    payloads[i] = new TexturePayload
+                    {
+                        HashHex = hashHex,
+                        Bytes = File.ReadAllBytes(path),
+                    };
+                }
+                catch (System.Exception ex)
+                {
+                    payloads[i] = new TexturePayload
+                    {
+                        HashHex = hashHex,
+                        Error = ex.Message,
+                    };
+                }
+            }
+
+            sw.Stop();
+            return (payloads, sw.ElapsedMilliseconds);
+        }
+
+        private static Texture2D LoadTexture(TexturePayload payload)
+        {
+            if (payload == null)
+                return null;
+            if (!string.IsNullOrEmpty(payload.Error))
+            {
+                Debug.LogWarning($"[VVardenfell] tex {payload.HashHex} load failed: {payload.Error}");
+                return null;
+            }
+            if (payload.Bytes == null)
                 return null;
 
             try
             {
-                var bytes = File.ReadAllBytes(path);
-                return DdsTexture.Load(bytes, hashHex);
+                return DdsTexture.Load(payload.Bytes, payload.HashHex);
             }
             catch (System.Exception ex)
             {
-                Debug.LogWarning($"[VVardenfell] tex {hashHex} load failed: {ex.Message}");
+                Debug.LogWarning($"[VVardenfell] tex {payload.HashHex} load failed: {ex.Message}");
                 return null;
             }
         }
 
-        private static Mesh ReadOneMesh(BinaryReader r, string name)
+        sealed class TexturePayload
+        {
+            public string HashHex;
+            public byte[] Bytes;
+            public string Error;
+        }
+
+        static (MeshPayload[] Payloads, long ElapsedMs) ReadMeshPayloadsOnWorker()
+        {
+            var sw = Stopwatch.StartNew();
+            if (!File.Exists(CachePaths.Meshes))
+                throw new InvalidDataException("meshes.bin missing");
+
+            using var fs = File.OpenRead(CachePaths.Meshes);
+            using var r = new BinaryReader(fs);
+            if (r.ReadUInt32() != Importer.Bake.MeshBakery.MagicMesh)
+                throw new InvalidDataException("meshes.bin magic mismatch");
+
+            uint count = r.ReadUInt32();
+            if (count > int.MaxValue)
+                throw new InvalidDataException($"meshes.bin mesh count {count} exceeds supported limits.");
+
+            var offsets = new ulong[count];
+            for (int i = 0; i < count; i++)
+                offsets[i] = r.ReadUInt64();
+
+            var payloads = new MeshPayload[count];
+            try
+            {
+                for (int i = 0; i < payloads.Length; i++)
+                {
+                    fs.Position = (long)offsets[i];
+                    payloads[i] = ReadOneMeshPayload(r, $"BakedMesh{i}");
+                }
+            }
+            catch
+            {
+                for (int i = 0; i < payloads.Length; i++)
+                    payloads[i]?.Dispose();
+                throw;
+            }
+
+            sw.Stop();
+            return (payloads, sw.ElapsedMilliseconds);
+        }
+
+        private static MeshPayload ReadOneMeshPayload(BinaryReader r, string name)
         {
             uint vertexCount = r.ReadUInt32();
             uint indexCount = r.ReadUInt32();
@@ -786,7 +932,6 @@ namespace VVardenfell.Runtime.Cache
 
             byte[] vertexBytes = null;
             byte[] indexBytes = null;
-
             try
             {
                 using (k_MeshPayloadRead.Auto())
@@ -795,39 +940,79 @@ namespace VVardenfell.Runtime.Cache
                     indexBytes = ArrayPool<byte>.Shared.Rent((int)indexDataBytes);
                     ReadExactly(r, vertexBytes, (int)vertexDataBytes);
                     ReadExactly(r, indexBytes, (int)indexDataBytes);
+                    return new MeshPayload
+                    {
+                        Name = name,
+                        VertexCount = (int)vertexCount,
+                        IndexCount = (int)indexCount,
+                        HasNormals = hasNormals,
+                        HasUvs = hasUVs,
+                        Index32 = index32,
+                        BoundsCenter = bc,
+                        BoundsExtents = be,
+                        VertexBytes = vertexBytes,
+                        VertexByteCount = (int)vertexDataBytes,
+                        IndexBytes = indexBytes,
+                        IndexByteCount = (int)indexDataBytes,
+                    };
                 }
+            }
+            catch (EndOfStreamException ex)
+            {
+                if (vertexBytes != null)
+                    ArrayPool<byte>.Shared.Return(vertexBytes);
+                if (indexBytes != null)
+                    ArrayPool<byte>.Shared.Return(indexBytes);
+                throw new InvalidDataException($"Mesh '{name}' payload is truncated.", ex);
+            }
+            catch
+            {
+                if (vertexBytes != null)
+                    ArrayPool<byte>.Shared.Return(vertexBytes);
+                if (indexBytes != null)
+                    ArrayPool<byte>.Shared.Return(indexBytes);
+                throw;
+            }
+        }
 
+        private static Mesh UploadMeshPayload(MeshPayload payload)
+        {
+            if (payload == null)
+                throw new InvalidDataException("Mesh payload is null.");
+
+            try
+            {
                 using (k_MeshUpload.Auto())
                 {
                     var mesh = new Mesh
                     {
-                        name = name,
-                        indexFormat = index32 ? IndexFormat.UInt32 : IndexFormat.UInt16,
+                        name = payload.Name,
+                        indexFormat = payload.Index32 ? IndexFormat.UInt32 : IndexFormat.UInt16,
                     };
 
                     var meshDataArray = Mesh.AllocateWritableMeshData(1);
                     try
                     {
                         var meshData = meshDataArray[0];
-                        var descriptors = GetVertexLayout(hasNormals, hasUVs);
-                        meshData.SetVertexBufferParams((int)vertexCount, descriptors);
-                        meshData.SetIndexBufferParams((int)indexCount, index32 ? IndexFormat.UInt32 : IndexFormat.UInt16);
+                        var descriptors = GetVertexLayout(payload.HasNormals, payload.HasUvs);
+                        meshData.SetVertexBufferParams(payload.VertexCount, descriptors);
+                        meshData.SetIndexBufferParams(payload.IndexCount, payload.Index32 ? IndexFormat.UInt32 : IndexFormat.UInt16);
 
                         var vertexData = meshData.GetVertexData<byte>(0);
                         var indexData = meshData.GetIndexData<byte>();
-                        if (vertexData.Length != vertexDataBytes || indexData.Length != indexDataBytes)
+                        if (vertexData.Length != payload.VertexByteCount || indexData.Length != payload.IndexByteCount)
                         {
                             throw new InvalidDataException(
-                                $"Mesh '{name}' writable buffer size mismatch ({vertexData.Length}/{indexData.Length}).");
+                                $"Mesh '{payload.Name}' writable buffer size mismatch ({vertexData.Length}/{indexData.Length}).");
                         }
 
-                        NativeArray<byte>.Copy(vertexBytes, 0, vertexData, 0, (int)vertexDataBytes);
-                        NativeArray<byte>.Copy(indexBytes, 0, indexData, 0, (int)indexDataBytes);
+                        NativeArray<byte>.Copy(payload.VertexBytes, 0, vertexData, 0, payload.VertexByteCount);
+                        NativeArray<byte>.Copy(payload.IndexBytes, 0, indexData, 0, payload.IndexByteCount);
 
                         meshData.subMeshCount = 1;
                         meshData.SetSubMesh(
                             0,
-                            new SubMeshDescriptor(0, (int)indexCount, MeshTopology.Triangles),
+                            new SubMeshDescriptor(0, payload.IndexCount, MeshTopology.Triangles),
                             MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
 
                         Mesh.ApplyAndDisposeWritableMeshData(
@@ -835,7 +1020,7 @@ namespace VVardenfell.Runtime.Cache
                             mesh,
                             MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
 
-                        mesh.bounds = new Bounds(bc, be * 2f);
+                        mesh.bounds = new Bounds(payload.BoundsCenter, payload.BoundsExtents * 2f);
                         mesh.UploadMeshData(true);
                         return mesh;
                     }
@@ -846,16 +1031,40 @@ namespace VVardenfell.Runtime.Cache
                     }
                 }
             }
-            catch (EndOfStreamException ex)
-            {
-                throw new InvalidDataException($"Mesh '{name}' payload is truncated.", ex);
-            }
             finally
             {
-                if (vertexBytes != null)
-                    ArrayPool<byte>.Shared.Return(vertexBytes);
-                if (indexBytes != null)
-                    ArrayPool<byte>.Shared.Return(indexBytes);
+                payload.Dispose();
+            }
+        }
+
+        sealed class MeshPayload
+        {
+            public string Name;
+            public int VertexCount;
+            public int IndexCount;
+            public bool HasNormals;
+            public bool HasUvs;
+            public bool Index32;
+            public Vector3 BoundsCenter;
+            public Vector3 BoundsExtents;
+            public byte[] VertexBytes;
+            public int VertexByteCount;
+            public byte[] IndexBytes;
+            public int IndexByteCount;
+
+            public void Dispose()
+            {
+                if (VertexBytes != null)
+                {
+                    ArrayPool<byte>.Shared.Return(VertexBytes);
+                    VertexBytes = null;
+                }
+
+                if (IndexBytes != null)
+                {
+                    ArrayPool<byte>.Shared.Return(IndexBytes);
+                    IndexBytes = null;
+                }
             }
         }
 

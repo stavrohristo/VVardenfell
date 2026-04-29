@@ -18,14 +18,15 @@ struct GpuSkeleton
     int FirstBoneIndex;
     int BoneCount;
     int AccumulationBoneIndex;
-    int Padding;
+    int MaxBoneDepth;
 };
 
 struct GpuBone
 {
     int ParentIndex;
     uint Mask;
-    float2 Padding;
+    int Depth;
+    float Padding;
     float3 BindPosition;
     float BindScale;
     float4 BindRotation;
@@ -59,6 +60,14 @@ struct GpuTrack
     int FirstKeyIndex;
     int KeyCount;
     uint Mask;
+};
+
+struct GpuClipBoneTrackRange
+{
+    int FirstTrackIndex;
+    int TrackCount;
+    int Padding0;
+    int Padding1;
 };
 
 struct GpuKey
@@ -103,6 +112,10 @@ struct GpuActor
     int BoneCount;
     int BoneMatrixOffset;
     int BoneMatrixCount;
+    int FirstSkinMeshWorkIndex;
+    int SkinMeshWorkCount;
+    int DeformedVertexOffset;
+    int DeformedVertexCount;
     int Padding;
 };
 
@@ -153,6 +166,7 @@ StructuredBuffer<GpuSkeleton> _GpuAnimationSkeletons;
 StructuredBuffer<GpuBone> _GpuAnimationBones;
 StructuredBuffer<GpuClip> _GpuAnimationClips;
 StructuredBuffer<GpuTrack> _GpuAnimationTracks;
+StructuredBuffer<GpuClipBoneTrackRange> _GpuAnimationClipBoneTrackRanges;
 StructuredBuffer<GpuKey> _GpuAnimationKeys;
 StructuredBuffer<GpuSkinMesh> _GpuAnimationSkinMeshes;
 StructuredBuffer<GpuSkinBone> _GpuAnimationSkinBones;
@@ -169,6 +183,18 @@ int _GpuActorCount;
 int _GpuSkinMeshWorkCount;
 int _GpuActorDispatchBase;
 int _GpuSkinMeshDispatchBase;
+int _GpuSkeletonCount;
+int _GpuBoneCount;
+int _GpuClipCount;
+int _GpuTrackCount;
+int _GpuKeyCount;
+int _GpuSkinMeshCount;
+int _GpuSkinBoneCount;
+int _GpuSkinVertexCount;
+int _GpuLayerCount;
+int _GpuLocalBoneMatrixCount;
+int _GpuActorBoneMatrixCount;
+int _GpuDeformedVertexCount;
 
 bool IsInRange(uint index, uint count)
 {
@@ -541,10 +567,7 @@ float4 SampleSourceRotation(GpuTrack track, float time, uint keyBufferCount)
 
 void WriteActorMatrix(int index, ActorMatrix3x4 value)
 {
-    uint outputMatrixCount = 0;
-    uint outputMatrixStride = 0;
-    _GpuActorBoneMatrices.GetDimensions(outputMatrixCount, outputMatrixStride);
-    if (IsInRange((uint)index, outputMatrixCount))
+    if (IsInRange((uint)index, (uint)_GpuActorBoneMatrixCount))
         _GpuActorBoneMatrices[index] = value;
 }
 
@@ -561,40 +584,20 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
     if (actorIndex >= (uint)_GpuActorCount)
         return;
 
-    uint actorBufferCount = 0;
-    uint actorBufferStride = 0;
-    _GpuAnimationActors.GetDimensions(actorBufferCount, actorBufferStride);
-    uint skeletonBufferCount = 0;
-    uint skeletonBufferStride = 0;
-    _GpuAnimationSkeletons.GetDimensions(skeletonBufferCount, skeletonBufferStride);
-    uint boneBufferCount = 0;
-    uint boneBufferStride = 0;
-    _GpuAnimationBones.GetDimensions(boneBufferCount, boneBufferStride);
-    uint clipBufferCount = 0;
-    uint clipBufferStride = 0;
-    _GpuAnimationClips.GetDimensions(clipBufferCount, clipBufferStride);
-    uint trackBufferCount = 0;
-    uint trackBufferStride = 0;
-    _GpuAnimationTracks.GetDimensions(trackBufferCount, trackBufferStride);
-    uint keyBufferCount = 0;
-    uint keyBufferStride = 0;
-    _GpuAnimationKeys.GetDimensions(keyBufferCount, keyBufferStride);
-    uint layerBufferCount = 0;
-    uint layerBufferStride = 0;
-    _GpuAnimationLayers.GetDimensions(layerBufferCount, layerBufferStride);
-
-    if (!IsInRange(actorIndex, actorBufferCount))
+    if (!IsInRange(actorIndex, (uint)_GpuActorCount))
         return;
 
     GpuActor actor = _GpuAnimationActors[actorIndex];
-    if (!IsInRange((uint)actor.SkeletonIndex, skeletonBufferCount))
+    if (!IsInRange((uint)actor.SkeletonIndex, (uint)_GpuSkeletonCount))
         return;
 
     GpuSkeleton skeleton = _GpuAnimationSkeletons[actor.SkeletonIndex];
     if (boneIndex < 0
         || boneIndex >= skeleton.BoneCount
         || skeleton.FirstBoneIndex < 0
-        || skeleton.FirstBoneIndex + skeleton.BoneCount > (int)boneBufferCount)
+        || skeleton.FirstBoneIndex + skeleton.BoneCount > _GpuBoneCount
+        || actor.LocalBoneOffset < 0
+        || actor.LocalBoneOffset + skeleton.BoneCount > _GpuLocalBoneMatrixCount)
     {
         return;
     }
@@ -609,24 +612,19 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
 
     bool hasLayerRange = actor.LayerCount > 0
         && actor.FirstLayerIndex >= 0
-        && IsInRange((uint)actor.FirstLayerIndex, layerBufferCount);
+        && IsInRange((uint)actor.FirstLayerIndex, (uint)_GpuLayerCount);
     if (hasLayerRange)
     {
         uint blendMasks[4] = { 1u, 2u, 4u, 8u };
-        int layerEnd = min((int)layerBufferCount, actor.FirstLayerIndex + actor.LayerCount);
+        int layerEnd = min(_GpuLayerCount, actor.FirstLayerIndex + actor.LayerCount);
         [loop]
         for (int layerIndex = actor.FirstLayerIndex; layerIndex < layerEnd; layerIndex++)
         {
             GpuLayer layer = _GpuAnimationLayers[layerIndex];
-            if (layer.Weight <= 0.0 || layer.Mask == 0u || !IsInRange((uint)layer.ClipIndex, clipBufferCount))
-                continue;
-
-            GpuClip clip = _GpuAnimationClips[layer.ClipIndex];
-            if (clip.TrackCount <= 0 || clip.FirstTrackIndex < 0 || clip.FirstTrackIndex >= (int)trackBufferCount)
+            if (layer.Weight <= 0.0 || layer.Mask == 0u || !IsInRange((uint)layer.ClipIndex, (uint)_GpuClipCount))
                 continue;
 
             float weight = saturate(layer.Weight);
-            int trackEnd = min((int)trackBufferCount, clip.FirstTrackIndex + clip.TrackCount);
             [loop]
             for (int maskSlot = 0; maskSlot < 4; maskSlot++)
             {
@@ -642,8 +640,14 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
                 uint sampledHasTrack = 0u;
                 int sampledOrder = 0;
 
+                int rangeIndex = layer.ClipIndex * MAX_GPU_BONES + boneIndex;
+                GpuClipBoneTrackRange trackRange = _GpuAnimationClipBoneTrackRanges[rangeIndex];
+                if (trackRange.TrackCount <= 0 || trackRange.FirstTrackIndex < 0 || trackRange.FirstTrackIndex >= _GpuTrackCount)
+                    continue;
+
+                int trackEnd = min(_GpuTrackCount, trackRange.FirstTrackIndex + trackRange.TrackCount);
                 [loop]
-                for (int trackIndex = clip.FirstTrackIndex; trackIndex < trackEnd; trackIndex++)
+                for (int trackIndex = trackRange.FirstTrackIndex; trackIndex < trackEnd; trackIndex++)
                 {
                     GpuTrack track = _GpuAnimationTracks[trackIndex];
                     if (track.TargetBoneIndex != boneIndex
@@ -661,7 +665,7 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
                     sampledHasTrack = 1u;
                     if (track.Kind == 1)
                     {
-                        float4 value = SampleValue(track, trackTime, keyBufferCount);
+                        float4 value = SampleValue(track, trackTime, (uint)_GpuKeyCount);
                         sampledPos = SourceTranslationToUnity(value.xyz);
                         if (boneIndex == skeleton.AccumulationBoneIndex)
                         {
@@ -671,28 +675,28 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
                     }
                     else if (track.Kind == 2)
                     {
-                        sampledRot = SampleSourceRotation(track, trackTime, keyBufferCount);
+                        sampledRot = SampleSourceRotation(track, trackTime, (uint)_GpuKeyCount);
                     }
                     else if (track.Kind == 3)
                     {
-                        float4 value = SampleValue(track, trackTime, keyBufferCount);
+                        float4 value = SampleValue(track, trackTime, (uint)_GpuKeyCount);
                         sampledScale = value.x <= 0.0 ? 1.0 : value.x;
                     }
                     else if (track.Kind == 4)
                     {
-                        sampledAxis.x = SampleValue(track, trackTime, keyBufferCount).x;
+                        sampledAxis.x = SampleValue(track, trackTime, (uint)_GpuKeyCount).x;
                         sampledFlags |= 1u;
                         sampledOrder = track.AxisOrder;
                     }
                     else if (track.Kind == 5)
                     {
-                        sampledAxis.y = SampleValue(track, trackTime, keyBufferCount).x;
+                        sampledAxis.y = SampleValue(track, trackTime, (uint)_GpuKeyCount).x;
                         sampledFlags |= 2u;
                         sampledOrder = track.AxisOrder;
                     }
                     else if (track.Kind == 6)
                     {
-                        sampledAxis.z = SampleValue(track, trackTime, keyBufferCount).x;
+                        sampledAxis.z = SampleValue(track, trackTime, (uint)_GpuKeyCount).x;
                         sampledFlags |= 4u;
                         sampledOrder = track.AxisOrder;
                     }
@@ -734,6 +738,8 @@ void SampleLocalBones(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Group
     _GpuAnimationLocalBoneMatrices[localOutputIndex] = localMatrix;
 }
 
+groupshared ActorMatrix3x4 s_ComposeLocalToRootMatrices[MAX_GPU_BONES];
+
 [numthreads(128, 1, 1)]
 void ComposeLocalToRoot(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID)
 {
@@ -742,47 +748,51 @@ void ComposeLocalToRoot(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_Gro
     if (actorIndex >= (uint)_GpuActorCount)
         return;
 
-    uint actorBufferCount = 0;
-    uint actorBufferStride = 0;
-    _GpuAnimationActors.GetDimensions(actorBufferCount, actorBufferStride);
-    uint skeletonBufferCount = 0;
-    uint skeletonBufferStride = 0;
-    _GpuAnimationSkeletons.GetDimensions(skeletonBufferCount, skeletonBufferStride);
-    uint boneBufferCount = 0;
-    uint boneBufferStride = 0;
-    _GpuAnimationBones.GetDimensions(boneBufferCount, boneBufferStride);
-
-    if (!IsInRange(actorIndex, actorBufferCount))
+    if (!IsInRange(actorIndex, (uint)_GpuActorCount))
         return;
 
     GpuActor actor = _GpuAnimationActors[actorIndex];
-    if (!IsInRange((uint)actor.SkeletonIndex, skeletonBufferCount))
+    if (!IsInRange((uint)actor.SkeletonIndex, (uint)_GpuSkeletonCount))
         return;
 
     GpuSkeleton skeleton = _GpuAnimationSkeletons[actor.SkeletonIndex];
-    if (boneIndex < 0
-        || boneIndex >= skeleton.BoneCount
-        || skeleton.FirstBoneIndex < 0
-        || skeleton.FirstBoneIndex + skeleton.BoneCount > (int)boneBufferCount)
+    if (skeleton.FirstBoneIndex < 0
+        || skeleton.FirstBoneIndex + skeleton.BoneCount > _GpuBoneCount
+        || actor.LocalBoneOffset < 0
+        || actor.LocalBoneOffset + skeleton.BoneCount > _GpuLocalBoneMatrixCount)
     {
         return;
     }
 
-    int currentBoneIndex = boneIndex;
-    ActorMatrix3x4 result = _GpuAnimationLocalBoneMatrices[actor.LocalBoneOffset + currentBoneIndex];
-    GpuBone currentBone = _GpuAnimationBones[skeleton.FirstBoneIndex + currentBoneIndex];
-    int parentIndex = currentBone.ParentIndex;
-    int guard = 0;
-    while (parentIndex >= 0 && parentIndex < currentBoneIndex && guard++ < MAX_GPU_BONES)
+    bool boneValid = boneIndex >= 0 && boneIndex < skeleton.BoneCount;
+    ActorMatrix3x4 local = IdentityMatrix3x4();
+    int boneParentIndex = -1;
+    int boneDepth = 0;
+    if (boneValid)
     {
-        ActorMatrix3x4 parentLocal = _GpuAnimationLocalBoneMatrices[actor.LocalBoneOffset + parentIndex];
-        result = MultiplyAffine(parentLocal, result);
-        currentBoneIndex = parentIndex;
-        currentBone = _GpuAnimationBones[skeleton.FirstBoneIndex + currentBoneIndex];
-        parentIndex = currentBone.ParentIndex;
+        local = _GpuAnimationLocalBoneMatrices[actor.LocalBoneOffset + boneIndex];
+        GpuBone bone = _GpuAnimationBones[skeleton.FirstBoneIndex + boneIndex];
+        boneParentIndex = bone.ParentIndex;
+        boneDepth = bone.Depth;
     }
+    s_ComposeLocalToRootMatrices[boneIndex] = local;
+    GroupMemoryBarrierWithGroupSync();
 
-    _GpuAnimationLocalToRootMatrices[actor.LocalBoneOffset + boneIndex] = result;
+    int maxDepth = min(skeleton.MaxBoneDepth, MAX_GPU_BONES - 1);
+    [loop]
+    for (int depth = 0; depth <= maxDepth; depth++)
+    {
+        if (boneValid && boneDepth == depth)
+        {
+            ActorMatrix3x4 result = local;
+            if (boneParentIndex >= 0 && boneParentIndex < boneIndex)
+                result = MultiplyAffine(s_ComposeLocalToRootMatrices[boneParentIndex], local);
+
+            s_ComposeLocalToRootMatrices[boneIndex] = result;
+            _GpuAnimationLocalToRootMatrices[actor.LocalBoneOffset + boneIndex] = result;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
 }
 
 [numthreads(128, 1, 1)]
@@ -792,29 +802,16 @@ void BuildSkinMatrices(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (workIndex >= (uint)_GpuSkinMeshWorkCount)
         return;
 
-    uint actorBufferCount = 0;
-    uint actorBufferStride = 0;
-    _GpuAnimationActors.GetDimensions(actorBufferCount, actorBufferStride);
-    uint skeletonBufferCount = 0;
-    uint skeletonBufferStride = 0;
-    _GpuAnimationSkeletons.GetDimensions(skeletonBufferCount, skeletonBufferStride);
-    uint skinMeshBufferCount = 0;
-    uint skinMeshBufferStride = 0;
-    _GpuAnimationSkinMeshes.GetDimensions(skinMeshBufferCount, skinMeshBufferStride);
-    uint skinBoneBufferCount = 0;
-    uint skinBoneBufferStride = 0;
-    _GpuAnimationSkinBones.GetDimensions(skinBoneBufferCount, skinBoneBufferStride);
-
     GpuSkinMeshWork work = _GpuAnimationSkinMeshWork[workIndex];
-    if (!IsInRange((uint)work.ActorIndex, actorBufferCount)
-        || !IsInRange((uint)work.SkinMeshIndex, skinMeshBufferCount))
+    if (!IsInRange((uint)work.ActorIndex, (uint)_GpuActorCount)
+        || !IsInRange((uint)work.SkinMeshIndex, (uint)_GpuSkinMeshCount))
     {
         WriteActorMatrix(work.BoneMatrixOffset, IdentityMatrix3x4());
         return;
     }
 
     GpuActor actor = _GpuAnimationActors[work.ActorIndex];
-    if (!IsInRange((uint)actor.SkeletonIndex, skeletonBufferCount))
+    if (!IsInRange((uint)actor.SkeletonIndex, (uint)_GpuSkeletonCount))
     {
         WriteActorMatrix(work.BoneMatrixOffset, IdentityMatrix3x4());
         return;
@@ -850,7 +847,7 @@ void BuildSkinMatrices(uint3 dispatchThreadId : SV_DispatchThreadID)
     int firstSkinBoneIndex = max(0, skinMesh.FirstSkinBoneIndex);
     int availableSkinBoneCount = skinMesh.FirstSkinBoneIndex < 0
         ? 0
-        : max(0, min(skinMesh.SkinBoneCount, (int)skinBoneBufferCount - firstSkinBoneIndex));
+        : max(0, min(skinMesh.SkinBoneCount, _GpuSkinBoneCount - firstSkinBoneIndex));
     if (availableSkinBoneCount <= 0)
     {
         WriteActorMatrix(work.BoneMatrixOffset, IdentityMatrix3x4());
@@ -881,10 +878,7 @@ void BuildSkinMatrices(uint3 dispatchThreadId : SV_DispatchThreadID)
 ActorMatrix3x4 ReadActorSkinMatrix(int index)
 {
     ActorMatrix3x4 matrixValue = IdentityMatrix3x4();
-    uint matrixCount = 0;
-    uint matrixStride = 0;
-    _GpuActorBoneMatrices.GetDimensions(matrixCount, matrixStride);
-    if (IsInRange((uint)index, matrixCount))
+    if (IsInRange((uint)index, (uint)_GpuActorBoneMatrixCount))
         matrixValue = _GpuActorBoneMatrices[index];
     return matrixValue;
 }
@@ -921,76 +915,80 @@ void AccumulateVertexInfluence(
 [numthreads(128, 1, 1)]
 void BuildDeformedVertices(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID)
 {
-    uint workIndex = (uint)_GpuSkinMeshDispatchBase + groupId.x;
-    if (workIndex >= (uint)_GpuSkinMeshWorkCount)
+    uint actorIndex = (uint)_GpuActorDispatchBase + groupId.x;
+    if (actorIndex >= (uint)_GpuActorCount)
         return;
 
-    uint skinMeshWorkCount = 0;
-    uint skinMeshWorkStride = 0;
-    _GpuAnimationSkinMeshWork.GetDimensions(skinMeshWorkCount, skinMeshWorkStride);
-    uint skinMeshCount = 0;
-    uint skinMeshStride = 0;
-    _GpuAnimationSkinMeshes.GetDimensions(skinMeshCount, skinMeshStride);
-    uint vertexCount = 0;
-    uint vertexStride = 0;
-    _GpuAnimationSkinVertices.GetDimensions(vertexCount, vertexStride);
-    uint outputCount = 0;
-    uint outputStride = 0;
-    _ActorDeformedVertices.GetDimensions(outputCount, outputStride);
-
-    if (!IsInRange(workIndex, skinMeshWorkCount))
+    if (!IsInRange(actorIndex, (uint)_GpuActorCount))
         return;
 
-    GpuSkinMeshWork work = _GpuAnimationSkinMeshWork[workIndex];
-    if (!IsInRange((uint)work.SkinMeshIndex, skinMeshCount))
-        return;
-
-    GpuSkinMesh skinMesh = _GpuAnimationSkinMeshes[work.SkinMeshIndex];
-    if (skinMesh.FirstVertexIndex < 0 || skinMesh.VertexCount <= 0)
-        return;
-
-    [loop]
-    for (int localVertexIndex = (int)groupThreadId.x; localVertexIndex < skinMesh.VertexCount; localVertexIndex += 128)
+    GpuActor actor = _GpuAnimationActors[actorIndex];
+    if (actor.FirstSkinMeshWorkIndex < 0
+        || actor.SkinMeshWorkCount <= 0
+        || actor.DeformedVertexOffset < 0
+        || actor.DeformedVertexCount <= 0)
     {
-        int sourceVertexIndex = skinMesh.FirstVertexIndex + localVertexIndex;
-        int outputVertexIndex = work.DeformedVertexOffset + localVertexIndex;
-        if (!IsInRange((uint)sourceVertexIndex, vertexCount) || !IsInRange((uint)outputVertexIndex, outputCount))
+        return;
+    }
+
+    int workEnd = min(_GpuSkinMeshWorkCount, actor.FirstSkinMeshWorkIndex + actor.SkinMeshWorkCount);
+    [loop]
+    for (int workIndex = actor.FirstSkinMeshWorkIndex; workIndex < workEnd; workIndex++)
+    {
+        GpuSkinMeshWork work = _GpuAnimationSkinMeshWork[workIndex];
+        if (!IsInRange((uint)work.SkinMeshIndex, (uint)_GpuSkinMeshCount))
             continue;
 
-        ActorVertex source = _GpuAnimationSkinVertices[sourceVertexIndex];
-        float3 skinnedPosition = 0.0;
-        float3 skinnedNormal = 0.0;
-        AccumulateVertexInfluence(source.BoneIndices0.x, source.Weights0.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices0.y, source.Weights0.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices0.z, source.Weights0.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices0.w, source.Weights0.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices1.x, source.Weights1.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices1.y, source.Weights1.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices1.z, source.Weights1.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-        AccumulateVertexInfluence(source.BoneIndices1.w, source.Weights1.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+        GpuSkinMesh skinMesh = _GpuAnimationSkinMeshes[work.SkinMeshIndex];
+        if (skinMesh.FirstVertexIndex < 0 || skinMesh.VertexCount <= 0)
+            continue;
 
-        float weightSum = dot(source.Weights0, float4(1.0, 1.0, 1.0, 1.0))
-            + dot(source.Weights1, float4(1.0, 1.0, 1.0, 1.0));
-        if (weightSum <= 0.0)
+        [loop]
+        for (int localVertexIndex = (int)groupThreadId.x; localVertexIndex < skinMesh.VertexCount; localVertexIndex += 128)
         {
+            int sourceVertexIndex = skinMesh.FirstVertexIndex + localVertexIndex;
+            int outputVertexIndex = work.DeformedVertexOffset + localVertexIndex;
+            if (!IsInRange((uint)sourceVertexIndex, (uint)_GpuSkinVertexCount) || !IsInRange((uint)outputVertexIndex, (uint)_GpuDeformedVertexCount))
+                continue;
+
+            ActorVertex source = _GpuAnimationSkinVertices[sourceVertexIndex];
             if (skinMesh.IsRigid != 0)
             {
                 ActorMatrix3x4 rigidMatrix = ReadActorSkinMatrix(work.BoneMatrixOffset);
-                skinnedPosition = TransformPoint(rigidMatrix, source.Position);
-                skinnedNormal = TransformDirection(rigidMatrix, source.Normal);
+                ActorDeformedVertex rigidOutputVertex;
+                rigidOutputVertex.Position = TransformPoint(rigidMatrix, source.Position);
+                rigidOutputVertex.Padding0 = 0.0;
+                rigidOutputVertex.Normal = SafeNormalize3(TransformDirection(rigidMatrix, source.Normal), source.Normal);
+                rigidOutputVertex.Padding1 = 0.0;
+                _ActorDeformedVertices[outputVertexIndex] = rigidOutputVertex;
+                continue;
             }
-            else
+
+            float3 skinnedPosition = 0.0;
+            float3 skinnedNormal = 0.0;
+            AccumulateVertexInfluence(source.BoneIndices0.x, source.Weights0.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.y, source.Weights0.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.z, source.Weights0.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.w, source.Weights0.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.x, source.Weights1.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.y, source.Weights1.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.z, source.Weights1.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.w, source.Weights1.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+
+            float weightSum = dot(source.Weights0, float4(1.0, 1.0, 1.0, 1.0))
+                + dot(source.Weights1, float4(1.0, 1.0, 1.0, 1.0));
+            if (weightSum <= 0.0)
             {
                 skinnedPosition = source.Position;
                 skinnedNormal = source.Normal;
             }
-        }
 
-        ActorDeformedVertex outputVertex;
-        outputVertex.Position = skinnedPosition;
-        outputVertex.Padding0 = 0.0;
-        outputVertex.Normal = SafeNormalize3(skinnedNormal, source.Normal);
-        outputVertex.Padding1 = 0.0;
-        _ActorDeformedVertices[outputVertexIndex] = outputVertex;
+            ActorDeformedVertex outputVertex;
+            outputVertex.Position = skinnedPosition;
+            outputVertex.Padding0 = 0.0;
+            outputVertex.Normal = SafeNormalize3(skinnedNormal, source.Normal);
+            outputVertex.Padding1 = 0.0;
+            _ActorDeformedVertices[outputVertexIndex] = outputVertex;
+        }
     }
 }

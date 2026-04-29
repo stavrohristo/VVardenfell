@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
@@ -12,14 +13,15 @@ namespace VVardenfell.Runtime.Animation
         public int FirstBoneIndex;
         public int BoneCount;
         public int AccumulationBoneIndex;
-        public int Padding;
+        public int MaxBoneDepth;
     }
 
     struct ActorGpuAnimationBoneGpu
     {
         public int ParentIndex;
         public uint Mask;
-        public float2 Padding;
+        public int Depth;
+        public float Padding;
         public float3 BindPosition;
         public float BindScale;
         public float4 BindRotation;
@@ -53,6 +55,14 @@ namespace VVardenfell.Runtime.Animation
         public int FirstKeyIndex;
         public int KeyCount;
         public uint Mask;
+    }
+
+    struct ActorGpuAnimationClipBoneTrackRangeGpu
+    {
+        public int FirstTrackIndex;
+        public int TrackCount;
+        public int Padding0;
+        public int Padding1;
     }
 
     struct ActorGpuAnimationKeyGpu
@@ -97,6 +107,10 @@ namespace VVardenfell.Runtime.Animation
         public int BoneCount;
         public int BoneMatrixOffset;
         public int BoneMatrixCount;
+        public int FirstSkinMeshWorkIndex;
+        public int SkinMeshWorkCount;
+        public int DeformedVertexOffset;
+        public int DeformedVertexCount;
         public int Padding;
     }
 
@@ -153,6 +167,38 @@ namespace VVardenfell.Runtime.Animation
         public GraphicsBuffer DeformedVertexBuffer;
     }
 
+    public struct ActorGpuAnimationPreparedFrame
+    {
+        internal ulong Version;
+        internal int ActorCount;
+        internal int LayerCount;
+        internal int LocalBoneMatrixCount;
+        internal int SkinMeshWorkCount;
+        internal int BoneMatrixCount;
+        internal int DeformedVertexCount;
+        internal GraphicsBuffer ActorBuffer;
+        internal GraphicsBuffer LayerBuffer;
+        internal GraphicsBuffer LocalBoneMatrixBuffer;
+        internal GraphicsBuffer LocalToRootMatrixBuffer;
+        internal GraphicsBuffer SkinMeshWorkBuffer;
+        internal GraphicsBuffer BoneMatrixBuffer;
+        internal GraphicsBuffer DeformedVertexBuffer;
+
+        public bool IsValid => Version != 0UL
+                               && ActorCount > 0
+                               && LocalBoneMatrixCount > 0
+                               && SkinMeshWorkCount > 0
+                               && BoneMatrixCount > 0
+                               && DeformedVertexCount > 0
+                               && ActorBuffer != null
+                               && LayerBuffer != null
+                               && LocalBoneMatrixBuffer != null
+                               && LocalToRootMatrixBuffer != null
+                               && SkinMeshWorkBuffer != null
+                               && BoneMatrixBuffer != null
+                               && DeformedVertexBuffer != null;
+    }
+
     public sealed class ActorGpuAnimationResources : IDisposable
     {
         const string ComputeShaderPath = "ActorGpuAnimation";
@@ -164,7 +210,7 @@ namespace VVardenfell.Runtime.Animation
         const int SkinMatrixThreadsPerGroup = 128;
         const int MaxComputeGroupsPerDimension = 65535;
         const int FrameResourceCount = 3;
-        const ulong StaticUploadVersion = 5UL;
+        const ulong StaticUploadVersion = 6UL;
         const GraphicsBuffer.UsageFlags DynamicBufferUsage = GraphicsBuffer.UsageFlags.LockBufferForWrite;
 
         static readonly int k_ActorCountId = Shader.PropertyToID("_GpuActorCount");
@@ -175,6 +221,7 @@ namespace VVardenfell.Runtime.Animation
         static readonly int k_BonesId = Shader.PropertyToID("_GpuAnimationBones");
         static readonly int k_ClipsId = Shader.PropertyToID("_GpuAnimationClips");
         static readonly int k_TracksId = Shader.PropertyToID("_GpuAnimationTracks");
+        static readonly int k_ClipBoneTrackRangesId = Shader.PropertyToID("_GpuAnimationClipBoneTrackRanges");
         static readonly int k_KeysId = Shader.PropertyToID("_GpuAnimationKeys");
         static readonly int k_SkinMeshesId = Shader.PropertyToID("_GpuAnimationSkinMeshes");
         static readonly int k_SkinBonesId = Shader.PropertyToID("_GpuAnimationSkinBones");
@@ -186,6 +233,18 @@ namespace VVardenfell.Runtime.Animation
         static readonly int k_SkinMeshWorkId = Shader.PropertyToID("_GpuAnimationSkinMeshWork");
         static readonly int k_OutputMatricesId = Shader.PropertyToID("_GpuActorBoneMatrices");
         static readonly int k_DeformedVerticesId = Shader.PropertyToID("_ActorDeformedVertices");
+        static readonly int k_SkeletonCountId = Shader.PropertyToID("_GpuSkeletonCount");
+        static readonly int k_BoneCountId = Shader.PropertyToID("_GpuBoneCount");
+        static readonly int k_ClipCountId = Shader.PropertyToID("_GpuClipCount");
+        static readonly int k_TrackCountId = Shader.PropertyToID("_GpuTrackCount");
+        static readonly int k_KeyCountId = Shader.PropertyToID("_GpuKeyCount");
+        static readonly int k_SkinMeshCountId = Shader.PropertyToID("_GpuSkinMeshCount");
+        static readonly int k_SkinBoneCountId = Shader.PropertyToID("_GpuSkinBoneCount");
+        static readonly int k_SkinVertexCountId = Shader.PropertyToID("_GpuSkinVertexCount");
+        static readonly int k_LayerCountId = Shader.PropertyToID("_GpuLayerCount");
+        static readonly int k_LocalBoneMatrixCountId = Shader.PropertyToID("_GpuLocalBoneMatrixCount");
+        static readonly int k_ActorBoneMatrixCountId = Shader.PropertyToID("_GpuActorBoneMatrixCount");
+        static readonly int k_DeformedVertexCountId = Shader.PropertyToID("_GpuDeformedVertexCount");
 
         ComputeShader _computeShader;
         int _sampleLocalBonesKernelIndex = -1;
@@ -198,14 +257,26 @@ namespace VVardenfell.Runtime.Animation
         GraphicsBuffer _boneBuffer;
         GraphicsBuffer _clipBuffer;
         GraphicsBuffer _trackBuffer;
+        GraphicsBuffer _clipBoneTrackRangeBuffer;
         GraphicsBuffer _keyBuffer;
         GraphicsBuffer _skinMeshBuffer;
         GraphicsBuffer _skinBoneBuffer;
         GraphicsBuffer _skinVertexBuffer;
         readonly ActorGpuAnimationFrameResources[] _frames = new ActorGpuAnimationFrameResources[FrameResourceCount];
         int _frameIndex = -1;
+        ActorGpuAnimationPreparedFrame _preparedFrame;
+        ulong _preparedFrameVersion;
+        ulong _lastRecordedFrameVersion;
         int _allocatedBoneMatrixCount;
         int _allocatedDeformedVertexCount;
+        int _skeletonCount;
+        int _boneCount;
+        int _clipCount;
+        int _trackCount;
+        int _keyCount;
+        int _skinMeshCount;
+        int _skinBoneCount;
+        int _skinVertexCount;
 
         public ActorGpuAnimationResources()
         {
@@ -229,6 +300,7 @@ namespace VVardenfell.Runtime.Animation
         public int BoneMatrixCount { get; private set; }
         public int AllocatedBoneMatrixCount => _allocatedBoneMatrixCount;
         public int AllocatedDeformedVertexCount => _allocatedDeformedVertexCount;
+        public bool HasPreparedFrame => _preparedFrame.IsValid;
 
         public void AllocateActorRanges(int boneMatrixCount, int deformedVertexCount, out int boneMatrixOffset, out int deformedVertexOffset)
         {
@@ -249,6 +321,7 @@ namespace VVardenfell.Runtime.Animation
                 && _boneBuffer != null
                 && _clipBuffer != null
                 && _trackBuffer != null
+                && _clipBoneTrackRangeBuffer != null
                 && _keyBuffer != null
                 && _skinMeshBuffer != null
                 && _skinBoneBuffer != null
@@ -264,6 +337,7 @@ namespace VVardenfell.Runtime.Animation
         public void BeginFrame()
         {
             _frameIndex = (_frameIndex + 1) % FrameResourceCount;
+            _preparedFrame = default;
             BoneMatrixCount = 0;
         }
 
@@ -302,34 +376,98 @@ namespace VVardenfell.Runtime.Animation
             frame.SkinMeshWorkBuffer.UnlockBufferAfterWrite<ActorGpuAnimationSkinMeshWorkGpu>(math.max(1, upload.SkinMeshCount));
         }
 
-        internal void Dispatch(int actorCount, int skinMeshWorkCount)
+        internal void PrepareFrameForRender(
+            int actorCount,
+            int layerCount,
+            int localBoneMatrixCount,
+            int skinMeshWorkCount,
+            int boneMatrixCount,
+            int deformedVertexCount)
         {
             if (!IsSupported)
                 return;
 
-            if (actorCount <= 0 || skinMeshWorkCount <= 0 || BoneMatrixCount <= 0)
+            if (actorCount <= 0
+                || localBoneMatrixCount <= 0
+                || skinMeshWorkCount <= 0
+                || boneMatrixCount <= 0
+                || deformedVertexCount <= 0)
                 return;
 
             ref ActorGpuAnimationFrameResources frame = ref CurrentFrame;
-            _computeShader.SetInt(k_ActorCountId, actorCount);
-            _computeShader.SetInt(k_SkinMeshWorkCountId, skinMeshWorkCount);
-            BindStaticBuffers(_sampleLocalBonesKernelIndex);
-            BindStaticBuffers(_composeLocalToRootKernelIndex);
-            BindStaticBuffers(_buildSkinMatricesKernelIndex);
-            BindStaticBuffers(_buildDeformedVerticesKernelIndex);
-            BindFrameBuffers(_sampleLocalBonesKernelIndex);
-            BindFrameBuffers(_composeLocalToRootKernelIndex);
-            BindFrameBuffers(_buildSkinMatricesKernelIndex);
-            BindFrameBuffers(_buildDeformedVerticesKernelIndex);
+            _preparedFrame = new ActorGpuAnimationPreparedFrame
+            {
+                Version = ++_preparedFrameVersion,
+                ActorCount = actorCount,
+                LayerCount = layerCount,
+                LocalBoneMatrixCount = localBoneMatrixCount,
+                SkinMeshWorkCount = skinMeshWorkCount,
+                BoneMatrixCount = boneMatrixCount,
+                DeformedVertexCount = deformedVertexCount,
+                ActorBuffer = frame.ActorBuffer,
+                LayerBuffer = frame.LayerBuffer,
+                LocalBoneMatrixBuffer = frame.LocalBoneMatrixBuffer,
+                LocalToRootMatrixBuffer = frame.LocalToRootMatrixBuffer,
+                SkinMeshWorkBuffer = frame.SkinMeshWorkBuffer,
+                BoneMatrixBuffer = frame.BoneMatrixBuffer,
+                DeformedVertexBuffer = frame.DeformedVertexBuffer,
+            };
+        }
 
-            var cmd = CommandBufferPool.Get("VV ActorGpuAnimation Dispatch");
-            DispatchActorKernel(cmd, _sampleLocalBonesKernelIndex, actorCount);
-            DispatchActorKernel(cmd, _composeLocalToRootKernelIndex, actorCount);
-            DispatchSkinMatrixKernel(cmd, skinMeshWorkCount);
-            DispatchSkinMeshKernel(cmd, _buildDeformedVerticesKernelIndex, skinMeshWorkCount);
-            Graphics.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
-            Shader.SetGlobalBuffer(k_DeformedVerticesId, frame.DeformedVertexBuffer);
+        public bool TryGetPreparedFrame(out ActorGpuAnimationPreparedFrame frame)
+        {
+            frame = _preparedFrame;
+            return frame.IsValid;
+        }
+
+        public void RecordPreparedFrameDispatch(CommandBuffer cmd)
+        {
+            if (!TryGetPreparedFrame(out var frame))
+                return;
+
+            if (_lastRecordedFrameVersion == frame.Version)
+            {
+                cmd.SetGlobalBuffer(k_DeformedVerticesId, frame.DeformedVertexBuffer);
+                return;
+            }
+
+            RecordDispatch(cmd, in frame);
+            _lastRecordedFrameVersion = frame.Version;
+        }
+
+        public void RecordDispatch(CommandBuffer cmd, in ActorGpuAnimationPreparedFrame frame)
+        {
+            if (!frame.IsValid)
+                throw new InvalidOperationException("Actor GPU animation render dispatch was requested without a valid prepared frame.");
+
+            cmd.SetComputeIntParam(_computeShader, k_ActorCountId, frame.ActorCount);
+            cmd.SetComputeIntParam(_computeShader, k_SkinMeshWorkCountId, frame.SkinMeshWorkCount);
+            cmd.SetComputeIntParam(_computeShader, k_LayerCountId, frame.LayerCount);
+            cmd.SetComputeIntParam(_computeShader, k_LocalBoneMatrixCountId, frame.LocalBoneMatrixCount);
+            cmd.SetComputeIntParam(_computeShader, k_ActorBoneMatrixCountId, frame.BoneMatrixCount);
+            cmd.SetComputeIntParam(_computeShader, k_DeformedVertexCountId, frame.DeformedVertexCount);
+            cmd.SetComputeIntParam(_computeShader, k_SkeletonCountId, _skeletonCount);
+            cmd.SetComputeIntParam(_computeShader, k_BoneCountId, _boneCount);
+            cmd.SetComputeIntParam(_computeShader, k_ClipCountId, _clipCount);
+            cmd.SetComputeIntParam(_computeShader, k_TrackCountId, _trackCount);
+            cmd.SetComputeIntParam(_computeShader, k_KeyCountId, _keyCount);
+            cmd.SetComputeIntParam(_computeShader, k_SkinMeshCountId, _skinMeshCount);
+            cmd.SetComputeIntParam(_computeShader, k_SkinBoneCountId, _skinBoneCount);
+            cmd.SetComputeIntParam(_computeShader, k_SkinVertexCountId, _skinVertexCount);
+            BindStaticBuffers(cmd, _sampleLocalBonesKernelIndex);
+            BindStaticBuffers(cmd, _composeLocalToRootKernelIndex);
+            BindStaticBuffers(cmd, _buildSkinMatricesKernelIndex);
+            BindStaticBuffers(cmd, _buildDeformedVerticesKernelIndex);
+            BindFrameBuffers(cmd, _sampleLocalBonesKernelIndex, in frame);
+            BindFrameBuffers(cmd, _composeLocalToRootKernelIndex, in frame);
+            BindFrameBuffers(cmd, _buildSkinMatricesKernelIndex, in frame);
+            BindFrameBuffers(cmd, _buildDeformedVerticesKernelIndex, in frame);
+
+            DispatchActorKernel(cmd, _sampleLocalBonesKernelIndex, frame.ActorCount);
+            DispatchActorKernel(cmd, _composeLocalToRootKernelIndex, frame.ActorCount);
+            DispatchSkinMatrixKernel(cmd, frame.SkinMeshWorkCount);
+            DispatchActorKernel(cmd, _buildDeformedVerticesKernelIndex, frame.ActorCount);
+            cmd.SetGlobalBuffer(k_DeformedVerticesId, frame.DeformedVertexBuffer);
         }
 
         void DispatchActorKernel(CommandBuffer cmd, int kernelIndex, int actorCount)
@@ -354,38 +492,28 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
-        void DispatchSkinMeshKernel(CommandBuffer cmd, int kernelIndex, int skinMeshWorkCount)
+        void BindStaticBuffers(CommandBuffer cmd, int kernelIndex)
         {
-            for (int baseWork = 0; baseWork < skinMeshWorkCount; baseWork += MaxComputeGroupsPerDimension)
-            {
-                int groupCount = math.min(MaxComputeGroupsPerDimension, skinMeshWorkCount - baseWork);
-                cmd.SetComputeIntParam(_computeShader, k_SkinMeshDispatchBaseId, baseWork);
-                cmd.DispatchCompute(_computeShader, kernelIndex, groupCount, 1, 1);
-            }
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkeletonsId, _skeletonBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_BonesId, _boneBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_ClipsId, _clipBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_TracksId, _trackBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_ClipBoneTrackRangesId, _clipBoneTrackRangeBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_KeysId, _keyBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinMeshesId, _skinMeshBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinBonesId, _skinBoneBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinVerticesId, _skinVertexBuffer);
         }
 
-        void BindStaticBuffers(int kernelIndex)
+        void BindFrameBuffers(CommandBuffer cmd, int kernelIndex, in ActorGpuAnimationPreparedFrame frame)
         {
-            _computeShader.SetBuffer(kernelIndex, k_SkeletonsId, _skeletonBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_BonesId, _boneBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_ClipsId, _clipBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_TracksId, _trackBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_KeysId, _keyBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_SkinMeshesId, _skinMeshBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_SkinBonesId, _skinBoneBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_SkinVerticesId, _skinVertexBuffer);
-        }
-
-        void BindFrameBuffers(int kernelIndex)
-        {
-            ref ActorGpuAnimationFrameResources frame = ref CurrentFrame;
-            _computeShader.SetBuffer(kernelIndex, k_ActorsId, frame.ActorBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_LayersId, frame.LayerBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_LocalMatricesId, frame.LocalBoneMatrixBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_LocalToRootMatricesId, frame.LocalToRootMatrixBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_SkinMeshWorkId, frame.SkinMeshWorkBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_OutputMatricesId, frame.BoneMatrixBuffer);
-            _computeShader.SetBuffer(kernelIndex, k_DeformedVerticesId, frame.DeformedVertexBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_ActorsId, frame.ActorBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_LayersId, frame.LayerBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_LocalMatricesId, frame.LocalBoneMatrixBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_LocalToRootMatricesId, frame.LocalToRootMatrixBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinMeshWorkId, frame.SkinMeshWorkBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_OutputMatricesId, frame.BoneMatrixBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_DeformedVerticesId, frame.DeformedVertexBuffer);
         }
 
         public void Dispose()
@@ -394,6 +522,7 @@ namespace VVardenfell.Runtime.Animation
             ReleaseBuffer(ref _boneBuffer);
             ReleaseBuffer(ref _clipBuffer);
             ReleaseBuffer(ref _trackBuffer);
+            ReleaseBuffer(ref _clipBoneTrackRangeBuffer);
             ReleaseBuffer(ref _keyBuffer);
             ReleaseBuffer(ref _skinMeshBuffer);
             ReleaseBuffer(ref _skinBoneBuffer);
@@ -401,8 +530,19 @@ namespace VVardenfell.Runtime.Animation
             for (int i = 0; i < _frames.Length; i++)
                 ReleaseFrameResources(ref _frames[i]);
             _frameIndex = -1;
+            _preparedFrame = default;
+            _preparedFrameVersion = 0UL;
+            _lastRecordedFrameVersion = 0UL;
             _allocatedBoneMatrixCount = 0;
             _allocatedDeformedVertexCount = 0;
+            _skeletonCount = 0;
+            _boneCount = 0;
+            _clipCount = 0;
+            _trackCount = 0;
+            _keyCount = 0;
+            _skinMeshCount = 0;
+            _skinBoneCount = 0;
+            _skinVertexCount = 0;
         }
 
         ref ActorGpuAnimationFrameResources CurrentFrame
@@ -416,6 +556,7 @@ namespace VVardenfell.Runtime.Animation
 
         void UploadStaticCatalog(ref ActorAnimationCatalogBlob catalog)
         {
+            int[] boneDepths = BuildBoneDepths(ref catalog, out int[] skeletonMaxDepths);
             var skeletons = new ActorGpuAnimationSkeletonGpu[catalog.Skeletons.Length];
             for (int i = 0; i < skeletons.Length; i++)
             {
@@ -425,6 +566,7 @@ namespace VVardenfell.Runtime.Animation
                     FirstBoneIndex = source.FirstBoneIndex,
                     BoneCount = source.BoneCount,
                     AccumulationBoneIndex = source.AccumulationBoneIndex,
+                    MaxBoneDepth = (uint)i < (uint)skeletonMaxDepths.Length ? skeletonMaxDepths[i] : 0,
                 };
             }
 
@@ -438,6 +580,7 @@ namespace VVardenfell.Runtime.Animation
                 {
                     ParentIndex = source.ParentIndex,
                     Mask = (uint)ComputeBoneMask(source.Name),
+                    Depth = (uint)i < (uint)boneDepths.Length ? boneDepths[i] : 0,
                     BindPosition = ActorAnimationSpaceConversion.SourceTranslationToUnity(source.BindPosition),
                     BindScale = source.BindScale <= 0f ? 1f : source.BindScale,
                     BindRotation = ActorAnimationSpaceConversion.SourceQuaternionToUnity(source.BindRotation).value,
@@ -462,28 +605,10 @@ namespace VVardenfell.Runtime.Animation
                 };
             }
 
-            var tracks = new ActorGpuAnimationTrackGpu[catalog.Tracks.Length];
-            for (int i = 0; i < tracks.Length; i++)
-            {
-                var source = catalog.Tracks[i];
-                tracks[i] = new ActorGpuAnimationTrackGpu
-                {
-                    TargetBoneIndex = source.TargetBoneIndex,
-                    Kind = (int)source.Kind,
-                    Interpolation = (int)source.Interpolation,
-                    AxisOrder = source.AxisOrder,
-                    ControllerFlags = source.ControllerFlags,
-                    Frequency = source.Frequency,
-                    Phase = source.Phase,
-                    TimeStart = source.TimeStart,
-                    TimeStop = source.TimeStop,
-                    FirstKeyIndex = source.FirstKeyIndex,
-                    KeyCount = source.KeyCount,
-                    Mask = source.BlendMask != 0
-                        ? source.BlendMask
-                        : (uint)ComputeBoneMask(source.TargetName),
-                };
-            }
+            BuildClipBoneTrackLookup(
+                ref catalog,
+                out ActorGpuAnimationTrackGpu[] tracks,
+                out ActorGpuAnimationClipBoneTrackRangeGpu[] clipBoneTrackRanges);
 
             var keys = new ActorGpuAnimationKeyGpu[catalog.Keys.Length];
             for (int i = 0; i < keys.Length; i++)
@@ -551,6 +676,7 @@ namespace VVardenfell.Runtime.Animation
             EnsureBuffer(ref _boneBuffer, bones.Length, UnsafeUtility.SizeOf<ActorGpuAnimationBoneGpu>(), "VV:GpuAnimBones");
             EnsureBuffer(ref _clipBuffer, clips.Length, UnsafeUtility.SizeOf<ActorGpuAnimationClipGpu>(), "VV:GpuAnimClips");
             EnsureBuffer(ref _trackBuffer, tracks.Length, UnsafeUtility.SizeOf<ActorGpuAnimationTrackGpu>(), "VV:GpuAnimTracks");
+            EnsureBuffer(ref _clipBoneTrackRangeBuffer, clipBoneTrackRanges.Length, UnsafeUtility.SizeOf<ActorGpuAnimationClipBoneTrackRangeGpu>(), "VV:GpuAnimClipBoneTrackRanges");
             EnsureBuffer(ref _keyBuffer, keys.Length, UnsafeUtility.SizeOf<ActorGpuAnimationKeyGpu>(), "VV:GpuAnimKeys");
             EnsureBuffer(ref _skinMeshBuffer, skinMeshes.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinMeshGpu>(), "VV:GpuAnimSkinMeshes");
             EnsureBuffer(ref _skinBoneBuffer, skinBones.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinBoneGpu>(), "VV:GpuAnimSkinBones");
@@ -564,6 +690,8 @@ namespace VVardenfell.Runtime.Animation
                 _clipBuffer.SetData(clips);
             if (tracks.Length > 0)
                 _trackBuffer.SetData(tracks);
+            if (clipBoneTrackRanges.Length > 0)
+                _clipBoneTrackRangeBuffer.SetData(clipBoneTrackRanges);
             if (keys.Length > 0)
                 _keyBuffer.SetData(keys);
             if (skinMeshes.Length > 0)
@@ -572,6 +700,118 @@ namespace VVardenfell.Runtime.Animation
                 _skinBoneBuffer.SetData(skinBones);
             if (skinVertices.Length > 0)
                 _skinVertexBuffer.SetData(skinVertices);
+
+            _skeletonCount = skeletons.Length;
+            _boneCount = bones.Length;
+            _clipCount = clips.Length;
+            _trackCount = tracks.Length;
+            _keyCount = keys.Length;
+            _skinMeshCount = skinMeshes.Length;
+            _skinBoneCount = skinBones.Length;
+            _skinVertexCount = skinVertices.Length;
+        }
+
+        static int[] BuildBoneDepths(ref ActorAnimationCatalogBlob catalog, out int[] skeletonMaxDepths)
+        {
+            var boneDepths = new int[catalog.Bones.Length];
+            skeletonMaxDepths = new int[catalog.Skeletons.Length];
+            for (int skeletonIndex = 0; skeletonIndex < catalog.Skeletons.Length; skeletonIndex++)
+            {
+                var skeleton = catalog.Skeletons[skeletonIndex];
+                int firstBone = skeleton.FirstBoneIndex;
+                int boneCount = math.max(0, skeleton.BoneCount);
+                if (firstBone < 0 || firstBone >= catalog.Bones.Length || boneCount <= 0)
+                    continue;
+
+                int maxBone = math.min(catalog.Bones.Length, firstBone + boneCount);
+                for (int absoluteBoneIndex = firstBone; absoluteBoneIndex < maxBone; absoluteBoneIndex++)
+                {
+                    int localBoneIndex = absoluteBoneIndex - firstBone;
+                    int depth = 0;
+                    int parent = catalog.Bones[absoluteBoneIndex].ParentIndex;
+                    int guard = 0;
+                    while (parent >= 0 && parent < localBoneIndex && guard++ < BoneThreadsPerGroup)
+                    {
+                        depth++;
+                        parent = catalog.Bones[firstBone + parent].ParentIndex;
+                    }
+
+                    boneDepths[absoluteBoneIndex] = depth;
+                    skeletonMaxDepths[skeletonIndex] = math.max(skeletonMaxDepths[skeletonIndex], depth);
+                }
+            }
+
+            return boneDepths;
+        }
+
+        static void BuildClipBoneTrackLookup(
+            ref ActorAnimationCatalogBlob catalog,
+            out ActorGpuAnimationTrackGpu[] sortedTracks,
+            out ActorGpuAnimationClipBoneTrackRangeGpu[] clipBoneTrackRanges)
+        {
+            int rangeCount = math.max(1, catalog.Clips.Length * BoneThreadsPerGroup);
+            clipBoneTrackRanges = new ActorGpuAnimationClipBoneTrackRangeGpu[rangeCount];
+            var tracks = new List<ActorGpuAnimationTrackGpu>(catalog.Tracks.Length);
+            for (int clipIndex = 0; clipIndex < catalog.Clips.Length; clipIndex++)
+            {
+                var clip = catalog.Clips[clipIndex];
+                int trackStart = clip.FirstTrackIndex;
+                int trackEnd = trackStart < 0
+                    ? 0
+                    : math.min(catalog.Tracks.Length, trackStart + math.max(0, clip.TrackCount));
+
+                for (int boneIndex = 0; boneIndex < BoneThreadsPerGroup; boneIndex++)
+                {
+                    int firstTrackIndex = tracks.Count;
+                    if (trackStart >= 0)
+                    {
+                        for (int sourceTrackIndex = trackStart; sourceTrackIndex < trackEnd; sourceTrackIndex++)
+                        {
+                            var source = catalog.Tracks[sourceTrackIndex];
+                            if (source.TargetBoneIndex != boneIndex
+                                || source.KeyCount <= 0
+                                || source.FirstKeyIndex < 0)
+                            {
+                                continue;
+                            }
+
+                            tracks.Add(BuildTrackGpu(source));
+                        }
+                    }
+
+                    int rangeIndex = clipIndex * BoneThreadsPerGroup + boneIndex;
+                    clipBoneTrackRanges[rangeIndex] = new ActorGpuAnimationClipBoneTrackRangeGpu
+                    {
+                        FirstTrackIndex = firstTrackIndex,
+                        TrackCount = tracks.Count - firstTrackIndex,
+                    };
+                }
+            }
+
+            sortedTracks = tracks.Count > 0
+                ? tracks.ToArray()
+                : Array.Empty<ActorGpuAnimationTrackGpu>();
+        }
+
+        static ActorGpuAnimationTrackGpu BuildTrackGpu(ActorAnimationTrackBlob source)
+        {
+            return new ActorGpuAnimationTrackGpu
+            {
+                TargetBoneIndex = source.TargetBoneIndex,
+                Kind = (int)source.Kind,
+                Interpolation = (int)source.Interpolation,
+                AxisOrder = source.AxisOrder,
+                ControllerFlags = source.ControllerFlags,
+                Frequency = source.Frequency,
+                Phase = source.Phase,
+                TimeStart = source.TimeStart,
+                TimeStop = source.TimeStop,
+                FirstKeyIndex = source.FirstKeyIndex,
+                KeyCount = source.KeyCount,
+                Mask = source.BlendMask != 0
+                    ? source.BlendMask
+                    : (uint)ComputeBoneMask(source.TargetName),
+            };
         }
 
         static ActorAnimationBlendMask ComputeBoneMask(FixedString64Bytes name)

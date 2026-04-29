@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using UnityDebug = UnityEngine.Debug;
 
 namespace VVardenfell.Core.Cache
@@ -101,6 +102,7 @@ namespace VVardenfell.Core.Cache
         public float[] SourceLocalToRootMatrix = Array.Empty<float>();
     }
 
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ActorSkinWeightDef
     {
         public ushort VertexIndex;
@@ -183,6 +185,7 @@ namespace VVardenfell.Core.Cache
         public ActorAnimationTextMarkerKind Kind;
     }
 
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ActorAnimationKeyDef
     {
         public float Time;
@@ -353,7 +356,7 @@ namespace VVardenfell.Core.Cache
         const uint Magic = 0x4D494E41u; // 'ANIM'
         const uint Version = 64u;
 
-        public static bool TryRead(string path, out ActorAnimationCatalogData data)
+        public static bool TryRead(string path, out ActorAnimationCatalogData data, bool emitTiming = true)
         {
             data = null;
             if (!File.Exists(path))
@@ -361,7 +364,7 @@ namespace VVardenfell.Core.Cache
 
             try
             {
-                data = Read(path);
+                data = Read(path, emitTiming);
                 return true;
             }
             catch
@@ -388,7 +391,7 @@ namespace VVardenfell.Core.Cache
             }
         }
 
-        public static ActorAnimationCatalogData Read(string path)
+        public static ActorAnimationCatalogData Read(string path, bool emitTiming = true)
         {
             using var fs = File.OpenRead(path);
             using var r = new BinaryReader(fs);
@@ -405,21 +408,21 @@ namespace VVardenfell.Core.Cache
 
             var data = new ActorAnimationCatalogData
             {
-                RigFamilies = ReadTimedArray(r, "RigFamilies", ReadRigFamily, timing, ref lastMs),
-                SkinBindings = ReadTimedArray(r, "SkinBindings", ReadSkinBinding, timing, ref lastMs),
-                ActorVisualRecipes = ReadTimedArray(r, "ActorVisualRecipes", ReadActorVisualRecipe, timing, ref lastMs),
-                ActorVisualRecipeEntries = ReadTimedArray(r, "ActorVisualRecipeEntries", ReadActorVisualRecipeEntry, timing, ref lastMs),
-                EquipmentVisuals = ReadTimedArray(r, "EquipmentVisuals", ReadEquipmentVisual, timing, ref lastMs),
-                EquipmentVisualEntries = ReadTimedArray(r, "EquipmentVisualEntries", ReadEquipmentVisualEntry, timing, ref lastMs),
-                GraphNodes = ReadTimedArray(r, "GraphNodes", ReadGraphNode, timing, ref lastMs),
-                Skeletons = ReadTimedArray(r, "Skeletons", ReadSkeleton, timing, ref lastMs),
-                SkinMeshes = ReadTimedArray(r, "SkinMeshes", ReadSkinMesh, timing, ref lastMs),
-                SkinWeights = ReadTimedArray(r, "SkinWeights", ReadSkinWeight, timing, ref lastMs),
-                Clips = ReadTimedArray(r, "Clips", ReadClip, timing, ref lastMs),
-                Tracks = ReadTimedArray(r, "Tracks", ReadTrack, timing, ref lastMs),
-                Keys = ReadTimedArray(r, "Keys", ReadKey, timing, ref lastMs),
-                TextKeys = ReadTimedArray(r, "TextKeys", ReadTextKey, timing, ref lastMs),
-                TextMarkers = ReadTimedArray(r, "TextMarkers", ReadTextMarker, timing, ref lastMs),
+                RigFamilies = ReadTimedArray(r, "RigFamilies", ReadRigFamily, timing, ref lastMs, emitTiming),
+                SkinBindings = ReadTimedArray(r, "SkinBindings", ReadSkinBinding, timing, ref lastMs, emitTiming),
+                ActorVisualRecipes = ReadTimedArray(r, "ActorVisualRecipes", ReadActorVisualRecipe, timing, ref lastMs, emitTiming),
+                ActorVisualRecipeEntries = ReadTimedArray(r, "ActorVisualRecipeEntries", ReadActorVisualRecipeEntry, timing, ref lastMs, emitTiming),
+                EquipmentVisuals = ReadTimedArray(r, "EquipmentVisuals", ReadEquipmentVisual, timing, ref lastMs, emitTiming),
+                EquipmentVisualEntries = ReadTimedArray(r, "EquipmentVisualEntries", ReadEquipmentVisualEntry, timing, ref lastMs, emitTiming),
+                GraphNodes = ReadTimedArray(r, "GraphNodes", ReadGraphNode, timing, ref lastMs, emitTiming),
+                Skeletons = ReadTimedArray(r, "Skeletons", ReadSkeleton, timing, ref lastMs, emitTiming),
+                SkinMeshes = ReadTimedArray(r, "SkinMeshes", ReadSkinMesh, timing, ref lastMs, emitTiming),
+                SkinWeights = ReadTimedBlittableArray<ActorSkinWeightDef>(r, "SkinWeights", timing, ref lastMs, emitTiming),
+                Clips = ReadTimedArray(r, "Clips", ReadClip, timing, ref lastMs, emitTiming),
+                Tracks = ReadTimedArray(r, "Tracks", ReadTrack, timing, ref lastMs, emitTiming),
+                Keys = ReadTimedBlittableArray<ActorAnimationKeyDef>(r, "Keys", timing, ref lastMs, emitTiming),
+                TextKeys = ReadTimedArray(r, "TextKeys", ReadTextKey, timing, ref lastMs, emitTiming),
+                TextMarkers = ReadTimedArray(r, "TextMarkers", ReadTextMarker, timing, ref lastMs, emitTiming),
             };
             return data;
         }
@@ -883,13 +886,52 @@ namespace VVardenfell.Core.Cache
             string segment,
             Func<BinaryReader, T> read,
             Stopwatch stopwatch,
-            ref long lastMs)
+            ref long lastMs,
+            bool emitTiming)
         {
             var values = ReadArray(r, read);
-            long elapsedMs = stopwatch.ElapsedMilliseconds;
-            UnityDebug.Log(
-                $"[VVardenfell][BootTiming] detail=ActorAnimationFile segment='{segment}' count={values.Length} deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
-            lastMs = elapsedMs;
+            if (emitTiming)
+            {
+                long elapsedMs = stopwatch.ElapsedMilliseconds;
+                UnityDebug.Log(
+                    $"[VVardenfell][BootTiming] detail=ActorAnimationFile segment='{segment}' count={values.Length} deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
+                lastMs = elapsedMs;
+            }
+            return values;
+        }
+
+        static T[] ReadTimedBlittableArray<T>(
+            BinaryReader r,
+            string segment,
+            Stopwatch stopwatch,
+            ref long lastMs,
+            bool emitTiming)
+            where T : struct
+        {
+            int count = r.ReadInt32();
+            if (count < 0)
+                throw new InvalidDataException($"Negative actor animation array count {count}.");
+
+            var values = new T[count];
+            int elementSize = Marshal.SizeOf<T>();
+            int byteCount = checked(count * elementSize);
+            if (byteCount > 0)
+            {
+                byte[] bytes = r.ReadBytes(byteCount);
+                if (bytes.Length != byteCount)
+                    throw new EndOfStreamException($"Actor animation array '{segment}' is truncated.");
+
+                MemoryMarshal.Cast<byte, T>(bytes).CopyTo(values);
+            }
+
+            if (emitTiming)
+            {
+                long elapsedMs = stopwatch.ElapsedMilliseconds;
+                UnityDebug.Log(
+                    $"[VVardenfell][BootTiming] detail=ActorAnimationFile segment='{segment}' count={values.Length} deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
+                lastMs = elapsedMs;
+            }
+
             return values;
         }
 

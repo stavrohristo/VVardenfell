@@ -7,6 +7,7 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Rendering;
+using UnityEngine;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -19,7 +20,9 @@ namespace VVardenfell.Runtime.Animation
     {
         static readonly ProfilerMarker k_CountWork = new("VV.ActorGpuAnimation.CountWork");
         static readonly ProfilerMarker k_PackFrame = new("VV.ActorGpuAnimation.PackFrame");
-        static readonly ProfilerMarker k_Dispatch = new("VV.ActorGpuAnimation.Dispatch");
+        const int WorkloadLogFrameInterval = 120;
+        const int MaxComputeGroupsPerDimension = 65535;
+        int _lastWorkloadLogFrame = -WorkloadLogFrameInterval;
 
         EntityQuery _gpuActorQuery;
         NativeList<ActorGpuAnimationCount> _counts;
@@ -33,6 +36,8 @@ namespace VVardenfell.Runtime.Animation
             public int BoneCount;
             public int SkinMeshWorkCount;
             public int BoneMatrixCount;
+            public int DeformedVertexCount;
+            public int MaxSkinMeshWorkCount;
         }
 
         struct ActorGpuAnimationOffset
@@ -61,6 +66,8 @@ namespace VVardenfell.Runtime.Animation
             var settings = SystemAPI.GetSingleton<ActorAnimationRuntimeSettings>();
             ActorGpuAnimationValidation.Enabled = settings.ValidationEnabled != 0;
             ActorGpuAnimationValidation.ActorIndex = math.max(0, settings.ValidationActorIndex);
+            if (ActorGpuAnimationValidation.Enabled)
+                throw new InvalidOperationException("Actor GPU animation validation currently requires a render-dispatch validation path; disable validation for normal render-owned dispatch.");
 
             if (settings.Mode == ActorAnimationRuntimeMode.Cpu)
             {
@@ -120,8 +127,11 @@ namespace VVardenfell.Runtime.Animation
             ActorGpuAnimationCount totalCounts = _totals.Value;
             if (totalCounts.ValidActorCount <= 0 || totalCounts.BoneMatrixCount <= 0)
             {
-                return;
+                throw new InvalidOperationException(
+                    $"Actor GPU animation found {_gpuActorQuery.CalculateEntityCount()} renderable actor(s), but no valid GPU animation frame could be prepared.");
             }
+
+            ReportWorkload(totalCounts);
 
             gpuResources.ReserveFrameCapacity(
                 totalCounts.ValidActorCount,
@@ -149,13 +159,13 @@ namespace VVardenfell.Runtime.Animation
                 Dependency.Complete();
             }
             gpuResources.EndFrameUpload(upload);
-
-            using (k_Dispatch.Auto())
-            {
-                gpuResources.Dispatch(totalCounts.ValidActorCount, totalCounts.SkinMeshWorkCount);
-            }
-            if (ActorGpuAnimationValidation.Enabled)
-                ValidateSelectedActor(ref catalog, gpuResources);
+            gpuResources.PrepareFrameForRender(
+                totalCounts.ValidActorCount,
+                totalCounts.LayerCount,
+                totalCounts.BoneCount,
+                totalCounts.SkinMeshWorkCount,
+                gpuResources.AllocatedBoneMatrixCount,
+                gpuResources.AllocatedDeformedVertexCount);
         }
 
         protected override void OnDestroy()
@@ -176,6 +186,28 @@ namespace VVardenfell.Runtime.Animation
                 list.Capacity = length;
 
             list.ResizeUninitialized(length);
+        }
+
+        void ReportWorkload(ActorGpuAnimationCount totalCounts)
+        {
+            int frame = UnityEngine.Time.frameCount;
+            if (frame - _lastWorkloadLogFrame < WorkloadLogFrameInterval)
+                return;
+
+            _lastWorkloadLogFrame = frame;
+            int averageSkinMeshes = totalCounts.ValidActorCount > 0
+                ? (totalCounts.SkinMeshWorkCount + totalCounts.ValidActorCount - 1) / totalCounts.ValidActorCount
+                : 0;
+            int deformedDispatchChunks = (totalCounts.ValidActorCount + MaxComputeGroupsPerDimension - 1) / MaxComputeGroupsPerDimension;
+            Debug.Log(
+                "[VVardenfell][ActorGpuAnimation] "
+                + $"actors={totalCounts.ValidActorCount} "
+                + $"skinMeshWork={totalCounts.SkinMeshWorkCount} "
+                + $"avgSkinMeshesPerActor={averageSkinMeshes} "
+                + $"maxSkinMeshesPerActor={totalCounts.MaxSkinMeshWorkCount} "
+                + $"deformedVertices={totalCounts.DeformedVertexCount} "
+                + $"boneMatrices={totalCounts.BoneMatrixCount} "
+                + $"deformDispatchActorChunks={deformedDispatchChunks}");
         }
 
         [BurstCompile]
@@ -217,6 +249,8 @@ namespace VVardenfell.Runtime.Animation
                 count.ValidActorCount = 1;
                 count.BoneCount = math.max(0, skeletonBlob.BoneCount);
                 count.SkinMeshWorkCount = CountValidSkinMeshes(skinMeshes, ref catalog);
+                count.DeformedVertexCount = gpuState.DeformedVertexCount;
+                count.MaxSkinMeshWorkCount = count.SkinMeshWorkCount;
                 Counts[entityIndex] = count;
             }
         }
@@ -247,6 +281,8 @@ namespace VVardenfell.Runtime.Animation
                     running.BoneCount += count.BoneCount;
                     running.SkinMeshWorkCount += count.SkinMeshWorkCount;
                     running.BoneMatrixCount += count.BoneMatrixCount;
+                    running.DeformedVertexCount += count.DeformedVertexCount;
+                    running.MaxSkinMeshWorkCount = math.max(running.MaxSkinMeshWorkCount, count.SkinMeshWorkCount);
                 }
 
                 Totals.Value = running;
@@ -296,7 +332,8 @@ namespace VVardenfell.Runtime.Animation
                 int boneOffset = offsets.BoneOffset;
                 int skinMeshWorkOffset = offsets.SkinMeshWorkOffset;
                 int boneMatrixOffset = gpuState.ValueRO.BoneMatrixOffset;
-                int deformedVertexOffset = gpuState.ValueRO.DeformedVertexOffset;
+                int actorDeformedVertexOffset = gpuState.ValueRO.DeformedVertexOffset;
+                int deformedVertexOffset = actorDeformedVertexOffset;
                 var skeletonBlob = catalog.Skeletons[skeleton.SkeletonIndex];
 
                 layerCount = WriteLayers(requests, ref catalog, Layers, layerOffset);
@@ -340,6 +377,10 @@ namespace VVardenfell.Runtime.Animation
                     BoneCount = skeletonBlob.BoneCount,
                     BoneMatrixOffset = boneMatrixOffset,
                     BoneMatrixCount = actorBoneMatrixCount,
+                    FirstSkinMeshWorkIndex = skinMeshWorkOffset,
+                    SkinMeshWorkCount = skinMeshWorkCount,
+                    DeformedVertexOffset = actorDeformedVertexOffset,
+                    DeformedVertexCount = deformedVertexOffset - actorDeformedVertexOffset,
                 };
             }
         }

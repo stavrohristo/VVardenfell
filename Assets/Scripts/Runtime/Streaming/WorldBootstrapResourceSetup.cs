@@ -145,71 +145,111 @@ namespace VVardenfell.Runtime.Streaming
 
             progress?.BeginStage("Ref prefab build", "Creating ref prefabs", rmas.Length);
             var prefabBuildSw = Stopwatch.StartNew();
-            for (int b = 0; b < rmas.Length; b++)
+            if (rmas.Length > 0)
             {
                 k_RefPrefabs.Begin();
                 try
                 {
-                    Entity prefab;
-                    k_RefPrefabCreateEntity.Begin();
-                    try
-                    {
-                        prefab = em.CreateEntity();
-                    }
-                    finally
-                    {
-                        k_RefPrefabCreateEntity.End();
-                    }
-
-                    em.SetName(prefab, $"VVardenfell.RefPrefab[b{b}]");
-
-                    k_RefPrefabAddRenderMesh.Begin();
-                    try
-                    {
-                        RenderMeshUtility.AddComponents(
-                            prefab, em, WorldResources.Desc, rmas[b],
-                            MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-                    }
-                    finally
-                    {
-                        k_RefPrefabAddRenderMesh.End();
-                    }
-
-                    k_RefPrefabSetup.Begin();
-                    try
-                    {
-                        em.AddComponentData(prefab, LocalTransform.Identity);
-                        em.AddComponentData(prefab, default(TextureSlice));
-                        em.AddComponentData(prefab, new CellLink { Value = int2.zero });
-                        em.AddComponent<Unity.Transforms.Static>(prefab);
-                        em.AddSharedComponent(prefab, new PhysicsWorldIndex { Value = 0 });
-                        em.AddComponent<Prefab>(prefab);
-                    }
-                    finally
-                    {
-                        k_RefPrefabSetup.End();
-                    }
-
-                    WorldResources.RefPrefabs[b] = prefab;
+                    CreateRenderShardRefPrefabs(em, rmas, WorldResources.RefPrefabs);
                 }
                 finally
                 {
                     k_RefPrefabs.End();
                 }
-
-                int completed = b + 1;
-                progress?.Report($"Creating ref prefabs {completed}/{rmas.Length}", completed, rmas.Length);
-                yield return null;
             }
+
+            progress?.Report($"Creating ref prefabs {rmas.Length}/{rmas.Length}", rmas.Length, rmas.Length);
             prefabBuildSw.Stop();
             progress?.CompleteStage("Ref prefabs ready");
-            if (rmas.Length > 0)
+            yield return null;
+        }
+
+        static void CreateRenderShardRefPrefabs(EntityManager em, RenderMeshArray[] rmas, Entity[] prefabs)
+        {
+            var materialMeshInfo = MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0);
+
+            k_RefPrefabCreateEntity.Begin();
+            Entity sourcePrefab;
+            try
             {
-                double averageMs = prefabBuildSw.Elapsed.TotalMilliseconds / rmas.Length;
+                sourcePrefab = em.CreateEntity();
             }
-            else
+            finally
             {
+                k_RefPrefabCreateEntity.End();
             }
+
+            em.SetName(sourcePrefab, "VVardenfell.RefPrefab[b0]");
+
+            k_RefPrefabAddRenderMesh.Begin();
+            try
+            {
+                ValidateRenderShardPrefabSource(rmas[0], 0, materialMeshInfo, out _);
+                RenderMeshUtility.AddComponents(
+                    sourcePrefab, em, WorldResources.Desc, rmas[0], materialMeshInfo);
+            }
+            finally
+            {
+                k_RefPrefabAddRenderMesh.End();
+            }
+
+            k_RefPrefabSetup.Begin();
+            try
+            {
+                em.AddComponentData(sourcePrefab, LocalTransform.Identity);
+                em.AddComponentData(sourcePrefab, default(TextureSlice));
+                em.AddComponentData(sourcePrefab, new CellLink { Value = int2.zero });
+                em.AddComponent<Unity.Transforms.Static>(sourcePrefab);
+                em.AddSharedComponent(sourcePrefab, new PhysicsWorldIndex { Value = 0 });
+                em.AddComponent<Prefab>(sourcePrefab);
+
+                prefabs[0] = sourcePrefab;
+                if (rmas.Length > 1)
+                {
+                    using var clones = new NativeArray<Entity>(rmas.Length - 1, Allocator.Temp);
+                    em.Instantiate(sourcePrefab, clones);
+                    em.AddComponent<Prefab>(clones);
+
+                    for (int i = 0; i < clones.Length; i++)
+                        prefabs[i + 1] = clones[i];
+                }
+            }
+            finally
+            {
+                k_RefPrefabSetup.End();
+            }
+
+            for (int b = 0; b < rmas.Length; b++)
+            {
+                Entity prefab = prefabs[b];
+                ValidateRenderShardPrefabSource(rmas[b], b, materialMeshInfo, out var bounds);
+                em.SetName(prefab, $"VVardenfell.RefPrefab[b{b}]");
+                em.SetSharedComponentManaged(prefab, rmas[b]);
+                em.SetComponentData(prefab, materialMeshInfo);
+                em.SetComponentData(prefab, new RenderBounds { Value = bounds });
+            }
+        }
+
+        static void ValidateRenderShardPrefabSource(
+            RenderMeshArray rma,
+            int shardIndex,
+            MaterialMeshInfo materialMeshInfo,
+            out AABB bounds)
+        {
+            var mesh = rma.GetMesh(materialMeshInfo);
+            if (mesh == null)
+                throw new System.InvalidOperationException($"Render shard {shardIndex} prefab source has no mesh at local mesh 0.");
+
+            var materials = rma.GetMaterials(materialMeshInfo);
+            if (materials == null)
+                throw new System.InvalidOperationException($"Render shard {shardIndex} prefab source has no material at local material 0.");
+
+            var unityBounds = mesh.bounds;
+            bounds = new AABB
+            {
+                Center = new float3(unityBounds.center.x, unityBounds.center.y, unityBounds.center.z),
+                Extents = new float3(unityBounds.extents.x, unityBounds.extents.y, unityBounds.extents.z),
+            };
         }
 
         public static WorldBootstrapCollisionLoadResult LoadCollisionBlobs()
