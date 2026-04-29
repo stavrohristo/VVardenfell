@@ -128,6 +128,104 @@ namespace VVardenfell.Runtime.Shell
             return BuildActiveEffectIcons(contentDb, EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true));
         }
 
+        RuntimeMagicEffectIconViewModel[] BuildHudActiveEffectIcons(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats)
+        {
+            if (!playerStats.HasPlayer
+                || contentDb == null
+                || !EntityManager.Exists(playerStats.PlayerEntity)
+                || !EntityManager.HasBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity))
+            {
+                _hasCachedHudActiveEffectSignature = false;
+                _cachedHudActiveEffects = Array.Empty<RuntimeMagicEffectIconViewModel>();
+                return _cachedHudActiveEffects;
+            }
+
+            var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true);
+            ulong signature = ComputeActiveEffectSignature(activeEffects);
+            if (signature == 0UL)
+            {
+                _hasCachedHudActiveEffectSignature = false;
+                _cachedHudActiveEffects = Array.Empty<RuntimeMagicEffectIconViewModel>();
+                return _cachedHudActiveEffects;
+            }
+
+            if (!_hasCachedHudActiveEffectSignature || signature != _cachedHudActiveEffectSignature)
+            {
+                _cachedHudActiveEffects = BuildActiveEffectIcons(contentDb, activeEffects);
+                _cachedHudActiveEffectSignature = signature;
+                _hasCachedHudActiveEffectSignature = true;
+                return _cachedHudActiveEffects;
+            }
+
+            UpdateCachedActiveEffectAlpha(contentDb, activeEffects, _cachedHudActiveEffects);
+            return _cachedHudActiveEffects;
+        }
+
+        static ulong ComputeActiveEffectSignature(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
+        {
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offset;
+            int count = 0;
+
+            for (int i = 0; i < activeEffects.Length; i++)
+            {
+                var active = activeEffects[i];
+                if (active.Applied == 0)
+                    continue;
+                if (active.DurationSeconds >= 0f && active.TimeLeftSeconds <= 0f)
+                    continue;
+
+                count++;
+                hash = (hash ^ (ushort)active.EffectId) * prime;
+                hash = (hash ^ (byte)active.Skill) * prime;
+                hash = (hash ^ (byte)active.Attribute) * prime;
+                hash = (hash ^ (byte)active.SourceKind) * prime;
+                hash = (hash ^ (uint)active.SourceName.GetHashCode()) * prime;
+                hash = (hash ^ (uint)active.SourceId.GetHashCode()) * prime;
+                hash = (hash ^ (uint)active.Magnitude.GetHashCode()) * prime;
+                hash = (hash ^ (uint)active.DurationSeconds.GetHashCode()) * prime;
+            }
+
+            return count == 0 ? 0UL : (hash ^ (uint)count) * prime;
+        }
+
+        static void UpdateCachedActiveEffectAlpha(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
+            RuntimeMagicEffectIconViewModel[] cachedEffects)
+        {
+            if (cachedEffects == null || cachedEffects.Length == 0)
+                return;
+
+            float fadeTime = 1f;
+            if (contentDb.TryGetGameSettingFloat("fMagicStartIconBlink", out float gmstFadeTime) && gmstFadeTime > 0f)
+                fadeTime = gmstFadeTime;
+
+            for (int i = 0; i < cachedEffects.Length; i++)
+            {
+                var cached = cachedEffects[i];
+                if (cached == null)
+                    continue;
+
+                float lowestFadeTimeLeft = float.PositiveInfinity;
+                for (int j = 0; j < activeEffects.Length; j++)
+                {
+                    var active = activeEffects[j];
+                    if (active.Applied == 0 || active.EffectId != cached.EffectId)
+                        continue;
+                    if (active.DurationSeconds >= 0f && active.TimeLeftSeconds <= 0f)
+                        continue;
+                    if (active.DurationSeconds >= 0f && active.TimeLeftSeconds >= 0f)
+                        lowestFadeTimeLeft = Math.Min(lowestFadeTimeLeft, active.TimeLeftSeconds);
+                }
+
+                cached.Alpha = fadeTime <= 0f || float.IsPositiveInfinity(lowestFadeTimeLeft)
+                    ? 1f
+                    : Math.Clamp(lowestFadeTimeLeft / fadeTime, 0f, 1f);
+            }
+        }
+
         static RuntimeMagicEffectIconViewModel[] BuildActiveEffectIcons(
             RuntimeContentDatabase contentDb,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects)

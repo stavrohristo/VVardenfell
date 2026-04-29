@@ -217,16 +217,18 @@ namespace VVardenfell.Runtime.UI.Shell
             if (_rootRect == null)
                 return;
 
-            gameObject.SetActive(visible);
+            SetActiveIfChanged(gameObject, visible);
             if (!visible)
             {
+                bool optionsWasOpen = _optionsOpen;
                 ClearSelectionIfOwned();
                 _inventoryVisible = false;
                 _containerVisible = false;
                 _pauseMenuOpen = false;
                 _modalOpen = false;
                 _optionsOpen = false;
-                _optionsView?.SetVisible(false);
+                if (optionsWasOpen)
+                    _optionsView?.SetVisible(false);
                 return;
             }
 
@@ -254,7 +256,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _modalOpen = modalOpen;
 
             _hudView.Sync(hudModel);
-            _suiteRoot.gameObject.SetActive(
+            SetActiveIfChanged(
+                _suiteRoot.gameObject,
                 inventoryVisible || containerVisible || statsVisible || spellVisible || mapVisible);
 
             _inventoryView.Sync(inventoryModel);
@@ -270,13 +273,14 @@ namespace VVardenfell.Runtime.UI.Shell
             _optionsOpen = optionsOpen;
             if (_optionsView != null)
             {
-                _optionsView.SetVisible(optionsOpen);
+                if (optionsTransitioning)
+                    _optionsView.SetVisible(optionsOpen);
                 if (optionsTransitioning && !optionsOpen)
                     SaveConfig();
             }
 
-            _pauseRoot.gameObject.SetActive(pauseMenuOpen && !saveLoadVisible && !optionsOpen);
-            _modalRoot.gameObject.SetActive(pauseMenuOpen && modalOpen && !optionsOpen);
+            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen);
+            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
             _popupLayer?.Sync();
 
@@ -833,6 +837,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 return;
             if (!VVardenfell.Core.Config.ConfigStorage.TrySave(_config, out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed saving config: {error}");
+        }
+
+        static void SetActiveIfChanged(GameObject go, bool active)
+        {
+            if (go != null && go.activeSelf != active)
+                go.SetActive(active);
         }
 
         void OnDestroy()

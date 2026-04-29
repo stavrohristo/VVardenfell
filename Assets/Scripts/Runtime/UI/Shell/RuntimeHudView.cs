@@ -49,14 +49,28 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Image _magickaFill;
         readonly Image _fatigueFill;
         readonly Image _enemyHealthFill;
+        readonly RectTransform _healthFillParent;
+        readonly RectTransform _magickaFillParent;
+        readonly RectTransform _fatigueFillParent;
+        readonly RectTransform _enemyHealthFillParent;
         readonly RectTransform _enemyHealthRow;
         readonly Image _weaponStatusFill;
         readonly Image _spellStatusFill;
+        readonly RectTransform _weaponStatusFillParent;
+        readonly RectTransform _spellStatusFillParent;
         readonly Image _spellIcon;
         readonly RectTransform _spellSlotRoot;
         readonly RectTransform _sneakSlotRow;
         readonly RectTransform _effectBoxRoot;
         readonly RuntimeMagicEffectIconStripView _activeEffectStrip;
+        GameObject _rootGo;
+        GameObject _crosshairGo;
+        GameObject _focusAnchorGo;
+        GameObject _notificationAnchorGo;
+        GameObject _spellIconGo;
+        GameObject _enemyHealthRowGo;
+        GameObject _sneakSlotRowGo;
+        GameObject _effectBoxGo;
         LocalMapTileGridView _miniMapGrid;
 
         public RuntimeHudView(RectTransform parent, RuntimeUiTheme theme, RuntimeInventoryIconService iconService = null)
@@ -97,6 +111,19 @@ namespace VVardenfell.Runtime.UI.Shell
             (_weaponSpellText, _weaponStatusFill, _spellStatusFill, _spellIcon, _spellSlotRoot, _sneakSlotRow) = BuildQuickSlots();
             (_cellNameText, _effectBoxRoot, _activeEffectStrip) = BuildMapCluster();
             (_focusText, _notificationText) = BuildMessages();
+            _rootGo = _root.gameObject;
+            _healthFillParent = (RectTransform)_healthFill.transform.parent;
+            _magickaFillParent = (RectTransform)_magickaFill.transform.parent;
+            _fatigueFillParent = (RectTransform)_fatigueFill.transform.parent;
+            _enemyHealthFillParent = (RectTransform)_enemyHealthFill.transform.parent;
+            _weaponStatusFillParent = (RectTransform)_weaponStatusFill.transform.parent;
+            _spellStatusFillParent = (RectTransform)_spellStatusFill.transform.parent;
+            _focusAnchorGo = _focusText.transform.parent.gameObject;
+            _notificationAnchorGo = _notificationText.transform.parent.gameObject;
+            _spellIconGo = _spellIcon.gameObject;
+            _enemyHealthRowGo = _enemyHealthRow.gameObject;
+            _sneakSlotRowGo = _sneakSlotRow.gameObject;
+            _effectBoxGo = _effectBoxRoot.gameObject;
 
             // Vanilla HUD crosshair - baked sprite from Textures/target.dds, sized to its
             // native 32x32 at reference resolution (matches openmw_hud.layout "Crosshair").
@@ -110,11 +137,12 @@ namespace VVardenfell.Runtime.UI.Shell
             _crosshairImage.rectTransform.pivot = new Vector2(0.5f, 0.5f);
             _crosshairImage.rectTransform.anchoredPosition = Vector2.zero;
             _crosshairImage.rectTransform.sizeDelta = RuntimeClassicUiMetrics.HudLayout(new Vector2(32f, 32f));
+            _crosshairGo = _crosshairImage.gameObject;
         }
 
         public void SetVisible(bool visible)
         {
-            _root.gameObject.SetActive(visible);
+            SetActiveIfChanged(_rootGo, visible);
         }
 
         public void Sync(RuntimeHudViewModel model)
@@ -126,28 +154,28 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             SetVisible(true);
-            _crosshairImage.gameObject.SetActive(model.ShowCrosshair);
-            _focusText.transform.parent.gameObject.SetActive(!string.IsNullOrWhiteSpace(model.FocusText));
-            _notificationText.transform.parent.gameObject.SetActive(!string.IsNullOrWhiteSpace(model.NotificationText));
+            SetActiveIfChanged(_crosshairGo, model.ShowCrosshair);
+            SetActiveIfChanged(_focusAnchorGo, !string.IsNullOrWhiteSpace(model.FocusText));
+            SetActiveIfChanged(_notificationAnchorGo, !string.IsNullOrWhiteSpace(model.NotificationText));
             _focusText.Text = model.FocusText ?? string.Empty;
             _notificationText.Text = model.NotificationText ?? string.Empty;
             _weaponSpellText.Text = model.WeaponSpellText ?? string.Empty;
             _cellNameText.Text = model.CellNameText ?? string.Empty;
 
-            SetBarFill(_healthFill, model.HealthFillNormalized);
-            SetBarFill(_magickaFill, model.MagickaFillNormalized);
-            SetBarFill(_fatigueFill, model.FatigueFillNormalized);
-            SetBarFill(_weaponStatusFill, model.WeaponStatusNormalized);
-            SetBarFill(_spellStatusFill, model.SpellStatusNormalized);
+            SetBarFill(_healthFill, _healthFillParent, model.HealthFillNormalized);
+            SetBarFill(_magickaFill, _magickaFillParent, model.MagickaFillNormalized);
+            SetBarFill(_fatigueFill, _fatigueFillParent, model.FatigueFillNormalized);
+            SetBarFill(_weaponStatusFill, _weaponStatusFillParent, model.WeaponStatusNormalized);
+            SetBarFill(_spellStatusFill, _spellStatusFillParent, model.SpellStatusNormalized);
             bool hasSpellIcon = !string.IsNullOrWhiteSpace(model.SelectedSpellIconPath);
-            _spellIcon.gameObject.SetActive(hasSpellIcon);
+            SetActiveIfChanged(_spellIconGo, hasSpellIcon);
             if (hasSpellIcon)
                 _spellIcon.sprite = _iconService?.GetMagicEffectSprite(model.SelectedSpellIconPath);
             RuntimeUiPopupUtility.SetTooltip(_spellSlotRoot.gameObject, model.SelectedSpellTooltip);
-            _enemyHealthRow.gameObject.SetActive(model.ShowEnemyHealth);
+            SetActiveIfChanged(_enemyHealthRowGo, model.ShowEnemyHealth);
             if (model.ShowEnemyHealth)
-                SetBarFill(_enemyHealthFill, model.EnemyHealthFillNormalized);
-            _sneakSlotRow.gameObject.SetActive(model.ShowSneakIndicator);
+                SetBarFill(_enemyHealthFill, _enemyHealthFillParent, model.EnemyHealthFillNormalized);
+            SetActiveIfChanged(_sneakSlotRowGo, model.ShowSneakIndicator);
             SyncActiveEffects(model.ActiveEffects);
             _miniMapGrid.Sync(model.LocalMap);
         }
@@ -476,9 +504,8 @@ namespace VVardenfell.Runtime.UI.Shell
             return rect;
         }
 
-        static void SetBarFill(Image fill, float normalized)
+        static void SetBarFill(Image fill, RectTransform parentRect, float normalized)
         {
-            var parentRect = fill.transform.parent.GetComponent<RectTransform>();
             float width = Mathf.Max(0f, parentRect.rect.width * Mathf.Clamp01(normalized));
             fill.rectTransform.sizeDelta = new Vector2(width, 0f);
         }
@@ -487,7 +514,7 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             activeEffects ??= System.Array.Empty<RuntimeMagicEffectIconViewModel>();
             bool hasEffects = activeEffects.Length > 0;
-            _effectBoxRoot.gameObject.SetActive(hasEffects);
+            SetActiveIfChanged(_effectBoxGo, hasEffects);
             if (!hasEffects)
             {
                 _activeEffectStrip.Sync(activeEffects, collapseRoot: false);
@@ -499,6 +526,12 @@ namespace VVardenfell.Runtime.UI.Shell
             float width = padding * 2f + activeEffects.Length * iconSize;
             _effectBoxRoot.sizeDelta = new Vector2(width, RuntimeClassicUiMetrics.HudLayout(20f));
             _activeEffectStrip.Sync(activeEffects, collapseRoot: false);
+        }
+
+        static void SetActiveIfChanged(GameObject go, bool active)
+        {
+            if (go != null && go.activeSelf != active)
+                go.SetActive(active);
         }
     }
 }

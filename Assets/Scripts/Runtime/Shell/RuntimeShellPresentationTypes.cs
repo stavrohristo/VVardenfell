@@ -62,6 +62,14 @@ namespace VVardenfell.Runtime.Shell
 
     struct LocationPresentation
     {
+        public static readonly LocationPresentation Unavailable = new()
+        {
+            DisplayName = string.Empty,
+            RegionText = "--",
+            CellText = "--",
+            StreamingText = "Streaming state unavailable",
+        };
+
         public bool InteriorActive;
         public string DisplayName;
         public string RegionText;

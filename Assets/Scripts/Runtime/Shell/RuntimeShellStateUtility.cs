@@ -1,4 +1,6 @@
-﻿using Unity.Collections;
+using Unity.Collections;
+using UnityEngine;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Shell
@@ -79,6 +81,37 @@ namespace VVardenfell.Runtime.Shell
                 browser.DraftSaveName = ToFixedName(saveName);
         }
 
+        public static void SyncGameplayGateAndCursor(ref RuntimeShellState state)
+        {
+            bool shellBlocksGameplay = state.InventoryOpen != 0
+                || state.ContainerOpen != 0
+                || state.PauseMenuOpen != 0
+                || state.ModalOpen != 0
+                || state.SaveLoadBrowserOpen != 0
+                || state.OptionsOpen != 0;
+
+            RuntimeShellPresentationGate.BlocksGameplayInput = !BootstrapPresentationGate.BlocksGameplayInput && shellBlocksGameplay;
+            ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);
+        }
+
+        static void ApplyCursorState(bool gameplayInputAllowed)
+        {
+            if (gameplayInputAllowed)
+            {
+                if (Cursor.lockState != CursorLockMode.Locked)
+                    Cursor.lockState = CursorLockMode.Locked;
+                if (Cursor.visible)
+                    Cursor.visible = false;
+            }
+            else
+            {
+                if (Cursor.lockState != CursorLockMode.None)
+                    Cursor.lockState = CursorLockMode.None;
+                if (!Cursor.visible)
+                    Cursor.visible = true;
+            }
+        }
+
         public static FixedString64Bytes ToFixedName(string value)
         {
             return RuntimeFixedStringUtility.ToFixed64OrDefault(value);
@@ -105,4 +138,3 @@ namespace VVardenfell.Runtime.Shell
         }
     }
 }
-

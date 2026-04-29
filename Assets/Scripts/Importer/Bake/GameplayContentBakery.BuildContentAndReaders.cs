@@ -17,6 +17,20 @@ namespace VVardenfell.Importer.Bake
 
     internal static partial class GameplayContentBakery
     {
+        static readonly string[] s_WeatherIniNames =
+        {
+            "Clear",
+            "Cloudy",
+            "Foggy",
+            "Overcast",
+            "Rain",
+            "Thunderstorm",
+            "Ashstorm",
+            "Blight",
+            "Snow",
+            "Blizzard",
+        };
+
         static void BuildEnchantmentArrays(
             Dictionary<string, EnchantmentDef> map,
             Dictionary<string, List<MagicEffectInstanceDef>> effectMap,
@@ -212,6 +226,7 @@ namespace VVardenfell.Importer.Bake
                 BuildWeatherDefinition(config, WeatherKind.Snow, "Snow", stormWindSpeed: 0.7f, rainSpeed: 30f),
                 BuildWeatherDefinition(config, WeatherKind.Blizzard, "Blizzard", stormWindSpeed: 0.7f, rainSpeed: 50f),
             };
+            ValidateWeatherDefinitions(weather);
             return weather;
         }
 
@@ -388,7 +403,6 @@ namespace VVardenfell.Importer.Bake
         sealed class WeatherConfigSource
         {
             public MorrowindIniReader Ini;
-            public readonly Dictionary<string, string> Fallbacks = new(StringComparer.OrdinalIgnoreCase);
         }
 
 
@@ -399,29 +413,32 @@ namespace VVardenfell.Importer.Bake
             if (File.Exists(iniPath))
                 source.Ini = MorrowindIniReader.Read(iniPath);
 
-            string openMwPath = Path.Combine(Directory.GetCurrentDirectory(), "OpenMW", "files", "openmw.cfg");
-            if (File.Exists(openMwPath))
-            {
-                foreach (string rawLine in File.ReadLines(openMwPath))
-                {
-                    string line = rawLine?.Trim();
-                    if (string.IsNullOrEmpty(line) || line.StartsWith("#", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    const string prefix = "fallback=";
-                    if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    string payload = line.Substring(prefix.Length);
-                    int comma = payload.IndexOf(',');
-                    if (comma <= 0)
-                        continue;
-
-                    source.Fallbacks[payload.Substring(0, comma).Trim()] = payload.Substring(comma + 1).Trim();
-                }
-            }
+            if (source.Ini == null)
+                throw new FileNotFoundException("Morrowind.ini not found while baking gameplay content.", iniPath);
 
             return source;
+        }
+
+
+        static void ValidateWeatherDefinitions(WeatherDefinitionDef[] weather)
+        {
+            if (weather == null || weather.Length == 0)
+                throw new InvalidOperationException("No weather definitions were built from Morrowind.ini.");
+
+            var missing = new StringBuilder();
+            for (int i = 0; i < weather.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(weather[i].CloudTexture))
+                    missing.AppendLine($"- {weather[i].Id ?? i.ToString(CultureInfo.InvariantCulture)} ({weather[i].Kind})");
+            }
+
+            if (missing.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    "Morrowind.ini is missing required weather cloud texture entries. "
+                    + "Rebake from a Morrowind install that contains complete weather settings.\n"
+                    + missing);
+            }
         }
 
 
@@ -430,7 +447,13 @@ namespace VVardenfell.Importer.Bake
             if (source?.Ini != null)
             {
                 string iniKey = key.StartsWith("Weather_", StringComparison.OrdinalIgnoreCase) ? key.Substring("Weather_".Length) : key;
-                if (source.Ini.TryGetValue("Weather", iniKey.Replace('_', ' '), out string iniValue))
+                string spacedKey = iniKey.Replace('_', ' ');
+
+                if (TryReadWeatherSpecificIniValue(source.Ini, iniKey, spacedKey, out string iniValue))
+                    return iniValue;
+                if (TryReadMoonSpecificIniValue(source.Ini, key, out iniValue))
+                    return iniValue;
+                if (source.Ini.TryGetValue("Weather", spacedKey, out iniValue))
                     return iniValue;
                 if (source.Ini.TryGetValue("Weather", iniKey, out iniValue))
                     return iniValue;
@@ -438,7 +461,53 @@ namespace VVardenfell.Importer.Bake
                     return iniValue;
             }
 
-            return source != null && source.Fallbacks.TryGetValue(key, out string value) ? value : fallback;
+            return fallback;
+        }
+
+
+        static bool TryReadWeatherSpecificIniValue(
+            MorrowindIniReader ini,
+            string iniKey,
+            string spacedKey,
+            out string value)
+        {
+            value = null;
+            foreach (string weatherName in s_WeatherIniNames)
+            {
+                string prefix = weatherName + "_";
+                if (!iniKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string field = iniKey.Substring(prefix.Length);
+                string spacedField = field.Replace('_', ' ');
+                return ini.TryGetValue("Weather " + weatherName, spacedField, out value)
+                    || ini.TryGetValue("Weather " + weatherName, field, out value)
+                    || ini.TryGetValue("Weather", spacedKey, out value);
+            }
+
+            return false;
+        }
+
+
+        static bool TryReadMoonSpecificIniValue(MorrowindIniReader ini, string key, out string value)
+        {
+            value = null;
+            const string prefix = "Moons_";
+            if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string iniKey = key.Substring(prefix.Length);
+            int underscore = iniKey.IndexOf('_');
+            if (underscore <= 0 || underscore + 1 >= iniKey.Length)
+                return false;
+
+            string moonName = iniKey.Substring(0, underscore);
+            string field = iniKey.Substring(underscore + 1);
+            string spacedField = field.Replace('_', ' ');
+            string combinedField = moonName + " " + spacedField;
+            return ini.TryGetValue("Moons " + moonName, spacedField, out value)
+                || ini.TryGetValue("Moons " + moonName, field, out value)
+                || ini.TryGetValue("Moons", combinedField, out value);
         }
 
 

@@ -82,12 +82,7 @@ namespace VVardenfell.Runtime.Shell
                 RuntimeShellStateUtility.OpenPause(ref state);
             }
 
-            RuntimeShellPresentationGate.BlocksGameplayInput = state.InventoryOpen != 0
-                || state.ContainerOpen != 0
-                || state.PauseMenuOpen != 0
-                || state.ModalOpen != 0
-                || state.SaveLoadBrowserOpen != 0
-                || state.OptionsOpen != 0;
+            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
         }
     }
 }

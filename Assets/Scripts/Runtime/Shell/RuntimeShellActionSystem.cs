@@ -78,14 +78,20 @@ namespace VVardenfell.Runtime.Shell
             }
 
             if (request.Pending == 0)
+            {
+                RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
                 return;
+            }
 
             var action = (RuntimeShellMenuActionId)request.Action;
             request.Pending = 0;
             request.Action = 0;
 
             if (action == RuntimeShellMenuActionId.None)
+            {
+                RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
                 return;
+            }
 
             state.SelectedAction = (byte)action;
 
@@ -128,7 +134,8 @@ namespace VVardenfell.Runtime.Shell
                     Application.Quit();
                     break;
             }
+
+            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
         }
     }
 }
-

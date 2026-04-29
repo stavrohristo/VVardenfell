@@ -155,27 +155,53 @@ namespace VVardenfell.Runtime.Shell
             float panCellY = 0f,
             bool showShroud = true,
             bool showMarkers = true)
+            => FillViewModel(
+                CreateReusableViewModel(),
+                playerStats,
+                interiorActive,
+                zoom,
+                panCellX,
+                panCellY,
+                showShroud,
+                showMarkers);
+
+        public static LocalMapViewModel CreateReusableViewModel()
         {
+            var model = new LocalMapViewModel();
+            EnsureTileEntries(model);
+            return model;
+        }
+
+        public static LocalMapViewModel FillViewModel(
+            LocalMapViewModel model,
+            in PlayerPresentationStats playerStats,
+            bool interiorActive,
+            float zoom = 1f,
+            float panCellX = 0f,
+            float panCellY = 0f,
+            bool showShroud = true,
+            bool showMarkers = true)
+        {
+            model ??= CreateReusableViewModel();
+            EnsureTileEntries(model);
             zoom = math.clamp(zoom <= 0f ? 1f : zoom, 1f / 3f, 8f);
-            var model = new LocalMapViewModel
-            {
-                Ready = playerStats.HasPlayer && !interiorActive,
-                InteriorActive = interiorActive,
-                PlayerCellX = playerStats.CellNormalizedPosition.x,
-                PlayerCellY = playerStats.CellNormalizedPosition.y,
-                PlayerHeadingDegrees = playerStats.HeadingDegrees,
-                ViewportCellSpan = 1f / zoom,
-                PanCellX = panCellX,
-                PanCellY = panCellY,
-                Zoom = zoom,
-                ShowShroud = showShroud,
-                ShowMarkers = showMarkers,
-            };
+            model.Ready = playerStats.HasPlayer && !interiorActive;
+            model.InteriorActive = interiorActive;
+            model.PlayerCellX = playerStats.CellNormalizedPosition.x;
+            model.PlayerCellY = playerStats.CellNormalizedPosition.y;
+            model.PlayerHeadingDegrees = playerStats.HeadingDegrees;
+            model.ViewportCellSpan = 1f / zoom;
+            model.PanCellX = panCellX;
+            model.PanCellY = panCellY;
+            model.Zoom = zoom;
+            model.ShowShroud = showShroud;
+            model.ShowMarkers = showMarkers;
+            model.Markers = System.Array.Empty<LocalMapMarkerViewModel>();
 
             if (!model.Ready)
                 return model;
 
-            var entries = new LocalMapTileViewModel[9];
+            var entries = model.Tiles;
             int index = 0;
             EnsureFullHiddenShroud(DefaultMaskResolution);
             var neighborhood = s_Neighborhood;
@@ -189,22 +215,28 @@ namespace VVardenfell.Runtime.Shell
                 {
                     var coord = playerStats.ExteriorCell + new int2(x, y);
                     s_Tiles.TryGetValue(coord, out var tile);
-                    entries[index++] = new LocalMapTileViewModel
-                    {
-                        OffsetX = x,
-                        OffsetY = y,
-                        MapTexture = hasRenderedNeighborhood ? neighborhood.MapTexture : null,
-                        MapUvRect = new Rect((x + 1) / 3f, (y + 1) / 3f, 1f / 3f, 1f / 3f),
-                        ShroudTexture = tile?.HasDiscovery == true ? tile.ShroudTexture ?? s_FullHiddenShroud : s_FullHiddenShroud,
-                        HasMapTexture = hasRenderedNeighborhood,
-                    };
+                    var entry = entries[index++];
+                    entry.OffsetX = x;
+                    entry.OffsetY = y;
+                    entry.MapTexture = hasRenderedNeighborhood ? neighborhood.MapTexture : null;
+                    entry.MapUvRect = new Rect((x + 1) / 3f, (y + 1) / 3f, 1f / 3f, 1f / 3f);
+                    entry.ShroudTexture = tile?.HasDiscovery == true ? tile.ShroudTexture ?? s_FullHiddenShroud : s_FullHiddenShroud;
+                    entry.HasMapTexture = hasRenderedNeighborhood;
                 }
             }
 
-            model.Tiles = entries;
             if (showMarkers && hasRenderedNeighborhood)
                 model.Markers = BuildDoorMarkers(playerStats.ExteriorCell);
             return model;
+        }
+
+        static void EnsureTileEntries(LocalMapViewModel model)
+        {
+            if (model.Tiles == null || model.Tiles.Length != 9)
+                model.Tiles = new LocalMapTileViewModel[9];
+
+            for (int i = 0; i < model.Tiles.Length; i++)
+                model.Tiles[i] ??= new LocalMapTileViewModel();
         }
 
         static LocalMapMarkerViewModel[] BuildDoorMarkers(int2 centerCell)

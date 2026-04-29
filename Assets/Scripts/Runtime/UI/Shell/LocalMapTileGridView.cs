@@ -16,6 +16,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RectTransform _content;
         readonly RawImage[] _mapTiles = new RawImage[TileCount];
         readonly RawImage[] _shroudTiles = new RawImage[TileCount];
+        readonly bool[] _tileUpdated = new bool[TileCount];
         readonly System.Collections.Generic.List<Image> _markerPool = new();
         readonly Image _playerMarker;
         readonly Material _shroudMaterial;
@@ -101,8 +102,8 @@ namespace VVardenfell.Runtime.UI.Shell
         public void Sync(LocalMapViewModel model)
         {
             bool ready = model?.Ready == true;
-            _content.gameObject.SetActive(ready);
-            _playerMarker.gameObject.SetActive(ready);
+            SetActiveIfChanged(_content.gameObject, ready);
+            SetActiveIfChanged(_playerMarker.gameObject, ready);
             if (!ready)
                 return;
 
@@ -121,17 +122,14 @@ namespace VVardenfell.Runtime.UI.Shell
             _playerMarker.rectTransform.localEulerAngles = new Vector3(0f, 0f, 180f - model.PlayerHeadingDegrees);
 
             for (int i = 0; i < TileCount; i++)
-            {
-                _mapTiles[i].texture = null;
-                _mapTiles[i].color = _emptyTileColor;
-                _mapTiles[i].uvRect = new Rect(0f, 0f, 1f, 1f);
-                _shroudTiles[i].texture = null;
-                _shroudTiles[i].gameObject.SetActive(false);
-            }
+                _tileUpdated[i] = false;
 
             var tiles = model.Tiles;
             if (tiles == null)
+            {
+                ResetUnusedTiles();
                 return;
+            }
 
             for (int i = 0; i < tiles.Length; i++)
             {
@@ -140,6 +138,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 if ((uint)index >= TileCount)
                     continue;
 
+                _tileUpdated[index] = true;
                 RectTransform tileRect = (RectTransform)_mapTiles[index].transform.parent;
                 tileRect.anchoredPosition = new Vector2((entry.OffsetX + 1) * tilePixelWidth, (entry.OffsetY + 1) * tilePixelHeight);
                 tileRect.sizeDelta = new Vector2(tilePixelWidth, tilePixelHeight);
@@ -149,9 +148,10 @@ namespace VVardenfell.Runtime.UI.Shell
                 _mapTiles[index].uvRect = hasMap ? entry.MapUvRect : new Rect(0f, 0f, 1f, 1f);
                 _mapTiles[index].color = hasMap ? Color.white : _emptyTileColor;
                 _shroudTiles[index].texture = hasMap && model.ShowShroud ? entry.ShroudTexture : null;
-                _shroudTiles[index].gameObject.SetActive(hasMap && model.ShowShroud && entry.ShroudTexture != null);
+                SetActiveIfChanged(_shroudTiles[index].gameObject, hasMap && model.ShowShroud && entry.ShroudTexture != null);
             }
 
+            ResetUnusedTiles();
             SyncMarkers(model, tilePixelWidth, tilePixelHeight);
             _playerMarker.rectTransform.SetAsLastSibling();
         }
@@ -262,7 +262,7 @@ namespace VVardenfell.Runtime.UI.Shell
             {
                 var marker = _markerPool[i];
                 bool active = i < count;
-                marker.gameObject.SetActive(active);
+                SetActiveIfChanged(marker.gameObject, active);
                 if (!active)
                 {
                     RuntimeUiPopupUtility.SetTooltip(marker.gameObject, null);
@@ -274,7 +274,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 if ((uint)tileIndex >= TileCount)
                 {
                     RuntimeUiPopupUtility.SetTooltip(marker.gameObject, null);
-                    marker.gameObject.SetActive(false);
+                    SetActiveIfChanged(marker.gameObject, false);
                     continue;
                 }
 
@@ -307,5 +307,26 @@ namespace VVardenfell.Runtime.UI.Shell
 
         static int ToIndex(int offsetX, int offsetY)
             => (offsetY + 1) * GridSide + (offsetX + 1);
+
+        void ResetUnusedTiles()
+        {
+            for (int i = 0; i < TileCount; i++)
+            {
+                if (_tileUpdated[i])
+                    continue;
+
+                _mapTiles[i].texture = null;
+                _mapTiles[i].color = _emptyTileColor;
+                _mapTiles[i].uvRect = new Rect(0f, 0f, 1f, 1f);
+                _shroudTiles[i].texture = null;
+                SetActiveIfChanged(_shroudTiles[i].gameObject, false);
+            }
+        }
+
+        static void SetActiveIfChanged(GameObject go, bool active)
+        {
+            if (go != null && go.activeSelf != active)
+                go.SetActive(active);
+        }
     }
 }

@@ -157,7 +157,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _lastTooltipKey = null;
                 _hasLastMousePosition = false;
                 _remainingDelay = TooltipDelaySeconds;
-                _tooltipRoot.gameObject.SetActive(false);
+                SetTooltipVisible(false);
             }
 
             if (!_hasLastMousePosition || (mousePosition - _lastMousePosition).sqrMagnitude > 0.01f)
@@ -165,14 +165,14 @@ namespace VVardenfell.Runtime.UI.Shell
                 _lastMousePosition = mousePosition;
                 _hasLastMousePosition = true;
                 _remainingDelay = TooltipDelaySeconds;
-                _tooltipRoot.gameObject.SetActive(false);
+                SetTooltipVisible(false);
                 return;
             }
 
             if (_remainingDelay > 0f)
             {
                 _remainingDelay -= Time.unscaledDeltaTime;
-                _tooltipRoot.gameObject.SetActive(false);
+                SetTooltipVisible(false);
                 return;
             }
 
@@ -185,7 +185,7 @@ namespace VVardenfell.Runtime.UI.Shell
         void SetTooltipContent(RuntimeUiPopupTrigger trigger, string tooltipKey)
         {
             _lastTooltipKey = tooltipKey;
-            _tooltipRoot.gameObject.SetActive(true);
+            SetTooltipVisible(true);
 
             float maxWidth = RuntimeClassicUiMetrics.Ui(TooltipMaxWidth);
             float maxContentWidth = Mathf.Max(1f, maxWidth - _frameHorizontalChrome - _contentHorizontalPadding);
@@ -277,7 +277,14 @@ namespace VVardenfell.Runtime.UI.Shell
             _lastTooltipKey = null;
             _hasLastMousePosition = false;
             _remainingDelay = TooltipDelaySeconds;
-            _tooltipRoot.gameObject.SetActive(false);
+            SetTooltipVisible(false);
+        }
+
+        void SetTooltipVisible(bool visible)
+        {
+            var go = _tooltipRoot.gameObject;
+            if (go.activeSelf != visible)
+                go.SetActive(visible);
         }
 
         static void SetFrameRaycastTarget(BorderFrameView frame, bool target)

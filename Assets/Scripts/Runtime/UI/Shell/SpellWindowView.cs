@@ -565,7 +565,7 @@ namespace VVardenfell.Runtime.UI.Shell
             {
                 bool visible = i < effects.Length;
                 var cell = _cells[i];
-                cell.Root.gameObject.SetActive(visible);
+                SetActiveIfChanged(cell.Root.gameObject, visible);
                 if (!visible)
                 {
                     RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, null);
@@ -588,7 +588,7 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             if (collapseRoot)
-                _root.gameObject.SetActive(effects.Length > 0);
+                SetActiveIfChanged(_root.gameObject, effects.Length > 0);
         }
 
         IconCell CreateCell(int index)
@@ -610,6 +610,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 Root = root,
                 Image = image,
             };
+        }
+
+        static void SetActiveIfChanged(GameObject go, bool active)
+        {
+            if (go != null && go.activeSelf != active)
+                go.SetActive(active);
         }
     }
 }

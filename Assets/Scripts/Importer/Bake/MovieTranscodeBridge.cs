@@ -16,13 +16,7 @@ namespace VVardenfell.Importer.Bake
     public sealed class MovieTranscodeBridge
     {
         const int ToolTimeoutMs = 120_000;
-        static readonly string[] ToolSearchRoots =
-        {
-            @"C:\Program Files\Topaz Labs LLC\Topaz Video AI",
-            @"C:\Program Files\ffmpeg",
-            @"C:\Program Files (x86)\ffmpeg",
-            @"C:\Tools\ffmpeg",
-        };
+        const int ToolSearchMaxDepth = 5;
 
         readonly Dictionary<string, UiMovieRecord> _previousRecords;
         string _ffmpegPath;
@@ -393,36 +387,190 @@ namespace VVardenfell.Importer.Bake
 
         static string ResolveToolPath(string toolName, string overrideEnvVar)
         {
+            string fileName = toolName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? toolName : toolName + ".exe";
             string envOverride = Environment.GetEnvironmentVariable(overrideEnvVar);
             if (File.Exists(envOverride))
                 return envOverride;
 
-            try
+            foreach (string candidate in EnumerateToolCandidates(toolName, fileName))
             {
-                var result = RunTool("where.exe", toolName);
-                if (result.ExitCode == 0)
-                {
-                    var pathFromWhere = result.StandardOutput
-                        .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(line => line.Trim())
-                        .FirstOrDefault(File.Exists);
-                    if (!string.IsNullOrWhiteSpace(pathFromWhere))
-                        return pathFromWhere;
-                }
-            }
-            catch
-            {
-            }
-
-            string fileName = toolName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? toolName : toolName + ".exe";
-            for (int i = 0; i < ToolSearchRoots.Length; i++)
-            {
-                string candidate = Path.Combine(ToolSearchRoots[i], fileName);
                 if (File.Exists(candidate))
                     return candidate;
             }
 
             return null;
+        }
+
+        static IEnumerable<string> EnumerateToolCandidates(string toolName, string fileName)
+        {
+            foreach (string candidate in EnumerateProjectLocalToolCandidates(fileName))
+                yield return candidate;
+
+            foreach (string candidate in EnumerateWhereCandidates(toolName))
+                yield return candidate;
+
+            foreach (string candidate in EnumeratePathCandidates(fileName))
+                yield return candidate;
+
+            foreach (string candidate in EnumerateKnownInstallCandidates(fileName))
+                yield return candidate;
+        }
+
+        static IEnumerable<string> EnumerateProjectLocalToolCandidates(string fileName)
+        {
+            string assetsPath = UnityEngine.Application.dataPath;
+            if (string.IsNullOrWhiteSpace(assetsPath))
+                yield break;
+
+            string projectRoot = Directory.GetParent(assetsPath)?.FullName;
+            if (string.IsNullOrWhiteSpace(projectRoot))
+                yield break;
+
+            yield return Path.Combine(projectRoot, "Tools", "FFmpeg", fileName);
+            yield return Path.Combine(projectRoot, "Tools", "FFmpeg", "bin", fileName);
+            yield return Path.Combine(assetsPath, "StreamingAssets", "Tools", "FFmpeg", fileName);
+            yield return Path.Combine(assetsPath, "StreamingAssets", "Tools", "FFmpeg", "bin", fileName);
+            yield return Path.Combine(assetsPath, "StreamingAssets", "Tools", "FFmpeg", "Win", fileName);
+            yield return Path.Combine(assetsPath, "StreamingAssets", "Tools", "FFmpeg", "Win", "bin", fileName);
+        }
+
+        static IEnumerable<string> EnumerateWhereCandidates(string toolName)
+        {
+            ProcessResult result;
+            try
+            {
+                result = RunTool("where.exe", toolName);
+            }
+            catch
+            {
+                yield break;
+            }
+
+            if (result.ExitCode != 0)
+                yield break;
+
+            var paths = result.StandardOutput
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim());
+
+            foreach (string path in paths)
+                yield return path;
+        }
+
+        static IEnumerable<string> EnumeratePathCandidates(string fileName)
+        {
+            string pathValue = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var directories = pathValue.Split(Path.PathSeparator)
+                .Select(path => path.Trim().Trim('"'))
+                .Where(path => !string.IsNullOrWhiteSpace(path));
+
+            foreach (string directory in directories)
+            {
+                yield return Path.Combine(directory, fileName);
+                yield return Path.Combine(directory, "bin", fileName);
+            }
+        }
+
+        static IEnumerable<string> EnumerateKnownInstallCandidates(string fileName)
+        {
+            var directRoots = new[]
+            {
+                Environment.GetEnvironmentVariable("ProgramFiles"),
+                Environment.GetEnvironmentVariable("ProgramFiles(x86)"),
+                Environment.GetEnvironmentVariable("ProgramData"),
+                Environment.GetEnvironmentVariable("LocalAppData"),
+                Environment.GetEnvironmentVariable("UserProfile"),
+            };
+
+            foreach (string root in directRoots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                foreach (string candidate in EnumerateDirectToolCandidates(root, fileName))
+                    yield return candidate;
+            }
+
+            string localAppData = Environment.GetEnvironmentVariable("LocalAppData");
+            string userProfile = Environment.GetEnvironmentVariable("UserProfile");
+            var discoveryRoots = new[]
+            {
+                Environment.GetEnvironmentVariable("ProgramFiles"),
+                Environment.GetEnvironmentVariable("ProgramFiles(x86)"),
+                string.IsNullOrWhiteSpace(localAppData) ? null : Path.Combine(localAppData, "Programs"),
+                string.IsNullOrWhiteSpace(localAppData) ? null : Path.Combine(localAppData, "Microsoft", "WinGet", "Packages"),
+                string.IsNullOrWhiteSpace(userProfile) ? null : Path.Combine(userProfile, "scoop", "apps"),
+            };
+
+            foreach (string root in discoveryRoots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                foreach (string candidate in EnumerateToolCandidatesUnderRoot(root, fileName))
+                    yield return candidate;
+            }
+        }
+
+        static IEnumerable<string> EnumerateToolCandidatesUnderRoot(string root, string fileName)
+        {
+            if (!Directory.Exists(root))
+                yield break;
+
+            foreach (string direct in EnumerateDirectToolCandidates(root, fileName))
+                yield return direct;
+
+            foreach (string candidate in EnumerateMatchingFiles(root, fileName, ToolSearchMaxDepth))
+            {
+                string normalized = candidate.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+                if (normalized.IndexOf("ffmpeg", StringComparison.OrdinalIgnoreCase) >= 0)
+                    yield return candidate;
+            }
+        }
+
+        static IEnumerable<string> EnumerateDirectToolCandidates(string root, string fileName)
+        {
+            yield return Path.Combine(root, fileName);
+            yield return Path.Combine(root, "bin", fileName);
+            yield return Path.Combine(root, "ffmpeg", fileName);
+            yield return Path.Combine(root, "ffmpeg", "bin", fileName);
+            yield return Path.Combine(root, "chocolatey", "bin", fileName);
+            yield return Path.Combine(root, "scoop", "shims", fileName);
+            yield return Path.Combine(root, "scoop", "apps", "ffmpeg", "current", "bin", fileName);
+        }
+
+        static IEnumerable<string> EnumerateMatchingFiles(string root, string fileName, int maxDepth)
+        {
+            var pending = new Queue<(string Path, int Depth)>();
+            pending.Enqueue((root, 0));
+
+            while (pending.Count > 0)
+            {
+                var current = pending.Dequeue();
+
+                IEnumerable<string> files;
+                try
+                {
+                    files = Directory.EnumerateFiles(current.Path, fileName, SearchOption.TopDirectoryOnly).ToArray();
+                }
+                catch
+                {
+                    files = Array.Empty<string>();
+                }
+
+                foreach (string file in files)
+                    yield return file;
+
+                if (current.Depth >= maxDepth)
+                    continue;
+
+                IEnumerable<string> directories;
+                try
+                {
+                    directories = Directory.EnumerateDirectories(current.Path).ToArray();
+                }
+                catch
+                {
+                    directories = Array.Empty<string>();
+                }
+
+                foreach (string directory in directories)
+                    pending.Enqueue((directory, current.Depth + 1));
+            }
         }
 
         static string ResolveSiblingToolPath(string knownToolPath, string siblingExeName)

@@ -237,8 +237,12 @@ namespace VVardenfell.Runtime.Cache
             if (string.IsNullOrWhiteSpace(sourcePath) || _textureIndexByPath == null)
                 return false;
 
-            if (!_textureIndexByPath.TryGetValue(NormalizeTexturePath(sourcePath), out int index))
+            string normalized = NormalizeTexturePath(sourcePath);
+            if (!_textureIndexByPath.TryGetValue(normalized, out int index)
+                && !_textureIndexByPath.TryGetValue(ChangeExtension(normalized, ".dds"), out index))
+            {
                 return false;
+            }
 
             if ((uint)index >= (uint)(Textures?.Length ?? 0))
                 return false;
@@ -417,10 +421,25 @@ namespace VVardenfell.Runtime.Cache
 
             _textureIndexByPath[normalized] = textureIndex;
             _textureIndexByPath[normalized.Replace('\\', '/')] = textureIndex;
+            RegisterTextureAlias(ChangeExtension(normalized, ".tga"), textureIndex);
+            RegisterTextureAlias(ChangeExtension(normalized, ".dds"), textureIndex);
 
             int slash = normalized.LastIndexOf('\\');
             if (slash >= 0 && slash + 1 < normalized.Length)
                 _textureIndexByPath[normalized.Substring(slash + 1)] = textureIndex;
+        }
+
+        void RegisterTextureAlias(string normalizedPath, int textureIndex)
+        {
+            if (string.IsNullOrEmpty(normalizedPath))
+                return;
+
+            _textureIndexByPath[normalizedPath] = textureIndex;
+            _textureIndexByPath[normalizedPath.Replace('\\', '/')] = textureIndex;
+
+            int slash = normalizedPath.LastIndexOf('\\');
+            if (slash >= 0 && slash + 1 < normalizedPath.Length)
+                _textureIndexByPath[normalizedPath.Substring(slash + 1)] = textureIndex;
         }
 
         static string NormalizeTexturePath(string path)
@@ -437,6 +456,15 @@ namespace VVardenfell.Runtime.Cache
                 p = "textures\\" + p;
 
             return p;
+        }
+
+        static string ChangeExtension(string path, string extension)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            int dot = path.LastIndexOf('.');
+            return dot >= 0 ? path.Substring(0, dot) + extension : path + extension;
         }
 
         private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)

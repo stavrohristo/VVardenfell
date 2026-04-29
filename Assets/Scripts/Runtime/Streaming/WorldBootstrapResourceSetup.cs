@@ -119,6 +119,17 @@ namespace VVardenfell.Runtime.Streaming
                     UnityEditor.AssetDatabase.SaveAssets();
                 }
 #endif
+                if (WorldResources.TerrainTemplate == null && WorldResources.TerrainShader != null)
+                {
+                    WorldResources.TerrainTemplate = new Material(WorldResources.TerrainShader)
+                    {
+                        name = "VV:TerrainTemplate",
+                        enableInstancing = true,
+                    };
+                    WorldResources.TerrainTemplate.SetFloat("_TileScale", 16f);
+                    WorldResources.TerrainTemplate.SetFloat("_SplatSize", 16f);
+                }
+
                 if (WorldResources.TerrainFallbackMat == null)
                 {
                     WorldResources.TerrainFallbackMat = new Material(fallbackShader)

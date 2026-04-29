@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Physics;
@@ -123,20 +124,21 @@ namespace VVardenfell.Runtime.Physics
         }
     }
 
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
-    public partial class RuntimeColliderBlobDisposalSystem : SystemBase
+    public partial struct RuntimeColliderBlobDisposalSystem : ISystem
     {
         EntityQuery _query;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            _query = GetEntityQuery(ComponentType.ReadWrite<DeferredRuntimeColliderBlobDisposal>());
-            RequireForUpdate(_query);
+            state.RequireForUpdate<DeferredRuntimeColliderBlobDisposal>();
         }
 
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
         {
-            var buffer = _query.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
+            var buffer = SystemAPI.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
             for (int i = buffer.Length - 1; i >= 0; i--)
             {
                 var entry = buffer[i];
@@ -153,12 +155,11 @@ namespace VVardenfell.Runtime.Physics
             }
         }
 
-        protected override void OnDestroy()
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
         {
-            if (_query.IsEmptyIgnoreFilter)
-                return;
 
-            var buffer = _query.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
+            var buffer = SystemAPI.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
             for (int i = 0; i < buffer.Length; i++)
             {
                 var entry = buffer[i];
@@ -167,41 +168,6 @@ namespace VVardenfell.Runtime.Physics
             }
 
             buffer.Clear();
-        }
-    }
-
-    [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup), OrderLast = true)]
-    public partial class RuntimePhysicsLifetimeValidationSystem : SystemBase
-    {
-        int _lastInvalidSources = -1;
-
-        protected override void OnCreate()
-        {
-            RequireForUpdate<RuntimePhysicsLifetimeState>();
-        }
-
-        protected override void OnUpdate()
-        {
-            int invalidSources = CountInvalidRuntimeColliderSources();
-            bool invalidCountsChanged = _lastInvalidSources != invalidSources;
-            _lastInvalidSources = invalidSources;
-
-            if (invalidCountsChanged && invalidSources > 0)
-            {
-                Debug.LogWarning($"[VVardenfell][Physics] invalid collider sources detected: {invalidSources}.");
-            }
-        }
-
-        int CountInvalidRuntimeColliderSources()
-        {
-            int invalidSources = 0;
-            foreach (var source in SystemAPI.Query<RefRO<RuntimeColliderSource>>())
-            {
-                if (!source.ValueRO.Value.IsCreated)
-                    invalidSources++;
-            }
-
-            return invalidSources;
         }
     }
 }

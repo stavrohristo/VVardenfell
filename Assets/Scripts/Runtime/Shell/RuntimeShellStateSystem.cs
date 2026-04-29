@@ -1,4 +1,4 @@
-﻿using Unity.Entities;
+using Unity.Entities;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
@@ -38,7 +38,8 @@ namespace VVardenfell.Runtime.Shell
                 state.ContainerOpen = 0;
                 state.PauseMenuOpen = 1;
             }
+
+            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
         }
     }
 }
-

@@ -23,40 +23,39 @@ namespace VVardenfell.Runtime.Shell
         {
             string itemLabel = ResolveSelectedInventoryLabel(contentDb, inventoryState, inventory);
             string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState, out string spellIconPath, out string spellTooltip);
-            return new RuntimeHudViewModel
-            {
-                Visible = showHud,
-                // Final crosshair visibility is gameplay state AND the user
-                // preference - the Options "Show Crosshair" checkbox flips the
-                // preference, hiding the crosshair even when the gameplay
-                // interaction state would normally display it.
-                ShowCrosshair = showHud && interaction.ShowCrosshair != 0 && HudUserPreferences.ShowCrosshair,
-                FocusText = showHud && interaction.ShowFocus != 0 ? interaction.FocusText.ToString() : null,
-                NotificationText = showHud && interaction.ShowNotification != 0 ? interaction.NotificationText.ToString() : null,
-                WeaponSpellText = showHud ? BuildWeaponSpellText(itemLabel, spellLabel) : string.Empty,
-                CellNameText = showHud ? location.DisplayName : string.Empty,
-                HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f,
-                MagickaFillNormalized = playerStats.HasPlayer ? playerStats.MagickaFill : 0f,
-                FatigueFillNormalized = playerStats.HasPlayer ? playerStats.FatigueFill : 0f,
-                WeaponStatusNormalized = string.IsNullOrWhiteSpace(itemLabel) ? 0f : 1f,
-                SpellStatusNormalized = string.IsNullOrWhiteSpace(spellLabel) ? 0f : 1f,
-                SneakStatusNormalized = 0.6f,
-                WeaponLabel = "W",
-                SpellLabel = "S",
-                SneakLabel = "Sneak",
-                SelectedSpellIconPath = spellIconPath,
-                SelectedSpellTooltip = spellTooltip,
-                ActiveEffects = BuildActiveEffectIcons(contentDb, playerStats),
-                ShowEnemyHealth = false,
-                EnemyHealthFillNormalized = 0f,
-                ShowSneakIndicator = false,
-                LocalMap = showHud ? LocalMapPresentationCache.BuildViewModel(
-                    playerStats,
-                    location.InteriorActive,
-                    zoom: 5f,
-                    showShroud: true,
-                    showMarkers: false) : null,
-            };
+            _hudModel.Visible = showHud;
+            // Final crosshair visibility is gameplay state AND the user
+            // preference - the Options "Show Crosshair" checkbox flips the
+            // preference, hiding the crosshair even when the gameplay
+            // interaction state would normally display it.
+            _hudModel.ShowCrosshair = showHud && interaction.ShowCrosshair != 0 && HudUserPreferences.ShowCrosshair;
+            _hudModel.FocusText = showHud ? ResolveFocusText(interaction) : null;
+            _hudModel.NotificationText = showHud ? ResolveNotificationText(interaction) : null;
+            _hudModel.WeaponSpellText = showHud ? BuildWeaponSpellText(itemLabel, spellLabel) : string.Empty;
+            _hudModel.CellNameText = showHud ? location.DisplayName : string.Empty;
+            _hudModel.HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f;
+            _hudModel.MagickaFillNormalized = playerStats.HasPlayer ? playerStats.MagickaFill : 0f;
+            _hudModel.FatigueFillNormalized = playerStats.HasPlayer ? playerStats.FatigueFill : 0f;
+            _hudModel.WeaponStatusNormalized = string.IsNullOrWhiteSpace(itemLabel) ? 0f : 1f;
+            _hudModel.SpellStatusNormalized = string.IsNullOrWhiteSpace(spellLabel) ? 0f : 1f;
+            _hudModel.SneakStatusNormalized = 0.6f;
+            _hudModel.WeaponLabel = "W";
+            _hudModel.SpellLabel = "S";
+            _hudModel.SneakLabel = "Sneak";
+            _hudModel.SelectedSpellIconPath = spellIconPath;
+            _hudModel.SelectedSpellTooltip = spellTooltip;
+            _hudModel.ActiveEffects = BuildHudActiveEffectIcons(contentDb, playerStats);
+            _hudModel.ShowEnemyHealth = false;
+            _hudModel.EnemyHealthFillNormalized = 0f;
+            _hudModel.ShowSneakIndicator = false;
+            _hudModel.LocalMap = showHud ? LocalMapPresentationCache.FillViewModel(
+                _hudLocalMapModel,
+                playerStats,
+                location.InteriorActive,
+                zoom: 5f,
+                showShroud: true,
+                showMarkers: false) : null;
+            return _hudModel;
         }
 
         static string ResolveSelectedInventoryLabel(
@@ -105,7 +104,7 @@ namespace VVardenfell.Runtime.Shell
                 return string.Empty;
 
             ref readonly var spell = ref contentDb.Get(handle);
-            string label = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? string.Empty : spell.Name.Trim();
+            string label = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? string.Empty : spell.Name;
             tooltip = label;
             if (spell.EffectStartIndex >= 0 && spell.EffectCount > 0 && contentDb.Data.MagicEffectInstances != null)
             {
@@ -120,17 +119,28 @@ namespace VVardenfell.Runtime.Shell
             return label;
         }
 
-        static string BuildWeaponSpellText(string itemLabel, string spellLabel)
+        string BuildWeaponSpellText(string itemLabel, string spellLabel)
         {
             bool hasItem = !string.IsNullOrWhiteSpace(itemLabel);
             bool hasSpell = !string.IsNullOrWhiteSpace(spellLabel);
+            itemLabel = hasItem ? itemLabel : string.Empty;
+            spellLabel = hasSpell ? spellLabel : string.Empty;
+            if (string.Equals(_lastWeaponLabel, itemLabel, StringComparison.Ordinal)
+                && string.Equals(_lastSpellLabel, spellLabel, StringComparison.Ordinal))
+                return _cachedWeaponSpellText;
+
+            _lastWeaponLabel = itemLabel;
+            _lastSpellLabel = spellLabel;
             if (hasItem && hasSpell)
-                return $"{itemLabel}  |  {spellLabel}";
-            if (hasItem)
-                return itemLabel;
-            if (hasSpell)
-                return spellLabel;
-            return string.Empty;
+                _cachedWeaponSpellText = string.Concat(itemLabel, "  |  ", spellLabel);
+            else if (hasItem)
+                _cachedWeaponSpellText = itemLabel;
+            else if (hasSpell)
+                _cachedWeaponSpellText = spellLabel;
+            else
+                _cachedWeaponSpellText = string.Empty;
+
+            return _cachedWeaponSpellText;
         }
 
         static MapWindowViewModel BuildMapModel(in MapWindowState state, in LocationPresentation location, in PlayerPresentationStats playerStats)
