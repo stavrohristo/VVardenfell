@@ -83,6 +83,7 @@ namespace VVardenfell.Runtime.Cache
 
             progress?.BeginStage("Manifest + metadata", "Reading manifest", 1);
             var manifestSw = Stopwatch.StartNew();
+            long metadataLastMs = 0;
             k_Manifest.Begin();
             try
             {
@@ -91,17 +92,23 @@ namespace VVardenfell.Runtime.Cache
                 if (manifest.FormatVersion != CacheFormat.FormatVersion)
                     throw new InvalidDataException($"manifest.bin format mismatch (found {manifest.FormatVersion}, expected {CacheFormat.FormatVersion}); rebake required.");
                 Manifest = manifest;
+                LogMetadataTiming("manifest", manifestSw, ref metadataLastMs);
                 MeshNames = Importer.Bake.MeshBakery.ReadNames(CachePaths.MeshNames);
+                LogMetadataTiming("mesh names", manifestSw, ref metadataLastMs);
                 if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
                     throw new InvalidDataException("render_shards.bin unreadable");
                 RenderShardCatalog = renderShardCatalog;
+                LogMetadataTiming("render shards", manifestSw, ref metadataLastMs);
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
+                LogMetadataTiming("model prefabs", manifestSw, ref metadataLastMs);
                 if (!ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog))
                     Debug.LogWarning($"[VVardenfell] actor animation cache '{CachePaths.ActorAnimations}' is missing or version-mismatched; actor presentations will not render until actor_animations.bin is rebaked.");
                 ActorAnimationCatalog = actorAnimationCatalog ?? new ActorAnimationCatalogData();
+                LogMetadataTiming("actor animation catalog", manifestSw, ref metadataLastMs);
                 BuildActorVisualLookup();
+                LogMetadataTiming("actor visual lookup", manifestSw, ref metadataLastMs);
             }
             finally
             {
@@ -167,6 +174,13 @@ namespace VVardenfell.Runtime.Cache
             terrainSw.Stop();
 
             totalSw.Stop();
+        }
+
+        static void LogMetadataTiming(string segment, Stopwatch stopwatch, ref long lastMs)
+        {
+            long elapsedMs = stopwatch.ElapsedMilliseconds;
+            Debug.Log($"[VVardenfell][BootTiming] detail=ManifestMetadata segment='{segment}' deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
+            lastMs = elapsedMs;
         }
 
         public bool TryGetActorVisualRecipe(ContentId actorContentId, bool firstPerson, out ActorVisualRecipeDef recipe)

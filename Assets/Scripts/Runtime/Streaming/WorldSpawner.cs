@@ -302,11 +302,14 @@ namespace VVardenfell.Runtime.Streaming
             ref LoadedCellsMap loaded,
             ref LogicalRefLookup logicalRefs,
             bool active,
-            bool gateTerrainByRadius)
+            bool gateTerrainByRadius,
+            bool emitTiming = false)
         {
             if (world == null || data == null)
                 return false;
 
+            Stopwatch timing = emitTiming ? Stopwatch.StartNew() : null;
+            long timingLastMs = 0;
             var em = world.EntityManager;
             Entity terrainEntity = Entity.Null;
 
@@ -323,18 +326,20 @@ namespace VVardenfell.Runtime.Streaming
             {
                 em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, active || !gateTerrainByRadius);
             }
+            LogSpawnExteriorTiming(emitTiming, coord, "terrain", timing, ref timingLastMs);
 
             bool streamableAlreadySpawned = loaded.Streamed.IsCreated && loaded.Streamed.Contains(coord);
             if (!streamableAlreadySpawned && WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
                 WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, staticBlob, active);
+            LogSpawnExteriorTiming(emitTiming, coord, "static collider", timing, ref timingLastMs);
 
             var refs = data.Refs;
             if (!streamableAlreadySpawned && refs != null && refs.Length > 0)
             {
                 var spawnedRefEntities = new Entity[refs.Length];
                 var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
-                for (int i = 0; i < refs.Length; i++)
-                    spawnedRefEntities[i] = WorldRefSpawnUtility.SpawnExteriorRef(em, refs[i], coord, shardCatalog);
+                WorldRefSpawnUtility.SpawnExteriorRefs(em, refs, coord, shardCatalog, spawnedRefEntities);
+                LogSpawnExteriorTiming(emitTiming, coord, "refs", timing, ref timingLastMs);
 
                 var refArray = new NativeArray<RefEntry>(refs.Length, Allocator.Temp);
                 for (int i = 0; i < refs.Length; i++)
@@ -354,6 +359,7 @@ namespace VVardenfell.Runtime.Streaming
                     out _);
                 coordArray.Dispose();
                 refArray.Dispose();
+                LogSpawnExteriorTiming(emitTiming, coord, "logical refs", timing, ref timingLastMs);
 
                 if (!active)
                     SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
@@ -362,6 +368,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
             }
+            LogSpawnExteriorTiming(emitTiming, coord, "inactive gate", timing, ref timingLastMs);
 
             if (loaded.Map.IsCreated)
                 loaded.Map[coord] = terrainEntity;
@@ -372,8 +379,19 @@ namespace VVardenfell.Runtime.Streaming
                 loaded.Active.Add(coord);
                 WorldExteriorPhysicsUtility.SetCellPhysicsActive(em, coord, true);
             }
+            LogSpawnExteriorTiming(emitTiming, coord, "loaded state", timing, ref timingLastMs);
 
             return true;
+        }
+
+        static void LogSpawnExteriorTiming(bool enabled, int2 coord, string segment, Stopwatch stopwatch, ref long lastMs)
+        {
+            if (!enabled || stopwatch == null)
+                return;
+
+            long elapsedMs = stopwatch.ElapsedMilliseconds;
+            Debug.Log($"[VVardenfell][BootTiming] detail=SpawnExteriorCell coord=({coord.x},{coord.y}) segment='{segment}' deltaMs={elapsedMs - lastMs} elapsedMs={elapsedMs}");
+            lastMs = elapsedMs;
         }
 
         private static NativeArray<int2> BuildCoordArray(int2 coord, int length)

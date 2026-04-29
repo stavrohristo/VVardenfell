@@ -3,14 +3,12 @@ using UnityEngine.InputSystem;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
-using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    [UpdateBefore(typeof(PlayerInputReceivingSystem))]
     public partial class RuntimeShellInputSystem : SystemBase
     {
         protected override void OnCreate()

@@ -39,6 +39,72 @@ namespace VVardenfell.Runtime.Streaming
                 : SpawnRenderShardRef(em, entry, false, coord, default, float3.zero, shardCatalog);
         }
 
+        internal static void SpawnExteriorRefs(
+            EntityManager em,
+            RefEntry[] refs,
+            int2 coord,
+            RenderShardRecord[] shardCatalog,
+            Entity[] spawnedRefEntities)
+        {
+            if (refs == null || spawnedRefEntities == null)
+                return;
+
+            string cellLabel = $"exterior ({coord.x},{coord.y})";
+            Dictionary<int, List<int>> renderShardGroups = null;
+            for (int i = 0; i < refs.Length && i < spawnedRefEntities.Length; i++)
+            {
+                RefEntry entry = refs[i];
+                WarnUnsupportedSpawnMode(entry, cellLabel);
+                if ((RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab)
+                {
+                    spawnedRefEntities[i] = SpawnModelPrefabRef(em, entry, false, coord, default, float3.zero);
+                    continue;
+                }
+
+                if (!TryGetRenderShardPrefab(entry, out _))
+                {
+                    spawnedRefEntities[i] = Entity.Null;
+                    continue;
+                }
+
+                renderShardGroups ??= new Dictionary<int, List<int>>();
+                if (!renderShardGroups.TryGetValue(entry.RenderShardIndex, out var indices))
+                {
+                    indices = new List<int>();
+                    renderShardGroups.Add(entry.RenderShardIndex, indices);
+                }
+
+                indices.Add(i);
+            }
+
+            if (renderShardGroups == null)
+                return;
+
+            foreach (var pair in renderShardGroups)
+            {
+                if (!TryGetRenderShardPrefab(refs[pair.Value[0]], out Entity prefab))
+                    continue;
+
+                using var instances = new NativeArray<Entity>(pair.Value.Count, Allocator.Temp);
+                em.Instantiate(prefab, instances);
+                for (int i = 0; i < pair.Value.Count; i++)
+                {
+                    int refIndex = pair.Value[i];
+                    Entity entity = instances[i];
+                    spawnedRefEntities[refIndex] = entity;
+                    ApplyRenderShardRefData(
+                        em,
+                        entity,
+                        refs[refIndex],
+                        false,
+                        coord,
+                        default,
+                        float3.zero,
+                        shardCatalog);
+                }
+            }
+        }
+
         internal static Entity SpawnInteriorRef(EntityManager em, RefEntry entry, float3 worldOffset, FixedString128Bytes interiorCellId, List<Entity> spawnedEntities)
         {
             WarnUnsupportedSpawnMode(entry, $"interior '{interiorCellId}'");
@@ -359,14 +425,46 @@ namespace VVardenfell.Runtime.Streaming
             float3 worldOffset,
             RenderShardRecord[] shardCatalog)
         {
-            if (entry.RenderShardIndex < 0 || entry.LocalMeshIndex < 0 || entry.LocalMaterialIndex < 0)
+            if (!TryGetRenderShardPrefab(entry, out Entity prefab))
                 return Entity.Null;
+
+            var entity = em.Instantiate(prefab);
+            ApplyRenderShardRefData(
+                em,
+                entity,
+                entry,
+                isInterior,
+                exteriorCell,
+                interiorCellId,
+                worldOffset,
+                shardCatalog);
+            return entity;
+        }
+
+        static bool TryGetRenderShardPrefab(RefEntry entry, out Entity prefab)
+        {
+            prefab = Entity.Null;
+            if (entry.RenderShardIndex < 0 || entry.LocalMeshIndex < 0 || entry.LocalMaterialIndex < 0)
+                return false;
 
             var prefabs = WorldResources.RefPrefabs;
             if (prefabs == null || (uint)entry.RenderShardIndex >= (uint)prefabs.Length)
-                return Entity.Null;
+                return false;
 
-            var entity = em.Instantiate(prefabs[entry.RenderShardIndex]);
+            prefab = prefabs[entry.RenderShardIndex];
+            return prefab != Entity.Null;
+        }
+
+        static void ApplyRenderShardRefData(
+            EntityManager em,
+            Entity entity,
+            RefEntry entry,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            RenderShardRecord[] shardCatalog)
+        {
             float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
             position += worldOffset;
             quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
@@ -388,7 +486,6 @@ namespace VVardenfell.Runtime.Streaming
             em.SetComponentData(entity, new RenderBounds { Value = aabb });
 
             ApplyRefRootMetadata(em, entity, entry, isInterior, exteriorCell, interiorCellId);
-            return entity;
         }
 
         static Entity SpawnModelPrefabRef(

@@ -142,7 +142,8 @@ namespace VVardenfell.Runtime.Streaming
                         ref loadedMap,
                         ref logicalRefLookup,
                         active: true,
-                        gateTerrainByRadius: DefaultGateTerrainByRadius);
+                        gateTerrainByRadius: DefaultGateTerrainByRadius,
+                        emitTiming: true);
                     progress?.Report("Start cell ready", 1, 1);
                     progress?.CompleteStage();
                     yield return null;
