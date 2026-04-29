@@ -10,7 +10,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
 {
-    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioMenuSystemGroup))]
     [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class MusicResolveSystem : SystemBase
     {

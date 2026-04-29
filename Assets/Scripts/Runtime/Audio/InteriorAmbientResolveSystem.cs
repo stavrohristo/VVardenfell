@@ -12,7 +12,6 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class InteriorAmbientResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_InteriorResolve = new("VV.Audio.ResolveInteriorAmbient");

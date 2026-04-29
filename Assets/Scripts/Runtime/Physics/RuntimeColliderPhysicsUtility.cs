@@ -18,6 +18,8 @@ namespace VVardenfell.Runtime.Physics
             if (entity == Entity.Null || !entityManager.Exists(entity) || !collider.IsCreated)
                 return false;
 
+            QueueReplacedTemporarySourceForDisposal(entityManager, entity, collider);
+
             var source = new RuntimeColliderSource
             {
                 Value = collider,
@@ -29,6 +31,8 @@ namespace VVardenfell.Runtime.Physics
                 entityManager.SetComponentData(entity, source);
             else
                 entityManager.AddComponentData(entity, source);
+
+            AttachGeneratedBlobCleanup(entityManager, entity, collider, temporary);
 
             if (active)
                 return EnablePhysics(entityManager, entity);
@@ -49,6 +53,8 @@ namespace VVardenfell.Runtime.Physics
             if (entity == Entity.Null || !entityManager.Exists(entity) || !collider.IsCreated)
                 return false;
 
+            QueueReplacedTemporarySourceForDisposal(entityManager, entity, collider);
+
             var source = new RuntimeColliderSource
             {
                 Value = collider,
@@ -60,6 +66,8 @@ namespace VVardenfell.Runtime.Physics
                 ecb.SetComponent(entity, source);
             else
                 ecb.AddComponent(entity, source);
+
+            QueueAttachGeneratedBlobCleanup(entityManager, ref ecb, entity, collider, temporary);
 
             if (active)
                 return QueueEnablePhysics(entityManager, ref ecb, entity);
@@ -86,6 +94,14 @@ namespace VVardenfell.Runtime.Physics
                 Temporary = temporary ? (byte)1 : (byte)0,
             });
 
+            if (temporary)
+            {
+                ecb.AddComponent(entity, new RuntimeGeneratedColliderBlobCleanup
+                {
+                    Value = collider,
+                });
+            }
+
             if (active)
             {
                 ecb.AddComponent(entity, new PhysicsCollider { Value = collider });
@@ -106,6 +122,9 @@ namespace VVardenfell.Runtime.Physics
             if (instance == Entity.Null || !collider.IsCreated)
                 return;
 
+            if (entityManager.Exists(instance))
+                QueueReplacedTemporarySourceForDisposal(entityManager, instance, collider);
+
             var source = new RuntimeColliderSource
             {
                 Value = collider,
@@ -117,6 +136,8 @@ namespace VVardenfell.Runtime.Physics
                 ecb.SetComponent(instance, source);
             else
                 ecb.AddComponent(instance, source);
+
+            QueueAttachGeneratedBlobCleanup(entityManager, ref ecb, instance, collider, temporary);
 
             var physicsCollider = new PhysicsCollider { Value = collider };
             if (active)
@@ -197,6 +218,83 @@ namespace VVardenfell.Runtime.Physics
                 return;
             if (entityManager.HasComponent<PhysicsCollider>(entity))
                 ecb.RemoveComponent<PhysicsCollider>(entity);
+        }
+
+        static void QueueReplacedTemporarySourceForDisposal(
+            EntityManager entityManager,
+            Entity entity,
+            BlobAssetReference<Collider> replacement)
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity))
+                return;
+            if (!entityManager.HasComponent<RuntimeColliderSource>(entity))
+                return;
+
+            var previous = entityManager.GetComponentData<RuntimeColliderSource>(entity);
+            if (previous.Temporary == 0 || !previous.Value.IsCreated || previous.Value.Equals(replacement))
+                return;
+
+            RuntimeColliderBlobLifetime.DeferGeneratedBlobDisposal(entityManager, previous.Value);
+        }
+
+        static void AttachGeneratedBlobCleanup(
+            EntityManager entityManager,
+            Entity entity,
+            BlobAssetReference<Collider> collider,
+            bool temporary)
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity))
+                return;
+
+            if (!temporary)
+            {
+                if (entityManager.HasComponent<RuntimeGeneratedColliderBlobCleanup>(entity))
+                    entityManager.RemoveComponent<RuntimeGeneratedColliderBlobCleanup>(entity);
+                return;
+            }
+
+            var cleanup = new RuntimeGeneratedColliderBlobCleanup
+            {
+                Value = collider,
+            };
+            if (entityManager.HasComponent<RuntimeGeneratedColliderBlobCleanup>(entity))
+                entityManager.SetComponentData(entity, cleanup);
+            else
+                entityManager.AddComponentData(entity, cleanup);
+        }
+
+        static void QueueAttachGeneratedBlobCleanup(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity entity,
+            BlobAssetReference<Collider> collider,
+            bool temporary)
+        {
+            if (entity == Entity.Null)
+                return;
+
+            if (!entityManager.Exists(entity))
+            {
+                if (temporary)
+                    ecb.AddComponent(entity, new RuntimeGeneratedColliderBlobCleanup { Value = collider });
+                return;
+            }
+
+            if (!temporary)
+            {
+                if (entityManager.HasComponent<RuntimeGeneratedColliderBlobCleanup>(entity))
+                    ecb.RemoveComponent<RuntimeGeneratedColliderBlobCleanup>(entity);
+                return;
+            }
+
+            var cleanup = new RuntimeGeneratedColliderBlobCleanup
+            {
+                Value = collider,
+            };
+            if (entityManager.HasComponent<RuntimeGeneratedColliderBlobCleanup>(entity))
+                ecb.SetComponent(entity, cleanup);
+            else
+                ecb.AddComponent(entity, cleanup);
         }
     }
 }

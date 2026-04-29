@@ -117,8 +117,6 @@ namespace VVardenfell.Runtime.Rendering
         public NativeList<ActorProceduralDrawBatch> ShadowBatches;
         public NativeList<ActorProceduralMatrixGpu> ShadowBoneMatrices;
 
-        NativeList<ActorProceduralDrawGpu> _packedDraws;
-        NativeList<int> _packedBatchTypeIds;
         NativeList<int> _batchTypeCounts;
         NativeList<int> _batchTypeOffsets;
         NativeList<int> _batchTypeWriteHeads;
@@ -151,8 +149,6 @@ namespace VVardenfell.Runtime.Rendering
             _indices = new NativeList<int>(Allocator.Persistent);
             _indirectArgs = new NativeList<uint>(Allocator.Persistent);
             _shadowIndirectArgs = new NativeList<uint>(Allocator.Persistent);
-            _packedDraws = new NativeList<ActorProceduralDrawGpu>(Allocator.Persistent);
-            _packedBatchTypeIds = new NativeList<int>(Allocator.Persistent);
             _batchTypeCounts = new NativeList<int>(Allocator.Persistent);
             _batchTypeOffsets = new NativeList<int>(Allocator.Persistent);
             _batchTypeWriteHeads = new NativeList<int>(Allocator.Persistent);
@@ -225,10 +221,6 @@ namespace VVardenfell.Runtime.Rendering
 
             if (drawCount > draws.Capacity)
                 draws.Capacity = drawCount;
-            if (drawCount > _packedDraws.Capacity)
-                _packedDraws.Capacity = drawCount;
-            if (drawCount > _packedBatchTypeIds.Capacity)
-                _packedBatchTypeIds.Capacity = drawCount;
             if (boneMatrixCount > boneMatrices.Capacity)
                 boneMatrices.Capacity = boneMatrixCount;
             int batchTypeCount = _batchTypeInfos.IsCreated ? _batchTypeInfos.Length : 0;
@@ -245,6 +237,25 @@ namespace VVardenfell.Runtime.Rendering
                 indirectArgs.Capacity = indirectArgCount;
         }
 
+        public void PrepareBatchTypeScratch(ActorProceduralRenderSet set)
+        {
+            int batchTypeCount = _batchTypeInfos.IsCreated ? _batchTypeInfos.Length : 0;
+            var batches = GetBatches(set);
+            if (batchTypeCount > batches.Capacity)
+                batches.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeCounts.Capacity)
+                _batchTypeCounts.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeOffsets.Capacity)
+                _batchTypeOffsets.Capacity = batchTypeCount;
+            if (batchTypeCount > _batchTypeWriteHeads.Capacity)
+                _batchTypeWriteHeads.Capacity = batchTypeCount;
+
+            batches.ResizeUninitialized(batchTypeCount);
+            _batchTypeCounts.ResizeUninitialized(batchTypeCount);
+            _batchTypeOffsets.ResizeUninitialized(batchTypeCount);
+            _batchTypeWriteHeads.ResizeUninitialized(batchTypeCount);
+        }
+
         public void PrepareFrameData(int drawCount, int boneMatrixCount)
         {
             PrepareFrameData(ActorProceduralRenderSet.Forward, drawCount, boneMatrixCount);
@@ -254,19 +265,11 @@ namespace VVardenfell.Runtime.Rendering
         {
             ReserveFrameCapacity(set, drawCount, boneMatrixCount);
             var draws = GetDraws(set);
-            var batches = GetBatches(set);
             var boneMatrices = GetBoneMatrices(set);
             var indirectArgs = GetIndirectArgs(set);
 
-            _packedDraws.ResizeUninitialized(drawCount);
-            _packedBatchTypeIds.ResizeUninitialized(drawCount);
             draws.ResizeUninitialized(drawCount);
             boneMatrices.ResizeUninitialized(boneMatrixCount);
-            int batchTypeCount = _batchTypeInfos.IsCreated ? _batchTypeInfos.Length : 0;
-            batches.ResizeUninitialized(batchTypeCount);
-            _batchTypeCounts.ResizeUninitialized(batchTypeCount);
-            _batchTypeOffsets.ResizeUninitialized(batchTypeCount);
-            _batchTypeWriteHeads.ResizeUninitialized(batchTypeCount);
             indirectArgs.Clear();
         }
 
@@ -276,8 +279,6 @@ namespace VVardenfell.Runtime.Rendering
         public NativeArray<int> BatchTypeOffsets => _batchTypeOffsets.AsArray();
         public NativeArray<int> BatchTypeWriteHeads => _batchTypeWriteHeads.AsArray();
         public NativeArray<ActorProceduralBatchTypeInfo> BatchTypeInfos => _batchTypeInfos.AsArray();
-        public NativeArray<ActorProceduralDrawGpu> PackedDraws => _packedDraws.AsArray();
-        public NativeArray<int> PackedBatchTypeIds => _packedBatchTypeIds.AsArray();
         public NativeArray<ActorProceduralSkinMeshRuntimeInfo> SkinMeshRuntimeInfos => _skinMeshRuntimeInfos.AsArray();
         public int InvalidBatchTypeId => _invalidBatchTypeId;
 
@@ -581,8 +582,6 @@ namespace VVardenfell.Runtime.Rendering
             if (_indices.IsCreated) _indices.Dispose();
             if (_indirectArgs.IsCreated) _indirectArgs.Dispose();
             if (_shadowIndirectArgs.IsCreated) _shadowIndirectArgs.Dispose();
-            if (_packedDraws.IsCreated) _packedDraws.Dispose();
-            if (_packedBatchTypeIds.IsCreated) _packedBatchTypeIds.Dispose();
             if (_batchTypeCounts.IsCreated) _batchTypeCounts.Dispose();
             if (_batchTypeOffsets.IsCreated) _batchTypeOffsets.Dispose();
             if (_batchTypeWriteHeads.IsCreated) _batchTypeWriteHeads.Dispose();

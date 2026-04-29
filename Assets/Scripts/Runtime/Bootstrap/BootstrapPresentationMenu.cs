@@ -277,14 +277,14 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 case BootstrapMenuActionId.Continue:
                     if (GameInitializationRequestBridge.TryRequestContinue(out var continueError))
-                        Dismiss();
+                        BeginRuntimeLoading("Resuming game");
                     else
                         ShowMenuDialog("Continue Unavailable", continueError);
                     break;
 
                 case BootstrapMenuActionId.NewGame:
                     if (GameInitializationRequestBridge.TryRequestNewGame(out var newGameError))
-                        Dismiss();
+                        BeginRuntimeLoading("Starting new game");
                     else
                         ShowMenuDialog("New Game Unavailable", newGameError);
                     break;
@@ -306,6 +306,7 @@ namespace VVardenfell.Runtime.Bootstrap
         void Dismiss()
         {
             CloseMenuDialog();
+            _runtimeLoading = false;
             _dismissed = true;
             _phase = PresentationPhase.Dismissed;
             BootstrapPresentationAudioState.SetPhase(BootstrapAudioPhase.Dismissed);

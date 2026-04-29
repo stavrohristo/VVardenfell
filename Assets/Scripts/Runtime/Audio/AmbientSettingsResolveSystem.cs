@@ -8,7 +8,6 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    [UpdateAfter(typeof(AudioContextResolveSystem))]
     public partial class AmbientSettingsResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_SettingsResolve = new("VV.Audio.ResolveAmbientSettings");

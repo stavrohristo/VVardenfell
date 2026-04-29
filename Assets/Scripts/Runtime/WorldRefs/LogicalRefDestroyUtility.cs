@@ -1,6 +1,5 @@
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.WorldRefs
@@ -39,18 +38,8 @@ namespace VVardenfell.Runtime.WorldRefs
             var children = LogicalRefChildUtility.SnapshotChildBuffer(entityManager, logicalEntity);
             for (int i = 0; i < children.Length; i++)
             {
-                Entity child = children[i];
-                if (entityManager.Exists(child)
-                    && entityManager.HasComponent<InteractionActivationProxyTag>(child)
-                    && entityManager.HasComponent<RuntimeColliderSource>(child))
-                {
-                    var source = entityManager.GetComponentData<RuntimeColliderSource>(child);
-                    if (source.Temporary != 0)
-                        RuntimeColliderBlobLifetime.DeferGeneratedBlobDisposal(entityManager, source.Value);
-                }
-
-                if (entityManager.Exists(child))
-                    ecb.DestroyEntity(child);
+                if (entityManager.Exists(children[i]))
+                    ecb.DestroyEntity(children[i]);
             }
 
             if (entityManager.Exists(logicalEntity))

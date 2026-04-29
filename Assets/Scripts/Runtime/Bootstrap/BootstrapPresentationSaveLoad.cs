@@ -138,7 +138,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
                     if (GameInitializationRequestBridge.TryRequestLoadGame(_menuSaveLoadSelectedSlotId, out string loadError))
                     {
-                        Dismiss();
+                        BeginRuntimeLoading("Saved state");
                         return;
                     }
 

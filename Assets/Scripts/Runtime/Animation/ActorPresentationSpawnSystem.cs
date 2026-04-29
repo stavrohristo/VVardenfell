@@ -2,12 +2,14 @@ using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Rendering;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.Streaming;
 
@@ -19,6 +21,8 @@ namespace VVardenfell.Runtime.Animation
     {
         static readonly System.Collections.Generic.HashSet<int> s_RigidEquipmentPrefabBuildSet = new();
         static int s_RobeSkirtDiagnosticLogCount;
+        static readonly float3 k_MinAnimatedRenderCullExtents = new(1.25f, 2.25f, 1.25f);
+        static readonly float3 k_AnimatedRenderCullPadding = new(0.75f, 1.0f, 0.75f);
 
         protected override void OnUpdate()
         {
@@ -35,6 +39,11 @@ namespace VVardenfell.Runtime.Animation
 
             ref var catalog = ref blobRef.Value;
             PrebuildRigidEquipmentPrefabs(contentDb);
+            var actorRenderResources = WorldResources.ActorEntitiesGraphicsRenderer ?? new ActorEntitiesGraphicsRenderResources();
+            WorldResources.ActorEntitiesGraphicsRenderer = actorRenderResources;
+            actorRenderResources.Ensure(EntityManager, ref catalog);
+            var gpuAnimationResources = WorldResources.ActorGpuAnimation ?? new ActorGpuAnimationResources();
+            WorldResources.ActorGpuAnimation = gpuAnimationResources;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (source, entity) in
@@ -77,6 +86,7 @@ namespace VVardenfell.Runtime.Animation
                     },
                 });
                 ecb.AddComponent(entity, new ActorJumpAnimationState());
+                ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
                 ecb.AddBuffer<ActorAnimationOverlayState>(entity);
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
@@ -115,6 +125,32 @@ namespace VVardenfell.Runtime.Animation
                     hasEquipment,
                     equipmentBuffer);
 
+                int boneMatrixCount = CountOutputBoneMatrices(skinMeshBuffer, ref catalog);
+                int deformedVertexCount = CountOutputVertices(skinMeshBuffer, ref catalog);
+                gpuAnimationResources.AllocateActorRanges(
+                    boneMatrixCount,
+                    deformedVertexCount,
+                    out int boneMatrixOffset,
+                    out int deformedVertexOffset);
+                ecb.AddComponent(entity, new ActorGpuAnimationState
+                {
+                    SkeletonIndex = skeletonIndex,
+                    BoneMatrixOffset = boneMatrixOffset,
+                    BoneMatrixCount = boneMatrixCount,
+                    DeformedVertexOffset = deformedVertexOffset,
+                    DeformedVertexCount = deformedVertexCount,
+                });
+                ActorLocalBounds actorBounds = BuildLocalBounds(skinMeshBuffer, ref catalog);
+                QueueActorRenderChildren(
+                    ref ecb,
+                    EntityManager,
+                    actorRenderResources,
+                    entity,
+                    skinMeshBuffer,
+                    ref catalog,
+                    deformedVertexOffset,
+                    actorBounds);
+
                 using var rigidEquipment = new NativeList<ActorRigidEquipment>(Allocator.Temp);
                 PopulateRigidEquipment(
                     ref ecb,
@@ -144,7 +180,7 @@ namespace VVardenfell.Runtime.Animation
                             attachmentBoneBuffer.Add(attachmentBones[i]);
                     }
                 }
-                ecb.AddComponent(entity, BuildLocalBounds(skinMeshBuffer, ref catalog));
+                ecb.AddComponent(entity, actorBounds);
             }
 
             ecb.Playback(EntityManager);
@@ -153,6 +189,106 @@ namespace VVardenfell.Runtime.Animation
 
         static int ResolveBoneCount(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
             => ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
+
+        static int CountOutputBoneMatrices(DynamicBuffer<ActorSkinMesh> skinMeshes, ref ActorAnimationCatalogBlob catalog)
+        {
+            int count = 0;
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    continue;
+
+                count += math.max(1, catalog.SkinMeshes[skinMeshIndex].SkinBoneCount);
+            }
+
+            return count;
+        }
+
+        static int CountOutputVertices(DynamicBuffer<ActorSkinMesh> skinMeshes, ref ActorAnimationCatalogBlob catalog)
+        {
+            int count = 0;
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    continue;
+
+                count += math.max(0, catalog.SkinMeshes[skinMeshIndex].VertexCount);
+            }
+
+            return count;
+        }
+
+        static void QueueActorRenderChildren(
+            ref EntityCommandBuffer ecb,
+            EntityManager entityManager,
+            ActorEntitiesGraphicsRenderResources renderResources,
+            Entity actorEntity,
+            DynamicBuffer<ActorSkinMesh> skinMeshes,
+            ref ActorAnimationCatalogBlob catalog,
+            int deformedVertexOffset,
+            ActorLocalBounds actorBounds)
+        {
+            DynamicBuffer<LinkedEntityGroup> linked = default;
+            bool createdLinkedBuffer = false;
+            if (!entityManager.HasBuffer<LinkedEntityGroup>(actorEntity))
+            {
+                linked = ecb.AddBuffer<LinkedEntityGroup>(actorEntity);
+                linked.Add(new LinkedEntityGroup { Value = actorEntity });
+                createdLinkedBuffer = true;
+            }
+
+            int vertexCursor = deformedVertexOffset;
+            LocalToWorld initialLocalToWorld = entityManager.HasComponent<LocalToWorld>(actorEntity)
+                ? entityManager.GetComponentData<LocalToWorld>(actorEntity)
+                : new LocalToWorld { Value = float4x4.identity };
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    continue;
+
+                var skinMesh = catalog.SkinMeshes[skinMeshIndex];
+                if (!renderResources.TryGetSkinMeshInfo(skinMeshIndex, out var info)
+                    || !renderResources.TryGetPrototype(info.BucketIndex, out Entity prototype))
+                {
+                    throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} has no Entities Graphics render prototype.");
+                }
+
+                Entity child = ecb.Instantiate(prototype);
+                ecb.SetName(child, $"VVardenfell.ActorRenderMesh[{skinMeshIndex}]");
+                ecb.SetComponent(child, LocalTransform.Identity);
+                ecb.SetComponent(child, initialLocalToWorld);
+                ecb.AddComponent(child, new Parent { Value = actorEntity });
+                ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(info.MaterialIndex, info.MeshIndex));
+                ecb.SetComponent(child, new TextureSlice { Value = info.TextureSlice });
+                ecb.SetComponent(child, new ActorDeformedMeshIndex { Value = vertexCursor });
+                ecb.SetComponent(child, new RenderBounds
+                {
+                    Value = new AABB
+                    {
+                        Center = actorBounds.Center,
+                        Extents = BuildAnimatedRenderCullExtents(actorBounds),
+                    },
+                });
+                ecb.SetComponent(child, new ActorRenderMeshInstance
+                {
+                    Actor = actorEntity,
+                    SkinMeshIndex = skinMeshIndex,
+                });
+
+                if (createdLinkedBuffer)
+                    linked.Add(new LinkedEntityGroup { Value = child });
+                else
+                    ecb.AppendToBuffer(actorEntity, new LinkedEntityGroup { Value = child });
+
+                vertexCursor += math.max(0, skinMesh.VertexCount);
+            }
+        }
+
+        static float3 BuildAnimatedRenderCullExtents(ActorLocalBounds actorBounds)
+            => math.max(actorBounds.Extents + k_AnimatedRenderCullPadding, k_MinAnimatedRenderCullExtents);
 
         static int ResolveAccumulationBoneIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
         {

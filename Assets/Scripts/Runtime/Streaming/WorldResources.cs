@@ -76,6 +76,7 @@ namespace VVardenfell.Runtime.Streaming
         public static PathGridNavigationWorld PathGridNavigation;
         public static ActorProceduralRenderResources ActorProceduralRenderer;
         public static ActorGpuAnimationResources ActorGpuAnimation;
+        public static ActorEntitiesGraphicsRenderResources ActorEntitiesGraphicsRenderer;
         public static float ActorShadowCasterDistance = 64f;
         public static float ActorShadowCasterPadding = 8f;
         public static int MaxActorShadowCasters = 128;
@@ -288,6 +289,8 @@ namespace VVardenfell.Runtime.Streaming
             if (MeshBounds.IsCreated) MeshBounds.Dispose();
             if (RefShardMeshRanges.IsCreated) RefShardMeshRanges.Dispose();
             if (RefShardGlobalMeshIndices.IsCreated) RefShardGlobalMeshIndices.Dispose();
+            ActorEntitiesGraphicsRenderer?.Dispose();
+            ActorEntitiesGraphicsRenderer = null;
             if (RefBaseArrays != null)
             {
                 for (int i = 0; i < RefBaseArrays.Length; i++)

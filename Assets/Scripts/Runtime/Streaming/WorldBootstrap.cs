@@ -180,6 +180,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 progress?.BeginStage("Game initialization", "Publishing game initialization payload", 1);
                 WorldBootstrapStateUtility.PublishGameInitialization(em, options);
+                if (options.IsSandbox)
+                    WorldBootstrapStateUtility.PublishSandboxStartRequest(em);
                 progress?.Report("Game initialization queued", 1, 1);
                 progress?.CompleteStage();
                 yield return null;

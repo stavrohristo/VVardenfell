@@ -86,10 +86,12 @@ namespace VVardenfell.Runtime.Player
             var initEntity = SystemAPI.GetSingletonEntity<GameInitializationSingleton>();
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
+            MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(em);
             WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
             if (init.SpawnLocalPlayer == 0)
             {
                 ConfigureStreamingAfterInitialization(em, init);
+                MorrowindRuntimeLifecycleUtility.EnsureActive(em);
                 ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
                 return;
             }
@@ -101,38 +103,32 @@ namespace VVardenfell.Runtime.Player
             {
                 var loadRequest = SystemAPI.GetSingleton<LoadGameInitializationSingleton>();
                 string slotId = loadRequest.SlotId.ToString();
-                string loadError = null;
-                if (!string.IsNullOrWhiteSpace(slotId) && WorldSaveStorage.TryLoadSlot(slotId, out var payload, out loadError))
-                {
-                    init.PlayerPosition = payload.PlayerPosition;
-                    init.PlayerRotation = payload.PlayerRotation;
-                    init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
-                    init.PlayerActorStats = payload.ActorStats;
-                    init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
-                    PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
-                    PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
-                    WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
-                    if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
-                        Debug.LogWarning($"[VVardenfell][Save] load slot location restore failed; starting from default bootstrap state instead. {locationError}");
-                    else
-                        RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em, RuntimeContentDatabase.Active);
-                }
-                else
-                {
-                    Debug.LogWarning($"[VVardenfell][Save] load slot requested, but payload was unavailable. {loadError}");
-                }
+                if (string.IsNullOrWhiteSpace(slotId))
+                    throw new System.InvalidOperationException("[VVardenfell][Save] load slot requested without a slot id.");
+
+                if (!WorldSaveStorage.TryLoadSlot(slotId, out var payload, out string loadError))
+                    throw new System.InvalidOperationException($"[VVardenfell][Save] load slot requested, but payload was unavailable. {loadError}");
+
+                init.PlayerPosition = payload.PlayerPosition;
+                init.PlayerRotation = payload.PlayerRotation;
+                init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
+                init.PlayerActorStats = payload.ActorStats;
+                init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+                PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
+                PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
+                WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
+                if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
+                    throw new System.InvalidOperationException($"[VVardenfell][Save] load slot location restore failed. {locationError}");
+
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em, RuntimeContentDatabase.Active);
             }
             else if (hasContinueRequest)
             {
-                if (init.HasSerializedSavePayload)
-                {
-                    if (!WorldSaveReplayUtility.TryRestoreContinueSave(World, em, ref init, out string loadError))
-                        Debug.LogWarning($"[VVardenfell][Save] continue load failed; starting from default bootstrap state instead. {loadError}");
-                }
-                else
-                {
-                    Debug.LogWarning("[VVardenfell][Save] continue requested, but no serialized save payload was available.");
-                }
+                if (!init.HasSerializedSavePayload)
+                    throw new System.InvalidOperationException("[VVardenfell][Save] continue requested, but no serialized save payload was available.");
+
+                if (!WorldSaveReplayUtility.TryRestoreContinueSave(World, em, ref init, out string loadError))
+                    throw new System.InvalidOperationException($"[VVardenfell][Save] continue load failed. {loadError}");
             }
 
             var standingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.StandingHeight);
@@ -229,6 +225,7 @@ namespace VVardenfell.Runtime.Player
 
             ConfigureStreamingAfterInitialization(em, init);
 
+            MorrowindRuntimeLifecycleUtility.EnsureActive(em);
             ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
         }
 

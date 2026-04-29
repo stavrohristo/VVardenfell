@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
 {
-    [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioMenuSystemGroup))]
     public partial class AudioContextResolveSystem : SystemBase
     {
         static readonly ProfilerMarker k_ContextResolve = new("VV.Audio.ResolveContext");

@@ -260,7 +260,7 @@ namespace VVardenfell.Runtime.Pathfinding
         }
     }
 
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial struct PathGridTraversalSettingsBootstrapSystem : ISystem
     {
         public void OnCreate(ref SystemState state)

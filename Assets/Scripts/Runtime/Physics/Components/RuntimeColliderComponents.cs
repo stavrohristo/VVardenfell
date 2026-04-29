@@ -22,6 +22,11 @@ namespace VVardenfell.Runtime.Components
         public byte Temporary;
     }
 
+    public struct RuntimeGeneratedColliderBlobCleanup : ICleanupComponentData
+    {
+        public BlobAssetReference<Collider> Value;
+    }
+
     public static class RuntimeColliderAttachmentUtility
     {
         public static bool AttachSource(

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core.Cache;
@@ -12,6 +13,7 @@ using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 using Stopwatch = System.Diagnostics.Stopwatch;
 using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Bootstrap
 {
@@ -512,6 +514,10 @@ namespace VVardenfell.Runtime.Bootstrap
                 StopCoroutine(_loadCoroutine);
                 _loadCoroutine = null;
             }
+
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world != null && world.IsCreated)
+                MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(world.EntityManager);
 
             DestroyPresentation();
             try

@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
 {
-    [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindAudioPresentationSystemGroup))]
     public partial class AudioPresentationSystem : SystemBase
     {
         static readonly ProfilerMarker k_SyncAudio = new("VV.Audio.SyncPlayback");
@@ -54,18 +54,33 @@ namespace VVardenfell.Runtime.Audio
             var interactionRequests = SystemAPI.GetSingletonBuffer<InteractionAudioRequest>();
             ref var playbackStatus = ref SystemAPI.GetSingletonRW<MusicPlaybackStatus>().ValueRW;
             ref var interactionState = ref SystemAPI.GetSingletonRW<InteractionAudioRequestState>().ValueRW;
+            bool runtimeActive = SystemAPI.HasSingleton<MorrowindRuntimeActive>();
+            bool runtimePaused = SystemAPI.HasSingleton<MorrowindRuntimePaused>();
 
             using (k_SyncMusic.Auto())
                 _service.SyncMusic(contentDb, music, tuning);
-            using (k_SyncInteriorAmbient.Auto())
-                _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
-            _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
-            using (k_SyncRegionContext.Auto())
-                _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
-            using (k_QueueRegionEvent.Auto())
-                _service.QueueRegionAmbientEvent(contentDb, regionAmbient, tuning);
-            using (k_QueueInteractionEvent.Auto())
-                _service.QueueInteractionAudioEvents(contentDb, interactionRequests, ref interactionState, tuning);
+            if (runtimeActive && !runtimePaused)
+            {
+                using (k_SyncInteriorAmbient.Auto())
+                    _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
+                _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
+                using (k_SyncRegionContext.Auto())
+                    _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
+                using (k_QueueRegionEvent.Auto())
+                    _service.QueueRegionAmbientEvent(contentDb, regionAmbient, tuning);
+                using (k_QueueInteractionEvent.Auto())
+                    _service.QueueInteractionAudioEvents(contentDb, interactionRequests, ref interactionState, tuning);
+            }
+            else
+            {
+                using (k_SyncInteriorAmbient.Auto())
+                    _service.SyncInteriorAmbient(contentDb, default, tuning);
+                _service.SyncWeatherAmbient(contentDb, default, tuning);
+                using (k_SyncRegionContext.Auto())
+                    _service.SyncRegionAmbientContext(false);
+                interactionRequests.Clear();
+                interactionState = default;
+            }
 
             _service.Tick(SystemAPI.Time.DeltaTime);
             playbackStatus.IsPlaying = (byte)(_service.IsMusicPlaying ? 1 : 0);

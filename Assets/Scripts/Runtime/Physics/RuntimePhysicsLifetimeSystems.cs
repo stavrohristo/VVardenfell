@@ -1,3 +1,4 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Physics;
 using UnityEngine;
@@ -76,6 +77,53 @@ namespace VVardenfell.Runtime.Physics
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
+    [UpdateBefore(typeof(RuntimeColliderBlobDisposalSystem))]
+    public partial class RuntimeGeneratedColliderBlobCleanupSystem : SystemBase
+    {
+        EntityQuery _query;
+
+        protected override void OnCreate()
+        {
+            _query = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>() },
+                None = new[] { ComponentType.ReadOnly<RuntimeColliderSource>() },
+            });
+            RequireForUpdate(_query);
+        }
+
+        protected override void OnUpdate()
+        {
+            using var entities = _query.ToEntityArray(Allocator.Temp);
+            using var cleanups = _query.ToComponentDataArray<RuntimeGeneratedColliderBlobCleanup>(Allocator.Temp);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (cleanups[i].Value.IsCreated)
+                    RuntimeColliderBlobLifetime.DeferGeneratedBlobDisposal(EntityManager, cleanups[i].Value);
+                ecb.RemoveComponent<RuntimeGeneratedColliderBlobCleanup>(entities[i]);
+            }
+
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
+        }
+
+        protected override void OnDestroy()
+        {
+            using var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>());
+            if (query.IsEmptyIgnoreFilter)
+                return;
+
+            using var cleanups = query.ToComponentDataArray<RuntimeGeneratedColliderBlobCleanup>(Allocator.Temp);
+            for (int i = 0; i < cleanups.Length; i++)
+            {
+                if (cleanups[i].Value.IsCreated)
+                    cleanups[i].Value.Dispose();
+            }
+        }
+    }
+
+    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
     public partial class RuntimeColliderBlobDisposalSystem : SystemBase
     {
         EntityQuery _query;
@@ -103,6 +151,22 @@ namespace VVardenfell.Runtime.Physics
                     entry.Value.Dispose();
                 buffer.RemoveAt(i);
             }
+        }
+
+        protected override void OnDestroy()
+        {
+            if (_query.IsEmptyIgnoreFilter)
+                return;
+
+            var buffer = _query.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                var entry = buffer[i];
+                if (entry.Value.IsCreated)
+                    entry.Value.Dispose();
+            }
+
+            buffer.Clear();
         }
     }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Unity.Entities;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -11,6 +12,7 @@ using UnityEngine.Video;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 using VVardenfell.Runtime.UI.Shell;
@@ -137,6 +139,7 @@ namespace VVardenfell.Runtime.Bootstrap
         float _phaseStartTime;
         bool _bootstrapComplete;
         bool _dismissed;
+        bool _runtimeLoading;
         bool _activeMovieOwnsPhase;
         bool _phaseWaitingForMovieCompletion;
         bool _loadingPhaseSignaled;
@@ -245,8 +248,14 @@ namespace VVardenfell.Runtime.Bootstrap
                     break;
                 case PresentationPhase.Loading:
                     UpdateLoadingVisuals();
-                    if (_bootstrapComplete && Time.unscaledTime - _phaseStartTime >= MinimumLoadingSeconds)
+                    if (_runtimeLoading)
+                    {
+                        UpdateRuntimeLoading();
+                    }
+                    else if (_bootstrapComplete && Time.unscaledTime - _phaseStartTime >= MinimumLoadingSeconds)
+                    {
                         SwitchPhase(PresentationPhase.IntroLogo);
+                    }
                     break;
                 case PresentationPhase.IntroLogo:
                     if (ShouldAdvanceIntroPhase(LogoIntroSeconds))
@@ -280,6 +289,39 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             _theme?.Dispose();
+        }
+
+        void BeginRuntimeLoading(string label)
+        {
+            CloseMenuDialog();
+            CloseMenuSaveLoadBrowser();
+            CloseMenuOptions();
+            _runtimeLoading = true;
+            _progress?.Reset();
+            _progress?.BeginStage("Loading", label, 1);
+            _progress?.Report(label, 0, 1);
+            SwitchPhase(PresentationPhase.Loading);
+        }
+
+        void UpdateRuntimeLoading()
+        {
+            if (!IsRuntimeActive())
+                return;
+
+            _progress?.Complete("Loading", "Loading complete");
+            if (Time.unscaledTime - _phaseStartTime >= MinimumLoadingSeconds)
+                Dismiss();
+        }
+
+        static bool IsRuntimeActive()
+        {
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+                return false;
+
+            var entityManager = world.EntityManager;
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
+            return !query.IsEmptyIgnoreFilter;
         }
 
         void BuildCanvas()

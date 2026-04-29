@@ -239,7 +239,7 @@ namespace VVardenfell.Runtime.Player
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
     [UpdateAfter(typeof(PlayerInputReceivingSystem))]
     public partial class LocalPlayerViewModeSystem : SystemBase
     {

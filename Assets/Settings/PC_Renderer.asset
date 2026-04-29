@@ -11,7 +11,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: de640fe3d0db1804a85f9fc8f5cadab6, type: 3}
   m_Name: PC_Renderer
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   debugShaders:
     debugReplacementPS: {fileID: 4800000, guid: cf852408f2e174538bcd9b7fda1c5ae7, type: 3}
     hdrDebugViewPS: {fileID: 4800000, guid: 573620ae32aec764abd4d728906d2587, type: 3}
@@ -26,9 +26,8 @@ MonoBehaviour:
     probeVolumeBlendStatesCS: {fileID: 7200000, guid: b9a23f869c4fd45f19c5ada54dd82176, type: 3}
   m_RendererFeatures:
   - {fileID: 6534511581813211391}
-  - {fileID: 8715144715598568205}
   - {fileID: 425964976593195146}
-  m_RendererFeatureMap: ff00a78ea93faf5a0d1b60abf169f2788a5098ace354e905
+  m_RendererFeatureMap: ff00a78ea93faf5a8a5098ace354e905
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
@@ -104,23 +103,3 @@ MonoBehaviour:
       surfaceData: 2
     screenSpaceSettings:
       normalBlend: 0
---- !u!114 &8715144715598568205
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0ac59af6da894d90a92f48836b6cf436, type: 3}
-  m_Name: ActorProceduralRendererFeature
-  m_EditorClassIdentifier: 
-  m_Active: 1
-  _renderPassEvent: 300
-  _enableMainLightActorShadows: 1
-  _enableAdditionalPointLightActorShadows: 1
-  _maxAdditionalPointShadowLights: 4
-  _actorRenderingLayerMask: 1
-  _actorShadowCasterPadding: 8
-  _maxActorShadowCasters: 128

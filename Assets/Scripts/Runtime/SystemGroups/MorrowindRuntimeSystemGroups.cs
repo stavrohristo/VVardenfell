@@ -13,101 +13,147 @@ namespace VVardenfell.Runtime.Systems
     {
     }
 
+    public abstract partial class MorrowindRuntimeGatedSystemGroup : ComponentSystemGroup
+    {
+        protected override void OnCreate()
+        {
+            base.OnCreate();
+            RequireForUpdate<MorrowindRuntimeActive>();
+        }
+    }
+
+    public abstract partial class MorrowindRuntimePauseGatedSystemGroup : MorrowindRuntimeGatedSystemGroup
+    {
+        EntityQuery _pauseQuery;
+
+        protected override void OnCreate()
+        {
+            base.OnCreate();
+            _pauseQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+        }
+
+        protected override void OnUpdate()
+        {
+            if (!_pauseQuery.IsEmptyIgnoreFilter)
+                return;
+
+            base.OnUpdate();
+        }
+    }
+
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(FixedStepSimulationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    public partial class MorrowindAudioMenuSystemGroup : ComponentSystemGroup
+    {
+    }
+
     [UpdateInGroup(typeof(SimulationSystemGroup), OrderFirst = true)]
     [UpdateBefore(typeof(FixedStepSimulationSystemGroup))]
-    public partial class MorrowindInputSystemGroup : ComponentSystemGroup
+    public partial class MorrowindInputSystemGroup : MorrowindRuntimeGatedSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(MorrowindInputSystemGroup), OrderLast = true)]
+    [UpdateAfter(typeof(VVardenfell.Runtime.Shell.RuntimeShellPauseSyncSystem))]
+    public partial class MorrowindGameplayInputSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateBefore(typeof(PhysicsSystemGroup))]
-    public partial class MorrowindOwnedPhysicsSystemGroup : ComponentSystemGroup
+    public partial class MorrowindOwnedPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderFirst = true)]
-    public partial class MorrowindPhysicsPreBuildSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPhysicsPreBuildSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup))]
     [UpdateAfter(typeof(MorrowindPhysicsPreBuildSystemGroup))]
-    public partial class MorrowindPhysicsQuerySystemGroup : ComponentSystemGroup
+    public partial class MorrowindPhysicsQuerySystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderLast = true)]
     [UpdateAfter(typeof(MorrowindPhysicsQuerySystemGroup))]
-    public partial class MorrowindPhysicsPostQueryMutationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPhysicsPostQueryMutationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateBefore(typeof(PhysicsSystemGroup))]
-    public partial class MorrowindFixedPrePhysicsSystemGroup : ComponentSystemGroup
+    public partial class MorrowindFixedPrePhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateAfter(typeof(PhysicsSystemGroup))]
-    public partial class MorrowindFixedPostPhysicsSystemGroup : ComponentSystemGroup
+    public partial class MorrowindFixedPostPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(BeforePhysicsSystemGroup))]
-    public partial class MorrowindPrePhysicsSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPrePhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(AfterPhysicsSystemGroup))]
-    public partial class MorrowindPostPhysicsSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPostPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(FixedStepSimulationSystemGroup))]
     [UpdateBefore(typeof(TransformSystemGroup))]
-    public partial class MorrowindPreTransformSimulationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPreTransformSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(TransformSystemGroup))]
-    public partial class MorrowindPostTransformSimulationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindPostTransformSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
-    public partial class MorrowindInteractionSystemGroup : ComponentSystemGroup
+    public partial class MorrowindInteractionSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindInteractionSystemGroup))]
-    public partial class MorrowindWorldMutationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindWorldMutationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindWorldMutationSystemGroup))]
-    public partial class MorrowindEnvironmentSystemGroup : ComponentSystemGroup
+    public partial class MorrowindEnvironmentSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindEnvironmentSystemGroup))]
-    public partial class MorrowindAudioSimulationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindAudioSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class MorrowindInteractionPresentationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindInteractionPresentationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
     [UpdateInGroup(typeof(PresentationSystemGroup))]
-    public partial class MorrowindPresentationSystemGroup : ComponentSystemGroup
+    public partial class MorrowindAudioPresentationSystemGroup : ComponentSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(PresentationSystemGroup))]
+    public partial class MorrowindPresentationSystemGroup : MorrowindRuntimeGatedSystemGroup
     {
     }
 }

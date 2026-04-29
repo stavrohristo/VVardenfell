@@ -43,6 +43,44 @@ namespace VVardenfell.Runtime.Animation
         public byte RigidMirrorX;
     }
 
+    public enum ActorAnimationRuntimeMode : byte
+    {
+        Cpu = 0,
+        Gpu = 1,
+    }
+
+    public struct ActorAnimationRuntimeSettings : IComponentData
+    {
+        public ActorAnimationRuntimeMode Mode;
+        public byte ValidationEnabled;
+        public int ValidationActorIndex;
+    }
+
+    public struct ActorGpuAnimationState : IComponentData
+    {
+        public int SkeletonIndex;
+        public int LayerOffset;
+        public int LayerCount;
+        public int SkinMeshOffset;
+        public int SkinMeshCount;
+        public int BoneMatrixOffset;
+        public int BoneMatrixCount;
+        public int DeformedVertexOffset;
+        public int DeformedVertexCount;
+        public byte Valid;
+    }
+
+    public struct ActorGpuAnimationRequest : IBufferElementData
+    {
+        public int ClipIndex;
+        public ulong ClipHash;
+        public float Time;
+        public float Weight;
+        public int Priority;
+        public ActorAnimationBlendMask Mask;
+        public byte HasPreviousLayer;
+    }
+
     public struct ActorHiddenVisualPartMask : IComponentData
     {
         public uint Mask;

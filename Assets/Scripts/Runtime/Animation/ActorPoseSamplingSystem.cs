@@ -34,6 +34,12 @@ namespace VVardenfell.Runtime.Animation
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
+            if (SystemAPI.HasSingleton<ActorAnimationRuntimeSettings>()
+                && SystemAPI.GetSingleton<ActorAnimationRuntimeSettings>().Mode == ActorAnimationRuntimeMode.Gpu)
+            {
+                return;
+            }
+
             var catalog = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
 
             state.Dependency = new SampleActorPoseWithOverlaysJob { Catalog = catalog }

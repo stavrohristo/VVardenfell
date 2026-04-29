@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
     public partial class PlayerInputReceivingSystem : SystemBase
     {
         EntityQuery _playerQuery;

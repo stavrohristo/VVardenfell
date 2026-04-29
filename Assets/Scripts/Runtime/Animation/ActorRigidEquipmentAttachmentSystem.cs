@@ -19,6 +19,12 @@ namespace VVardenfell.Runtime.Animation
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
+            if (SystemAPI.HasSingleton<ActorAnimationRuntimeSettings>()
+                && SystemAPI.GetSingleton<ActorAnimationRuntimeSettings>().Mode == ActorAnimationRuntimeMode.Gpu)
+            {
+                return;
+            }
+
             var job = new UpdateRigidEquipmentAttachmentJob
             {
                 ActorWorlds = SystemAPI.GetComponentLookup<LocalToWorld>(true),

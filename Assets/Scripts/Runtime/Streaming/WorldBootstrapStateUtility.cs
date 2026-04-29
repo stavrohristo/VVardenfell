@@ -142,6 +142,17 @@ namespace VVardenfell.Runtime.Streaming
             em.AddBuffer<ActorActiveMagicEffect>(initEntity);
         }
 
+        public static void PublishSandboxStartRequest(EntityManager em)
+        {
+            using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<NewGameInitializationSingleton>());
+            if (!requestQuery.IsEmptyIgnoreFilter)
+                return;
+
+            var requestEntity = em.CreateEntity();
+            em.SetName(requestEntity, "VVardenfell.SandboxInitialization");
+            em.AddComponentData(requestEntity, new NewGameInitializationSingleton());
+        }
+
         static void ResolveInitialPlayerData(
             RuntimeContentDatabase contentDb,
             out ActorRuntimeStatSeed stats,

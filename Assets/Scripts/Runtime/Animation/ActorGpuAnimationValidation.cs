@@ -1,4 +1,3 @@
-#if VVARDENFELL_ACTOR_GPU_ANIMATION
 using System;
 using System.Collections.Generic;
 using Unity.Entities;
@@ -44,7 +43,6 @@ namespace VVardenfell.Runtime.Animation
         public static void Validate(
             Entity entity,
             ref ActorAnimationCatalogBlob catalog,
-            in ActorAnimationController controller,
             in ActorSkeleton skeleton,
             in ActorGpuAnimationState gpuState,
             DynamicBuffer<ActorGpuAnimationRequest> requests,
@@ -54,32 +52,15 @@ namespace VVardenfell.Runtime.Animation
             if (!Enabled || boneMatrixBuffer == null || gpuState.BoneMatrixCount <= 0)
                 return;
 
-            if (!TryGetRequest(requests, ref catalog, out var request))
+            ulong reportHash = BuildRequestReportHash(requests, ref catalog);
+            if (reportHash == 0UL)
             {
-                LogOnce(entity, controller.CurrentClipHash, skeleton.SkeletonIndex, true,
+                LogOnce(entity, 0UL, skeleton.SkeletonIndex, true,
                     "[ActorGpuAnimationValidation] No valid GPU animation request to validate.");
                 return;
             }
 
-            var referenceSampled = BuildReferenceSampledPose(ref catalog, skeleton, request);
-            var referenceLocal = BuildReferenceLocalPose(ref catalog, skeleton, request, referenceSampled);
-            var gpuSampled = BuildGpuIntentSampledPose(ref catalog, skeleton, request);
-            var gpuLocal = BuildGpuIntentLocalPose(ref catalog, skeleton, request, gpuSampled);
-
-            if (TryFindSampledMismatch(referenceSampled, gpuSampled, out int sampledBoneIndex, out float sampledError))
-            {
-                LogOnce(entity, request.ClipHash, skeleton.SkeletonIndex, false,
-                    $"[ActorGpuAnimationValidation] Sampled pose mismatch at bone {sampledBoneIndex}, error {sampledError:F6}, clipHash {request.ClipHash}, skeletonIndex {skeleton.SkeletonIndex}.");
-                return;
-            }
-
-            if (TryFindLocalToRootMismatch(referenceLocal, gpuLocal, skeleton, ref catalog, out int localBoneIndex, out float localError))
-            {
-                LogOnce(entity, request.ClipHash, skeleton.SkeletonIndex, false,
-                    $"[ActorGpuAnimationValidation] LocalToRoot mismatch at bone {localBoneIndex}, error {localError:F6}, clipHash {request.ClipHash}, skeletonIndex {skeleton.SkeletonIndex}.");
-                return;
-            }
-
+            var referenceLocal = BuildReferenceLocalPose(ref catalog, skeleton, requests);
             var expectedSkinMatrices = new List<float4x4>(gpuState.BoneMatrixCount);
             var matrixSkinMeshIndices = new List<int>(gpuState.BoneMatrixCount);
             var matrixBoneIndices = new List<int>(gpuState.BoneMatrixCount);
@@ -87,8 +68,8 @@ namespace VVardenfell.Runtime.Animation
 
             if (expectedSkinMatrices.Count != gpuState.BoneMatrixCount)
             {
-                LogOnce(entity, request.ClipHash, skeleton.SkeletonIndex, false,
-                    $"[ActorGpuAnimationValidation] Expected {expectedSkinMatrices.Count} skin matrices but GPU state reserved {gpuState.BoneMatrixCount}, clipHash {request.ClipHash}, skeletonIndex {skeleton.SkeletonIndex}.");
+                LogOnce(entity, reportHash, skeleton.SkeletonIndex, false,
+                    $"[ActorGpuAnimationValidation] Expected {expectedSkinMatrices.Count} skin matrices but GPU state reserved {gpuState.BoneMatrixCount}, requestHash {reportHash}, skeletonIndex {skeleton.SkeletonIndex}.");
                 return;
             }
 
@@ -97,29 +78,33 @@ namespace VVardenfell.Runtime.Animation
 
             if (TryFindSkinMatrixMismatch(gpuMatrices, expectedSkinMatrices, matrixSkinMeshIndices, matrixBoneIndices, out int matrixIndex, out float matrixError))
             {
-                LogOnce(entity, request.ClipHash, skeleton.SkeletonIndex, false,
-                    $"[ActorGpuAnimationValidation] GPU skin matrix mismatch at matrix {matrixIndex} (skinMeshIndex {matrixSkinMeshIndices[matrixIndex]}, boneIndex {matrixBoneIndices[matrixIndex]}), error {matrixError:F6}, clipHash {request.ClipHash}, skeletonIndex {skeleton.SkeletonIndex}. This likely points to GPU packing/layout or remaining compute parity issues.");
+                LogOnce(entity, reportHash, skeleton.SkeletonIndex, false,
+                    $"[ActorGpuAnimationValidation] GPU skin matrix mismatch at matrix {matrixIndex} (skinMeshIndex {matrixSkinMeshIndices[matrixIndex]}, boneIndex {matrixBoneIndices[matrixIndex]}), error {matrixError:F6}, requestHash {reportHash}, skeletonIndex {skeleton.SkeletonIndex}. This likely points to GPU packing/layout or remaining compute parity issues.");
                 return;
             }
 
-            LogOnce(entity, request.ClipHash, skeleton.SkeletonIndex, true,
-                $"[ActorGpuAnimationValidation] GPU animation validated for entity {entity.Index}:{entity.Version}, clipHash {request.ClipHash}, skeletonIndex {skeleton.SkeletonIndex}, matrices {gpuState.BoneMatrixCount}.");
+            LogOnce(entity, reportHash, skeleton.SkeletonIndex, true,
+                $"[ActorGpuAnimationValidation] GPU animation validated for entity {entity.Index}:{entity.Version}, requestHash {reportHash}, skeletonIndex {skeleton.SkeletonIndex}, matrices {gpuState.BoneMatrixCount}.");
         }
 
-        static bool TryGetRequest(DynamicBuffer<ActorGpuAnimationRequest> requests, ref ActorAnimationCatalogBlob catalog, out ActorGpuAnimationRequest request)
+        static ulong BuildRequestReportHash(DynamicBuffer<ActorGpuAnimationRequest> requests, ref ActorAnimationCatalogBlob catalog)
         {
+            ulong hash = 14695981039346656037UL;
+            bool hasRequest = false;
             for (int i = 0; i < requests.Length; i++)
             {
                 var candidate = requests[i];
                 if (candidate.Weight <= 0f || (uint)candidate.ClipIndex >= (uint)catalog.Clips.Length)
                     continue;
 
-                request = candidate;
-                return true;
+                hasRequest = true;
+                hash ^= candidate.ClipHash;
+                hash *= 1099511628211UL;
+                hash ^= (uint)candidate.Mask;
+                hash *= 1099511628211UL;
             }
 
-            request = default;
-            return false;
+            return hasRequest ? hash : 0UL;
         }
 
         static SampledPose[] BuildReferenceSampledPose(ref ActorAnimationCatalogBlob catalog, in ActorSkeleton skeleton, in ActorGpuAnimationRequest request)
@@ -188,6 +173,42 @@ namespace VVardenfell.Runtime.Animation
             return BuildReferenceLocalPose(ref catalog, skeleton, request, sampled);
         }
 
+        static LocalPose[] BuildReferenceLocalPose(ref ActorAnimationCatalogBlob catalog, in ActorSkeleton skeleton, DynamicBuffer<ActorGpuAnimationRequest> requests)
+        {
+            int boneCount = ResolveBoneCount(ref catalog, skeleton);
+            var local = CreateBindLocalPose(ref catalog, skeleton, boneCount);
+            if (boneCount == 0)
+                return local;
+
+            var bind = CreateBindLocalPose(ref catalog, skeleton, boneCount);
+            for (int i = 0; i < requests.Length; i++)
+            {
+                var request = requests[i];
+                if (request.Weight <= 0f || (uint)request.ClipIndex >= (uint)catalog.Clips.Length)
+                    continue;
+
+                var sampled = BuildReferenceSampledPose(ref catalog, skeleton, request);
+                float weight = math.clamp(request.Weight, 0f, 1f);
+                for (int boneIndex = 0; boneIndex < boneCount; boneIndex++)
+                {
+                    if (sampled[boneIndex].HasTrack == 0)
+                        continue;
+
+                    var basePose = request.HasPreviousLayer != 0 ? local[boneIndex] : bind[boneIndex];
+                    local[boneIndex] = new LocalPose
+                    {
+                        Position = math.lerp(basePose.Position, sampled[boneIndex].Position, weight),
+                        Rotation = SafeNormalize(math.slerp(basePose.Rotation, SafeNormalize(sampled[boneIndex].Rotation), weight)),
+                        Scale = math.lerp(basePose.Scale, sampled[boneIndex].Scale, weight),
+                        HasTrack = 1,
+                    };
+                }
+            }
+
+            StripAccumulationBoneTranslation(ref catalog, skeleton, local);
+            return local;
+        }
+
         static void BuildExpectedSkinMatrices(
             ref ActorAnimationCatalogBlob catalog,
             in ActorSkeleton skeleton,
@@ -205,11 +226,36 @@ namespace VVardenfell.Runtime.Animation
                     continue;
 
                 var skinMesh = catalog.SkinMeshes[skinMeshIndex];
+                int reservedCount = math.max(1, skinMesh.SkinBoneCount);
                 if (skinMesh.IsRigid != 0)
+                {
+                    float4x4 attach = (uint)skinMeshes[i].AttachBoneIndex < (uint)localToRoot.Length
+                        ? localToRoot[skinMeshes[i].AttachBoneIndex]
+                        : float4x4.identity;
+                    float4x4 mirror = skinMeshes[i].RigidMirrorX != 0
+                        ? new float4x4(
+                            new float4(-1f, 0f, 0f, 0f),
+                            new float4(0f, 1f, 0f, 0f),
+                            new float4(0f, 0f, 1f, 0f),
+                            new float4(0f, 0f, 0f, 1f))
+                        : float4x4.identity;
+                    float4x4 geometryToSkeleton = ActorAnimationSpaceConversion.SourceAffineToUnity(skinMesh.GeometryToSkeleton);
+                    skinMatrices.Add(math.mul(attach, math.mul(mirror, geometryToSkeleton)));
+                    skinMeshIndices.Add(skinMeshIndex);
+                    boneIndices.Add(skinMeshes[i].AttachBoneIndex);
+
+                    for (int pad = 1; pad < reservedCount; pad++)
+                    {
+                        skinMatrices.Add(float4x4.identity);
+                        skinMeshIndices.Add(skinMeshIndex);
+                        boneIndices.Add(-1);
+                    }
                     continue;
+                }
 
                 int firstSkinBone = skinMesh.FirstSkinBoneIndex;
                 int end = math.min(catalog.SkinBones.Length, firstSkinBone + skinMesh.SkinBoneCount);
+                int written = 0;
                 for (int skinBoneIndex = firstSkinBone; skinBoneIndex < end; skinBoneIndex++)
                 {
                     var skinBone = catalog.SkinBones[skinBoneIndex];
@@ -220,6 +266,22 @@ namespace VVardenfell.Runtime.Animation
                     skinMatrices.Add(math.mul(math.mul(unityGeometryToSkeleton, pose), unityBindPose));
                     skinMeshIndices.Add(skinMeshIndex);
                     boneIndices.Add(boneIndex);
+                    written++;
+                }
+
+                if (written == 0)
+                {
+                    skinMatrices.Add(float4x4.identity);
+                    skinMeshIndices.Add(skinMeshIndex);
+                    boneIndices.Add(-1);
+                    written = 1;
+                }
+
+                for (int pad = written; pad < reservedCount; pad++)
+                {
+                    skinMatrices.Add(float4x4.identity);
+                    skinMeshIndices.Add(skinMeshIndex);
+                    boneIndices.Add(-1);
                 }
             }
         }
@@ -338,6 +400,19 @@ namespace VVardenfell.Runtime.Animation
                 Scale = bindBone.BindScale <= 0f ? 1f : bindBone.BindScale,
                 HasTrack = 0,
             };
+        }
+
+        static void StripAccumulationBoneTranslation(ref ActorAnimationCatalogBlob catalog, in ActorSkeleton skeleton, LocalPose[] local)
+        {
+            if ((uint)skeleton.AccumulationBoneIndex >= (uint)local.Length)
+                return;
+
+            int firstBoneIndex = ResolveFirstBoneIndex(ref catalog, skeleton);
+            var bindBone = catalog.Bones[firstBoneIndex + skeleton.AccumulationBoneIndex];
+            var pose = local[skeleton.AccumulationBoneIndex];
+            pose.Position.x = ActorAnimationSpaceConversion.SourceTranslationToUnity(bindBone.BindPosition).x;
+            pose.Position.z = ActorAnimationSpaceConversion.SourceTranslationToUnity(bindBone.BindPosition).z;
+            local[skeleton.AccumulationBoneIndex] = pose;
         }
 
         static SampledPose[] CreateBindSampledPose(ref ActorAnimationCatalogBlob catalog, in ActorSkeleton skeleton, int boneCount)
@@ -661,4 +736,3 @@ namespace VVardenfell.Runtime.Animation
         }
     }
 }
-#endif
