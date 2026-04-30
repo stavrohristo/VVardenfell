@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Importer.Bake
@@ -37,6 +38,7 @@ namespace VVardenfell.Importer.Bake
             programs = programList.ToArray();
             instructions = instructionList.ToArray();
             locals = localList.ToArray();
+            LogCompileCoverage(programs);
         }
 
         static void CompileScript(
@@ -53,7 +55,7 @@ namespace VVardenfell.Importer.Bake
             int maxStack = 0;
             int stackDepth = 0;
             var localLookup = new Dictionary<string, (int Index, byte Kind)>(StringComparer.OrdinalIgnoreCase);
-            bool emittedAudio = false;
+            var ifStack = new Stack<int>();
 
             if (string.IsNullOrWhiteSpace(script.Id))
             {
@@ -62,7 +64,6 @@ namespace VVardenfell.Importer.Bake
             }
 
             string[] lines = (script.Text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-            bool containsAudioCommand = ContainsAudioCommand(lines);
             for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
             {
                 string line = StripComment(lines[lineIndex]).Trim();
@@ -75,11 +76,43 @@ namespace VVardenfell.Importer.Bake
                 if (TryCompileLocalDeclaration(line, firstLocal, locals, localLookup))
                     continue;
 
+                if (TryCompileIf(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        instructions,
+                        ifStack,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string ifFailure))
+                {
+                    continue;
+                }
+
+                if (ifFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, ifFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileEndif(line, instructions, ifStack, out string endifFailure))
+                    continue;
+
+                if (endifFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, endifFailure, lineIndex);
+                    return;
+                }
+
+                if (StartsWithCommand(line, "else") || StartsWithCommand(line, "elseif"))
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, "else/elseif are not supported in MWScript V2.", lineIndex);
+                    return;
+                }
+
                 if (StartsWithCommand(line, "return"))
                 {
-                    if (containsAudioCommand && !emittedAudio)
-                        continue;
-
                     instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.Return });
                     continue;
                 }
@@ -98,7 +131,6 @@ namespace VVardenfell.Importer.Bake
 
                 if (TryCompileAudio(line, sounds, instructions, out string audioFailure))
                 {
-                    emittedAudio = true;
                     continue;
                 }
 
@@ -108,10 +140,13 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (containsAudioCommand && IsIgnorableAudioScriptGuard(line))
-                    continue;
-
                 DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, $"Unsupported command '{line}'.", lineIndex);
+                return;
+            }
+
+            if (ifStack.Count > 0)
+            {
+                DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, "Unclosed if block.", lines.Length - 1);
                 return;
             }
 
@@ -176,6 +211,124 @@ namespace VVardenfell.Importer.Bake
             };
         }
 
+        static void LogCompileCoverage(MorrowindScriptProgramDef[] programs)
+        {
+            if (programs == null || programs.Length == 0)
+                return;
+
+            int compiled = 0;
+            int disabledUnsupported = 0;
+            int failedInvalid = 0;
+            var unsupportedRoots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < programs.Length; i++)
+            {
+                var status = (MorrowindScriptProgramStatus)programs[i].Status;
+                if (status == MorrowindScriptProgramStatus.Compiled)
+                {
+                    compiled++;
+                    continue;
+                }
+
+                if (status == MorrowindScriptProgramStatus.DisabledUnsupported)
+                {
+                    disabledUnsupported++;
+                    string root = ExtractUnsupportedRoot(programs[i].DisabledReason);
+                    if (!string.IsNullOrWhiteSpace(root))
+                        unsupportedRoots[root] = unsupportedRoots.TryGetValue(root, out int count) ? count + 1 : 1;
+                    continue;
+                }
+
+                if (status == MorrowindScriptProgramStatus.FailedInvalid)
+                    failedInvalid++;
+            }
+
+            var summary = new StringBuilder(16 * 1024);
+            summary.Append("[VVardenfell][MWScript][Coverage] scripts=").Append(programs.Length)
+                .Append(" compiled=").Append(compiled)
+                .Append(" disabledUnsupported=").Append(disabledUnsupported)
+                .Append(" failedInvalid=").Append(failedInvalid);
+
+            if (unsupportedRoots.Count > 0)
+            {
+                summary.AppendLine();
+                summary.AppendLine("Unsupported roots:");
+                foreach (var pair in SortUnsupportedRoots(unsupportedRoots))
+                    summary.Append("  ").Append(pair.Key).Append(": ").Append(pair.Value).AppendLine();
+            }
+
+            if (disabledUnsupported > 0 || failedInvalid > 0)
+            {
+                summary.AppendLine("Unsupported scripts:");
+                for (int i = 0; i < programs.Length; i++)
+                {
+                    var status = (MorrowindScriptProgramStatus)programs[i].Status;
+                    if (status != MorrowindScriptProgramStatus.DisabledUnsupported && status != MorrowindScriptProgramStatus.FailedInvalid)
+                        continue;
+
+                    summary.Append("  ")
+                        .Append(string.IsNullOrWhiteSpace(programs[i].Id) ? $"script:{i}" : programs[i].Id)
+                        .Append(": ")
+                        .Append(programs[i].DisabledReason)
+                        .AppendLine();
+                }
+            }
+
+            UnityEngine.Debug.Log(summary.ToString());
+        }
+
+        static List<KeyValuePair<string, int>> SortUnsupportedRoots(Dictionary<string, int> roots)
+        {
+            var sorted = new List<KeyValuePair<string, int>>(roots);
+            sorted.Sort((a, b) =>
+            {
+                int countComparison = b.Value.CompareTo(a.Value);
+                return countComparison != 0 ? countComparison : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase);
+            });
+            return sorted;
+        }
+
+        static string ExtractUnsupportedRoot(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+                return string.Empty;
+
+            if (TryExtractQuotedReasonPayload(reason, "Unsupported command '", out string command)
+                || TryExtractQuotedReasonPayload(reason, "Unsupported expression '", out command)
+                || TryExtractQuotedReasonPayload(reason, "Set command only supports numeric literals in V1: '", out command)
+                || TryExtractQuotedReasonPayload(reason, "Unsupported comparison operator '", out command))
+            {
+                string[] tokens = SplitCommandTokens(command);
+                return tokens.Length == 0 ? command.Trim() : NormalizeToken(tokens[0]);
+            }
+
+            if (reason.IndexOf("else/elseif", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "else/elseif";
+            if (reason.IndexOf("Explicit reference", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "explicit-reference";
+
+            int colon = reason.IndexOf(':');
+            string root = colon >= 0 ? reason.Substring(colon + 1).Trim() : reason.Trim();
+            int space = root.IndexOf(' ');
+            return space > 0 ? root.Substring(0, space) : root;
+        }
+
+        static bool TryExtractQuotedReasonPayload(string reason, string marker, out string payload)
+        {
+            payload = null;
+            int start = reason.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+                return false;
+
+            start += marker.Length;
+            int end = reason.IndexOf('\'', start);
+            if (end < 0)
+                return false;
+
+            payload = reason.Substring(start, end - start);
+            return true;
+        }
+
         static bool TryCompileLocalDeclaration(
             string line,
             int firstLocal,
@@ -205,6 +358,222 @@ namespace VVardenfell.Importer.Bake
                 ValueKind = valueKind,
             });
             return true;
+        }
+
+        static bool TryCompileIf(
+            string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            Stack<int> ifStack,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (!StartsWithCommand(line, "if"))
+                return false;
+
+            string condition = TrimEnclosingParentheses(line.Substring(2).Trim());
+            if (string.IsNullOrWhiteSpace(condition))
+            {
+                failure = "if statement is missing a condition.";
+                return false;
+            }
+
+            if (!TryCompileCondition(condition, localLookup, globalLookup, soundLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                return false;
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.JumpIfZero,
+                Int0 = 0,
+            });
+            stackDepth = Math.Max(0, stackDepth - 1);
+            ifStack.Push(instructions.Count - 1);
+            return true;
+        }
+
+        static bool TryCompileEndif(
+            string line,
+            List<MorrowindScriptInstructionDef> instructions,
+            Stack<int> ifStack,
+            out string failure)
+        {
+            failure = null;
+            if (!StartsWithCommand(line, "endif"))
+                return false;
+
+            if (ifStack.Count == 0)
+            {
+                failure = "endif without matching if.";
+                return false;
+            }
+
+            int jumpIndex = ifStack.Pop();
+            var jump = instructions[jumpIndex];
+            jump.Int0 = instructions.Count - jumpIndex - 1;
+            instructions[jumpIndex] = jump;
+            return true;
+        }
+
+        static bool TryCompileCondition(
+            string condition,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (condition.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                failure = $"Explicit reference conditions are not supported in MWScript V2: '{condition}'.";
+                return false;
+            }
+
+            string[] tokens = SplitConditionTokens(condition);
+            if (tokens.Length == 0)
+            {
+                failure = "if statement is missing a condition.";
+                return false;
+            }
+
+            int comparisonIndex = FindComparisonToken(tokens);
+            if (comparisonIndex < 0)
+                return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, instructions, ref stackDepth, ref maxStack, out failure);
+
+            if (FindComparisonToken(tokens, comparisonIndex + 1) >= 0)
+            {
+                failure = $"Condition has more than one comparison operator: '{condition}'.";
+                return false;
+            }
+
+            if (!TryCompileExpression(tokens, 0, comparisonIndex, localLookup, globalLookup, soundLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                return false;
+
+            if (!TryCompileExpression(tokens, comparisonIndex + 1, tokens.Length - comparisonIndex - 1, localLookup, globalLookup, soundLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                return false;
+
+            if (!TryMapComparisonOpcode(tokens[comparisonIndex], out MorrowindScriptOpcode opcode))
+            {
+                failure = $"Unsupported comparison operator '{tokens[comparisonIndex]}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)opcode });
+            stackDepth = Math.Max(0, stackDepth - 1);
+            return true;
+        }
+
+        static bool TryCompileExpression(
+            string[] tokens,
+            int start,
+            int count,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (count <= 0)
+            {
+                failure = "Expression is missing.";
+                return false;
+            }
+
+            if (count == 2
+                && tokens[start].Equals("getdistance", StringComparison.OrdinalIgnoreCase)
+                && tokens[start + 1].Equals("player", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetDistancePlayer });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (count == 2
+                && tokens[start].Equals("getsoundplaying", StringComparison.OrdinalIgnoreCase))
+            {
+                string soundId = NormalizeToken(tokens[start + 1]).Trim('"');
+                if (!soundLookup.TryGetValue(ContentId.NormalizeId(soundId), out SoundDefHandle sound) || !sound.IsValid)
+                {
+                    failure = $"GetSoundPlaying references unknown sound '{soundId}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetSoundPlaying,
+                    Int0 = sound.Value,
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (count != 1)
+            {
+                failure = $"Unsupported expression '{string.Join(" ", tokens, start, count)}'.";
+                return false;
+            }
+
+            string token = tokens[start];
+            if (TryParseLiteral(token, out int intValue, out float floatValue, out bool isFloat))
+            {
+                EmitPushLiteral(instructions, intValue, floatValue, isFloat, ref stackDepth, ref maxStack);
+                return true;
+            }
+
+            if (localLookup.TryGetValue(token, out var local))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetLocal,
+                    Int0 = local.Index,
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            string normalizedToken = ContentId.NormalizeId(token);
+            if (globalLookup.TryGetValue(normalizedToken, out var global))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetGlobal,
+                    Int0 = global.Index,
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (token.Equals("cellchanged", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetCellChanged });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (token.Equals("menumode", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetMenuMode });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            failure = $"Unsupported expression '{token}'.";
+            return false;
         }
 
         static bool TryCompileSet(
@@ -322,6 +691,35 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryMapComparisonOpcode(string op, out MorrowindScriptOpcode opcode)
+        {
+            switch (op)
+            {
+                case "==":
+                case "=":
+                    opcode = MorrowindScriptOpcode.CompareEqual;
+                    return true;
+                case "!=":
+                    opcode = MorrowindScriptOpcode.CompareNotEqual;
+                    return true;
+                case "<":
+                    opcode = MorrowindScriptOpcode.CompareLess;
+                    return true;
+                case "<=":
+                    opcode = MorrowindScriptOpcode.CompareLessOrEqual;
+                    return true;
+                case ">":
+                    opcode = MorrowindScriptOpcode.CompareGreater;
+                    return true;
+                case ">=":
+                    opcode = MorrowindScriptOpcode.CompareGreaterOrEqual;
+                    return true;
+                default:
+                    opcode = default;
+                    return false;
+            }
+        }
+
         static void EmitPushLiteral(
             List<MorrowindScriptInstructionDef> instructions,
             int intValue,
@@ -379,31 +777,6 @@ namespace VVardenfell.Importer.Bake
             }
 
             return true;
-        }
-
-        static bool IsIgnorableAudioScriptGuard(string line)
-        {
-            return StartsWithCommand(line, "if")
-                || StartsWithCommand(line, "endif")
-                || StartsWithCommand(line, "else")
-                || StartsWithCommand(line, "elseif");
-        }
-
-        static bool ContainsAudioCommand(string[] lines)
-        {
-            if (lines == null)
-                return false;
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string line = StripComment(lines[i]).Trim();
-                line = StripExplicitReferencePrefix(line);
-                string[] tokens = SplitCommandTokens(line);
-                if (tokens.Length > 0 && TryMapAudioKind(tokens[0], out _))
-                    return true;
-            }
-
-            return false;
         }
 
         static Dictionary<string, SoundDefHandle> BuildSoundLookup(SoundDef[] sounds)
@@ -475,6 +848,118 @@ namespace VVardenfell.Importer.Bake
         static string[] SplitWhitespace(string line)
         {
             return line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        static string[] SplitConditionTokens(string condition)
+        {
+            var tokens = new List<string>();
+            int i = 0;
+            while (i < condition.Length)
+            {
+                char c = condition[i];
+                if (char.IsWhiteSpace(c) || c == ',' || c == '(' || c == ')')
+                {
+                    i++;
+                    continue;
+                }
+
+                if (c == '<' || c == '>' || c == '=' || c == '!')
+                {
+                    if (i + 1 < condition.Length && condition[i + 1] == '=')
+                    {
+                        tokens.Add(condition.Substring(i, 2));
+                        i += 2;
+                    }
+                    else
+                    {
+                        tokens.Add(condition.Substring(i, 1));
+                        i++;
+                    }
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    int quotedTokenStart = ++i;
+                    while (i < condition.Length && condition[i] != '"')
+                        i++;
+
+                    string quotedToken = condition.Substring(quotedTokenStart, i - quotedTokenStart);
+                    if (!string.IsNullOrWhiteSpace(quotedToken))
+                        tokens.Add(quotedToken);
+                    if (i < condition.Length)
+                        i++;
+                    continue;
+                }
+
+                int tokenStart = i;
+                while (i < condition.Length
+                       && !char.IsWhiteSpace(condition[i])
+                       && condition[i] != ','
+                       && condition[i] != '('
+                       && condition[i] != ')'
+                       && condition[i] != '<'
+                       && condition[i] != '>'
+                       && condition[i] != '='
+                       && condition[i] != '!')
+                {
+                    i++;
+                }
+
+                string token = NormalizeToken(condition.Substring(tokenStart, i - tokenStart));
+                if (!string.IsNullOrWhiteSpace(token))
+                    tokens.Add(token);
+            }
+
+            return tokens.ToArray();
+        }
+
+        static int FindComparisonToken(string[] tokens, int start = 0)
+        {
+            for (int i = Math.Max(0, start); i < tokens.Length; i++)
+            {
+                string token = tokens[i];
+                if (token == "="
+                    || token == "=="
+                    || token == "!="
+                    || token == "<"
+                    || token == "<="
+                    || token == ">"
+                    || token == ">=")
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        static string TrimEnclosingParentheses(string text)
+        {
+            text = (text ?? string.Empty).Trim();
+            while (text.Length >= 2 && text[0] == '(' && text[text.Length - 1] == ')' && HasSingleOuterParenthesisPair(text))
+                text = text.Substring(1, text.Length - 2).Trim();
+            return text;
+        }
+
+        static bool HasSingleOuterParenthesisPair(string text)
+        {
+            int depth = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '(')
+                    depth++;
+                else if (text[i] == ')')
+                {
+                    depth--;
+                    if (depth == 0 && i < text.Length - 1)
+                        return false;
+                    if (depth < 0)
+                        return false;
+                }
+            }
+
+            return depth == 0;
         }
 
         static string[] SplitCommandTokens(string line)

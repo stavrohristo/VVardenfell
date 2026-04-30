@@ -6,6 +6,7 @@ using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -16,6 +17,10 @@ namespace VVardenfell.Runtime.MorrowindScript
     {
         EntityQuery _scriptQuery;
         BufferLookup<MorrowindScriptGlobalValue> _globalsLookup;
+        byte _hasLastCellContext;
+        byte _lastInteriorActive;
+        int2 _lastExteriorCell;
+        ulong _lastInteriorCellHash;
 
         public void OnCreate(ref SystemState state)
         {
@@ -43,6 +48,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             int scriptCount = _scriptQuery.CalculateEntityCount();
             runtimeState.NextAudioRequestSequence += (uint)math.max(1, scriptCount + 1);
             _globalsLookup.Update(ref state);
+            var activeSources = state.EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
+            activeSources.Clear();
+
+            var playingBuffer = state.EntityManager.GetBuffer<MorrowindScriptPlayingSound>(runtimeEntity);
+            var playingSoundKeys = new NativeArray<ulong>(playingBuffer.Length, Allocator.TempJob);
+            for (int i = 0; i < playingBuffer.Length; i++)
+                playingSoundKeys[i] = playingBuffer[i].LoopKey;
 
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
             byte interiorActive = 0;
@@ -51,6 +63,53 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 interiorActive = 1;
                 activeInteriorCellHash = interiorTransition.ActiveInteriorCellHash;
+            }
+
+            byte hasPlayerPosition = 0;
+            float3 playerPosition = default;
+            if (SystemAPI.TryGetSingletonEntity<PlayerTag>(out var playerEntity)
+                && SystemAPI.HasComponent<LocalTransform>(playerEntity))
+            {
+                playerPosition = SystemAPI.GetComponent<LocalTransform>(playerEntity).Position;
+                hasPlayerPosition = 1;
+            }
+
+            byte hasMenuMode = 0;
+            byte menuMode = 0;
+            if (SystemAPI.TryGetSingleton<RuntimeShellState>(out var shell))
+            {
+                hasMenuMode = 1;
+                menuMode = shell.InventoryOpen != 0
+                    || shell.ContainerOpen != 0
+                    || shell.PauseMenuOpen != 0
+                    || shell.ModalOpen != 0
+                    || shell.SaveLoadBrowserOpen != 0
+                    || shell.OptionsOpen != 0
+                        ? (byte)1
+                        : (byte)0;
+            }
+
+            byte hasCellChanged = 0;
+            byte cellChanged = 0;
+            int2 currentExteriorCell = default;
+            if (interiorActive != 0)
+            {
+                hasCellChanged = 1;
+                cellChanged = _hasLastCellContext == 0
+                    || _lastInteriorActive == 0
+                    || _lastInteriorCellHash != activeInteriorCellHash
+                        ? (byte)1
+                        : (byte)0;
+            }
+            else if (hasPlayerPosition != 0)
+            {
+                currentExteriorCell = WorldBootstrap.WorldPositionToCell(playerPosition);
+                hasCellChanged = 1;
+                cellChanged = _hasLastCellContext == 0
+                    || _lastInteriorActive != 0
+                    || math.any(currentExteriorCell != _lastExteriorCell)
+                        ? (byte)1
+                        : (byte)0;
             }
 
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
@@ -67,12 +126,28 @@ namespace VVardenfell.Runtime.MorrowindScript
                 RuntimeEntity = runtimeEntity,
                 Ecb = ecb.AsParallelWriter(),
                 AudioSequenceBase = sequenceBase,
+                PlayerPosition = playerPosition,
+                HasPlayerPosition = hasPlayerPosition,
+                PlayingScriptSoundKeys = playingSoundKeys,
+                HasCellChanged = hasCellChanged,
+                CellChanged = cellChanged,
+                HasMenuMode = hasMenuMode,
+                MenuMode = menuMode,
             };
 
             state.Dependency = job.Schedule(_scriptQuery, state.Dependency);
             state.Dependency.Complete();
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
+            playingSoundKeys.Dispose();
+
+            if (hasCellChanged != 0)
+            {
+                _hasLastCellContext = 1;
+                _lastInteriorActive = interiorActive;
+                _lastExteriorCell = currentExteriorCell;
+                _lastInteriorCellHash = activeInteriorCellHash;
+            }
         }
 
         [BurstCompile]
@@ -89,6 +164,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             public Entity RuntimeEntity;
             public EntityCommandBuffer.ParallelWriter Ecb;
             public uint AudioSequenceBase;
+            public float3 PlayerPosition;
+            [ReadOnly] public NativeArray<ulong> PlayingScriptSoundKeys;
+            public byte HasPlayerPosition;
+            public byte HasCellChanged;
+            public byte CellChanged;
+            public byte HasMenuMode;
+            public byte MenuMode;
 
             void Execute(
                 [EntityIndexInQuery] int sortKey,
@@ -116,6 +198,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled || program.InstructionCount <= 0)
                     return;
 
+                Ecb.AppendToBuffer(sortKey, RuntimeEntity, new MorrowindScriptActiveSource
+                {
+                    LoopSourceKey = MorrowindScriptOpcodeTable.BuildScriptLoopSourceKey(placedRef.Value, entity),
+                });
+
                 if (locals.Length < program.LocalCount)
                     locals.ResizeUninitialized(program.LocalCount);
 
@@ -138,8 +225,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Globals = globalBuffer.Length == 0 ? null : (MorrowindScriptGlobalValue*)globalBuffer.GetUnsafePtr(),
                     GlobalCount = globalBuffer.Length,
                     Position = transform.Position,
+                    PlayerPosition = PlayerPosition,
+                    PlayingScriptSoundKeys = PlayingScriptSoundKeys.Length == 0 ? null : (ulong*)PlayingScriptSoundKeys.GetUnsafeReadOnlyPtr(),
+                    PlayingScriptSoundKeyCount = PlayingScriptSoundKeys.Length,
                     PlacedRefId = placedRef.Value,
                     AudioSequenceBase = AudioSequenceBase,
+                    HasPlayerPosition = HasPlayerPosition,
+                    HasCellChanged = HasCellChanged,
+                    CellChanged = CellChanged,
+                    HasMenuMode = HasMenuMode,
+                    MenuMode = MenuMode,
                 };
 
                 int pc = 0;

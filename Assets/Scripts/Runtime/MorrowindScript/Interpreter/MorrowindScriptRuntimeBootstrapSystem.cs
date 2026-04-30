@@ -43,6 +43,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                     ValueKind = valueKind,
                 };
             }
+
+            EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
         }
 
         static byte ResolveGlobalKind(in GenericRecordDef global)

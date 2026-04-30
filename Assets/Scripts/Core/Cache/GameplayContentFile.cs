@@ -257,6 +257,10 @@ namespace VVardenfell.Core.Cache
         Jump = 20,
         JumpIfZero = 21,
         EmitAudioRequest = 22,
+        GetDistancePlayer = 23,
+        GetCellChanged = 24,
+        GetSoundPlaying = 25,
+        GetMenuMode = 26,
     }
 
     public enum MorrowindScriptAudioKind : byte

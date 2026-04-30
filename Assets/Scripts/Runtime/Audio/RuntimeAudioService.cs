@@ -10,6 +10,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.MorrowindScript;
 
 namespace VVardenfell.Runtime.Audio
 {
@@ -544,12 +545,15 @@ namespace VVardenfell.Runtime.Audio
             _pendingEventRequests.Add(pendingRequest);
         }
 
-        public void EndScriptAudioFrame()
+        public void EndScriptAudioFrame(
+            DynamicBuffer<MorrowindScriptActiveSource> activeSources,
+            DynamicBuffer<MorrowindScriptPlayingSound> playingSounds,
+            bool keepActiveLoops)
         {
             _scriptLoopRemovalKeys.Clear();
             foreach (var pair in _scriptLoopChannels)
             {
-                if (_scriptLoopTouched.Contains(pair.Key))
+                if (keepActiveLoops && ContainsActiveScriptLoopSource(activeSources, ExtractScriptLoopSourceKey(pair.Key)))
                     continue;
 
                 _scriptLoopRemovalKeys.Add(pair.Key);
@@ -559,6 +563,15 @@ namespace VVardenfell.Runtime.Audio
                 RemoveScriptLoopChannel(_scriptLoopRemovalKeys[i]);
 
             _scriptLoopRemovalKeys.Clear();
+            if (playingSounds.IsCreated)
+            {
+                playingSounds.Clear();
+                foreach (var pair in _scriptLoopChannels)
+                {
+                    if (IsScriptLoopAudibleOrLoading(pair.Value))
+                        playingSounds.Add(new MorrowindScriptPlayingSound { LoopKey = pair.Key });
+                }
+            }
         }
 
         public void Tick(float deltaTime)
@@ -1077,10 +1090,35 @@ namespace VVardenfell.Runtime.Audio
 
         static ulong BuildScriptLoopKey(in MorrowindScriptAudioRequest request)
         {
-            ulong source = request.SourcePlacedRefId != 0u
-                ? request.SourcePlacedRefId
-                : (uint)request.SourceEntity.Index;
-            return (source << 32) ^ (uint)request.Sound.Value;
+            return MorrowindScriptOpcodeTable.BuildScriptLoopKey(request.SourcePlacedRefId, request.SourceEntity, request.Sound.Value);
+        }
+
+        static ulong ExtractScriptLoopSourceKey(ulong loopKey)
+            => loopKey >> 32;
+
+        static bool ContainsActiveScriptLoopSource(DynamicBuffer<MorrowindScriptActiveSource> activeSources, ulong sourceKey)
+        {
+            if (!activeSources.IsCreated)
+                return false;
+
+            for (int i = 0; i < activeSources.Length; i++)
+            {
+                if (activeSources[i].LoopSourceKey == sourceKey)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool IsScriptLoopAudibleOrLoading(ChannelState channel)
+        {
+            if (channel == null)
+                return false;
+
+            if (channel.Operation != null || !string.IsNullOrWhiteSpace(channel.PendingPath))
+                return true;
+
+            return channel.Source != null && (channel.Source.isPlaying || channel.Source.volume > 0.0001f);
         }
 
         void CancelLoad(ChannelState channel, bool disposeClip = false)

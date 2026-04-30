@@ -78,7 +78,7 @@ namespace VVardenfell.Runtime.Audio
                 using (k_QueueInteractionEvent.Auto())
                     _service.QueueInteractionAudioEvents(contentDb, interactionRequests, ref interactionState, tuning);
                 using (k_QueueScriptEvent.Auto())
-                    ConsumeScriptAudioRequests(contentDb, tuning, consume: true);
+                    ConsumeScriptAudioRequests(contentDb, tuning, consume: true, keepActiveLoops: true);
             }
             else
             {
@@ -90,7 +90,7 @@ namespace VVardenfell.Runtime.Audio
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(false);
                 using (k_QueueScriptEvent.Auto())
-                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false);
+                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false, keepActiveLoops: false);
                 interactionRequests.Clear();
                 interactionState = default;
             }
@@ -100,7 +100,7 @@ namespace VVardenfell.Runtime.Audio
             playbackStatus.HasPendingTrack = (byte)(_service.HasPendingMusicTrack ? 1 : 0);
         }
 
-        void ConsumeScriptAudioRequests(RuntimeContentDatabase contentDb, in AudioTuningState tuning, bool consume)
+        void ConsumeScriptAudioRequests(RuntimeContentDatabase contentDb, in AudioTuningState tuning, bool consume, bool keepActiveLoops)
         {
             _service.BeginScriptAudioFrame();
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
@@ -113,7 +113,14 @@ namespace VVardenfell.Runtime.Audio
 
             ecb.Playback(EntityManager);
             ecb.Dispose();
-            _service.EndScriptAudioFrame();
+            if (SystemAPI.TryGetSingletonEntity<MorrowindScriptRuntimeState>(out var runtimeEntity)
+                && EntityManager.HasBuffer<MorrowindScriptActiveSource>(runtimeEntity)
+                && EntityManager.HasBuffer<MorrowindScriptPlayingSound>(runtimeEntity))
+            {
+                var activeSources = EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
+                var playingSounds = EntityManager.GetBuffer<MorrowindScriptPlayingSound>(runtimeEntity);
+                _service.EndScriptAudioFrame(activeSources, playingSounds, keepActiveLoops);
+            }
         }
     }
 }

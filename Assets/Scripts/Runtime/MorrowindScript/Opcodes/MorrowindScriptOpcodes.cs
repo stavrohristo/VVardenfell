@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -23,8 +24,16 @@ namespace VVardenfell.Runtime.MorrowindScript
         public MorrowindScriptGlobalValue* Globals;
         public int GlobalCount;
         public float3 Position;
+        public float3 PlayerPosition;
+        public ulong* PlayingScriptSoundKeys;
+        public int PlayingScriptSoundKeyCount;
         public uint PlacedRefId;
         public uint AudioSequenceBase;
+        public byte HasPlayerPosition;
+        public byte HasCellChanged;
+        public byte CellChanged;
+        public byte HasMenuMode;
+        public byte MenuMode;
         public byte Halted;
         public byte Faulted;
     }
@@ -32,7 +41,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        const int OpcodeCount = 23;
+        const int OpcodeCount = 27;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {
@@ -64,6 +73,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             handlers[(int)MorrowindScriptOpcode.Jump] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Jump);
             handlers[(int)MorrowindScriptOpcode.JumpIfZero] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(JumpIfZero);
             handlers[(int)MorrowindScriptOpcode.EmitAudioRequest] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(EmitAudioRequest);
+            handlers[(int)MorrowindScriptOpcode.GetDistancePlayer] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetDistancePlayer);
+            handlers[(int)MorrowindScriptOpcode.GetCellChanged] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetCellChanged);
+            handlers[(int)MorrowindScriptOpcode.GetSoundPlaying] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetSoundPlaying);
+            handlers[(int)MorrowindScriptOpcode.GetMenuMode] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetMenuMode);
             return handlers;
         }
 
@@ -245,6 +258,93 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Spatial = (byte)(kind == MorrowindScriptAudioKind.PlaySound ? 0 : 1),
                 Looping = (byte)(kind == MorrowindScriptAudioKind.PlayLoopSound3D || kind == MorrowindScriptAudioKind.PlayLoopSound3DVP ? 1 : 0),
             });
+        }
+
+        [BurstCompile]
+        static void GetDistancePlayer(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (context->HasPlayerPosition == 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            float distanceMw = math.distance(context->Position, context->PlayerPosition) / WorldScale.MwUnitsToMeters;
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = (int)distanceMw,
+                FloatValue = distanceMw,
+                ValueKind = (byte)MorrowindScriptValueKind.Float,
+            });
+        }
+
+        [BurstCompile]
+        static void GetCellChanged(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (context->HasCellChanged == 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = context->CellChanged,
+                FloatValue = context->CellChanged,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        [BurstCompile]
+        static void GetSoundPlaying(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            ulong key = BuildScriptLoopKey(context->PlacedRefId, context->Entity, instruction->Int0);
+            bool isPlaying = false;
+            for (int i = 0; i < context->PlayingScriptSoundKeyCount; i++)
+            {
+                if (context->PlayingScriptSoundKeys[i] != key)
+                    continue;
+
+                isPlaying = true;
+                break;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = isPlaying ? 1 : 0,
+                FloatValue = isPlaying ? 1f : 0f,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        [BurstCompile]
+        static void GetMenuMode(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (context->HasMenuMode == 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = context->MenuMode,
+                FloatValue = context->MenuMode,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        public static ulong BuildScriptLoopSourceKey(uint placedRefId, Entity sourceEntity)
+        {
+            return placedRefId != 0u
+                ? placedRefId
+                : (uint)sourceEntity.Index;
+        }
+
+        public static ulong BuildScriptLoopKey(uint placedRefId, Entity sourceEntity, int soundHandleValue)
+        {
+            ulong source = BuildScriptLoopSourceKey(placedRefId, sourceEntity);
+            return (source << 32) ^ (uint)soundHandleValue;
         }
 
         static bool TryGetLocal(MorrowindScriptExecutionContext* context, int index, out MorrowindScriptLocalValue local)

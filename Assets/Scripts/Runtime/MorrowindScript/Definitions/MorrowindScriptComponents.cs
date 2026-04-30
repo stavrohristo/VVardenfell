@@ -48,6 +48,16 @@ namespace VVardenfell.Runtime.Components
         public byte ValueKind;
     }
 
+    public struct MorrowindScriptActiveSource : IBufferElementData
+    {
+        public ulong LoopSourceKey;
+    }
+
+    public struct MorrowindScriptPlayingSound : IBufferElementData
+    {
+        public ulong LoopKey;
+    }
+
     public struct MorrowindScriptAudioRequest : IComponentData
     {
         public uint Sequence;
