@@ -59,8 +59,8 @@ Shader "VVardenfell/MwRef"
             #pragma multi_compile _ _LIGHT_LAYERS
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile_fog
-            #pragma shader_feature_local _ALPHATEST_ON
-            #pragma shader_feature_local _SURFACE_TYPE_TRANSPARENT
+            #pragma multi_compile_local _ _ALPHATEST_ON
+            #pragma multi_compile_local _ _SURFACE_TYPE_TRANSPARENT
             #pragma multi_compile_instancing
             #pragma instancing_options renderinglayer
             #pragma multi_compile _ DOTS_INSTANCING_ON
@@ -182,7 +182,7 @@ Shader "VVardenfell/MwRef"
             #pragma vertex depthVert
             #pragma fragment depthFrag
             #pragma target 4.5
-            #pragma shader_feature_local_fragment _ALPHATEST_ON
+            #pragma multi_compile_local_fragment _ _ALPHATEST_ON
             #pragma multi_compile_instancing
             #pragma multi_compile _ DOTS_INSTANCING_ON
 
@@ -255,7 +255,7 @@ Shader "VVardenfell/MwRef"
             #pragma vertex   shadowVert
             #pragma fragment shadowFrag
             #pragma target 4.5
-            #pragma shader_feature_local _ALPHATEST_ON
+            #pragma multi_compile_local _ _ALPHATEST_ON
             #pragma multi_compile_instancing
             #pragma multi_compile _ DOTS_INSTANCING_ON
 

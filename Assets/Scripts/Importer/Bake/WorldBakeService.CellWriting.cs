@@ -382,6 +382,35 @@ namespace VVardenfell.Importer.Bake
         }
 
 
+        private static bool IsScriptedAmbientSoundMarker(GameplayContentData gameplayContent, ContentReference contentReference)
+        {
+            if (gameplayContent == null
+                || contentReference.Kind != ContentReferenceKind.Activator
+                || contentReference.HandleValue <= 0)
+            {
+                return false;
+            }
+
+            var activators = gameplayContent.Activators ?? Array.Empty<BaseDef>();
+            int activatorIndex = contentReference.HandleValue - 1;
+            if ((uint)activatorIndex >= (uint)activators.Length)
+                return false;
+
+            string scriptId = activators[activatorIndex].ScriptId;
+            if (string.IsNullOrWhiteSpace(scriptId))
+                return false;
+
+            var scripts = gameplayContent.Scripts ?? Array.Empty<GenericRecordDef>();
+            for (int i = 0; i < scripts.Length; i++)
+            {
+                if (string.Equals(scripts[i].Id, scriptId, StringComparison.OrdinalIgnoreCase))
+                    return MorrowindAmbientScriptUtility.TryGetLoopingSoundId(scripts[i].Text, out _);
+            }
+
+            return false;
+        }
+
+
         private static byte[] BuildTerrainNormalBytes(LandRecord land)
         {
             var bytes = new byte[land.Normals.Length];

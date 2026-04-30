@@ -465,6 +465,22 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private static string GuessDefaultInstallPath()
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            string persistentRoot = Application.persistentDataPath;
+            string[] androidCandidates =
+            {
+                Path.Combine(persistentRoot, "Morrowind"),
+                persistentRoot,
+                "/storage/emulated/0/Morrowind",
+                "/storage/emulated/1/Morrowind",
+            };
+
+            foreach (var c in androidCandidates)
+                if (Directory.Exists(c))
+                    return c;
+
+            return androidCandidates[0];
+#else
             string[] candidates =
             {
                 @"C:\Program Files (x86)\Steam\steamapps\common\Morrowind",
@@ -477,6 +493,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 if (Directory.Exists(c))
                     return c;
             return "";
+#endif
         }
 
         private bool EnsurePresentation()

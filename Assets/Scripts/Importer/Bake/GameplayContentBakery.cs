@@ -107,6 +107,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint RadtTag = EsmFourCC.Make('R', 'A', 'D', 'T');
         static readonly uint RdatTag = EsmFourCC.Make('R', 'D', 'A', 'T');
         static readonly uint RnamTag = EsmFourCC.Make('R', 'N', 'A', 'M');
+        static readonly uint SctxTag = EsmFourCC.Make('S', 'C', 'T', 'X');
         static readonly uint ScvrTag = EsmFourCC.Make('S', 'C', 'V', 'R');
         static readonly uint ScriTag = EsmFourCC.Make('S', 'C', 'R', 'I');
         static readonly uint SnamTag = EsmFourCC.Make('S', 'N', 'A', 'M');
@@ -254,6 +255,7 @@ namespace VVardenfell.Importer.Bake
 
         sealed class State
         {
+            public readonly HashSet<string> InteriorCellIds = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, ActorAccumulator> Actors = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Activators = new(StringComparer.OrdinalIgnoreCase);
             public readonly Dictionary<string, BaseDef> Doors = new(StringComparer.OrdinalIgnoreCase);
@@ -316,6 +318,7 @@ namespace VVardenfell.Importer.Bake
                 progress.Label = Path.GetFileName(recordSourcePaths[i]);
                 using (var esm = new EsmReader(recordSourcePaths[i]))
                 {
+                    IndexInteriorCells(esm, state.InteriorCellIds);
                     currentDialogueId = ParseSourceIntoState(esm, state, currentDialogueId);
                 }
 
@@ -400,7 +403,7 @@ namespace VVardenfell.Importer.Bake
                         ParseBodyPartRecord(esm, state.BodyParts, state.ActorBodyParts);
                         break;
                     case var tag when tag == PgrdTag:
-                        ParsePathGridRecord(esm, state.PathGrids);
+                        ParsePathGridRecord(esm, state.PathGrids, state.InteriorCellIds);
                         break;
                     case var tag when tag == DoorTag:
                         ParseBaseDefRecord(esm, rec.Tag, state.Doors, isDoor: true);

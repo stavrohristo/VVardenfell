@@ -71,11 +71,16 @@ namespace VVardenfell.Importer.Bake
                 record.SourceMtimeTicks = sourceInfo.LastWriteTimeUtc.Ticks;
                 record.Flags |= UiMovieFlags.SourceAvailable;
 
-                EnsureToolPaths();
-
                 if (TryReuseTranscodedClip(record, out var reusedProbe))
                 {
                     ApplyClipMetadata(record, reusedProbe);
+                    return record;
+                }
+
+                if (!TryEnsureToolPaths(out string toolError))
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[VVardenfell] skipping movie slot '{slot}' ({record.ResolvedSourcePath}): {toolError}");
                     return record;
                 }
 
@@ -153,7 +158,9 @@ namespace VVardenfell.Importer.Bake
                 ClipProbeResult probe;
                 try
                 {
-                    validator.EnsureToolPaths();
+                    if (!validator.TryEnsureToolPaths(out _))
+                        continue;
+
                     probe = validator.ProbeClip(movie.CachedClipPath);
                 }
                 catch (Exception ex)
@@ -210,8 +217,21 @@ namespace VVardenfell.Importer.Bake
             if (clipInfo.Length != previous.CachedClipSize || clipInfo.LastWriteTimeUtc.Ticks != previous.CachedClipMtimeTicks)
                 return false;
 
-            probe = ProbeClip(previous.CachedClipPath);
             record.CachedClipPath = previous.CachedClipPath;
+            if (TryEnsureToolPaths(out _))
+            {
+                probe = ProbeClip(previous.CachedClipPath);
+                return true;
+            }
+
+            probe = new ClipProbeResult(
+                previous.Width,
+                previous.Height,
+                previous.DurationMs,
+                previous.HasAudio,
+                "",
+                "",
+                "");
             return true;
         }
 
@@ -371,18 +391,59 @@ namespace VVardenfell.Importer.Bake
 
         void EnsureToolPaths()
         {
-            _ffmpegPath ??= ResolveToolPath("ffmpeg", "VVARDENFELL_FFMPEG_PATH");
-            _ffprobePath ??= ResolveSiblingToolPath(_ffmpegPath, "ffprobe.exe")
-                             ?? ResolveToolPath("ffprobe", "VVARDENFELL_FFPROBE_PATH");
+            if (!TryEnsureToolPaths(out string error))
+                throw new InvalidOperationException(error);
+        }
 
-            _ffmpegPath ??= ResolveSiblingToolPath(_ffprobePath, "ffmpeg.exe")
-                            ?? ResolveToolPath("ffmpeg", "VVARDENFELL_FFMPEG_PATH");
+        bool TryEnsureToolPaths(out string error)
+        {
+            error = null;
 
-            if (string.IsNullOrWhiteSpace(_ffmpegPath))
-                throw new InvalidOperationException("Required movie transcode tool 'ffmpeg' was not found on PATH or in known install locations.");
-            if (string.IsNullOrWhiteSpace(_ffprobePath))
-                throw new InvalidOperationException("Required movie transcode tool 'ffprobe' was not found on PATH or in known install locations.");
-            _videoEncoder ??= ResolveVideoEncoder(_ffmpegPath);
+            if (!SupportsExternalTranscodeTools())
+            {
+                error = $"{UnityEngine.Application.platform} does not support local ffmpeg movie transcoding.";
+                return false;
+            }
+
+            try
+            {
+                _ffmpegPath ??= ResolveToolPath("ffmpeg", "VVARDENFELL_FFMPEG_PATH");
+                _ffprobePath ??= ResolveSiblingToolPath(_ffmpegPath, "ffprobe.exe")
+                                 ?? ResolveToolPath("ffprobe", "VVARDENFELL_FFPROBE_PATH");
+
+                _ffmpegPath ??= ResolveSiblingToolPath(_ffprobePath, "ffmpeg.exe")
+                                ?? ResolveToolPath("ffmpeg", "VVARDENFELL_FFMPEG_PATH");
+
+                if (string.IsNullOrWhiteSpace(_ffmpegPath))
+                {
+                    error = "movie transcode tool 'ffmpeg' was not found automatically or via VVARDENFELL_FFMPEG_PATH.";
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(_ffprobePath))
+                {
+                    error = "movie validation tool 'ffprobe' was not found automatically or via VVARDENFELL_FFPROBE_PATH.";
+                    return false;
+                }
+
+                _videoEncoder ??= ResolveVideoEncoder(_ffmpegPath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        static bool SupportsExternalTranscodeTools()
+        {
+            return UnityEngine.Application.platform == UnityEngine.RuntimePlatform.WindowsEditor
+                   || UnityEngine.Application.platform == UnityEngine.RuntimePlatform.WindowsPlayer
+                   || UnityEngine.Application.platform == UnityEngine.RuntimePlatform.OSXEditor
+                   || UnityEngine.Application.platform == UnityEngine.RuntimePlatform.OSXPlayer
+                   || UnityEngine.Application.platform == UnityEngine.RuntimePlatform.LinuxEditor
+                   || UnityEngine.Application.platform == UnityEngine.RuntimePlatform.LinuxPlayer;
         }
 
         static string ResolveToolPath(string toolName, string overrideEnvVar)

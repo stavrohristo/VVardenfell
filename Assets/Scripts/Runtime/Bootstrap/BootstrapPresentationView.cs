@@ -17,6 +17,7 @@ using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 using VVardenfell.Runtime.UI.Shell;
 using VVardenfell.Runtime.WorldState;
+using Object = UnityEngine.Object;
 
 namespace VVardenfell.Runtime.Bootstrap
 {
@@ -151,10 +152,6 @@ namespace VVardenfell.Runtime.Bootstrap
         RawImage _videoImage;
         AudioSource _videoAudio;
         EventSystem _eventSystem;
-
-        RectTransform _introFallbackGroup;
-        BitmapTextGraphic _introFallbackTitle;
-        BitmapTextGraphic _introFallbackSubtitle;
 
         RectTransform _loadingRoot;
         RectTransform _loadingDialogRect;
@@ -347,7 +344,6 @@ namespace VVardenfell.Runtime.Bootstrap
             _videoAudio.loop = false;
             _videoAudio.spatialBlend = 0f;
 
-            BuildIntroFallback();
             BuildLoadingView();
             BuildMenuView();
             BuildVideoPlayer();
@@ -361,7 +357,6 @@ namespace VVardenfell.Runtime.Bootstrap
             _phaseStartTime = Time.unscaledTime;
             _activeMovieOwnsPhase = false;
             _phaseWaitingForMovieCompletion = false;
-            _introFallbackGroup.gameObject.SetActive(false);
             _loadingRoot.gameObject.SetActive(false);
             _menuRoot.gameObject.SetActive(false);
             if (_menuDialogRoot != null)
@@ -378,7 +373,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     _backgroundImage.color = Color.clear;
                     RuntimeUiFactory.Stretch(_backgroundImage.rectTransform);
                     _backgroundMatte.color = Color.black;
-                    ConfigureIntroFallback("Bethesda Softworks", "A new telling begins", ScaleText(1.05f), ScaleText(0.8f), show: true);
                     BeginIntroMoviePhase("Company Logo");
                     break;
 
@@ -393,7 +387,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
                 case PresentationPhase.IntroLogo:
                     _backgroundMatte.color = Color.black;
-                    ConfigureIntroFallback("MORROWIND", "The Elder Scrolls III", ScaleText(1.7f), ScaleText(0.82f), show: true);
                     SetBackgroundImage(_theme.MenuBackground ?? _activeLoadingSplash ?? PickSplashImage(), stretchToFill: true);
                     BeginIntroMoviePhase("Morrowind Logo");
                     break;

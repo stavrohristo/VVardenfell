@@ -64,23 +64,13 @@ namespace VVardenfell.Runtime.Audio
             }
 
             var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
-            if (transition.InteriorActive == 0)
-            {
-                ambient.ResolvedSound = default;
-                ambient.InteriorCellId = default;
-                ambient.InteriorCellHash = 0UL;
-                ambient.SourcePlacedRefId = 0u;
-                ambient.SourcePosition = default;
-                ambient.MinDistance = 0f;
-                ambient.MaxDistance = 0f;
-                return;
-            }
-
             float3 playerPosition = _playerQuery.GetSingleton<LocalTransform>().Position;
-            ambient.InteriorCellId = transition.ActiveInteriorCellId;
-            ambient.InteriorCellHash = transition.ActiveInteriorCellHash;
+            bool interiorActive = transition.InteriorActive != 0;
+            ambient.InteriorCellId = interiorActive ? transition.ActiveInteriorCellId : default;
+            ambient.InteriorCellHash = interiorActive ? transition.ActiveInteriorCellHash : 0UL;
             ambient.ResolvedSound = ResolveNearestInteriorAmbient(
                 transition.ActiveInteriorCellHash,
+                interiorActive,
                 playerPosition,
                 out uint sourcePlacedRefId,
                 out float3 sourcePosition);
@@ -99,7 +89,7 @@ namespace VVardenfell.Runtime.Audio
                 ambient.MaxDistance = 0f;
             }
 
-            if (!ambient.ResolvedSound.IsValid)
+            if (interiorActive && !ambient.ResolvedSound.IsValid)
             {
                 if (!_loggedMissingInterior || !_lastMissingInteriorId.Equals(transition.ActiveInteriorCellId))
                 {
@@ -115,6 +105,7 @@ namespace VVardenfell.Runtime.Audio
 
         SoundDefHandle ResolveNearestInteriorAmbient(
             ulong interiorCellHash,
+            bool interiorActive,
             float3 playerPosition,
             out uint sourcePlacedRefId,
             out float3 sourcePosition)
@@ -126,10 +117,17 @@ namespace VVardenfell.Runtime.Audio
 
             foreach (var (ambientSource, location, placedRefId, transform) in SystemAPI
                          .Query<RefRO<InteriorAmbientSourceAuthoring>, RefRO<LogicalRefLocation>, RefRO<PlacedRefIdentity>, RefRO<LocalTransform>>()
-                         .WithAll<LogicalRefTag, LightSourceAuthoring>())
+                         .WithAll<LogicalRefTag>())
             {
-                if (location.ValueRO.IsInterior == 0 || location.ValueRO.InteriorCellHash != interiorCellHash)
+                if (interiorActive)
+                {
+                    if (location.ValueRO.IsInterior == 0 || location.ValueRO.InteriorCellHash != interiorCellHash)
+                        continue;
+                }
+                else if (location.ValueRO.IsInterior != 0)
+                {
                     continue;
+                }
 
                 float distanceSq = math.distancesq(transform.ValueRO.Position, playerPosition);
                 if (distanceSq > bestDistanceSq)

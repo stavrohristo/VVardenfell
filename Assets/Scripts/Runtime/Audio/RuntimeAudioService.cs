@@ -98,6 +98,8 @@ namespace VVardenfell.Runtime.Audio
         readonly ChannelState _interiorAmbient;
         readonly ChannelState _weatherAmbient;
         readonly ChannelState _weatherAmbientNext;
+        readonly ChannelState _weatherRain;
+        readonly ChannelState _weatherRainNext;
         readonly AudioSource[] _regionEventSources;
         readonly AudioSource[] _interactionEventSources;
 
@@ -162,6 +164,9 @@ namespace VVardenfell.Runtime.Audio
             _music.TargetVolume = Mathf.Clamp01(_music.BaselineVolume * ComputeBusMultiplier(_music.Bus));
             _interiorAmbient.TargetVolume = Mathf.Clamp01(_interiorAmbient.BaselineVolume * ComputeBusMultiplier(_interiorAmbient.Bus));
             _weatherAmbient.TargetVolume = Mathf.Clamp01(_weatherAmbient.BaselineVolume * ComputeBusMultiplier(_weatherAmbient.Bus));
+            _weatherAmbientNext.TargetVolume = Mathf.Clamp01(_weatherAmbientNext.BaselineVolume * ComputeBusMultiplier(_weatherAmbientNext.Bus));
+            _weatherRain.TargetVolume = Mathf.Clamp01(_weatherRain.BaselineVolume * ComputeBusMultiplier(_weatherRain.Bus));
+            _weatherRainNext.TargetVolume = Mathf.Clamp01(_weatherRainNext.BaselineVolume * ComputeBusMultiplier(_weatherRainNext.Bus));
         }
 
         float ComputeBusMultiplier(ChannelBus bus) => bus switch
@@ -201,10 +206,24 @@ namespace VVardenfell.Runtime.Audio
             weatherAmbientNextSource.spatialBlend = 0f;
             weatherAmbientNextSource.ignoreListenerPause = true;
 
+            var weatherRainSource = _root.AddComponent<AudioSource>();
+            weatherRainSource.playOnAwake = false;
+            weatherRainSource.loop = true;
+            weatherRainSource.spatialBlend = 0f;
+            weatherRainSource.ignoreListenerPause = true;
+
+            var weatherRainNextSource = _root.AddComponent<AudioSource>();
+            weatherRainNextSource.playOnAwake = false;
+            weatherRainNextSource.loop = true;
+            weatherRainNextSource.spatialBlend = 0f;
+            weatherRainNextSource.ignoreListenerPause = true;
+
             _music = new ChannelState("music", musicSource, ChannelBus.Music);
             _interiorAmbient = new ChannelState("interior-ambient", interiorAmbientSource, ChannelBus.Effects);
             _weatherAmbient = new ChannelState("weather-ambient", weatherAmbientSource, ChannelBus.Effects);
             _weatherAmbientNext = new ChannelState("weather-ambient-next", weatherAmbientNextSource, ChannelBus.Effects);
+            _weatherRain = new ChannelState("weather-rain", weatherRainSource, ChannelBus.Effects);
+            _weatherRainNext = new ChannelState("weather-rain-next", weatherRainNextSource, ChannelBus.Effects);
 
             _regionEventSources = new AudioSource[RegionEventSourceCount];
             for (int i = 0; i < _regionEventSources.Length; i++)
@@ -251,6 +270,8 @@ namespace VVardenfell.Runtime.Audio
             DisposeChannel(_interiorAmbient);
             DisposeChannel(_weatherAmbient);
             DisposeChannel(_weatherAmbientNext);
+            DisposeChannel(_weatherRain);
+            DisposeChannel(_weatherRainNext);
             DisposePendingEvents();
 
             foreach (var clip in _clipCache.Values)
@@ -299,6 +320,25 @@ namespace VVardenfell.Runtime.Audio
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.NextLoopVolume);
             SyncChannel(_weatherAmbientNext, nextPath, state.ResolvedNextLoopSound.IsValid && nextVolume > 0.0001f, nextVolume);
+        }
+
+        public void SyncWeatherRain(RuntimeContentDatabase contentDb, WeatherRainAudioState state, in AudioTuningState tuning)
+        {
+            string path = ResolveSoundPath(contentDb, state.ResolvedLoopSound);
+            float volume = ResolveSoundVolume(
+                contentDb,
+                state.ResolvedLoopSound,
+                tuning.ExteriorAmbientFallbackBaseVolume,
+                tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.CurrentLoopVolume <= 0f && !state.ResolvedNextLoopSound.IsValid ? 1f : state.CurrentLoopVolume);
+            SyncChannel(_weatherRain, path, state.ResolvedLoopSound.IsValid && volume > 0.0001f, volume);
+
+            string nextPath = ResolveSoundPath(contentDb, state.ResolvedNextLoopSound);
+            float nextVolume = ResolveSoundVolume(
+                contentDb,
+                state.ResolvedNextLoopSound,
+                tuning.ExteriorAmbientFallbackBaseVolume,
+                tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.NextLoopVolume);
+            SyncChannel(_weatherRainNext, nextPath, state.ResolvedNextLoopSound.IsValid && nextVolume > 0.0001f, nextVolume);
         }
 
         public void QueueRegionAmbientEvent(RuntimeContentDatabase contentDb, RegionAmbientState state, in AudioTuningState tuning)
@@ -387,6 +427,8 @@ namespace VVardenfell.Runtime.Audio
             TickChannel(_interiorAmbient, deltaTime);
             TickChannel(_weatherAmbient, deltaTime);
             TickChannel(_weatherAmbientNext, deltaTime);
+            TickChannel(_weatherRain, deltaTime);
+            TickChannel(_weatherRainNext, deltaTime);
             TickPendingEvents();
         }
 

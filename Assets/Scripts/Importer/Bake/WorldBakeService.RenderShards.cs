@@ -378,8 +378,7 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < placedCount; i++)
             {
                 var placed = staged.PlacedRefs[i];
-                if (placed.ContentReference.Kind == ContentReferenceKind.Actor
-                    && string.IsNullOrEmpty(placed.ModelPath))
+                if (string.IsNullOrEmpty(placed.ModelPath))
                 {
                     result.Add(new CellBakery.BakedRef(
                         RefSpawnMode.RenderShard,

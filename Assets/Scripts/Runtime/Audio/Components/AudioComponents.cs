@@ -80,6 +80,14 @@ namespace VVardenfell.Runtime.Components
         public uint LastThunderSequence;
     }
 
+    public struct WeatherRainAudioState : IComponentData
+    {
+        public SoundDefHandle ResolvedLoopSound;
+        public SoundDefHandle ResolvedNextLoopSound;
+        public float CurrentLoopVolume;
+        public float NextLoopVolume;
+    }
+
     public struct AmbientSchedulerState : IComponentData
     {
         public float SecondsUntilNextAttempt;

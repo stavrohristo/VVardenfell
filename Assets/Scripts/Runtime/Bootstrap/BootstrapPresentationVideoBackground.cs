@@ -145,12 +145,6 @@ namespace VVardenfell.Runtime.Bootstrap
             source.targetTexture = _videoTexture;
             ConfigureMovieAudio(_activeMovie.HasAudio);
             UpdateVideoLayout();
-            ConfigureIntroFallback(
-                _introFallbackTitle.Text,
-                _introFallbackSubtitle.Text,
-                _introFallbackTitle.FontScale,
-                _introFallbackSubtitle.FontScale,
-                show: !_activeMovieOwnsPhase);
             _movieState = MoviePlaybackState.Prepared;
             _movieStartQueued = true;
         }

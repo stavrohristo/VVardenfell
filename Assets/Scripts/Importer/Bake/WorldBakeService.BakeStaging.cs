@@ -184,7 +184,8 @@ namespace VVardenfell.Importer.Bake
                                 stagedCells[i] = StageCell(
                                     worker,
                                     workItems[i],
-                                recordIndex,
+                                    recordIndex,
+                                    gameplayContent,
                                     gameplayContentLookup,
                                     sharedBsa,
                                     bsaByName,
@@ -413,6 +414,7 @@ namespace VVardenfell.Importer.Bake
             WorkerContext worker,
             CellBakeWorkItem workItem,
             RecordIndex recordIndex,
+            GameplayContentData gameplayContent,
             Dictionary<string, ContentReference> gameplayContentLookup,
             BsaArchive sharedBsa,
             Dictionary<string, BsaEntry> bsaByName,
@@ -495,6 +497,20 @@ namespace VVardenfell.Importer.Bake
                 bool isStat = hasBaseRecord && rec.Tag == StatTag;
                 bool isInteractable = !isStat;
                 var contentReference = ResolveGameplayContentReference(gameplayContentLookup, reference.BaseId);
+                if (IsScriptedAmbientSoundMarker(gameplayContent, contentReference))
+                {
+                    staged.CollisionNoColliderCount++;
+                    staged.PlacedRefs.Add(new StagedPlacedRefData(
+                        string.Empty,
+                        reference.FormId,
+                        -1,
+                        contentReference,
+                        pos,
+                        rot,
+                        reference.Scale));
+                    continue;
+                }
+
                 var model = hasBaseRecord ? EnsureModelSource(rec, sharedBsa, bsaByName, modelCache) : null;
 
                 if (contentReference.Kind == ContentReferenceKind.Actor

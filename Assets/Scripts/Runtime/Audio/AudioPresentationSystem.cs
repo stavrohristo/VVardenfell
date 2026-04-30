@@ -26,6 +26,7 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<InteriorAmbientState>();
             RequireForUpdate<RegionAmbientState>();
             RequireForUpdate<WeatherAudioState>();
+            RequireForUpdate<WeatherRainAudioState>();
             RequireForUpdate<AudioTuningState>();
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
@@ -50,6 +51,7 @@ namespace VVardenfell.Runtime.Audio
             var interiorAmbient = SystemAPI.GetSingleton<InteriorAmbientState>();
             var regionAmbient = SystemAPI.GetSingleton<RegionAmbientState>();
             var weatherAmbient = SystemAPI.GetSingleton<WeatherAudioState>();
+            var weatherRain = SystemAPI.GetSingleton<WeatherRainAudioState>();
             var tuning = SystemAPI.GetSingleton<AudioTuningState>();
             var interactionRequests = SystemAPI.GetSingletonBuffer<InteractionAudioRequest>();
             ref var playbackStatus = ref SystemAPI.GetSingletonRW<MusicPlaybackStatus>().ValueRW;
@@ -64,6 +66,7 @@ namespace VVardenfell.Runtime.Audio
                 using (k_SyncInteriorAmbient.Auto())
                     _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
                 _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
+                _service.SyncWeatherRain(contentDb, weatherRain, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
                 using (k_QueueRegionEvent.Auto())
@@ -76,6 +79,7 @@ namespace VVardenfell.Runtime.Audio
                 using (k_SyncInteriorAmbient.Auto())
                     _service.SyncInteriorAmbient(contentDb, default, tuning);
                 _service.SyncWeatherAmbient(contentDb, default, tuning);
+                _service.SyncWeatherRain(contentDb, default, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(false);
                 interactionRequests.Clear();

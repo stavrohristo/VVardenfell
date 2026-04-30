@@ -217,7 +217,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 Entity child = childEntities[i];
                 bool hasChild = child != Entity.Null && em.Exists(child);
-                if (!hasChild && contentReference.Kind != ContentReferenceKind.Actor)
+                bool logicalOnlyRef = IsLogicalOnlyRef(entry, contentReference);
+                if (!hasChild && contentReference.Kind != ContentReferenceKind.Actor && !logicalOnlyRef)
                     continue;
 
                 uint placedRefId = entry.PlacedRefId;
@@ -249,8 +250,11 @@ namespace VVardenfell.Runtime.Streaming
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
                     placedRefsToResolve.Add(placedRefId);
                     logicalRefCount++;
-                    if (LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
+                    if (!LogicalRefAuthoringUtility.IsScriptedAmbientSoundMarker(contentDb, contentReference)
+                        && LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
+                    {
                         proxyQueueCount++;
+                    }
                 }
 
                 if (hasChild)
@@ -276,6 +280,17 @@ namespace VVardenfell.Runtime.Streaming
             ResolveQueuedLogicalRefs(em, placedRefsToResolve, isInterior, ref logicalRefs, spawnedEntities);
             progress?.Report($"Creating logical placed refs {refCount}/{refCount}", refCount, refCount);
             return logicalRefCount;
+        }
+
+        static bool IsLogicalOnlyRef(in RefEntry entry, ContentReference contentReference)
+        {
+            if ((RefSpawnMode)entry.SpawnModeRaw != RefSpawnMode.RenderShard)
+                return false;
+
+            if (entry.RenderShardIndex >= 0 || entry.ModelPrefabIndex >= 0)
+                return false;
+
+            return contentReference.Kind == ContentReferenceKind.Activator;
         }
 
         interface ILogicalRefBuildSource

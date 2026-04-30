@@ -33,36 +33,6 @@ namespace VVardenfell.Runtime.Bootstrap
             AdvanceFromCurrentIntroPhase();
         }
 
-
-        void BuildIntroFallback()
-        {
-            _introFallbackGroup = RuntimeUiFactory.CreateAnchorRect(
-                "IntroFallback",
-                _rootRect,
-                new Vector2(0.08f, 0.56f),
-                new Vector2(0.92f, 0.86f),
-                Vector2.zero,
-                Vector2.zero,
-                Vector2.zero);
-            _introFallbackTitle = RuntimeUiFactory.CreateBitmapText(
-                "IntroFallbackTitle",
-                _introFallbackGroup,
-                _theme.DefaultFont,
-                ScaleText(1.6f),
-                new Color(0.94f, 0.82f, 0.53f),
-                BitmapTextAlignment.Center);
-            RuntimeUiFactory.Stretch(_introFallbackTitle.rectTransform);
-
-            _introFallbackSubtitle = RuntimeUiFactory.CreateBitmapText(
-                "IntroFallbackSubtitle",
-                _introFallbackGroup,
-                _theme.DefaultFont,
-                ScaleText(0.82f),
-                new Color(0.92f, 0.87f, 0.74f),
-                BitmapTextAlignment.Center);
-            RuntimeUiFactory.SetInset(_introFallbackSubtitle.rectTransform, 0f, -RuntimeUiScaleSettings.ScalePixels(108f), 0f, 0f);
-        }
-
         void BuildLoadingView()
         {
             _loadingRoot = RuntimeUiFactory.CreateStretchRect("LoadingRoot", _rootRect);
@@ -187,20 +157,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     break;
             }
         }
-
-        void ConfigureIntroFallback(string title, string subtitle, float titleScale, float subtitleScale, bool show)
-        {
-            _introFallbackTitle.Font = _theme.DefaultFont;
-            _introFallbackTitle.FontScale = RuntimeUiScaleSettings.ScaleFont(titleScale);
-            _introFallbackTitle.Text = title ?? string.Empty;
-
-            _introFallbackSubtitle.Font = _theme.DefaultFont;
-            _introFallbackSubtitle.FontScale = RuntimeUiScaleSettings.ScaleFont(subtitleScale);
-            _introFallbackSubtitle.Text = subtitle ?? string.Empty;
-
-            _introFallbackGroup.gameObject.SetActive(show);
-        }
-
         string BuildLoadingLabel()
         {
             if (_progress == null)
