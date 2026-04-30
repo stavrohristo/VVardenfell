@@ -21,8 +21,6 @@ namespace VVardenfell.Runtime.Animation
         static readonly ProfilerMarker k_CountWork = new("VV.ActorGpuAnimation.CountWork");
         static readonly ProfilerMarker k_PackFrame = new("VV.ActorGpuAnimation.PackFrame");
         const int WorkloadLogFrameInterval = 120;
-        const int MaxComputeGroupsPerDimension = 65535;
-        int _lastWorkloadLogFrame = -WorkloadLogFrameInterval;
 
         EntityQuery _gpuActorQuery;
         NativeList<ActorGpuAnimationCount> _counts;
@@ -104,7 +102,6 @@ namespace VVardenfell.Runtime.Animation
             EnsureScratchListLength(ref _counts, entityCount);
             EnsureScratchListLength(ref _offsets, entityCount);
 
-            var frameBuildHandle = Dependency;
             using (k_CountWork.Auto())
             {
                 var countHandle = new CountGpuAnimationWorkJob
@@ -113,15 +110,13 @@ namespace VVardenfell.Runtime.Animation
                     Counts = _counts.AsArray(),
                 }.ScheduleParallel(_gpuActorQuery, Dependency);
 
-                frameBuildHandle = new BuildGpuAnimationOffsetsJob
+                Dependency = new BuildGpuAnimationOffsetsJob
                 {
                     Counts = _counts.AsArray(),
                     Offsets = _offsets.AsArray(),
                     Totals = _totals,
                 }.Schedule(countHandle);
-                Dependency = frameBuildHandle;
                 Dependency.Complete();
-                frameBuildHandle = Dependency;
             }
 
             ActorGpuAnimationCount totalCounts = _totals.Value;
@@ -130,8 +125,6 @@ namespace VVardenfell.Runtime.Animation
                 throw new InvalidOperationException(
                     $"Actor GPU animation found {_gpuActorQuery.CalculateEntityCount()} renderable actor(s), but no valid GPU animation frame could be prepared.");
             }
-
-            ReportWorkload(totalCounts);
 
             gpuResources.ReserveFrameCapacity(
                 totalCounts.ValidActorCount,
@@ -154,7 +147,7 @@ namespace VVardenfell.Runtime.Animation
                     Actors = upload.Actors,
                     Layers = upload.Layers,
                     SkinMeshes = upload.SkinMeshes,
-                }.ScheduleParallel(_gpuActorQuery, frameBuildHandle);
+                }.ScheduleParallel(_gpuActorQuery, Dependency);
                 Dependency = packHandle;
                 Dependency.Complete();
             }
@@ -186,28 +179,6 @@ namespace VVardenfell.Runtime.Animation
                 list.Capacity = length;
 
             list.ResizeUninitialized(length);
-        }
-
-        void ReportWorkload(ActorGpuAnimationCount totalCounts)
-        {
-            int frame = UnityEngine.Time.frameCount;
-            if (frame - _lastWorkloadLogFrame < WorkloadLogFrameInterval)
-                return;
-
-            _lastWorkloadLogFrame = frame;
-            int averageSkinMeshes = totalCounts.ValidActorCount > 0
-                ? (totalCounts.SkinMeshWorkCount + totalCounts.ValidActorCount - 1) / totalCounts.ValidActorCount
-                : 0;
-            int deformedDispatchChunks = (totalCounts.ValidActorCount + MaxComputeGroupsPerDimension - 1) / MaxComputeGroupsPerDimension;
-            Debug.Log(
-                "[VVardenfell][ActorGpuAnimation] "
-                + $"actors={totalCounts.ValidActorCount} "
-                + $"skinMeshWork={totalCounts.SkinMeshWorkCount} "
-                + $"avgSkinMeshesPerActor={averageSkinMeshes} "
-                + $"maxSkinMeshesPerActor={totalCounts.MaxSkinMeshWorkCount} "
-                + $"deformedVertices={totalCounts.DeformedVertexCount} "
-                + $"boneMatrices={totalCounts.BoneMatrixCount} "
-                + $"deformDispatchActorChunks={deformedDispatchChunks}");
         }
 
         [BurstCompile]
@@ -457,28 +428,5 @@ namespace VVardenfell.Runtime.Animation
             return count;
         }
 
-        void ValidateSelectedActor(ref ActorAnimationCatalogBlob catalog, ActorGpuAnimationResources gpuResources)
-        {
-            int selectedActorIndex = math.max(0, ActorGpuAnimationValidation.ActorIndex);
-            int actorIndex = 0;
-            foreach (var (skeleton, gpuState, requests, skinMeshes, entity) in
-                     SystemAPI.Query<RefRO<ActorSkeleton>, RefRO<ActorGpuAnimationState>, DynamicBuffer<ActorGpuAnimationRequest>, DynamicBuffer<ActorSkinMesh>>()
-                         .WithAll<ActorRenderVisible>()
-                         .WithEntityAccess())
-            {
-                if (actorIndex++ != selectedActorIndex)
-                    continue;
-
-                ActorGpuAnimationValidation.Validate(
-                    entity,
-                    ref catalog,
-                    skeleton.ValueRO,
-                    gpuState.ValueRO,
-                    requests,
-                    skinMeshes,
-                    gpuResources.BoneMatrixBuffer);
-                return;
-            }
-        }
     }
 }

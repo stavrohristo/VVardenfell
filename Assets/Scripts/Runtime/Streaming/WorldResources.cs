@@ -11,6 +11,7 @@ using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Rendering;
 using Collider = Unity.Physics.Collider;
@@ -74,9 +75,10 @@ namespace VVardenfell.Runtime.Streaming
         public static RuntimeSpawnPrefabDescriptor[] SpawnableItemPrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableLightPrefabs;
         public static PathGridNavigationWorld PathGridNavigation;
-        public static ActorProceduralRenderResources ActorProceduralRenderer;
+        public static MorrowindScriptRuntimeCatalog MorrowindScriptCatalog;
         public static ActorGpuAnimationResources ActorGpuAnimation;
         public static ActorEntitiesGraphicsRenderResources ActorEntitiesGraphicsRenderer;
+        public static StaticRefInstanceRenderResources StaticRefInstanceRenderer;
         public static float ActorShadowCasterDistance = 64f;
         public static float ActorShadowCasterPadding = 8f;
         public static int MaxActorShadowCasters = 128;
@@ -291,6 +293,8 @@ namespace VVardenfell.Runtime.Streaming
             if (RefShardGlobalMeshIndices.IsCreated) RefShardGlobalMeshIndices.Dispose();
             ActorEntitiesGraphicsRenderer?.Dispose();
             ActorEntitiesGraphicsRenderer = null;
+            StaticRefInstanceRenderer?.Dispose();
+            StaticRefInstanceRenderer = null;
             if (RefBaseArrays != null)
             {
                 for (int i = 0; i < RefBaseArrays.Length; i++)
@@ -301,8 +305,6 @@ namespace VVardenfell.Runtime.Streaming
                 RefBaseArrays = null;
             }
             if (TexBucketInfo.IsCreated) TexBucketInfo.Dispose();
-            ActorProceduralRenderer?.Dispose();
-            ActorProceduralRenderer = null;
             ActorGpuAnimation?.Dispose();
             ActorGpuAnimation = null;
             ActorShadowCasterDistance = 64f;
@@ -327,6 +329,8 @@ namespace VVardenfell.Runtime.Streaming
             RuntimeContentDatabase.Clear();
             if (PathGridNavigation.IsCreated)
                 PathGridNavigation.Dispose();
+            MorrowindScriptCatalog?.Dispose();
+            MorrowindScriptCatalog = null;
         }
 
         private static void DisposeCellResidentBlobs(CellData data)

@@ -857,6 +857,13 @@ namespace VVardenfell.Importer.Bake
             BuildSpellArrays(state.Spells, s_SpellEffects, out data.Spells, ref data.MagicEffectInstances);
             BuildEnchantmentArrays(state.Enchantments, s_EnchantmentEffects, out data.Enchantments, ref data.MagicEffectInstances);
             BuildRegionArrays(state.Regions, out data.Regions, out data.RegionSoundRefs);
+            MorrowindScriptCompiler.Build(
+                data.Scripts,
+                data.Sounds,
+                data.Globals,
+                out data.MorrowindScriptPrograms,
+                out data.MorrowindScriptInstructions,
+                out data.MorrowindScriptLocals);
 
             s_SpellEffects.Clear();
             s_EnchantmentEffects.Clear();

@@ -12,6 +12,9 @@ namespace VVardenfell.Runtime.Animation
     public partial struct ActorGpuAnimationRequestSystem : ISystem
     {
         const int MainPriority = 0;
+        const int MainSampleKey = 1;
+        const int TransitionSampleKey = 2;
+        const int OverlaySampleKeyBase = 1000;
 
         public void OnCreate(ref SystemState state)
         {
@@ -128,6 +131,7 @@ namespace VVardenfell.Runtime.Animation
                 AddSampleRequest(
                     requests,
                     animation.TransitionPlayback,
+                    TransitionSampleKey,
                     1f,
                     MainPriority,
                     mask,
@@ -135,6 +139,7 @@ namespace VVardenfell.Runtime.Animation
                 AddPlaybackRequest(
                     requests,
                     animation.Playback,
+                    MainSampleKey,
                     transitionWeight,
                     MainPriority,
                     mask,
@@ -145,6 +150,7 @@ namespace VVardenfell.Runtime.Animation
             AddPlaybackRequest(
                 requests,
                 animation.Playback,
+                MainSampleKey,
                 1f,
                 MainPriority,
                 mask,
@@ -164,6 +170,7 @@ namespace VVardenfell.Runtime.Animation
             AddPlaybackRequest(
                 requests,
                 overlay.Playback,
+                OverlaySampleKeyBase + selectedIndex,
                 math.saturate(overlay.Weight),
                 overlay.Priority,
                 mask,
@@ -199,6 +206,7 @@ namespace VVardenfell.Runtime.Animation
         static void AddPlaybackRequest(
             DynamicBuffer<ActorGpuAnimationRequest> requests,
             in ActorAnimationPlaybackState playback,
+            int sampleKey,
             float weight,
             int priority,
             ActorAnimationBlendMask mask,
@@ -207,12 +215,13 @@ namespace VVardenfell.Runtime.Animation
             if (!ActorAnimationPlaybackUtility.IsActive(playback) || weight <= 0f || mask == 0)
                 return;
 
-            AddSampleRequest(requests, playback, weight, priority, mask, hasPreviousLayer);
+            AddSampleRequest(requests, playback, sampleKey, weight, priority, mask, hasPreviousLayer);
         }
 
         static void AddSampleRequest(
             DynamicBuffer<ActorGpuAnimationRequest> requests,
             in ActorAnimationPlaybackState playback,
+            int sampleKey,
             float weight,
             int priority,
             ActorAnimationBlendMask mask,
@@ -225,7 +234,13 @@ namespace VVardenfell.Runtime.Animation
             {
                 ClipIndex = playback.ClipIndex,
                 ClipHash = playback.ClipHash,
+                SampleKey = sampleKey,
+                PreviousTime = playback.PreviousTime,
                 Time = playback.Time,
+                StartTime = playback.StartTime,
+                LoopStartTime = playback.LoopStartTime,
+                LoopStopTime = playback.LoopStopTime,
+                StopTime = playback.StopTime,
                 Weight = math.saturate(weight),
                 Priority = priority,
                 Mask = mask,

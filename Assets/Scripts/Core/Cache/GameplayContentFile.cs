@@ -71,6 +71,7 @@ namespace VVardenfell.Core.Cache
     public struct RegionDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static RegionDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct MusicTrackDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static MusicTrackDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
     public struct GenericRecordDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static GenericRecordDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
+    public struct MorrowindScriptProgramDefHandle { public int Value; public bool IsValid => Value > 0; public int Index => Value - 1; public static MorrowindScriptProgramDefHandle FromIndex(int index) => new() { Value = index + 1 }; }
 
     public enum ContentReferenceKind : byte
     {
@@ -215,6 +216,87 @@ namespace VVardenfell.Core.Cache
         public int Int2;
         public float Float0;
         public float Float1;
+    }
+
+    public enum MorrowindScriptProgramStatus : byte
+    {
+        None = 0,
+        Compiled = 1,
+        DisabledUnsupported = 2,
+        FailedInvalid = 3,
+    }
+
+    public enum MorrowindScriptValueKind : byte
+    {
+        Integer = 1,
+        Float = 2,
+    }
+
+    public enum MorrowindScriptOpcode : byte
+    {
+        Nop = 0,
+        Return = 1,
+        PushInt = 2,
+        PushFloat = 3,
+        GetLocal = 4,
+        SetLocalInt = 5,
+        SetLocalFloat = 6,
+        GetGlobal = 7,
+        SetGlobalInt = 8,
+        SetGlobalFloat = 9,
+        Add = 10,
+        Subtract = 11,
+        Multiply = 12,
+        Divide = 13,
+        CompareEqual = 14,
+        CompareNotEqual = 15,
+        CompareLess = 16,
+        CompareLessOrEqual = 17,
+        CompareGreater = 18,
+        CompareGreaterOrEqual = 19,
+        Jump = 20,
+        JumpIfZero = 21,
+        EmitAudioRequest = 22,
+    }
+
+    public enum MorrowindScriptAudioKind : byte
+    {
+        None = 0,
+        PlaySound = 1,
+        PlaySound3D = 2,
+        PlayLoopSound3D = 3,
+        PlayLoopSound3DVP = 4,
+        PlaySound3DVP = 5,
+    }
+
+    public struct MorrowindScriptProgramDef
+    {
+        public string Id;
+        public int SourceScriptIndex;
+        public byte Status;
+        public string DisabledReason;
+        public int FirstInstructionIndex;
+        public int InstructionCount;
+        public int FirstLocalIndex;
+        public int LocalCount;
+        public int MaxStack;
+    }
+
+    public struct MorrowindScriptInstructionDef
+    {
+        public byte Opcode;
+        public byte Operand0;
+        public short Operand1;
+        public int Int0;
+        public int Int1;
+        public float Float0;
+        public float Float1;
+    }
+
+    public struct MorrowindScriptLocalDef
+    {
+        public string Name;
+        public byte ValueKind;
     }
 
     public struct ClassDef
@@ -901,6 +983,9 @@ namespace VVardenfell.Core.Cache
         public GenericRecordDef[] Skills = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Scripts = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] StartScripts = Array.Empty<GenericRecordDef>();
+        public MorrowindScriptProgramDef[] MorrowindScriptPrograms = Array.Empty<MorrowindScriptProgramDef>();
+        public MorrowindScriptInstructionDef[] MorrowindScriptInstructions = Array.Empty<MorrowindScriptInstructionDef>();
+        public MorrowindScriptLocalDef[] MorrowindScriptLocals = Array.Empty<MorrowindScriptLocalDef>();
         public GenericRecordDef[] SoundGenerators = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] LandTextures = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Statics = Array.Empty<GenericRecordDef>();
@@ -972,6 +1057,9 @@ namespace VVardenfell.Core.Cache
             WriteGenericRecordArray(w, data?.Skills);
             WriteGenericRecordArray(w, data?.Scripts);
             WriteGenericRecordArray(w, data?.StartScripts);
+            WriteMorrowindScriptProgramArray(w, data?.MorrowindScriptPrograms);
+            WriteMorrowindScriptInstructionArray(w, data?.MorrowindScriptInstructions);
+            WriteMorrowindScriptLocalArray(w, data?.MorrowindScriptLocals);
             WriteGenericRecordArray(w, data?.SoundGenerators);
             WriteGenericRecordArray(w, data?.LandTextures);
             WriteGenericRecordArray(w, data?.Statics);
@@ -1048,6 +1136,9 @@ namespace VVardenfell.Core.Cache
                 Skills = ReadGenericRecordArray(r),
                 Scripts = ReadGenericRecordArray(r),
                 StartScripts = ReadGenericRecordArray(r),
+                MorrowindScriptPrograms = ReadMorrowindScriptProgramArray(r),
+                MorrowindScriptInstructions = ReadMorrowindScriptInstructionArray(r),
+                MorrowindScriptLocals = ReadMorrowindScriptLocalArray(r),
                 SoundGenerators = ReadGenericRecordArray(r),
                 LandTextures = ReadGenericRecordArray(r),
                 Statics = ReadGenericRecordArray(r),

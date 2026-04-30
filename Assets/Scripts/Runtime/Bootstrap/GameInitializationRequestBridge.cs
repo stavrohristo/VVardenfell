@@ -81,7 +81,8 @@ namespace VVardenfell.Runtime.Bootstrap
 
         public static RequestAvailability GetContinueAvailability()
         {
-            if (TryGetInitializationPayload(out var payload, out _) && payload.RuntimeMode == (byte)BootstrapRuntimeMode.Sandbox)
+            if (TryGetInitializationPayload(out var payload, out _)
+                && BootstrapRuntimeModeUtility.IsSandboxMode((BootstrapRuntimeMode)payload.RuntimeMode))
                 return new RequestAvailability(false, "Continue is unavailable in sandbox mode.");
 
             if (!WorldSaveStorage.TryGetContinueAvailability(out string saveError))
@@ -92,7 +93,8 @@ namespace VVardenfell.Runtime.Bootstrap
 
         public static RequestAvailability GetLoadGameAvailability()
         {
-            if (TryGetInitializationPayload(out var payload, out _) && payload.RuntimeMode == (byte)BootstrapRuntimeMode.Sandbox)
+            if (TryGetInitializationPayload(out var payload, out _)
+                && BootstrapRuntimeModeUtility.IsSandboxMode((BootstrapRuntimeMode)payload.RuntimeMode))
                 return new RequestAvailability(false, "Load Game is unavailable in sandbox mode.");
 
             var slots = WorldSaveStorage.EnumerateSlots();
@@ -229,10 +231,14 @@ namespace VVardenfell.Runtime.Bootstrap
 
         static bool ShouldSpawnLocalPlayerForCurrentMode()
         {
-            if (BootstrapController.CurrentRuntimeMode != BootstrapRuntimeMode.Sandbox)
+            var mode = BootstrapController.CurrentRuntimeMode;
+            if (!BootstrapRuntimeModeUtility.IsSandboxMode(mode))
                 return true;
 
-            return SandboxWorldFixtures.Active?.SpawnLocalPlayer ?? true;
+            var profile = mode == BootstrapRuntimeMode.VegetationSandbox
+                ? SandboxWorldFixtures.VegetationStress
+                : SandboxWorldFixtures.Active;
+            return profile?.SpawnLocalPlayer ?? true;
         }
 
         static void ResolveInitialPlayerData(

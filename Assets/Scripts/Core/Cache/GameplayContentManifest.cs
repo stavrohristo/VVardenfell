@@ -47,6 +47,9 @@ namespace VVardenfell.Core.Cache
         public int SkillCount;
         public int ScriptCount;
         public int StartScriptCount;
+        public int MorrowindScriptProgramCount;
+        public int MorrowindScriptInstructionCount;
+        public int MorrowindScriptLocalCount;
         public int SoundGeneratorCount;
         public int LandTextureCount;
         public int StaticCount;
@@ -160,6 +163,9 @@ namespace VVardenfell.Core.Cache
             w.Write(SkillCount);
             w.Write(ScriptCount);
             w.Write(StartScriptCount);
+            w.Write(MorrowindScriptProgramCount);
+            w.Write(MorrowindScriptInstructionCount);
+            w.Write(MorrowindScriptLocalCount);
             w.Write(SoundGeneratorCount);
             w.Write(LandTextureCount);
             w.Write(StaticCount);
@@ -235,6 +241,9 @@ namespace VVardenfell.Core.Cache
                 manifest.SkillCount = r.ReadInt32();
                 manifest.ScriptCount = r.ReadInt32();
                 manifest.StartScriptCount = r.ReadInt32();
+                manifest.MorrowindScriptProgramCount = r.ReadInt32();
+                manifest.MorrowindScriptInstructionCount = r.ReadInt32();
+                manifest.MorrowindScriptLocalCount = r.ReadInt32();
                 manifest.SoundGeneratorCount = r.ReadInt32();
                 manifest.LandTextureCount = r.ReadInt32();
                 manifest.StaticCount = r.ReadInt32();

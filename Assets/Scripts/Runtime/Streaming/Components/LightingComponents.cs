@@ -230,8 +230,4 @@ namespace VVardenfell.Runtime.Components
         public byte IsInterior;
     }
 
-    public struct InteriorAmbientSourceAuthoring : IComponentData
-    {
-        public SoundDefHandle AmbientSound;
-    }
 }

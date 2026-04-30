@@ -88,6 +88,14 @@ namespace VVardenfell.Runtime.Components
         public float NextLoopVolume;
     }
 
+    public struct NearWaterAudioState : IComponentData
+    {
+        public SoundDefHandle ResolvedLoopSound;
+        public float Volume;
+        public byte Looping;
+        public byte IsInterior;
+    }
+
     public struct AmbientSchedulerState : IComponentData
     {
         public float SecondsUntilNextAttempt;

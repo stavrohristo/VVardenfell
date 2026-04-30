@@ -638,6 +638,9 @@ namespace VVardenfell.Importer.Bake
             manifest.SkillCount = data.Skills.Length;
             manifest.ScriptCount = data.Scripts.Length;
             manifest.StartScriptCount = data.StartScripts.Length;
+            manifest.MorrowindScriptProgramCount = data.MorrowindScriptPrograms?.Length ?? 0;
+            manifest.MorrowindScriptInstructionCount = data.MorrowindScriptInstructions?.Length ?? 0;
+            manifest.MorrowindScriptLocalCount = data.MorrowindScriptLocals?.Length ?? 0;
             manifest.SoundGeneratorCount = data.SoundGenerators.Length;
             manifest.LandTextureCount = data.LandTextures.Length;
             manifest.StaticCount = data.Statics.Length;

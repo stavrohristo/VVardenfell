@@ -23,9 +23,7 @@ namespace VVardenfell.Runtime.Streaming
     public partial struct CellUnloadSystem : ISystem
     {
         EntityQuery _singletonQuery;
-        EntityQuery _cfgQuery;
-        EntityQuery _refsOnlyQuery;  // excludes terrain (no CellCoord)
-        EntityQuery _allQuery;       // refs + terrain
+        EntityQuery _refsOnlyQuery;
         ComponentTypeHandle<CellLink> _cellLinkHandle;
         ComponentTypeHandle<MaterialMeshInfo> _mmiHandle;
 
@@ -34,24 +32,17 @@ namespace VVardenfell.Runtime.Streaming
             _singletonQuery = SystemAPI.QueryBuilder()
                 .WithAll<LoadedCellsMap, UnloadList, PendingCellPhysicsUnload>()
                 .Build();
-            _cfgQuery = SystemAPI.QueryBuilder().WithAll<StreamingConfig>().Build();
             state.RequireForUpdate(_singletonQuery);
 
             // WithPresent<MaterialMeshInfo> (not WithAll) — queries with WithAll on an
             // IEnableableComponent filter out entities whose enable bit is off. Mirrors
             // the load worker's query; see its OnCreate for the full reasoning.
-            //
-            // Two variants: _refsOnlyQuery excludes terrain (WithNone<CellCoord>) so
-            // terrain stays visible when StreamingConfig.GateTerrainByRadius is false;
-            // _allQuery includes terrain for when gating is on.
+            // Terrain is viewport-gated by TerrainFrustumVisibilitySystem, so streaming
+            // unload only touches non-terrain refs and static cell entities.
             _refsOnlyQuery = SystemAPI.QueryBuilder()
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
                 .WithNone<CellCoord>()
-                .Build();
-            _allQuery = SystemAPI.QueryBuilder()
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>()
                 .Build();
             _cellLinkHandle = state.GetComponentTypeHandle<CellLink>(isReadOnly: true);
             _mmiHandle = state.GetComponentTypeHandle<MaterialMeshInfo>(isReadOnly: false);
@@ -64,9 +55,7 @@ namespace VVardenfell.Runtime.Streaming
             var pendingPhysicsUnload = _singletonQuery.GetSingleton<PendingCellPhysicsUnload>();
             if (unload.PendingEntityDestroy.Length == 0) return;
 
-            var cfg = _cfgQuery.GetSingleton<StreamingConfig>();
-            var targetQuery = cfg.GateTerrainByRadius ? _allQuery : _refsOnlyQuery;
-
+            state.EntityManager.CompleteDependencyBeforeRW<MaterialMeshInfo>();
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
             for (int i = 0; i < unload.PendingEntityDestroy.Length; i++)
@@ -79,7 +68,7 @@ namespace VVardenfell.Runtime.Streaming
                     Enable = false,
                     LinkHandle = _cellLinkHandle,
                     MmiHandle = _mmiHandle,
-                }.Run(targetQuery);
+                }.Run(_refsOnlyQuery);
 
                 QueuePhysicsCell(ref pendingPhysicsUnload.Cells, coord);
                 loaded.Active.Remove(coord);

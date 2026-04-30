@@ -52,7 +52,7 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
         MorrowindButtonView _sandboxButton;
-        MorrowindButtonView _actorPreviewButton;
+        MorrowindButtonView _vegetationSandboxButton;
         Text _pathPromptText;
         Text _pathErrorText;
         Text _modePromptText;
@@ -368,26 +368,26 @@ namespace VVardenfell.Runtime.Bootstrap
             ReplaceButtonLabel(_sandboxButton, "Sandbox");
             _sandboxButton.Button.onClick.AddListener(OnSandboxPressed);
 
-            var actorPreviewRect = RuntimeUiFactory.CreateAnchoredRect(
-                "ActorPreviewButtonRow",
+            var vegetationSandboxRect = RuntimeUiFactory.CreateAnchoredRect(
+                "VegetationSandboxButtonRow",
                 _modeRoot,
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
                 new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
                 new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
-            actorPreviewRect.pivot = new Vector2(0f, 1f);
+            vegetationSandboxRect.pivot = new Vector2(0f, 1f);
 
-            _actorPreviewButton = RuntimeUiFactory.CreateMorrowindButton(
-                "ActorPreviewButton",
-                actorPreviewRect,
+            _vegetationSandboxButton = RuntimeUiFactory.CreateMorrowindButton(
+                "VegetationSandboxButton",
+                vegetationSandboxRect,
                 _theme,
-                "Actor Preview",
+                "Vegetation Sandbox",
                 1f,
                 BodyTextColor,
                 ButtonCenterColor);
-            RuntimeUiFactory.Stretch(_actorPreviewButton.Root);
-            ReplaceButtonLabel(_actorPreviewButton, "Actor Preview");
-            _actorPreviewButton.Button.onClick.AddListener(OnActorPreviewPressed);
+            RuntimeUiFactory.Stretch(_vegetationSandboxButton.Root);
+            ReplaceButtonLabel(_vegetationSandboxButton, "Vegetation Sandbox");
+            _vegetationSandboxButton.Button.onClick.AddListener(OnVegetationSandboxPressed);
         }
 
         void BuildProgressView()
@@ -578,9 +578,9 @@ namespace VVardenfell.Runtime.Bootstrap
             _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
         }
 
-        void OnActorPreviewPressed()
+        void OnVegetationSandboxPressed()
         {
-            _onModeSelected?.Invoke(BootstrapRuntimeMode.ActorPreview);
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.VegetationSandbox);
         }
 
         void OnDestroy()

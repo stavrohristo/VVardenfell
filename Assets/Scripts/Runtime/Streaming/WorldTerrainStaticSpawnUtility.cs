@@ -131,13 +131,13 @@ namespace VVardenfell.Runtime.Streaming
                 quaternion.identity,
                 1f));
 
-            float cellHalf = LandRecordSize.CellUnitsMw * 0.5f * WorldScale.MwUnitsToMeters;
+            Bounds meshBounds = managed.TerrainMesh.bounds;
             em.SetComponentData(terrainEntity, new RenderBounds
             {
                 Value = new AABB
                 {
-                    Center = new float3(cellHalf, 0f, cellHalf),
-                    Extents = new float3(cellHalf, 1000f, cellHalf),
+                    Center = new float3(meshBounds.center.x, meshBounds.center.y, meshBounds.center.z),
+                    Extents = new float3(meshBounds.extents.x, meshBounds.extents.y, meshBounds.extents.z),
                 }
             });
 

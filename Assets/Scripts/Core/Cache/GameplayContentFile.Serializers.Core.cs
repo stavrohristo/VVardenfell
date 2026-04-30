@@ -132,6 +132,81 @@ namespace VVardenfell.Core.Cache
         }
 
 
+        static void WriteMorrowindScriptProgram(BinaryWriter w, MorrowindScriptProgramDef value)
+        {
+            WriteString(w, value.Id);
+            w.Write(value.SourceScriptIndex);
+            w.Write(value.Status);
+            WriteString(w, value.DisabledReason);
+            w.Write(value.FirstInstructionIndex);
+            w.Write(value.InstructionCount);
+            w.Write(value.FirstLocalIndex);
+            w.Write(value.LocalCount);
+            w.Write(value.MaxStack);
+        }
+
+
+        static MorrowindScriptProgramDef ReadMorrowindScriptProgram(BinaryReader r)
+        {
+            return new MorrowindScriptProgramDef
+            {
+                Id = ReadString(r),
+                SourceScriptIndex = r.ReadInt32(),
+                Status = r.ReadByte(),
+                DisabledReason = ReadString(r),
+                FirstInstructionIndex = r.ReadInt32(),
+                InstructionCount = r.ReadInt32(),
+                FirstLocalIndex = r.ReadInt32(),
+                LocalCount = r.ReadInt32(),
+                MaxStack = r.ReadInt32(),
+            };
+        }
+
+
+        static void WriteMorrowindScriptInstruction(BinaryWriter w, MorrowindScriptInstructionDef value)
+        {
+            w.Write(value.Opcode);
+            w.Write(value.Operand0);
+            w.Write(value.Operand1);
+            w.Write(value.Int0);
+            w.Write(value.Int1);
+            w.Write(value.Float0);
+            w.Write(value.Float1);
+        }
+
+
+        static MorrowindScriptInstructionDef ReadMorrowindScriptInstruction(BinaryReader r)
+        {
+            return new MorrowindScriptInstructionDef
+            {
+                Opcode = r.ReadByte(),
+                Operand0 = r.ReadByte(),
+                Operand1 = r.ReadInt16(),
+                Int0 = r.ReadInt32(),
+                Int1 = r.ReadInt32(),
+                Float0 = r.ReadSingle(),
+                Float1 = r.ReadSingle(),
+            };
+        }
+
+
+        static void WriteMorrowindScriptLocal(BinaryWriter w, MorrowindScriptLocalDef value)
+        {
+            WriteString(w, value.Name);
+            w.Write(value.ValueKind);
+        }
+
+
+        static MorrowindScriptLocalDef ReadMorrowindScriptLocal(BinaryReader r)
+        {
+            return new MorrowindScriptLocalDef
+            {
+                Name = ReadString(r),
+                ValueKind = r.ReadByte(),
+            };
+        }
+
+
         static void WriteActorBodyPart(BinaryWriter w, ActorBodyPartDef value)
         {
             WriteContentId(w, value.ContentId);

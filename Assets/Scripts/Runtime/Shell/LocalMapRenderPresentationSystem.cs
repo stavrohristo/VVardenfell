@@ -69,6 +69,7 @@ namespace VVardenfell.Runtime.Shell
                     maskResolution);
             }
 
+            EntityManager.CompleteDependencyBeforeRO<Unity.Rendering.MaterialMeshInfo>();
             LocalMapPresentationCache.RenderOnePendingTile(centerCell, renderResolution, loadedCells.Active);
         }
     }

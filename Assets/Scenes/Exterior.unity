@@ -157,7 +157,6 @@ MonoBehaviour:
     MinPitch: -89
     MaxPitch: 89
     LookSensitivity: 0.12
-  _actorPreviewMaterial: {fileID: 2100000, guid: 0a412daf141cdcd43b07635628022a1c, type: 2}
 --- !u!4 &101423244
 Transform:
   m_ObjectHideFlags: 0

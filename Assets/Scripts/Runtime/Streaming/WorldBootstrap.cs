@@ -58,7 +58,7 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;
 
-                if (!options.IsSandbox)
+                if (options.RequiresRenderShardRefs)
                 {
                     foreach (var step in WorldBootstrapResourceSetup.InstallMeshBounds(cache, progress))
                         yield return step;
@@ -67,12 +67,12 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
-                preloadTask = Task.Run(() => options.IsSandbox
-                    ? WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active)
-                    : WorldBootstrapPreloadUtility.PreloadCells(cache));
+                preloadTask = Task.Run(() => options.RequiresFullCellPreload
+                    ? WorldBootstrapPreloadUtility.PreloadCells(cache)
+                    : WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active));
                 collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
 
-                if (!options.IsSandbox)
+                if (options.RequiresRenderShardRefs)
                 {
                     foreach (var step in WorldBootstrapResourceSetup.InstallRenderShardRefPrefabs(em, progress))
                         yield return step;

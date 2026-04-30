@@ -250,7 +250,7 @@ namespace VVardenfell.Runtime.Streaming
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
                     placedRefsToResolve.Add(placedRefId);
                     logicalRefCount++;
-                    if (!LogicalRefAuthoringUtility.IsScriptedAmbientSoundMarker(contentDb, contentReference)
+                    if (!logicalOnlyRef
                         && LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
                     {
                         proxyQueueCount++;
@@ -364,7 +364,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (em.HasComponent<MaterialMeshInfo>(child))
                 {
-                    if (WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox
+                    if (BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode)
                         && em.IsComponentEnabled<MaterialMeshInfo>(child))
                     {
                         enabledRenderChildren++;
@@ -376,14 +376,14 @@ namespace VVardenfell.Runtime.Streaming
                 RuntimeColliderAttachmentUtility.QueueDisablePhysics(em, ref ecb, child);
             }
 
-            if (enabledRenderChildren > 0 && WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox)
+            if (enabledRenderChildren > 0 && BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode))
             {
                 string key = $"{contentReference.Kind}:{contentReference.HandleValue}:{enabledRenderChildren}";
                 if (s_ActorPrefabVisualWarnings.Add(key))
                 {
                     Debug.LogWarning(
                         $"[VVardenfell][ActorDuplicateVisualGuard] actor content handle {contentReference.HandleValue} " +
-                        $"had {enabledRenderChildren} enabled model-prefab render children; suppressing them so procedural actor rendering is the only visual path.");
+                        $"had {enabledRenderChildren} enabled model-prefab render children; suppressing them so actor GPU animation rendering is the only visual path.");
                 }
             }
         }
@@ -639,7 +639,8 @@ namespace VVardenfell.Runtime.Streaming
         {
             if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
                 return;
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab && WorldResources.RuntimeMode == BootstrapRuntimeMode.Sandbox)
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab
+                && BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode))
                 return;
 
             string key = $"{cellLabel}:{entry.PlacedRefId}:{entry.SpawnModeRaw}";

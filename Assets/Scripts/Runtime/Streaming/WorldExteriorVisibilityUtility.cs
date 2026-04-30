@@ -112,7 +112,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (!em.HasComponent<MaterialMeshInfo>(entity))
                     continue;
-                if (!gateTerrainByRadius && em.HasComponent<CellCoord>(entity))
+                if (em.HasComponent<CellCoord>(entity))
                     continue;
 
                 em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
@@ -137,10 +137,10 @@ namespace VVardenfell.Runtime.Streaming
                     if (!em.HasComponent<MaterialMeshInfo>(entity))
                         continue;
 
-                    bool enable = active;
-                    if (!gateTerrainByRadius && em.HasComponent<CellCoord>(entity))
-                        enable = true;
-                    em.SetComponentEnabled<MaterialMeshInfo>(entity, enable);
+                    if (em.HasComponent<CellCoord>(entity))
+                        continue;
+
+                    em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
                 }
             }
         }

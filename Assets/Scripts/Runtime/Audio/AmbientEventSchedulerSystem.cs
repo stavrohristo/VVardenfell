@@ -46,7 +46,7 @@ namespace VVardenfell.Runtime.Audio
             {
                 scheduler.ActiveRegionHandleValue = regionState.Region.Value;
                 scheduler.RandomState = CreateSeed(regionState.Region.Value);
-                scheduler.SecondsUntilNextAttempt = math.min(0.5f, settings.MinSecondsBetweenEnvironmentalSounds);
+                scheduler.SecondsUntilNextAttempt = 0f;
                 scheduler.Initialized = 1;
             }
 
@@ -61,13 +61,18 @@ namespace VVardenfell.Runtime.Audio
             var refs = contentDb.GetRegionSoundRefs(regionState.Region);
             if (refs.Length > 0)
             {
-                int refIndex = random.NextInt(refs.Length);
-                var candidate = refs[refIndex];
-                int roll = random.NextInt(100);
-                if (roll < candidate.Chance && contentDb.TryGetSoundHandle(candidate.SoundId, out var handle) && handle.IsValid)
+                for (int i = 0; i < refs.Length; i++)
                 {
+                    var candidate = refs[i];
+                    int roll = random.NextInt(100);
+                    if (roll >= candidate.Chance)
+                        continue;
+                    if (!contentDb.TryGetSoundHandle(candidate.SoundId, out var handle) || !handle.IsValid)
+                        continue;
+
                     regionState.PendingEventSound = handle;
                     regionState.EventSequence += 1u;
+                    break;
                 }
             }
 

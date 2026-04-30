@@ -28,6 +28,20 @@ namespace VVardenfell.Importer.Bake
                     case var tag when tag == EsmFourCC.NAME:
                         def.Id = esm.ReadSubrecordString();
                         break;
+                    case var tag when tag == SchdTag && recordTag == ScptTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        string scriptId = ReadFixedString(bytes, 0, Math.Min(32, bytes.Length));
+                        if (!string.IsNullOrWhiteSpace(scriptId))
+                            def.Id = scriptId;
+                        if (bytes.Length >= 36)
+                            def.Int0 = ReadInt32(bytes, 32);
+                        if (bytes.Length >= 40)
+                            def.Int1 = ReadInt32(bytes, 36);
+                        if (bytes.Length >= 44)
+                            def.Int2 = ReadInt32(bytes, 40);
+                        break;
+                    }
                     case var tag when tag == EsmFourCC.FNAM:
                         def.Name = esm.ReadSubrecordString();
                         break;
@@ -39,6 +53,12 @@ namespace VVardenfell.Importer.Bake
                         break;
                     case var tag when tag == ScriTag:
                         def.ScriptId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == CnamTag && recordTag == SndgTag:
+                        def.ScriptId = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == SnamTag && recordTag == SndgTag:
+                        def.Text = esm.ReadSubrecordString();
                         break;
                     case var tag when tag == SctxTag:
                         def.Text = esm.ReadSubrecordString();
@@ -76,6 +96,13 @@ namespace VVardenfell.Importer.Bake
                         byte[] bytes = esm.ReadSubrecordBytes();
                         if (bytes.Length >= 4)
                             def.Float0 = ReadSingle(bytes, 0);
+                        break;
+                    }
+                    case var tag when tag == EsmFourCC.DATA && recordTag == SndgTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length >= 4)
+                            def.Int0 = ReadInt32(bytes, 0);
                         break;
                     }
                     case var tag when tag == FlagTag:

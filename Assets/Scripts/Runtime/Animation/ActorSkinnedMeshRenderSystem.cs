@@ -15,7 +15,7 @@ namespace VVardenfell.Runtime.Animation
 
         public void OnUpdate(ref SystemState state)
         {
-            // Procedural actor upload now reads static ActorSkinMesh data directly.
+            // Actor GPU animation upload now reads static ActorSkinMesh data directly.
             // Keep this system slot for ordering, but avoid rebuilding a transient draw buffer every frame.
         }
     }

@@ -346,10 +346,10 @@ namespace VVardenfell.Runtime.Animation
             ref ActorGpuAnimationFrameResources frame = ref CurrentFrame;
             EnsureFrameBuffer(ref frame.ActorBuffer, actorCount, UnsafeUtility.SizeOf<ActorGpuAnimationActorGpu>(), "VV:GpuAnimActors", DynamicBufferUsage);
             EnsureFrameBuffer(ref frame.LayerBuffer, layerCount, UnsafeUtility.SizeOf<ActorGpuAnimationLayerGpu>(), "VV:GpuAnimLayers", DynamicBufferUsage);
-            EnsureFrameBuffer(ref frame.LocalBoneMatrixBuffer, boneCount, UnsafeUtility.SizeOf<Rendering.ActorProceduralMatrixGpu>(), "VV:GpuAnimLocalBoneMatrices");
-            EnsureFrameBuffer(ref frame.LocalToRootMatrixBuffer, boneCount, UnsafeUtility.SizeOf<Rendering.ActorProceduralMatrixGpu>(), "VV:GpuAnimLocalToRootMatrices");
+            EnsureFrameBuffer(ref frame.LocalBoneMatrixBuffer, boneCount, UnsafeUtility.SizeOf<Rendering.ActorGpuAnimationMatrixGpu>(), "VV:GpuAnimLocalBoneMatrices");
+            EnsureFrameBuffer(ref frame.LocalToRootMatrixBuffer, boneCount, UnsafeUtility.SizeOf<Rendering.ActorGpuAnimationMatrixGpu>(), "VV:GpuAnimLocalToRootMatrices");
             EnsureFrameBuffer(ref frame.SkinMeshWorkBuffer, skinMeshWorkCount, UnsafeUtility.SizeOf<ActorGpuAnimationSkinMeshWorkGpu>(), "VV:GpuAnimSkinMeshWork", DynamicBufferUsage);
-            EnsureFrameBuffer(ref frame.BoneMatrixBuffer, math.max(boneMatrixCount, _allocatedBoneMatrixCount), UnsafeUtility.SizeOf<Rendering.ActorProceduralMatrixGpu>(), "VV:GpuAnimBoneMatrices");
+            EnsureFrameBuffer(ref frame.BoneMatrixBuffer, math.max(boneMatrixCount, _allocatedBoneMatrixCount), UnsafeUtility.SizeOf<Rendering.ActorGpuAnimationMatrixGpu>(), "VV:GpuAnimBoneMatrices");
             EnsureFrameBuffer(ref frame.DeformedVertexBuffer, _allocatedDeformedVertexCount, UnsafeUtility.SizeOf<ActorGpuDeformedVertexGpu>(), "VV:ActorDeformedVertices");
             BoneMatrixCount = math.max(boneMatrixCount, _allocatedBoneMatrixCount);
         }
@@ -656,11 +656,11 @@ namespace VVardenfell.Runtime.Animation
                 };
             }
 
-            var skinVertices = new Rendering.ActorProceduralVertexGpu[catalog.SkinVertices.Length];
+            var skinVertices = new Rendering.ActorGpuAnimationVertexGpu[catalog.SkinVertices.Length];
             for (int i = 0; i < skinVertices.Length; i++)
             {
                 var source = catalog.SkinVertices[i];
-                skinVertices[i] = new Rendering.ActorProceduralVertexGpu
+                skinVertices[i] = new Rendering.ActorGpuAnimationVertexGpu
                 {
                     Position = source.Position,
                     Normal = source.Normal,
@@ -680,7 +680,7 @@ namespace VVardenfell.Runtime.Animation
             EnsureBuffer(ref _keyBuffer, keys.Length, UnsafeUtility.SizeOf<ActorGpuAnimationKeyGpu>(), "VV:GpuAnimKeys");
             EnsureBuffer(ref _skinMeshBuffer, skinMeshes.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinMeshGpu>(), "VV:GpuAnimSkinMeshes");
             EnsureBuffer(ref _skinBoneBuffer, skinBones.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinBoneGpu>(), "VV:GpuAnimSkinBones");
-            EnsureBuffer(ref _skinVertexBuffer, skinVertices.Length, UnsafeUtility.SizeOf<Rendering.ActorProceduralVertexGpu>(), "VV:GpuAnimSkinVertices");
+            EnsureBuffer(ref _skinVertexBuffer, skinVertices.Length, UnsafeUtility.SizeOf<Rendering.ActorGpuAnimationVertexGpu>(), "VV:GpuAnimSkinVertices");
 
             if (skeletons.Length > 0)
                 _skeletonBuffer.SetData(skeletons);

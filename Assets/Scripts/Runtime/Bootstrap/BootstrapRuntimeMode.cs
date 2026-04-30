@@ -4,6 +4,6 @@ namespace VVardenfell.Runtime.Bootstrap
     {
         Vanilla = 0,
         Sandbox = 1,
-        ActorPreview = 2,
+        VegetationSandbox = 2,
     }
 }

@@ -39,6 +39,7 @@ namespace VVardenfell.Runtime.Audio
             EntityManager.AddComponentData(entity, new RegionAmbientState());
             EntityManager.AddComponentData(entity, new WeatherAudioState());
             EntityManager.AddComponentData(entity, new WeatherRainAudioState());
+            EntityManager.AddComponentData(entity, new NearWaterAudioState());
             EntityManager.AddComponentData(entity, new AmbientSchedulerState());
             EntityManager.AddComponentData(entity, new AmbientSettingsState
             {

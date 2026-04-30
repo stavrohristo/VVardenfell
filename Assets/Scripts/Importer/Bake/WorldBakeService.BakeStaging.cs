@@ -497,7 +497,7 @@ namespace VVardenfell.Importer.Bake
                 bool isStat = hasBaseRecord && rec.Tag == StatTag;
                 bool isInteractable = !isStat;
                 var contentReference = ResolveGameplayContentReference(gameplayContentLookup, reference.BaseId);
-                if (IsScriptedAmbientSoundMarker(gameplayContent, contentReference))
+                if (IsScriptedLogicalOnlyActivator(gameplayContent, contentReference))
                 {
                     staged.CollisionNoColliderCount++;
                     staged.PlacedRefs.Add(new StagedPlacedRefData(

@@ -856,6 +856,30 @@ namespace VVardenfell.Core.Cache
             => ReadArray<PathGridPointDef>(r, ReadPathGridPoint);
 
 
+        static void WriteMorrowindScriptProgramArray(BinaryWriter w, MorrowindScriptProgramDef[] values)
+            => WriteArray<MorrowindScriptProgramDef>(w, values, WriteMorrowindScriptProgram);
+
+
+        static MorrowindScriptProgramDef[] ReadMorrowindScriptProgramArray(BinaryReader r)
+            => ReadArray<MorrowindScriptProgramDef>(r, ReadMorrowindScriptProgram);
+
+
+        static void WriteMorrowindScriptInstructionArray(BinaryWriter w, MorrowindScriptInstructionDef[] values)
+            => WriteArray<MorrowindScriptInstructionDef>(w, values, WriteMorrowindScriptInstruction);
+
+
+        static MorrowindScriptInstructionDef[] ReadMorrowindScriptInstructionArray(BinaryReader r)
+            => ReadArray<MorrowindScriptInstructionDef>(r, ReadMorrowindScriptInstruction);
+
+
+        static void WriteMorrowindScriptLocalArray(BinaryWriter w, MorrowindScriptLocalDef[] values)
+            => WriteArray<MorrowindScriptLocalDef>(w, values, WriteMorrowindScriptLocal);
+
+
+        static MorrowindScriptLocalDef[] ReadMorrowindScriptLocalArray(BinaryReader r)
+            => ReadArray<MorrowindScriptLocalDef>(r, ReadMorrowindScriptLocal);
+
+
         static void WritePathGridConnectionArray(BinaryWriter w, PathGridConnectionDef[] values)
             => WriteArray<PathGridConnectionDef>(w, values, WritePathGridConnection);
 

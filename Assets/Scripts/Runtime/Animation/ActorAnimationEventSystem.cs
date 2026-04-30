@@ -1,4 +1,3 @@
-#if VVARDENFELL_ACTOR_ANIMATION_EVENTS
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -8,7 +7,8 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationControllerSystem))]
+    [UpdateAfter(typeof(ActorGpuAnimationRequestSystem))]
+    [UpdateBefore(typeof(ActorPoseSamplingSystem))]
     public partial struct ActorAnimationEventSystem : ISystem
     {
         public void OnCreate(ref SystemState state)
@@ -36,92 +36,72 @@ namespace VVardenfell.Runtime.Animation
             [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
 
             void Execute(
-                in ActorAnimationController controller,
-                ref ActorAnimationEventCursor cursor,
-                DynamicBuffer<ActorAnimationLayer> layers,
+                [ReadOnly] DynamicBuffer<ActorGpuAnimationRequest> requests,
                 DynamicBuffer<ActorAnimationEvent> events)
             {
                 events.Clear();
-                if (!Catalog.IsCreated || controller.CurrentGroup.IsEmpty)
+                if (!Catalog.IsCreated)
                     return;
 
                 ref var catalog = ref Catalog.Value;
-                bool groupChanged = !controller.CurrentGroup.Equals(cursor.LastGroup);
-                float fromTime = groupChanged ? controller.StartTime : cursor.LastTime;
-                float toTime = controller.Time;
-                int clipIndex = ResolveClipIndex(controller, layers);
-
-                if (groupChanged)
+                for (int i = 0; i < requests.Length; i++)
                 {
-                    EmitStartEvent(controller, events);
-                    cursor.LastGroup = controller.CurrentGroup;
-                    cursor.LastTime = toTime;
-                }
-
-                if ((uint)clipIndex < (uint)catalog.Clips.Length)
-                {
-                    var clip = catalog.Clips[clipIndex];
-                    if (!groupChanged && toTime < fromTime)
+                    var request = requests[i];
+                    if (request.Weight <= 0f
+                        || request.SampleKey == 0
+                        || (uint)request.ClipIndex >= (uint)catalog.Clips.Length
+                        || IsDuplicateSample(requests, i, request))
                     {
-                        EmitTextMarkers(ref catalog, clip, controller.CurrentGroup, fromTime, clip.Duration, events);
-                        EmitTextMarkers(ref catalog, clip, controller.CurrentGroup, 0f, toTime, events);
+                        continue;
+                    }
+
+                    var clip = catalog.Clips[request.ClipIndex];
+                    float startTime = request.StartTime;
+                    float stopTime = request.StopTime > startTime ? request.StopTime : clip.Duration;
+                    float loopStartTime = request.LoopStartTime >= startTime ? request.LoopStartTime : startTime;
+                    float loopStopTime = request.LoopStopTime > loopStartTime ? request.LoopStopTime : stopTime;
+                    if (loopStopTime > stopTime)
+                        loopStopTime = stopTime;
+
+                    float fromTime = Unity.Mathematics.math.clamp(request.PreviousTime, startTime, stopTime);
+                    float toTime = Unity.Mathematics.math.clamp(request.Time, startTime, stopTime);
+
+                    if (toTime < fromTime)
+                    {
+                        EmitTextMarkers(ref catalog, clip, fromTime, loopStopTime, events);
+                        EmitTextMarkers(ref catalog, clip, loopStartTime, toTime, events);
                     }
                     else
                     {
-                        EmitTextMarkers(ref catalog, clip, controller.CurrentGroup, fromTime, toTime, events);
+                        EmitTextMarkers(ref catalog, clip, fromTime, toTime, events);
+                    }
+                }
+            }
+
+            static bool IsDuplicateSample(
+                DynamicBuffer<ActorGpuAnimationRequest> requests,
+                int requestIndex,
+                ActorGpuAnimationRequest request)
+            {
+                for (int i = 0; i < requestIndex; i++)
+                {
+                    var candidate = requests[i];
+                    if (candidate.SampleKey == request.SampleKey
+                        && candidate.ClipHash == request.ClipHash
+                        && candidate.ClipIndex == request.ClipIndex
+                        && candidate.PreviousTime == request.PreviousTime
+                        && candidate.Time == request.Time)
+                    {
+                        return true;
                     }
                 }
 
-                cursor.LastTime = toTime;
-            }
-
-            static int ResolveClipIndex(in ActorAnimationController controller, DynamicBuffer<ActorAnimationLayer> layers)
-            {
-                for (int i = 0; i < layers.Length; i++)
-                {
-                    var layer = layers[i];
-                    if (layer.ClipHash == controller.CurrentClipHash)
-                        return layer.ClipIndex;
-                }
-                return layers.Length > 0 ? layers[0].ClipIndex : -1;
-            }
-
-            static void EmitStartEvent(in ActorAnimationController controller, DynamicBuffer<ActorAnimationEvent> events)
-            {
-                FixedString128Bytes text = default;
-                text.Append(controller.CurrentGroup);
-                text.Append((byte)':');
-                text.Append((byte)' ');
-                text.Append((byte)'s');
-                text.Append((byte)'t');
-                text.Append((byte)'a');
-                text.Append((byte)'r');
-                text.Append((byte)'t');
-                events.Add(new ActorAnimationEvent
-                {
-                    Group = controller.CurrentGroup,
-                    Value = StartValue(),
-                    Text = text,
-                    Time = controller.Time,
-                    Kind = ActorAnimationTextMarkerKind.Start,
-                });
-            }
-
-            static FixedString64Bytes StartValue()
-            {
-                FixedString64Bytes value = default;
-                value.Append((byte)'s');
-                value.Append((byte)'t');
-                value.Append((byte)'a');
-                value.Append((byte)'r');
-                value.Append((byte)'t');
-                return value;
+                return false;
             }
 
             static void EmitTextMarkers(
                 ref ActorAnimationCatalogBlob catalog,
                 ActorAnimationClipBlob clip,
-                FixedString64Bytes group,
                 float fromTime,
                 float toTime,
                 DynamicBuffer<ActorAnimationEvent> events)
@@ -136,14 +116,9 @@ namespace VVardenfell.Runtime.Animation
                     if (marker.Time <= fromTime || marker.Time > toTime)
                         continue;
 
-                    if (marker.Kind == ActorAnimationTextMarkerKind.Start
-                        && !marker.Group.IsEmpty
-                        && !EqualsIgnoreCase(marker.Group, group))
-                        continue;
-
                     events.Add(new ActorAnimationEvent
                     {
-                        Group = group,
+                        Group = marker.Group,
                         Value = marker.Value,
                         Text = marker.Text,
                         Time = marker.Time,
@@ -151,27 +126,6 @@ namespace VVardenfell.Runtime.Animation
                     });
                 }
             }
-
-            static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
-            {
-                if (left.Length != right.Length)
-                    return false;
-
-                for (int i = 0; i < left.Length; i++)
-                {
-                    byte a = ToLowerAscii(left[i]);
-                    byte b = ToLowerAscii(right[i]);
-                    if (a != b)
-                        return false;
-                }
-                return true;
-            }
-
-            static byte ToLowerAscii(byte value)
-                => value >= (byte)'A' && value <= (byte)'Z'
-                    ? (byte)(value + 32)
-                    : value;
         }
     }
 }
-#endif

@@ -10,6 +10,7 @@ using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
@@ -56,6 +57,7 @@ namespace VVardenfell.Runtime.Components
                         exteriorCell,
                         interiorCellId,
                         placedRefId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, actor.ScriptId);
                     return true;
                 }
 
@@ -64,14 +66,8 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
-                    if (TryResolveScriptedAmbientSound(contentDb, def.ScriptId, out SoundDefHandle ambientSound))
-                    {
-                        ecb.AddComponent(logicalEntity, new InteriorAmbientSourceAuthoring
-                        {
-                            AmbientSound = ambientSound,
-                        });
-                    }
                     return true;
                 }
 
@@ -80,6 +76,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     if (attachDoorInteractable)
                         ecb.AddComponent(logicalEntity, doorInteractable);
@@ -91,6 +88,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ContainerDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ContainerAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
                 }
@@ -100,6 +98,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ItemDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ItemPickupAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     if (RuntimeContentMetadataResolver.IsBook(def))
                         ecb.AddComponent<BookTag>(logicalEntity);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
@@ -111,24 +110,20 @@ namespace VVardenfell.Runtime.Components
                     var handle = new LightDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new LightSourceAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     ecb.AddComponent(logicalEntity, BuildLightInstanceFlags(def.Flags));
                     ecb.AddComponent(logicalEntity, BuildLightInstanceState(def));
                     ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, null);
-                    if (contentDb.TryGetSoundHandle(def.SoundId, out SoundDefHandle ambientSound) && ambientSound.IsValid)
-                    {
-                        ecb.AddComponent(logicalEntity, new InteriorAmbientSourceAuthoring
-                        {
-                            AmbientSound = ambientSound,
-                        });
-                    }
                     return true;
                 }
 
                 case ContentReferenceKind.Static:
                 {
                     var handle = new GenericRecordDefHandle { Value = contentReference.HandleValue };
+                    ref readonly var def = ref contentDb.GetStatic(handle);
                     ecb.AddComponent(logicalEntity, new StaticRefAuthoring { Definition = handle });
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     return true;
                 }
 
@@ -457,33 +452,5 @@ namespace VVardenfell.Runtime.Components
             });
         }
 
-        public static bool IsScriptedAmbientSoundMarker(RuntimeContentDatabase contentDb, ContentReference contentReference)
-        {
-            if (contentDb == null || contentReference.Kind != ContentReferenceKind.Activator || contentReference.HandleValue <= 0)
-                return false;
-
-            var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
-            if (!handle.IsValid)
-                return false;
-
-            ref readonly var def = ref contentDb.Get(handle);
-            return TryResolveScriptedAmbientSound(contentDb, def.ScriptId, out _);
-        }
-
-        static bool TryResolveScriptedAmbientSound(RuntimeContentDatabase contentDb, string scriptId, out SoundDefHandle sound)
-        {
-            sound = default;
-            if (contentDb == null || string.IsNullOrWhiteSpace(scriptId))
-                return false;
-
-            if (!contentDb.TryGetScriptHandle(scriptId, out var scriptHandle) || !scriptHandle.IsValid)
-                return false;
-
-            ref readonly var script = ref contentDb.GetScript(scriptHandle);
-            if (!MorrowindAmbientScriptUtility.TryGetLoopingSoundId(script.Text, out string soundId))
-                return false;
-
-            return contentDb.TryGetSoundHandle(soundId, out sound) && sound.IsValid;
-        }
     }
 }

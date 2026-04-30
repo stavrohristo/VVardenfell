@@ -92,6 +92,7 @@ namespace VVardenfell.Runtime.Animation
                 ecb.AddComponent(entity, new ActorJumpAnimationState());
                 ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
                 ecb.AddBuffer<ActorAnimationOverlayState>(entity);
+                ecb.AddBuffer<ActorAnimationEvent>(entity);
                 if (!EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);

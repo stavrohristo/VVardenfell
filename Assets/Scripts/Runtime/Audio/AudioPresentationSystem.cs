@@ -15,6 +15,7 @@ namespace VVardenfell.Runtime.Audio
         static readonly ProfilerMarker k_SyncRegionContext = new("VV.Audio.SyncRegionContext");
         static readonly ProfilerMarker k_QueueRegionEvent = new("VV.Audio.QueueRegionEvent");
         static readonly ProfilerMarker k_QueueInteractionEvent = new("VV.Audio.QueueInteractionEvent");
+        static readonly ProfilerMarker k_QueueScriptEvent = new("VV.Audio.QueueScriptEvent");
 
         RuntimeAudioService _service;
 
@@ -27,6 +28,7 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<RegionAmbientState>();
             RequireForUpdate<WeatherAudioState>();
             RequireForUpdate<WeatherRainAudioState>();
+            RequireForUpdate<NearWaterAudioState>();
             RequireForUpdate<AudioTuningState>();
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
@@ -52,6 +54,7 @@ namespace VVardenfell.Runtime.Audio
             var regionAmbient = SystemAPI.GetSingleton<RegionAmbientState>();
             var weatherAmbient = SystemAPI.GetSingleton<WeatherAudioState>();
             var weatherRain = SystemAPI.GetSingleton<WeatherRainAudioState>();
+            var nearWater = SystemAPI.GetSingleton<NearWaterAudioState>();
             var tuning = SystemAPI.GetSingleton<AudioTuningState>();
             var interactionRequests = SystemAPI.GetSingletonBuffer<InteractionAudioRequest>();
             ref var playbackStatus = ref SystemAPI.GetSingletonRW<MusicPlaybackStatus>().ValueRW;
@@ -67,12 +70,15 @@ namespace VVardenfell.Runtime.Audio
                     _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
                 _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
                 _service.SyncWeatherRain(contentDb, weatherRain, tuning);
+                _service.SyncNearWater(contentDb, nearWater, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
                 using (k_QueueRegionEvent.Auto())
                     _service.QueueRegionAmbientEvent(contentDb, regionAmbient, tuning);
                 using (k_QueueInteractionEvent.Auto())
                     _service.QueueInteractionAudioEvents(contentDb, interactionRequests, ref interactionState, tuning);
+                using (k_QueueScriptEvent.Auto())
+                    ConsumeScriptAudioRequests(contentDb, tuning, consume: true);
             }
             else
             {
@@ -80,8 +86,11 @@ namespace VVardenfell.Runtime.Audio
                     _service.SyncInteriorAmbient(contentDb, default, tuning);
                 _service.SyncWeatherAmbient(contentDb, default, tuning);
                 _service.SyncWeatherRain(contentDb, default, tuning);
+                _service.SyncNearWater(contentDb, default, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(false);
+                using (k_QueueScriptEvent.Auto())
+                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false);
                 interactionRequests.Clear();
                 interactionState = default;
             }
@@ -89,6 +98,22 @@ namespace VVardenfell.Runtime.Audio
             _service.Tick(SystemAPI.Time.DeltaTime);
             playbackStatus.IsPlaying = (byte)(_service.IsMusicPlaying ? 1 : 0);
             playbackStatus.HasPendingTrack = (byte)(_service.HasPendingMusicTrack ? 1 : 0);
+        }
+
+        void ConsumeScriptAudioRequests(RuntimeContentDatabase contentDb, in AudioTuningState tuning, bool consume)
+        {
+            _service.BeginScriptAudioFrame();
+            var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
+            foreach (var (request, entity) in SystemAPI.Query<RefRO<MorrowindScriptAudioRequest>>().WithEntityAccess())
+            {
+                if (consume)
+                    _service.QueueScriptAudioEvent(contentDb, request.ValueRO, tuning);
+                ecb.DestroyEntity(entity);
+            }
+
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
+            _service.EndScriptAudioFrame();
         }
     }
 }

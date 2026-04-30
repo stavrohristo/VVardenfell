@@ -34,6 +34,7 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, GenericRecordDefHandle> _skillsById;
         readonly Dictionary<string, GenericRecordDefHandle> _scriptsById;
         readonly Dictionary<string, GenericRecordDefHandle> _startScriptsById;
+        readonly Dictionary<string, MorrowindScriptProgramDefHandle> _morrowindScriptProgramsById;
         readonly Dictionary<string, GenericRecordDefHandle> _soundGeneratorsById;
         readonly Dictionary<string, GenericRecordDefHandle> _landTexturesById;
         readonly Dictionary<string, GenericRecordDefHandle> _staticsById;
@@ -77,6 +78,7 @@ namespace VVardenfell.Runtime.Content
         public int SkillCount => Data.Skills.Length;
         public int ScriptCount => Data.Scripts.Length;
         public int StartScriptCount => Data.StartScripts.Length;
+        public int MorrowindScriptProgramCount => Data.MorrowindScriptPrograms?.Length ?? 0;
         public int SoundGeneratorCount => Data.SoundGenerators.Length;
         public int LandTextureCount => Data.LandTextures.Length;
         public int StaticCount => Data.Statics.Length;
@@ -118,6 +120,7 @@ namespace VVardenfell.Runtime.Content
             _skillsById = BuildIndex(data.Skills, def => def.Id, GenericRecordDefHandle.FromIndex);
             _scriptsById = BuildIndex(data.Scripts, def => def.Id, GenericRecordDefHandle.FromIndex);
             _startScriptsById = BuildIndex(data.StartScripts, def => def.Id, GenericRecordDefHandle.FromIndex);
+            _morrowindScriptProgramsById = BuildIndex(data.MorrowindScriptPrograms, def => def.Id, MorrowindScriptProgramDefHandle.FromIndex);
             _soundGeneratorsById = BuildIndex(data.SoundGenerators, def => def.Id, GenericRecordDefHandle.FromIndex);
             _landTexturesById = BuildIndex(data.LandTextures, def => def.Id, GenericRecordDefHandle.FromIndex);
             _staticsById = BuildIndex(data.Statics, def => def.Id, GenericRecordDefHandle.FromIndex);
@@ -169,6 +172,8 @@ namespace VVardenfell.Runtime.Content
         public bool TryGetSkillHandle(string id, out GenericRecordDefHandle handle) => _skillsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetScriptHandle(string id, out GenericRecordDefHandle handle) => _scriptsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetStartScriptHandle(string id, out GenericRecordDefHandle handle) => _startScriptsById.TryGetValue(id ?? string.Empty, out handle);
+        public bool TryGetMorrowindScriptProgramHandle(string id, out MorrowindScriptProgramDefHandle handle)
+            => _morrowindScriptProgramsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetSoundGeneratorHandle(string id, out GenericRecordDefHandle handle) => _soundGeneratorsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetLandTextureHandle(string id, out GenericRecordDefHandle handle) => _landTexturesById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryGetBodyPartHandle(string id, out GenericRecordDefHandle handle) => _bodyPartsById.TryGetValue(id ?? string.Empty, out handle);
@@ -247,12 +252,43 @@ namespace VVardenfell.Runtime.Content
         public ref readonly GenericRecordDef GetSkill(GenericRecordDefHandle handle) => ref Data.Skills[handle.Index];
         public ref readonly GenericRecordDef GetScript(GenericRecordDefHandle handle) => ref Data.Scripts[handle.Index];
         public ref readonly GenericRecordDef GetStartScript(GenericRecordDefHandle handle) => ref Data.StartScripts[handle.Index];
+        public ref readonly MorrowindScriptProgramDef Get(MorrowindScriptProgramDefHandle handle) => ref Data.MorrowindScriptPrograms[handle.Index];
         public ref readonly GenericRecordDef GetSoundGenerator(GenericRecordDefHandle handle) => ref Data.SoundGenerators[handle.Index];
         public ref readonly GenericRecordDef GetLandTexture(GenericRecordDefHandle handle) => ref Data.LandTextures[handle.Index];
         public ref readonly GenericRecordDef GetBodyPart(GenericRecordDefHandle handle) => ref Data.BodyParts[handle.Index];
         public ref readonly ActorBodyPartDef GetActorBodyPart(GenericRecordDefHandle handle) => ref Data.ActorBodyParts[handle.Index];
         public ref readonly PathGridDef GetPathGrid(GenericRecordDefHandle handle) => ref Data.PathGrids[handle.Index];
         public ref readonly GenericRecordDef GetGlobal(GenericRecordDefHandle handle) => ref Data.Globals[handle.Index];
+
+        public ReadOnlySpan<MorrowindScriptInstructionDef> GetMorrowindScriptInstructions(MorrowindScriptProgramDefHandle handle)
+        {
+            if (!handle.IsValid || Data.MorrowindScriptPrograms == null || (uint)handle.Index >= (uint)Data.MorrowindScriptPrograms.Length)
+                return ReadOnlySpan<MorrowindScriptInstructionDef>.Empty;
+
+            ref readonly var program = ref Data.MorrowindScriptPrograms[handle.Index];
+            if (program.FirstInstructionIndex < 0 || program.InstructionCount <= 0 || Data.MorrowindScriptInstructions == null)
+                return ReadOnlySpan<MorrowindScriptInstructionDef>.Empty;
+
+            int count = Math.Min(program.InstructionCount, Data.MorrowindScriptInstructions.Length - program.FirstInstructionIndex);
+            return count <= 0
+                ? ReadOnlySpan<MorrowindScriptInstructionDef>.Empty
+                : new ReadOnlySpan<MorrowindScriptInstructionDef>(Data.MorrowindScriptInstructions, program.FirstInstructionIndex, count);
+        }
+
+        public ReadOnlySpan<MorrowindScriptLocalDef> GetMorrowindScriptLocals(MorrowindScriptProgramDefHandle handle)
+        {
+            if (!handle.IsValid || Data.MorrowindScriptPrograms == null || (uint)handle.Index >= (uint)Data.MorrowindScriptPrograms.Length)
+                return ReadOnlySpan<MorrowindScriptLocalDef>.Empty;
+
+            ref readonly var program = ref Data.MorrowindScriptPrograms[handle.Index];
+            if (program.FirstLocalIndex < 0 || program.LocalCount <= 0 || Data.MorrowindScriptLocals == null)
+                return ReadOnlySpan<MorrowindScriptLocalDef>.Empty;
+
+            int count = Math.Min(program.LocalCount, Data.MorrowindScriptLocals.Length - program.FirstLocalIndex);
+            return count <= 0
+                ? ReadOnlySpan<MorrowindScriptLocalDef>.Empty
+                : new ReadOnlySpan<MorrowindScriptLocalDef>(Data.MorrowindScriptLocals, program.FirstLocalIndex, count);
+        }
 
         public bool TryGetItemEquipment(ItemDefHandle handle, out ItemEquipmentDef equipment)
         {

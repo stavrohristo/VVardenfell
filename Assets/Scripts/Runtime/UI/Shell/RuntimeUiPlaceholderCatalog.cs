@@ -35,7 +35,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeUiPlaceholderId.InventoryAvatarPreview => new RuntimeUiPlaceholderDescriptor(
                     id,
                     "Avatar Preview",
-                    "Equipment paper doll and actor preview are unavailable in the current runtime slice."),
+                    "Equipment paper doll rendering is unavailable in the current runtime slice."),
                 RuntimeUiPlaceholderId.SpellEffectsPanel => new RuntimeUiPlaceholderDescriptor(
                     id,
                     "Effects",

@@ -7,6 +7,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Rendering;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -28,6 +29,18 @@ namespace VVardenfell.Runtime.Streaming
         public float2 ActorInspectionGridOrigin = new(5f, 5f);
         public bool GroundActorInspectionGrid = true;
         public float ActorInspectionGridHeight = 10f;
+        public bool GenerateVegetationStressGrid = false;
+        public int VegetationStressInstanceCount = 0;
+        public int VegetationStressUniqueStaticCount = 2;
+        public bool VegetationStressRequireTreeAndBush = true;
+        public bool VegetationStressSortRefsByRenderKey = true;
+        public bool VegetationStressUseStaticRefInstanceRenderer = false;
+        public int VegetationStressGridColumns = 128;
+        public float VegetationStressGridSpacing = 0.9f;
+        public int2 VegetationStressExteriorCell = new(-2, -9);
+        public float2 VegetationStressGridOrigin = new(1f, 1f);
+        public bool GroundVegetationStressGrid = true;
+        public float VegetationStressGridHeight = 10f;
         public SandboxSpawnSpec[] Spawns = Array.Empty<SandboxSpawnSpec>();
     }
 
@@ -100,6 +113,29 @@ namespace VVardenfell.Runtime.Streaming
             Spawns = Array.Empty<SandboxSpawnSpec>(),
         };
 
+        public static SandboxWorldProfile VegetationStress => new()
+        {
+            PlayerStartPosition = ExteriorCellPosition(new int2(-2, -9), 4f, 10f, 4f),
+            PlayerStartRotation = quaternion.identity,
+            ClearVanillaStaticCollision = true,
+            QueueInitialExteriorCells = false,
+            SpawnLocalPlayer = false,
+            GenerateActorInspectionGrid = false,
+            GenerateVegetationStressGrid = true,
+            VegetationStressInstanceCount = 8192,
+            VegetationStressUniqueStaticCount = 2,
+            VegetationStressRequireTreeAndBush = true,
+            VegetationStressSortRefsByRenderKey = true,
+            VegetationStressUseStaticRefInstanceRenderer = true,
+            VegetationStressGridColumns = 128,
+            VegetationStressGridSpacing = 0.9f,
+            VegetationStressExteriorCell = new int2(-2, -9),
+            VegetationStressGridOrigin = new float2(1f, 1f),
+            GroundVegetationStressGrid = true,
+            VegetationStressGridHeight = 10f,
+            Spawns = Array.Empty<SandboxSpawnSpec>(),
+        };
+
         internal static float3 ExteriorCellPosition(int2 cell, float localX, float y, float localZ)
         {
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
@@ -119,8 +155,6 @@ namespace VVardenfell.Runtime.Streaming
             if (cache == null || preload == null || profile == null)
                 return;
 
-            ClearVanillaRefs(preload, profile.ClearVanillaStaticCollision);
-
             var contentDb = cache.ContentDatabase ?? RuntimeContentDatabase.Active;
             if (contentDb == null)
             {
@@ -128,7 +162,6 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            var modelLookup = WorldModelPrefabUtility.BuildModelDescriptorLookup(cache.ModelPrefabCatalog?.Records);
             var exteriorCells = BuildExteriorCellLookup(cache, preload);
             var interiorCells = BuildInteriorCellLookup(cache, preload);
             var exteriorRefs = new Dictionary<int2, List<RefEntry>>();
@@ -136,6 +169,30 @@ namespace VVardenfell.Runtime.Streaming
             var exteriorDoors = new Dictionary<int2, List<DoorRefEntry>>();
             var interiorDoors = new Dictionary<string, List<DoorRefEntry>>(StringComparer.OrdinalIgnoreCase);
 
+            if (profile.GenerateVegetationStressGrid)
+            {
+                var vegetationRefs = VegetationSandboxRefBuilder.Build(cache, contentDb, exteriorCells, profile);
+                if (profile.VegetationStressUseStaticRefInstanceRenderer)
+                {
+                    var renderer = WorldResources.StaticRefInstanceRenderer ?? new StaticRefInstanceRenderResources();
+                    WorldResources.StaticRefInstanceRenderer = renderer;
+                    renderer.Build(cache, vegetationRefs);
+                    Debug.Log(
+                        $"[VVardenfell][VegetationSandboxRenderDiag] generatedRefs={vegetationRefs.Length}, " +
+                        $"uniqueRenderKeys={renderer.UniqueRenderKeyCount}, staticInstanceBatches={renderer.BatchCount}, " +
+                        $"expectedForwardDraws={renderer.ExpectedForwardDrawCount}, ecsRenderShardRefsSpawned=0.");
+                }
+                else
+                {
+                    AddRange(exteriorRefs, profile.VegetationStressExteriorCell, vegetationRefs);
+                }
+
+                exteriorDoors[profile.VegetationStressExteriorCell] = new List<DoorRefEntry>();
+            }
+
+            ClearVanillaRefs(preload, profile.ClearVanillaStaticCollision);
+
+            var modelLookup = WorldModelPrefabUtility.BuildModelDescriptorLookup(cache.ModelPrefabCatalog?.Records);
             var spawns = BuildSpawnList(contentDb, profile, exteriorCells);
             for (int i = 0; i < spawns.Length; i++)
             {
@@ -481,6 +538,19 @@ namespace VVardenfell.Runtime.Streaming
                 map[key] = list;
             }
             list.Add(entry);
+        }
+
+        static void AddRange<TKey>(Dictionary<TKey, List<RefEntry>> map, TKey key, RefEntry[] entries)
+        {
+            if (entries == null || entries.Length == 0)
+                return;
+
+            if (!map.TryGetValue(key, out var list))
+            {
+                list = new List<RefEntry>(entries.Length);
+                map[key] = list;
+            }
+            list.AddRange(entries);
         }
 
         static void ReplaceLast<TKey>(Dictionary<TKey, List<RefEntry>> map, TKey key, RefEntry entry)

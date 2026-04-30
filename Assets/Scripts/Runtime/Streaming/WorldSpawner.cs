@@ -229,9 +229,8 @@ namespace VVardenfell.Runtime.Streaming
             try
             {
                 var disableQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                    .WithAll<CellLink, MaterialMeshInfo>();
-                if (!gateTerrainByRadius)
-                    disableQueryBuilder = disableQueryBuilder.WithNone<CellCoord>();
+                    .WithAll<CellLink, MaterialMeshInfo>()
+                    .WithNone<CellCoord>();
 
                 var disableQuery = em.CreateEntityQuery(disableQueryBuilder);
                 em.SetComponentEnabled<MaterialMeshInfo>(disableQuery, false);
@@ -306,15 +305,8 @@ namespace VVardenfell.Runtime.Streaming
             bool terrainAlreadyResident = loaded.Map.IsCreated && loaded.Map.TryGetValue(coord, out terrainEntity);
             if (data.HasTerrain && !terrainAlreadyResident)
             {
-                var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active);
+                var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active: false);
                 terrainEntity = terrainResult.Entity;
-
-                if (!active && gateTerrainByRadius)
-                    em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, false);
-            }
-            else if (terrainAlreadyResident && terrainEntity != Entity.Null && em.Exists(terrainEntity))
-            {
-                em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, active || !gateTerrainByRadius);
             }
 
             bool streamableAlreadySpawned = loaded.Streamed.IsCreated && loaded.Streamed.Contains(coord);

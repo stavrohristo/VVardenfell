@@ -73,7 +73,7 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
-            var gpuMatrices = new ActorProceduralMatrixGpu[gpuState.BoneMatrixCount];
+            var gpuMatrices = new ActorGpuAnimationMatrixGpu[gpuState.BoneMatrixCount];
             boneMatrixBuffer.GetData(gpuMatrices, 0, gpuState.BoneMatrixOffset, gpuState.BoneMatrixCount);
 
             if (TryFindSkinMatrixMismatch(gpuMatrices, expectedSkinMatrices, matrixSkinMeshIndices, matrixBoneIndices, out int matrixIndex, out float matrixError))
@@ -83,8 +83,6 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
-            LogOnce(entity, reportHash, skeleton.SkeletonIndex, true,
-                $"[ActorGpuAnimationValidation] GPU animation validated for entity {entity.Index}:{entity.Version}, requestHash {reportHash}, skeletonIndex {skeleton.SkeletonIndex}, matrices {gpuState.BoneMatrixCount}.");
         }
 
         static ulong BuildRequestReportHash(DynamicBuffer<ActorGpuAnimationRequest> requests, ref ActorAnimationCatalogBlob catalog)
@@ -519,7 +517,7 @@ namespace VVardenfell.Runtime.Animation
         }
 
         static bool TryFindSkinMatrixMismatch(
-            ActorProceduralMatrixGpu[] gpuMatrices,
+            ActorGpuAnimationMatrixGpu[] gpuMatrices,
             List<float4x4> expectedMatrices,
             List<int> skinMeshIndices,
             List<int> boneIndices,
@@ -550,7 +548,7 @@ namespace VVardenfell.Runtime.Animation
             return false;
         }
 
-        static float4x4 FromGpuMatrix(ActorProceduralMatrixGpu matrix)
+        static float4x4 FromGpuMatrix(ActorGpuAnimationMatrixGpu matrix)
         {
             return new float4x4(
                 new float4(matrix.Row0.x, matrix.Row1.x, matrix.Row2.x, 0f),

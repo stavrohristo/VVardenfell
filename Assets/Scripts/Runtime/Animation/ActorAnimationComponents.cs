@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 
@@ -74,7 +75,13 @@ namespace VVardenfell.Runtime.Animation
     {
         public int ClipIndex;
         public ulong ClipHash;
+        public int SampleKey;
+        public float PreviousTime;
         public float Time;
+        public float StartTime;
+        public float LoopStartTime;
+        public float LoopStopTime;
+        public float StopTime;
         public float Weight;
         public int Priority;
         public ActorAnimationBlendMask Mask;
@@ -158,6 +165,15 @@ namespace VVardenfell.Runtime.Animation
         public float Weight;
         public int Priority;
         public ActorAnimationBlendMask Mask;
+    }
+
+    public struct ActorAnimationEvent : IBufferElementData
+    {
+        public FixedString64Bytes Group;
+        public FixedString64Bytes Value;
+        public FixedString128Bytes Text;
+        public float Time;
+        public ActorAnimationTextMarkerKind Kind;
     }
 
     public static class ActorAnimationPlaybackUtility
@@ -282,34 +298,12 @@ namespace VVardenfell.Runtime.Animation
         public int BoneIndex;
     }
 
-    public struct ActorProceduralRenderState : IComponentData
-    {
-        public int BoneMatrixOffset;
-        public int BoneMatrixCount;
-        public int DrawStart;
-        public int DrawCount;
-        public uint Version;
-    }
-
     public struct ActorRenderVisible : IComponentData, IEnableableComponent
     {
     }
 
     public struct ActorShadowCasterVisible : IComponentData, IEnableableComponent
     {
-    }
-
-    public struct ActorProceduralDraw : IBufferElementData
-    {
-        public int SkinMeshIndex;
-        public int MaterialIndex;
-        public int TextureIndex;
-        public int BoneMatrixOffset;
-        public int BoneMatrixCount;
-        public int DrawIndexCount;
-        public int DrawVertexCount;
-        public int AttachBoneIndex;
-        public byte RigidMirrorX;
     }
 
     public struct ActorRigidEquipmentAttachment : IComponentData
