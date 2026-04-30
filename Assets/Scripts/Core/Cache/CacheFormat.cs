@@ -22,7 +22,7 @@ namespace VVardenfell.Core.Cache
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 24;
+        public const uint WorldBakePipelineVersion = 26;
         public const uint GameplayContentVersion = 27;
 
         /// <summary>

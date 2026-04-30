@@ -66,6 +66,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
+                    TryQueueDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
@@ -76,6 +77,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
+                    TryQueueDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     if (attachDoorInteractable)
@@ -144,6 +146,20 @@ namespace VVardenfell.Runtime.Components
                 default:
                     return false;
             }
+        }
+
+        static void TryQueueDoorMotion(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            RuntimeContentDatabase contentDb,
+            string scriptId)
+        {
+            if (!DoorMotionAuthoringUtility.TryBuild(contentDb, scriptId, out DoorMotionState motion))
+                return;
+
+            ecb.AddComponent(logicalEntity, motion);
+            ecb.AddComponent<DoorActivated>(logicalEntity);
+            ecb.SetComponentEnabled<DoorActivated>(logicalEntity, false);
         }
 
         static PassiveActorPresence BuildPassiveActorPresence(in ActorDef actor)

@@ -66,6 +66,19 @@ namespace VVardenfell.Runtime.Components
         public quaternion DestinationRotation;
     }
 
+    public struct DoorActivated : IComponentData, IEnableableComponent
+    {
+    }
+
+    public struct DoorMotionState : IComponentData
+    {
+        public float Progress;
+        public float TargetProgress;
+        public float RangeRadians;
+        public float SpeedRadiansPerSecond;
+        public byte Axis;
+    }
+
     public struct PlayerInteractionFocus : IComponentData
     {
         public Entity TargetEntity;

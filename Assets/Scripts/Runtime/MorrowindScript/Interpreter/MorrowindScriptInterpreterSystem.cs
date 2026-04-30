@@ -19,10 +19,6 @@ namespace VVardenfell.Runtime.MorrowindScript
         EntityQuery _scriptQuery;
         BufferLookup<MorrowindScriptGlobalValue> _globalsLookup;
         BufferLookup<MorrowindQuestJournalIndex> _questJournalLookup;
-        ComponentLookup<LocalTransform> _transformLookup;
-        ComponentLookup<LocalToWorld> _localToWorldLookup;
-        ComponentLookup<Parent> _parentLookup;
-        ComponentLookup<InteractionActivationProxyTag> _activationProxyLookup;
         byte _hasLastCellContext;
         byte _lastInteriorActive;
         int2 _lastExteriorCell;
@@ -34,16 +30,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
                 ComponentType.ReadWrite<MorrowindScriptStackValue>(),
-                ComponentType.ReadOnly<LogicalRefChild>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadOnly<LogicalRefLocation>(),
                 ComponentType.ReadWrite<LocalTransform>());
             _globalsLookup = state.GetBufferLookup<MorrowindScriptGlobalValue>(false);
             _questJournalLookup = state.GetBufferLookup<MorrowindQuestJournalIndex>(true);
-            _transformLookup = state.GetComponentLookup<LocalTransform>(false);
-            _localToWorldLookup = state.GetComponentLookup<LocalToWorld>(false);
-            _parentLookup = state.GetComponentLookup<Parent>(true);
-            _activationProxyLookup = state.GetComponentLookup<InteractionActivationProxyTag>(true);
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
             state.RequireForUpdate<InteractionRuntimeState>();
             state.RequireForUpdate<ScriptActivationEvent>();
@@ -66,10 +57,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             runtimeState.NextAudioRequestSequence += (uint)math.max(1, scriptCount + 1);
             _globalsLookup.Update(ref state);
             _questJournalLookup.Update(ref state);
-            _transformLookup.Update(ref state);
-            _localToWorldLookup.Update(ref state);
-            _parentLookup.Update(ref state);
-            _activationProxyLookup.Update(ref state);
             var activeSources = state.EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
             activeSources.Clear();
 
@@ -147,10 +134,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 OpcodeHandlers = catalog.OpcodeHandlers,
                 Globals = _globalsLookup,
                 QuestJournal = _questJournalLookup,
-                Transforms = _transformLookup,
-                LocalToWorlds = _localToWorldLookup,
-                Parents = _parentLookup,
-                ActivationProxies = _activationProxyLookup,
                 ActiveExteriorCells = loadedCells.Active,
                 ActiveInteriorCellHash = activeInteriorCellHash,
                 InteriorActive = interiorActive,
@@ -194,10 +177,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindScriptGlobalValue> Globals;
             [ReadOnly] public BufferLookup<MorrowindQuestJournalIndex> QuestJournal;
-            [NativeDisableParallelForRestriction] public ComponentLookup<LocalTransform> Transforms;
-            [NativeDisableParallelForRestriction] public ComponentLookup<LocalToWorld> LocalToWorlds;
-            [ReadOnly] public ComponentLookup<Parent> Parents;
-            [ReadOnly] public ComponentLookup<InteractionActivationProxyTag> ActivationProxies;
             [ReadOnly] public NativeHashSet<int2> ActiveExteriorCells;
             public ulong ActiveInteriorCellHash;
             public byte InteriorActive;
@@ -222,7 +201,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ref MorrowindScriptInstance instance,
                 DynamicBuffer<MorrowindScriptLocalValue> locals,
                 DynamicBuffer<MorrowindScriptStackValue> stack,
-                DynamicBuffer<LogicalRefChild> children,
                 in PlacedRefIdentity placedRef,
                 in LogicalRefLocation location,
                 ref LocalTransform transform)
@@ -318,7 +296,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                     if (context.TransformRotationRequested != 0)
                     {
-                        ApplyRotationDelta(entity, ref transform, children, context.TransformRotationDelta);
+                        transform.Rotation = math.normalize(math.mul(context.TransformRotationDelta, transform.Rotation));
                         context.TransformRotationRequested = 0;
                     }
 
@@ -338,39 +316,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                     instance.SuppressActivation = 1;
 
                 instance.ProgramCounter = 0;
-            }
-
-            void ApplyRotationDelta(Entity entity, ref LocalTransform transform, DynamicBuffer<LogicalRefChild> children, quaternion delta)
-            {
-                RotateEntity(entity, ref transform, delta);
-                for (int i = 0; i < children.Length; i++)
-                {
-                    Entity child = children[i].Value;
-                    if (child == Entity.Null
-                        || child == entity
-                        || ActivationProxies.HasComponent(child)
-                        || Parents.HasComponent(child)
-                        || !Transforms.HasComponent(child))
-                    {
-                        continue;
-                    }
-
-                    var childTransform = Transforms[child];
-                    RotateEntity(child, ref childTransform, delta);
-                    Transforms[child] = childTransform;
-                }
-            }
-
-            void RotateEntity(Entity entity, ref LocalTransform transform, quaternion delta)
-            {
-                transform.Rotation = math.normalize(math.mul(delta, transform.Rotation));
-                if (LocalToWorlds.HasComponent(entity))
-                {
-                    LocalToWorlds[entity] = new LocalToWorld
-                    {
-                        Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
-                    };
-                }
             }
 
             bool IsScriptLocationActive(in LogicalRefLocation location)

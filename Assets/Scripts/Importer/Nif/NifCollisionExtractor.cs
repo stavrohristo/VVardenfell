@@ -103,12 +103,9 @@ namespace VVardenfell.Importer.Nif
             // Entering a collision subtree flips the flag for all descendants.
             bool childInCollision = inCollision || obj is RootCollisionNode;
 
-            if (childInCollision && obj is NiTriShape tri)
+            if (childInCollision && obj is NiGeometry geometry)
             {
-                var data = Resolve<NiTriShapeData>(nif, tri.Data);
-                if (data != null && data.Vertices != null && data.NumVertices > 0 && data.Triangles != null)
-                    AppendTriShape(data, world, verts, indices);
-                // NiTriShape has no children; fall through to return.
+                AppendGeometry(nif, geometry, world, verts, indices);
                 return;
             }
 
@@ -141,11 +138,9 @@ namespace VVardenfell.Importer.Nif
             if (obj is RootCollisionNode)
                 return;
 
-            if (obj is NiTriShape tri)
+            if (obj is NiGeometry geometry)
             {
-                var data = Resolve<NiTriShapeData>(nif, tri.Data);
-                if (data != null && data.Vertices != null && data.NumVertices > 0 && data.Triangles != null)
-                    AppendTriShape(data, world, verts, indices);
+                AppendGeometry(nif, geometry, world, verts, indices);
                 return;
             }
 
@@ -213,6 +208,28 @@ namespace VVardenfell.Importer.Nif
             return false;
         }
 
+        private static void AppendGeometry(NifFile nif, NiGeometry geometry, Matrix4x4 world,
+                                           List<Vector3> verts, List<int> indices)
+        {
+            switch (geometry)
+            {
+                case NiTriShape:
+                {
+                    var data = Resolve<NiTriShapeData>(nif, geometry.Data);
+                    if (data != null && data.Vertices != null && data.NumVertices > 0 && data.Triangles != null)
+                        AppendTriShape(data, world, verts, indices);
+                    break;
+                }
+                case NiTriStrips:
+                {
+                    var data = Resolve<NiTriStripsData>(nif, geometry.Data);
+                    if (data != null && data.Vertices != null && data.NumVertices > 0 && data.Strips != null)
+                        AppendTriStrips(data, world, verts, indices);
+                    break;
+                }
+            }
+        }
+
         private static void AppendTriShape(NiTriShapeData data, Matrix4x4 world,
                                            List<Vector3> verts, List<int> indices)
         {
@@ -236,6 +253,67 @@ namespace VVardenfell.Importer.Nif
                 indices.Add(baseVert + data.Triangles[i + 2]);
                 indices.Add(baseVert + data.Triangles[i + 1]);
             }
+        }
+
+        private static void AppendTriStrips(NiTriStripsData data, Matrix4x4 world,
+                                            List<Vector3> verts, List<int> indices)
+        {
+            int baseVert = verts.Count;
+            int vcount = data.NumVertices;
+            for (int i = 0; i < vcount; i++)
+            {
+                var p = world.MultiplyPoint3x4(data.Vertices[i]);
+                var pU = new Vector3(p.x, p.z, p.y) * WorldScale.MwUnitsToMeters;
+                verts.Add(pU);
+            }
+
+            var stripIndices = ConvertTriangleStrips(data.Strips);
+            for (int i = 0; i < stripIndices.Length; i += 3)
+            {
+                indices.Add(baseVert + stripIndices[i + 0]);
+                indices.Add(baseVert + stripIndices[i + 1]);
+                indices.Add(baseVert + stripIndices[i + 2]);
+            }
+        }
+
+        private static int[] ConvertTriangleStrips(ushort[][] strips)
+        {
+            if (strips == null || strips.Length == 0)
+                return System.Array.Empty<int>();
+
+            var triangles = new List<int>();
+            for (int s = 0; s < strips.Length; s++)
+            {
+                var strip = strips[s];
+                if (strip == null || strip.Length < 3)
+                    continue;
+
+                ushort b = strip[0];
+                ushort c = strip[1];
+                for (int i = 2; i < strip.Length; i++)
+                {
+                    ushort a = b;
+                    b = c;
+                    c = strip[i];
+                    if (a == b || b == c || a == c)
+                        continue;
+
+                    if ((i & 1) == 0)
+                    {
+                        triangles.Add(a);
+                        triangles.Add(c);
+                        triangles.Add(b);
+                    }
+                    else
+                    {
+                        triangles.Add(a);
+                        triangles.Add(b);
+                        triangles.Add(c);
+                    }
+                }
+            }
+
+            return triangles.ToArray();
         }
 
         private static T Resolve<T>(NifFile nif, int link) where T : NifRecord

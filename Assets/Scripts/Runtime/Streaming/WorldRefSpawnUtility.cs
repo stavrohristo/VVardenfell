@@ -67,7 +67,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (!TryGetRenderShardPrefab(entry, out _))
                 {
-                    WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
+                    if (!IsLogicalOnlyRef(entry))
+                        WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
                     spawnedRefEntities[i] = Entity.Null;
                     continue;
                 }
@@ -298,13 +299,30 @@ namespace VVardenfell.Runtime.Streaming
 
         static bool IsLogicalOnlyRef(in RefEntry entry, ContentReference contentReference)
         {
+            if (!IsLogicalOnlyRef(entry))
+                return false;
+
+            return contentReference.Kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Light
+                or ContentReferenceKind.LeveledItem
+                or ContentReferenceKind.LeveledCreature
+                or ContentReferenceKind.Actor;
+        }
+
+        static bool IsLogicalOnlyRef(in RefEntry entry)
+        {
             if ((RefSpawnMode)entry.SpawnModeRaw != RefSpawnMode.RenderShard)
                 return false;
 
             if (entry.RenderShardIndex >= 0 || entry.ModelPrefabIndex >= 0)
                 return false;
 
-            return contentReference.Kind == ContentReferenceKind.Activator;
+            ContentReferenceKind kind = (ContentReferenceKind)entry.ContentKind;
+            return kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Light
+                or ContentReferenceKind.LeveledItem
+                or ContentReferenceKind.LeveledCreature
+                or ContentReferenceKind.Actor;
         }
 
         interface ILogicalRefBuildSource
@@ -457,7 +475,8 @@ namespace VVardenfell.Runtime.Streaming
         {
             if (!TryGetRenderShardPrefab(entry, out Entity prefab))
             {
-                WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
+                if (!IsLogicalOnlyRef(entry))
+                    WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
                 return Entity.Null;
             }
 
@@ -519,6 +538,8 @@ namespace VVardenfell.Runtime.Streaming
             em.SetComponentData(entity, new RenderBounds { Value = aabb });
 
             ApplyRefRootMetadata(em, entity, entry, isInterior, exteriorCell, interiorCellId);
+            if (isInterior)
+                EnsureRenderEnabled(em, entity);
         }
 
         static Entity SpawnModelPrefabRef(
@@ -565,6 +586,8 @@ namespace VVardenfell.Runtime.Streaming
 
             ApplyRefRootMetadata(em, root, entry, isInterior, exteriorCell, interiorCellId);
             ApplyObjectAnimationState(em, root, entry);
+            if (isInterior)
+                EnsureRenderEnabled(em, root);
 
             if (linkedEntities != null)
             {
@@ -578,6 +601,7 @@ namespace VVardenfell.Runtime.Streaming
                     {
                         if (!em.HasComponent<InteriorCellMember>(linkedEntity))
                             em.AddComponent<InteriorCellMember>(linkedEntity);
+                        EnsureRenderEnabled(em, linkedEntity);
                     }
                     else
                     {
@@ -592,6 +616,14 @@ namespace VVardenfell.Runtime.Streaming
 
             AppendSpawnedEntities(root, spawnedEntities, linkedEntities);
             return root;
+        }
+
+        static void EnsureRenderEnabled(EntityManager em, Entity entity)
+        {
+            if (entity == Entity.Null || !em.Exists(entity) || !em.HasComponent<MaterialMeshInfo>(entity))
+                return;
+
+            em.SetComponentEnabled<MaterialMeshInfo>(entity, true);
         }
 
         static void ApplyObjectAnimationState(EntityManager em, Entity root, RefEntry entry)
@@ -728,9 +760,7 @@ namespace VVardenfell.Runtime.Streaming
             if (!s_UnsupportedSpawnModeWarnings.Add(key))
                 return;
 
-            string mode = System.Enum.IsDefined(typeof(RefSpawnMode), entry.SpawnModeRaw)
-                ? ((RefSpawnMode)entry.SpawnModeRaw).ToString()
-                : $"unknown({entry.SpawnModeRaw})";
+            string mode = FormatRefSpawnMode(entry.SpawnModeRaw);
             Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
         }
 
@@ -742,17 +772,32 @@ namespace VVardenfell.Runtime.Streaming
             if (!s_DroppedRefWarnings.Add(key))
                 return;
 
-            string mode = System.Enum.IsDefined(typeof(RefSpawnMode), entry.SpawnModeRaw)
-                ? ((RefSpawnMode)entry.SpawnModeRaw).ToString()
-                : $"unknown({entry.SpawnModeRaw})";
-            string kind = System.Enum.IsDefined(typeof(ContentReferenceKind), entry.ContentKind)
-                ? ((ContentReferenceKind)entry.ContentKind).ToString()
-                : $"unknown({entry.ContentKind})";
+            string mode = FormatRefSpawnMode(entry.SpawnModeRaw);
+            string kind = FormatContentReferenceKind(entry.ContentKind);
             Debug.LogWarning(
                 $"[VVardenfell][DroppedRef] {cellLabel} ref {entry.PlacedRefId:X8} was not spawned: {reason}. "
                 + $"spawnMode={mode} renderShard={entry.RenderShardIndex} modelPrefab={entry.ModelPrefabIndex} "
                 + $"mesh={entry.LocalMeshIndex} material={entry.LocalMaterialIndex} content={kind}:{entry.ContentHandleValue} "
                 + $"pos=({entry.PosX:F3}, {entry.PosY:F3}, {entry.PosZ:F3}).");
+        }
+
+        static string FormatRefSpawnMode(int raw)
+        {
+            var mode = (RefSpawnMode)raw;
+            return System.Enum.IsDefined(typeof(RefSpawnMode), mode)
+                ? mode.ToString()
+                : $"unknown({raw})";
+        }
+
+        static string FormatContentReferenceKind(int raw)
+        {
+            if ((uint)raw > byte.MaxValue)
+                return $"unknown({raw})";
+
+            var kind = (ContentReferenceKind)(byte)raw;
+            return System.Enum.IsDefined(typeof(ContentReferenceKind), kind)
+                ? kind.ToString()
+                : $"unknown({raw})";
         }
 
         static string DescribeRenderShardFailure(in RefEntry entry)

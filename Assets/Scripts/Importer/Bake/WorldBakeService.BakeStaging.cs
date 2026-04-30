@@ -534,6 +534,20 @@ namespace VVardenfell.Importer.Bake
 
                 if (model == null || model.Meshes.Length == 0)
                 {
+                    if (IsLogicalOnlyWorldRef(contentReference.Kind))
+                    {
+                        staged.CollisionNoColliderCount++;
+                        staged.PlacedRefs.Add(new StagedPlacedRefData(
+                            string.Empty,
+                            reference.FormId,
+                            -1,
+                            contentReference,
+                            pos,
+                            rot,
+                            reference.Scale));
+                        continue;
+                    }
+
                     RecordDroppedBakeRef(
                         workItem,
                         reference.FormId,
@@ -816,6 +830,15 @@ namespace VVardenfell.Importer.Bake
                 or ContentReferenceKind.Door
                 or ContentReferenceKind.Container
                 or ContentReferenceKind.Light;
+        }
+
+
+        private static bool IsLogicalOnlyWorldRef(ContentReferenceKind kind)
+        {
+            return kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Light
+                or ContentReferenceKind.LeveledItem
+                or ContentReferenceKind.LeveledCreature;
         }
 
 
