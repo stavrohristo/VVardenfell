@@ -25,18 +25,19 @@ namespace VVardenfell.Runtime.Animation
         static readonly float3 k_MinAnimatedRenderCullExtents = new(1.25f, 2.25f, 1.25f);
         static readonly float3 k_AnimatedRenderCullPadding = new(0.75f, 1.0f, 0.75f);
 
+        protected override void OnCreate()
+        {
+            RequireForUpdate<ActorAnimationBlobCatalog>();
+        }
+
         protected override void OnUpdate()
         {
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
             if (contentDb == null)
                 return;
-            if (!SystemAPI.HasSingleton<ActorAnimationBlobCatalog>())
-                return;
 
             CacheLoader cache = WorldResources.Cache;
             var blobRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
-            if (!blobRef.IsCreated)
-                return;
 
             ref var catalog = ref blobRef.Value;
             PrebuildRigidEquipmentPrefabs(contentDb);
@@ -47,9 +48,6 @@ namespace VVardenfell.Runtime.Animation
             WorldResources.ActorGpuAnimation = gpuAnimationResources;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            int spawnedActorCount = 0;
-            int spawnedRenderChildCount = 0;
-            int compatibleRenderRunCount = 0;
             foreach (var (source, entity) in
                      SystemAPI.Query<RefRO<ActorSpawnSource>>()
                          .WithNone<ActorPresentation>()
@@ -154,12 +152,7 @@ namespace VVardenfell.Runtime.Animation
                     skinMeshBuffer,
                     ref catalog,
                     deformedVertexOffset,
-                    actorBounds,
-                    out int renderChildCount,
-                    out int compatibleRunCount);
-                spawnedActorCount++;
-                spawnedRenderChildCount += renderChildCount;
-                compatibleRenderRunCount += compatibleRunCount;
+                    actorBounds);
 
                 using var rigidEquipment = new NativeList<ActorRigidEquipment>(Allocator.Temp);
                 PopulateRigidEquipment(
@@ -195,14 +188,6 @@ namespace VVardenfell.Runtime.Animation
 
             ecb.Playback(EntityManager);
             ecb.Dispose();
-            if (spawnedActorCount > 0)
-            {
-                Debug.Log(
-                    "[VVardenfell][ActorRenderSpawn] "
-                    + $"actors={spawnedActorCount} "
-                    + $"renderChildren={spawnedRenderChildCount} "
-                    + $"compatibleRenderRuns={compatibleRenderRunCount}");
-            }
         }
 
         static int ResolveBoneCount(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
@@ -246,12 +231,8 @@ namespace VVardenfell.Runtime.Animation
             DynamicBuffer<ActorSkinMesh> skinMeshes,
             ref ActorAnimationCatalogBlob catalog,
             int deformedVertexOffset,
-            ActorLocalBounds actorBounds,
-            out int renderChildCount,
-            out int compatibleRunCount)
+            ActorLocalBounds actorBounds)
         {
-            renderChildCount = 0;
-            compatibleRunCount = 0;
             DynamicBuffer<LinkedEntityGroup> linked = default;
             bool createdLinkedBuffer = false;
             if (!entityManager.HasBuffer<LinkedEntityGroup>(actorEntity))
@@ -281,12 +262,10 @@ namespace VVardenfell.Runtime.Animation
                     throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} has no Entities Graphics render prototype.");
                 }
 
-                renderChildCount++;
                 if (info.BucketIndex != previousBucketIndex
                     || info.MaterialIndex != previousMaterialIndex
                     || info.TextureSlice != previousTextureSlice)
                 {
-                    compatibleRunCount++;
                     previousBucketIndex = info.BucketIndex;
                     previousMaterialIndex = info.MaterialIndex;
                     previousTextureSlice = info.TextureSlice;

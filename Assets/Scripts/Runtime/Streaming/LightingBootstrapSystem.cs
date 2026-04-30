@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core;
+using VVardenfell.Core.Config;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -32,6 +33,13 @@ namespace VVardenfell.Runtime.Streaming
                 var entity = EntityManager.CreateEntity();
                 EntityManager.SetName(entity, "VVardenfell.SkyWeatherState");
                 EntityManager.AddComponentData(entity, CreateFallbackSkyWeather());
+            }
+
+            if (!SystemAPI.HasSingleton<RuntimeVideoSettings>())
+            {
+                var entity = EntityManager.CreateEntity();
+                EntityManager.SetName(entity, "VVardenfell.RuntimeVideoSettings");
+                EntityManager.AddComponentData(entity, ResolveRuntimeVideoSettings());
             }
         }
 
@@ -188,6 +196,13 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         static float3 Rgb(int r, int g, int b) => new(r / 255f, g / 255f, b / 255f);
+
+        static RuntimeVideoSettings ResolveRuntimeVideoSettings()
+        {
+            return ConfigStorage.TryLoad(out var config) && config != null
+                ? RuntimeVideoSettingsUtility.FromConfig(config)
+                : RuntimeVideoSettings.CreateDefault();
+        }
     }
 
 }

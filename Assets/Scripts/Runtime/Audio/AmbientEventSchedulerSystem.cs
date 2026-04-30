@@ -45,9 +45,12 @@ namespace VVardenfell.Runtime.Audio
             if (scheduler.ActiveRegionHandleValue != regionState.Region.Value || scheduler.Initialized == 0)
             {
                 scheduler.ActiveRegionHandleValue = regionState.Region.Value;
-                scheduler.RandomState = CreateSeed(regionState.Region.Value);
-                scheduler.SecondsUntilNextAttempt = 0f;
-                scheduler.Initialized = 1;
+                if (scheduler.Initialized == 0)
+                {
+                    scheduler.RandomState = CreateSeed(regionState.Region.Value);
+                    scheduler.SecondsUntilNextAttempt = 0f;
+                    scheduler.Initialized = 1;
+                }
             }
 
             float dt = SystemAPI.Time.DeltaTime;

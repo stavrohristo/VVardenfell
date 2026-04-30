@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.UI.Shell
 {
@@ -119,6 +120,15 @@ namespace VVardenfell.Runtime.UI.Shell
                 {
                     _config.Fov = v;
                     _callbacks.Fov?.Invoke(v);
+                });
+            y += RowHeight + RowSpacing;
+
+            _fogDistanceSlider = CreateRowSlider(root, y, "Fog Distance", RuntimeVideoSettings.MinFogDistanceScale, RuntimeVideoSettings.MaxFogDistanceScale, _config.FogDistanceScale,
+                formatter: v => $"{v:0.00}x",
+                onChanged: v =>
+                {
+                    _config.FogDistanceScale = v;
+                    _callbacks.FogDistanceScale?.Invoke(v);
                 });
             y += RowHeight + RowSpacing;
 

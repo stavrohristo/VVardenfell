@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _dayCycleQuery;
         EntityQuery _timeQuery;
         EntityQuery _weatherQuery;
+        EntityQuery _videoSettingsQuery;
 
         protected override void OnCreate()
         {
@@ -36,6 +37,7 @@ namespace VVardenfell.Runtime.Streaming
             _dayCycleQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindDayCycleState>());
             _timeQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindTimeState>());
             _weatherQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindWeatherState>());
+            _videoSettingsQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeVideoSettings>());
             RequireForUpdate(_environmentQuery);
             RequireForUpdate(_streamingQuery);
             RequireForUpdate(_dayCycleQuery);
@@ -53,6 +55,7 @@ namespace VVardenfell.Runtime.Streaming
             var dayCycle = _dayCycleQuery.GetSingleton<MorrowindDayCycleState>();
             var time = _timeQuery.GetSingleton<MorrowindTimeState>();
             var weather = _weatherQuery.GetSingleton<MorrowindWeatherState>();
+            float fogDistanceScale = ResolveFogDistanceScale();
 
             if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
@@ -61,7 +64,7 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     if (WorldResources.TryGetInteriorCell(transition.ActiveInteriorCellHash, out var interiorCell))
                     {
-                        environment = BuildInteriorEnvironment(interiorCell);
+                        environment = BuildInteriorEnvironment(interiorCell, fogDistanceScale);
                         LogEnvironmentContext(
                             isInterior: true,
                             exteriorCell: default,
@@ -71,7 +74,9 @@ namespace VVardenfell.Runtime.Streaming
                         return;
                     }
 
-                    environment = LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: true);
+                    environment = ApplyFogDistanceScale(
+                        LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: true),
+                        fogDistanceScale);
                     if (!_loggedMissingInteriorCell || !_missingInteriorCellId.Equals(transition.ActiveInteriorCellId))
                     {
                         _loggedMissingInteriorCell = true;
@@ -90,7 +95,7 @@ namespace VVardenfell.Runtime.Streaming
 
             if (WorldResources.Cells.TryGetValue(streaming.CameraCell, out var exteriorCell) && exteriorCell != null)
             {
-                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle, time, weather);
+                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle, time, weather, fogDistanceScale);
                 LogEnvironmentContext(
                     isInterior: false,
                     exteriorCell: streaming.CameraCell,
@@ -100,7 +105,7 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            environment = BuildExteriorEnvironment(null, contentDb, dayCycle, time, weather);
+            environment = BuildExteriorEnvironment(null, contentDb, dayCycle, time, weather, fogDistanceScale);
             LogEnvironmentContext(
                 isInterior: false,
                 exteriorCell: streaming.CameraCell,
@@ -108,9 +113,11 @@ namespace VVardenfell.Runtime.Streaming
                 sourceLabel: "missing exterior fallback");
         }
 
-        static ActiveEnvironmentState BuildInteriorEnvironment(CellData cell)
+        static ActiveEnvironmentState BuildInteriorEnvironment(CellData cell, float fogDistanceScale)
         {
-            var fallback = LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: true);
+            var fallback = ApplyFogDistanceScale(
+                LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: true),
+                fogDistanceScale);
             var env = cell.Environment;
             if (env.HasMood == 0)
                 return fallback;
@@ -127,14 +134,14 @@ namespace VVardenfell.Runtime.Streaming
                 SunPercent = 1f,
                 FogColorRgb = DecodeRgb(env.FogColorRgba),
                 FogDensity = density,
-                FogNearMeters = fogNear,
-                FogFarMeters = fogFar,
+                FogNearMeters = fogNear * fogDistanceScale,
+                FogFarMeters = fogFar * fogDistanceScale,
                 RegionHandleValue = 0,
                 IsInterior = 1,
             };
         }
 
-        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle, MorrowindTimeState time, MorrowindWeatherState weather)
+        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle, MorrowindTimeState time, MorrowindWeatherState weather, float fogDistanceScale)
         {
             int regionHandleValue = 0;
             string regionId = cell?.Environment.RegionId ?? string.Empty;
@@ -170,8 +177,8 @@ namespace VVardenfell.Runtime.Streaming
                 SunPercent = day.SunPercent,
                 FogColorRgb = day.FogColorRgb,
                 FogDensity = fogDensity,
-                FogNearMeters = fogNear,
-                FogFarMeters = fogFar,
+                FogNearMeters = fogNear * fogDistanceScale,
+                FogFarMeters = fogFar * fogDistanceScale,
                 RegionHandleValue = regionHandleValue,
                 IsInterior = 0,
             };
@@ -205,6 +212,22 @@ namespace VVardenfell.Runtime.Streaming
 
             fogFar = math.lerp(1800f, 240f, clampedDensity);
             fogNear = math.lerp(fogFar * 0.7f, fogFar * 0.18f, clampedDensity);
+        }
+
+        float ResolveFogDistanceScale()
+        {
+            if (_videoSettingsQuery.IsEmptyIgnoreFilter)
+                return RuntimeVideoSettings.DefaultFogDistanceScale;
+
+            var settings = _videoSettingsQuery.GetSingleton<RuntimeVideoSettings>();
+            return RuntimeVideoSettings.NormalizeFogDistanceScale(settings.FogDistanceScale);
+        }
+
+        static ActiveEnvironmentState ApplyFogDistanceScale(ActiveEnvironmentState environment, float fogDistanceScale)
+        {
+            environment.FogNearMeters *= fogDistanceScale;
+            environment.FogFarMeters *= fogDistanceScale;
+            return environment;
         }
 
         void LogEnvironmentContext(bool isInterior, int2 exteriorCell, FixedString128Bytes interiorCellId, string sourceLabel)

@@ -62,7 +62,7 @@ namespace VVardenfell.Runtime.Streaming
                 Month = ReadGlobalInt(contentDb, "month", 7),
                 Year = ReadGlobalInt(contentDb, "year", 427),
                 TimeScale = ReadGlobalFloat(contentDb, "timescale", 30f),
-                SimulationTimeScale = 1f,
+                SimulationTimeScale = 10f,
             };
         }
 

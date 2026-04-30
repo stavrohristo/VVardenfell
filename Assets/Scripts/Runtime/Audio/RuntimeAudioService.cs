@@ -27,6 +27,9 @@ namespace VVardenfell.Runtime.Audio
         const float DefaultFadeSpeed = 2.4f;
         const int RegionEventSourceCount = 4;
         const int InteractionEventSourceCount = 32;
+        const string RegionEventChannelName = "region-event";
+        const string InteractionEventChannelName = "interaction-event";
+        const string ScriptEventChannelName = "script-event";
 
         static readonly ProfilerMarker k_ClipLoad = new("VV.Audio.ClipLoad");
         static readonly ProfilerMarker k_ClipCacheHit = new("VV.Audio.ClipCacheHit");
@@ -95,10 +98,10 @@ namespace VVardenfell.Runtime.Audio
         readonly HashSet<string> _missingPathWarnings = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _loadFailureWarnings = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _rangeWarnings = new(StringComparer.OrdinalIgnoreCase);
-        readonly HashSet<string> _scriptAudioDiagnostics = new(StringComparer.OrdinalIgnoreCase);
         readonly List<OneShotRequest> _pendingEventRequests = new();
         readonly Dictionary<ulong, ChannelState> _scriptLoopChannels = new();
         readonly HashSet<ulong> _scriptLoopTouched = new();
+        readonly List<ulong> _scriptLoopRemovalKeys = new();
 
         readonly GameObject _root;
         readonly ChannelState _music;
@@ -247,7 +250,7 @@ namespace VVardenfell.Runtime.Audio
             _regionEventSources = new AudioSource[RegionEventSourceCount];
             for (int i = 0; i < _regionEventSources.Length; i++)
             {
-                var eventSource = CreateChildAudioSource($"region-event-{i:00}");
+                var eventSource = CreateChildAudioSource($"{RegionEventChannelName}-{i:00}");
                 eventSource.playOnAwake = false;
                 eventSource.loop = false;
                 eventSource.spatialBlend = 0f;
@@ -258,7 +261,7 @@ namespace VVardenfell.Runtime.Audio
             _interactionEventSources = new AudioSource[InteractionEventSourceCount];
             for (int i = 0; i < _interactionEventSources.Length; i++)
             {
-                var eventSource = CreateChildAudioSource($"interaction-event-{i:00}");
+                var eventSource = CreateChildAudioSource($"{InteractionEventChannelName}-{i:00}");
                 eventSource.playOnAwake = false;
                 eventSource.loop = false;
                 eventSource.spatialBlend = 1f;
@@ -303,7 +306,7 @@ namespace VVardenfell.Runtime.Audio
                 DisposeChannel(channel);
             _scriptLoopChannels.Clear();
             _scriptLoopTouched.Clear();
-            _scriptAudioDiagnostics.Clear();
+            _scriptLoopRemovalKeys.Clear();
             DisposePendingEvents();
 
             foreach (var clip in _clipCache.Values)
@@ -390,6 +393,8 @@ namespace VVardenfell.Runtime.Audio
 
             if (!_regionAmbientEnabled || state.EventSequence == 0 || state.EventSequence == _lastQueuedRegionEventSequence || !state.PendingEventSound.IsValid)
                 return;
+            if (HasActiveRegionEvent())
+                return;
 
             string path = ResolveSoundPath(contentDb, state.PendingEventSound);
             float volume = ResolveSoundVolume(
@@ -412,7 +417,7 @@ namespace VVardenfell.Runtime.Audio
             var request = new OneShotRequest
             {
                 Path = path,
-                ChannelName = "region-event",
+                ChannelName = RegionEventChannelName,
                 Volume = volume,
                 EventSequence = state.EventSequence,
                 Spatial = false,
@@ -497,7 +502,6 @@ namespace VVardenfell.Runtime.Audio
             if (request.Spatial != 0 && IsBeyondSpatialMaxDistance(position, maxDistance))
                 return;
 
-            LogScriptAudioRequestOnce(contentDb, request, path, volume, minDistance, maxDistance, position);
             float pitch = Mathf.Max(0.01f, request.Pitch <= 0f ? 1f : request.Pitch);
             if (request.Looping != 0)
             {
@@ -519,14 +523,14 @@ namespace VVardenfell.Runtime.Audio
                 if (request.Spatial != 0)
                     PlayInteractionEvent(cachedClip, volume, pitch, position, minDistance, maxDistance);
                 else
-                    PlayRegionEvent(cachedClip, volume, pitch);
+                    PlayNonSpatialEffectEvent(cachedClip, volume, pitch);
                 return;
             }
 
             var pendingRequest = new OneShotRequest
             {
                 Path = path,
-                ChannelName = "script-event",
+                ChannelName = ScriptEventChannelName,
                 Volume = volume,
                 Pitch = pitch,
                 EventSequence = request.Sequence,
@@ -542,13 +546,19 @@ namespace VVardenfell.Runtime.Audio
 
         public void EndScriptAudioFrame()
         {
+            _scriptLoopRemovalKeys.Clear();
             foreach (var pair in _scriptLoopChannels)
             {
                 if (_scriptLoopTouched.Contains(pair.Key))
                     continue;
 
-                SyncChannel(pair.Value, null, true, 0f);
+                _scriptLoopRemovalKeys.Add(pair.Key);
             }
+
+            for (int i = 0; i < _scriptLoopRemovalKeys.Count; i++)
+                RemoveScriptLoopChannel(_scriptLoopRemovalKeys[i]);
+
+            _scriptLoopRemovalKeys.Clear();
         }
 
         public void Tick(float deltaTime)
@@ -563,6 +573,7 @@ namespace VVardenfell.Runtime.Audio
             TickChannel(_nearWater, deltaTime);
             foreach (var channel in _scriptLoopChannels.Values)
                 TickChannel(channel, deltaTime);
+            RemoveStoppedScriptLoopChannels();
             TickPendingEvents();
         }
 
@@ -766,7 +777,46 @@ namespace VVardenfell.Runtime.Audio
             channel.ActivePath = path;
             if (!channel.Source.isPlaying)
                 channel.Source.Play();
-            LogScriptLoopLoadedOnce(channel, path, clip);
+        }
+
+        void RemoveStoppedScriptLoopChannels()
+        {
+            _scriptLoopRemovalKeys.Clear();
+            foreach (var pair in _scriptLoopChannels)
+            {
+                var channel = pair.Value;
+                if (channel == null || channel.Operation != null || !string.IsNullOrWhiteSpace(channel.PendingPath))
+                    continue;
+
+                if (channel.Source != null && (channel.Source.isPlaying || channel.Source.volume > 0.0001f))
+                    continue;
+
+                _scriptLoopRemovalKeys.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _scriptLoopRemovalKeys.Count; i++)
+            {
+                ulong key = _scriptLoopRemovalKeys[i];
+                if (!_scriptLoopChannels.TryGetValue(key, out var channel))
+                    continue;
+
+                RemoveScriptLoopChannel(key);
+            }
+
+            _scriptLoopRemovalKeys.Clear();
+        }
+
+        void RemoveScriptLoopChannel(ulong key)
+        {
+            if (!_scriptLoopChannels.TryGetValue(key, out var channel))
+                return;
+
+            DisposeChannel(channel);
+            if (channel.Source != null)
+                UnityEngine.Object.Destroy(channel.Source.gameObject);
+
+            _scriptLoopChannels.Remove(key);
+            _scriptLoopTouched.Remove(key);
         }
 
         void TickPendingEvents()
@@ -807,6 +857,8 @@ namespace VVardenfell.Runtime.Audio
 
             if (clip == null || _regionEventSources.Length == 0)
                 return;
+            if (CountPlayingRegionEventSources() > 0)
+                return;
 
             int sourceIndex = _nextRegionEventSource;
             _nextRegionEventSource = (_nextRegionEventSource + 1) % _regionEventSources.Length;
@@ -818,6 +870,37 @@ namespace VVardenfell.Runtime.Audio
             source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
             source.pitch = Mathf.Max(0.01f, pitch);
             source.PlayOneShot(clip, 1f);
+        }
+
+        bool HasActiveRegionEvent()
+        {
+            return CountPlayingRegionEventSources() > 0 || CountPendingRegionEventLoads() > 0;
+        }
+
+        int CountPlayingRegionEventSources()
+        {
+            int count = 0;
+            for (int i = 0; i < _regionEventSources.Length; i++)
+            {
+                var source = _regionEventSources[i];
+                if (source != null && source.isPlaying)
+                    count++;
+            }
+
+            return count;
+        }
+
+        int CountPendingRegionEventLoads()
+        {
+            int count = 0;
+            for (int i = 0; i < _pendingEventRequests.Count; i++)
+            {
+                var request = _pendingEventRequests[i];
+                if (request != null && !request.Spatial && string.Equals(request.ChannelName, RegionEventChannelName, StringComparison.Ordinal))
+                    count++;
+            }
+
+            return count;
         }
 
         void QueueInteractionAudioEvent(RuntimeContentDatabase contentDb, in InteractionAudioRequest request, in AudioTuningState tuning)
@@ -856,7 +939,7 @@ namespace VVardenfell.Runtime.Audio
             var pendingRequest = new OneShotRequest
             {
                 Path = path,
-                ChannelName = "interaction-event",
+                ChannelName = InteractionEventChannelName,
                 Volume = volume,
                 Pitch = 1f,
                 EventSequence = request.Sequence,
@@ -875,13 +958,19 @@ namespace VVardenfell.Runtime.Audio
             if (request == null)
                 return;
 
+            if (string.Equals(request.ChannelName, RegionEventChannelName, StringComparison.Ordinal))
+            {
+                PlayRegionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
+                return;
+            }
+
             if (request.Spatial)
             {
                 PlayInteractionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch, request.Position, request.MinDistance, request.MaxDistance);
                 return;
             }
 
-            PlayRegionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
+            PlayNonSpatialEffectEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
         }
 
         void PlayInteractionEvent(AudioClip clip, float volume, float pitch, Vector3 position, float minDistance, float maxDistance)
@@ -906,10 +995,38 @@ namespace VVardenfell.Runtime.Audio
             }
 
             _interactionEventPoolExhaustedWarningLogged = false;
+            source.spatialBlend = 1f;
             source.transform.position = position;
             source.minDistance = Mathf.Max(0f, minDistance);
             source.maxDistance = Mathf.Max(source.minDistance, maxDistance);
             // Interaction SFX also route through the Effects bus.
+            source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
+            source.pitch = Mathf.Max(0.01f, pitch);
+            source.clip = clip;
+            source.Play();
+        }
+
+        void PlayNonSpatialEffectEvent(AudioClip clip, float volume, float pitch)
+        {
+            using var _ = k_PlayInteractionEvent.Auto();
+
+            if (clip == null || _interactionEventSources.Length == 0)
+                return;
+
+            if (!TryGetIdleInteractionEventSource(out var source))
+            {
+                if (!_interactionEventPoolExhaustedWarningLogged)
+                {
+                    Debug.LogWarning(
+                        $"[VVardenfell][Audio] interaction one-shot pool exhausted ({_interactionEventSources.Length} sources); dropping non-spatial one-shot '{clip.name}' to avoid cutting off active audio.");
+                    _interactionEventPoolExhaustedWarningLogged = true;
+                }
+
+                return;
+            }
+
+            _interactionEventPoolExhaustedWarningLogged = false;
+            source.spatialBlend = 0f;
             source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
             source.pitch = Mathf.Max(0.01f, pitch);
             source.clip = clip;
@@ -964,55 +1081,6 @@ namespace VVardenfell.Runtime.Audio
                 ? request.SourcePlacedRefId
                 : (uint)request.SourceEntity.Index;
             return (source << 32) ^ (uint)request.Sound.Value;
-        }
-
-        void LogScriptAudioRequestOnce(
-            RuntimeContentDatabase contentDb,
-            in MorrowindScriptAudioRequest request,
-            string path,
-            float resolvedVolume,
-            float minDistance,
-            float maxDistance,
-            Vector3 position)
-        {
-            string key = $"{request.Kind}|{request.Sound.Value}|{request.SourcePlacedRefId}|{request.Looping}|{request.Spatial}|{path}";
-            if (!_scriptAudioDiagnostics.Add(key))
-                return;
-
-            byte sourceVolume = 0;
-            byte sourceMinRange = 0;
-            byte sourceMaxRange = 0;
-            if (contentDb != null && request.Sound.IsValid)
-            {
-                ref readonly var sound = ref contentDb.Get(request.Sound);
-                sourceVolume = sound.Volume;
-                sourceMinRange = sound.MinRange;
-                sourceMaxRange = sound.MaxRange;
-            }
-
-            float listenerDistance = -1f;
-            if (TryGetListenerPosition(out var listenerPosition))
-                listenerDistance = Vector3.Distance(listenerPosition, position);
-
-            Debug.Log(
-                $"[VVardenfell][MWScript][AudioDiag] accepted kind={(MorrowindScriptAudioKind)request.Kind} sound={request.Sound.Value} placedRef=0x{request.SourcePlacedRefId:X8} looping={request.Looping != 0} spatial={request.Spatial != 0} requestVolume={request.Volume:0.###} resolvedVolume={resolvedVolume:0.###} pitch={request.Pitch:0.###} sourceVolume={sourceVolume} sourceRange={sourceMinRange}-{sourceMaxRange} resolvedRangeMeters={minDistance:0.###}-{maxDistance:0.###} listenerDistanceMeters={listenerDistance:0.###} path='{path}'");
-        }
-
-        void LogScriptLoopLoadedOnce(ChannelState channel, string path, AudioClip clip)
-        {
-            if (channel == null || !channel.Name.StartsWith("script-loop-", StringComparison.Ordinal))
-                return;
-
-            string key = $"loaded|{channel.Name}|{path}";
-            if (!_scriptAudioDiagnostics.Add(key))
-                return;
-
-            float listenerDistance = -1f;
-            if (TryGetListenerPosition(out var listenerPosition))
-                listenerDistance = Vector3.Distance(listenerPosition, channel.Source.transform.position);
-
-            Debug.Log(
-                $"[VVardenfell][MWScript][AudioDiag] loopLoaded channel={channel.Name} clip='{clip.name}' length={clip.length:0.###} samples={clip.samples} frequency={clip.frequency} channels={clip.channels} playing={channel.Source.isPlaying} loop={channel.Source.loop} volume={channel.Source.volume:0.###} targetVolume={channel.TargetVolume:0.###} spatialBlend={channel.Source.spatialBlend:0.###} rangeMeters={channel.Source.minDistance:0.###}-{channel.Source.maxDistance:0.###} listenerDistanceMeters={listenerDistance:0.###} path='{path}'");
         }
 
         void CancelLoad(ChannelState channel, bool disposeClip = false)

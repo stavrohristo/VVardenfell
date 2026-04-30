@@ -24,9 +24,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
                 ComponentType.ReadWrite<MorrowindScriptStackValue>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
+                ComponentType.ReadOnly<LogicalRefLocation>(),
                 ComponentType.ReadOnly<LocalTransform>());
             _globalsLookup = state.GetBufferLookup<MorrowindScriptGlobalValue>(false);
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<LoadedCellsMap>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -42,6 +44,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             runtimeState.NextAudioRequestSequence += (uint)math.max(1, scriptCount + 1);
             _globalsLookup.Update(ref state);
 
+            var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
+            byte interiorActive = 0;
+            ulong activeInteriorCellHash = 0;
+            if (SystemAPI.TryGetSingleton<InteriorTransitionState>(out var interiorTransition) && interiorTransition.InteriorActive != 0)
+            {
+                interiorActive = 1;
+                activeInteriorCellHash = interiorTransition.ActiveInteriorCellHash;
+            }
+
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
             var job = new InterpretObjectScriptsJob
             {
@@ -49,6 +60,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Instructions = catalog.Instructions,
                 OpcodeHandlers = catalog.OpcodeHandlers,
                 Globals = _globalsLookup,
+                ActiveExteriorCells = loadedCells.Active,
+                ActiveInteriorCellHash = activeInteriorCellHash,
+                InteriorActive = interiorActive,
+                HasActiveExteriorCells = loadedCells.Active.IsCreated ? (byte)1 : (byte)0,
                 RuntimeEntity = runtimeEntity,
                 Ecb = ecb.AsParallelWriter(),
                 AudioSequenceBase = sequenceBase,
@@ -67,6 +82,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public NativeArray<MorrowindScriptInstructionRuntime> Instructions;
             [ReadOnly] public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindScriptGlobalValue> Globals;
+            [ReadOnly] public NativeHashSet<int2> ActiveExteriorCells;
+            public ulong ActiveInteriorCellHash;
+            public byte InteriorActive;
+            public byte HasActiveExteriorCells;
             public Entity RuntimeEntity;
             public EntityCommandBuffer.ParallelWriter Ecb;
             public uint AudioSequenceBase;
@@ -78,9 +97,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 DynamicBuffer<MorrowindScriptLocalValue> locals,
                 DynamicBuffer<MorrowindScriptStackValue> stack,
                 in PlacedRefIdentity placedRef,
+                in LogicalRefLocation location,
                 in LocalTransform transform)
             {
                 if (instance.Status != (byte)MorrowindScriptInstanceStatus.Running)
+                    return;
+
+                if (!IsScriptLocationActive(location))
                     return;
 
                 if ((uint)instance.ProgramIndex >= (uint)Programs.Length)
@@ -150,6 +173,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
 
                 instance.ProgramCounter = 0;
+            }
+
+            bool IsScriptLocationActive(in LogicalRefLocation location)
+            {
+                if (InteriorActive != 0)
+                    return location.IsInterior != 0 && location.InteriorCellHash == ActiveInteriorCellHash;
+
+                if (location.IsInterior != 0 || HasActiveExteriorCells == 0)
+                    return false;
+
+                return ActiveExteriorCells.Contains(location.ExteriorCell);
             }
 
             static void Fault(ref MorrowindScriptInstance instance, FixedString128Bytes reason)

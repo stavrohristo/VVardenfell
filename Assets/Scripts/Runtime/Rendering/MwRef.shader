@@ -109,7 +109,6 @@ Shader "VVardenfell/MwRef"
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS   : TEXCOORD1;
                 float2 uv         : TEXCOORD2;
-                float fogFactor   : TEXCOORD3;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -127,7 +126,6 @@ Shader "VVardenfell/MwRef"
                 OUT.positionWS = pos.positionWS;
                 OUT.normalWS   = nrm.normalWS;
                 OUT.uv         = IN.uv;
-                OUT.fogFactor  = ComputeFogFactor(pos.positionCS.z);
                 return OUT;
             }
 
@@ -157,7 +155,7 @@ Shader "VVardenfell/MwRef"
                 half3 N = normalize(IN.normalWS);
                 half3 lit = albedo.rgb * MwEvaluateDiffuseLighting(IN.positionWS, IN.positionCS, N);
 
-                lit = MixFog(lit, IN.fogFactor);
+                lit = MwMixRadialFog(lit, IN.positionWS);
 
                 #ifdef _SURFACE_TYPE_TRANSPARENT
                 return half4(lit, albedo.a);

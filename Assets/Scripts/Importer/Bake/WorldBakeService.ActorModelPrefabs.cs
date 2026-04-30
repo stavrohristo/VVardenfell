@@ -27,6 +27,7 @@ namespace VVardenfell.Importer.Bake
             BakeProgress progress,
             ModelPrefabBakery modelPrefabs,
             ActorAnimationBakery actorAnimations,
+            ObjectAnimationBakery objectAnimations,
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures,
@@ -110,6 +111,7 @@ namespace VVardenfell.Importer.Bake
                             actorAnimationAssigned = true;
                         }
 
+                        var objectAnimation = objectAnimations.GetOrAddModel(source.ModelPath, source.Nif, source.Prefab);
                         modelPrefabs.GetOrAdd(
                             source.ModelPath,
                             source.Prefab,
@@ -117,7 +119,8 @@ namespace VVardenfell.Importer.Bake
                             materials,
                             textures,
                             collisions,
-                            actorAnimation);
+                            actorAnimation,
+                            objectAnimation);
                     }
                 }
 

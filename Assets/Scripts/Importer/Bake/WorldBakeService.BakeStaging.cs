@@ -118,6 +118,7 @@ namespace VVardenfell.Importer.Bake
             bool forceCellRebuildForRenderShards = !File.Exists(CachePaths.RenderShards) || bakeryRenderShards.Count == 0;
             var bakeryModelPrefabs = new ModelPrefabBakery();
             var bakeryActorAnimations = new ActorAnimationBakery();
+            var bakeryObjectAnimations = new ObjectAnimationBakery(gameplayContent);
             var modelCache = new ConcurrentDictionary<string, Lazy<ModelSource>>(StringComparer.OrdinalIgnoreCase);
 
             progress.Current = 1;
@@ -213,6 +214,8 @@ namespace VVardenfell.Importer.Bake
 
             if (stageFailure != null)
                 throw stageFailure;
+            FlushAnimatedStaticRefWarnings();
+            FlushUnsupportedObjectControllerWarnings();
 
             progress.Current = workItems.Count;
             yield return null;
@@ -242,7 +245,7 @@ namespace VVardenfell.Importer.Bake
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
             bakeryActorAnimations.ConfigureCreatureAnimationSources(gameplayContent, bsaByName);
-            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
+            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
@@ -284,7 +287,7 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "model_prefabs.bin";
             progress.Current = 4;
             yield return null;
-            if (bakeryModelPrefabs.Modified || !File.Exists(CachePaths.ModelPrefabs))
+            if (bakeryModelPrefabs.Modified || bakeryObjectAnimations.Modified || !File.Exists(CachePaths.ModelPrefabs))
                 ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
 
             progress.Label = "actor_animations.bin";
@@ -511,10 +514,7 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                var model = hasBaseRecord ? EnsureModelSource(rec, sharedBsa, bsaByName, modelCache) : null;
-
-                if (contentReference.Kind == ContentReferenceKind.Actor
-                    && (model == null || model.Meshes.Length == 0))
+                if (contentReference.Kind == ContentReferenceKind.Actor)
                 {
                     staged.CollisionNoColliderCount++;
                     staged.PlacedRefs.Add(new StagedPlacedRefData(
@@ -527,6 +527,8 @@ namespace VVardenfell.Importer.Bake
                         reference.Scale));
                     continue;
                 }
+
+                var model = hasBaseRecord ? EnsureModelSource(rec, sharedBsa, bsaByName, modelCache) : null;
 
                 if (model == null || model.Meshes.Length == 0)
                 {
@@ -582,7 +584,17 @@ namespace VVardenfell.Importer.Bake
                         break;
                 }
 
-                bool useModelPrefab = EnableModelPrefabWorldRefs && contentReference.Kind == ContentReferenceKind.Actor;
+                if (isStat && model.HasObjectAnimation)
+                    RecordAnimatedStaticRef(model.ModelPath);
+                if (model.HasObjectAnimation
+                    && model.HasUnsupportedObjectControllers
+                    && IsObjectAnimationEligibleContent(contentReference.Kind))
+                {
+                    RecordUnsupportedObjectControllerRef(model.ModelPath);
+                }
+
+                bool useModelPrefab = (EnableModelPrefabWorldRefs && contentReference.Kind == ContentReferenceKind.Actor)
+                    || (model.HasObjectAnimation && IsObjectAnimationEligibleContent(contentReference.Kind));
                 if (useModelPrefab)
                 {
                     staged.PlacedRefs.Add(new StagedPlacedRefData(
@@ -774,7 +786,75 @@ namespace VVardenfell.Importer.Bake
             CollisionPayload autoVisualStaticCollision = collisionResult.Source == CollisionExtractionSource.AutoVisualStatic
                 ? collisionResult.Payload
                 : default;
-            return new ModelSource(path, nif, built.ToArray(), authoredCollision, autoVisualStaticCollision, collisionResult.Source, prefab);
+            bool hasObjectAnimation = NifObjectAnimationAnalysis.HasSupportedObjectAnimation(nif);
+            bool hasUnsupportedObjectControllers = NifObjectAnimationAnalysis.HasUnsupportedObjectControllers(nif);
+            return new ModelSource(
+                path,
+                nif,
+                built.ToArray(),
+                authoredCollision,
+                autoVisualStaticCollision,
+                collisionResult.Source,
+                prefab,
+                hasObjectAnimation,
+                hasUnsupportedObjectControllers);
+        }
+
+
+        private static bool IsObjectAnimationEligibleContent(ContentReferenceKind kind)
+        {
+            return kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Door
+                or ContentReferenceKind.Container
+                or ContentReferenceKind.Light;
+        }
+
+
+        private static void RecordAnimatedStaticRef(string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return;
+
+            s_AnimatedStaticRefCounts.AddOrUpdate(modelPath, 1, (_, count) => count + 1);
+        }
+
+
+        private static void RecordUnsupportedObjectControllerRef(string modelPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return;
+
+            s_UnsupportedObjectControllerRefCounts.AddOrUpdate(modelPath, 1, (_, count) => count + 1);
+        }
+
+
+        private static void FlushAnimatedStaticRefWarnings()
+        {
+            if (s_AnimatedStaticRefCounts.IsEmpty)
+                return;
+
+            foreach (var pair in s_AnimatedStaticRefCounts)
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[VVardenfell][ObjectAnimation] static model '{pair.Key}' has embedded object animation on {pair.Value} placed refs; detected but disabled for OpenMW class-gated parity.");
+            }
+
+            s_AnimatedStaticRefCounts.Clear();
+        }
+
+
+        private static void FlushUnsupportedObjectControllerWarnings()
+        {
+            if (s_UnsupportedObjectControllerRefCounts.IsEmpty)
+                return;
+
+            foreach (var pair in s_UnsupportedObjectControllerRefCounts)
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[VVardenfell][ObjectAnimation] model '{pair.Key}' has unsupported object-animation controller families on {pair.Value} placed refs; transform/visibility tracks remain the only simulated controller families in V1.");
+            }
+
+            s_UnsupportedObjectControllerRefCounts.Clear();
         }
 
 

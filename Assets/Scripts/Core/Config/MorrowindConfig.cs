@@ -42,6 +42,9 @@ namespace VVardenfell.Core.Config
         /// <summary>Field of view, in degrees, applied to the main camera.</summary>
         public float Fov = 75f;
 
+        /// <summary>Scales resolved fog start/end distances. 1.0 is the previous runtime distance.</summary>
+        public float FogDistanceScale = 0.6f;
+
         /// <summary>Gamma. Applied via <c>Screen.brightness</c> where supported.</summary>
         public float Gamma = 1f;
 
@@ -115,6 +118,7 @@ namespace VVardenfell.Core.Config
             WindowMode = 0;
             VSync = 1;
             Fov = 75f;
+            FogDistanceScale = 0.6f;
             Gamma = 1f;
 
             MasterVolume = 1f;

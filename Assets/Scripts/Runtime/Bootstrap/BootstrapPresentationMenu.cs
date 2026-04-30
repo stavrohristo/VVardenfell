@@ -12,6 +12,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Rendering;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 using VVardenfell.Runtime.UI.Shell;
@@ -98,6 +99,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 MenuTransparency = null,
                 Difficulty = null,
                 Fov = v => { camera.fieldOfView = v; },
+                FogDistanceScale = RuntimeVideoSettingsUtility.ApplyFogDistanceScale,
                 Gamma = v => Screen.brightness = v,
                 Resolution = (w, h, refresh) =>
                 {
@@ -150,6 +152,7 @@ namespace VVardenfell.Runtime.Bootstrap
             HudUserPreferences.ShowCrosshair = _config.ShowCrosshair;
             HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
             camera.fieldOfView = _config.Fov;
+            RuntimeVideoSettingsUtility.ApplyFogDistanceScale(_config.FogDistanceScale);
             Screen.brightness = _config.Gamma;
             QualitySettings.vSyncCount = Mathf.Clamp(_config.VSync, 0, 2);
             Screen.fullScreenMode = _config.WindowMode switch

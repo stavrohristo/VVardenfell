@@ -15,14 +15,14 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 43;
+        public const uint FormatVersion = 44;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 23;
+        public const uint WorldBakePipelineVersion = 24;
         public const uint GameplayContentVersion = 19;
 
         /// <summary>

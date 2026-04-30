@@ -3,6 +3,9 @@
 
 static const half4 k_MwDefaultShadowMask = half4(1.0h, 1.0h, 1.0h, 1.0h);
 
+float4 _VV_FogRange;
+float4 _VV_FogColor;
+
 half3 MwSampleEnvironmentDiffuse(half3 normalWS)
 {
     return SampleSH(normalWS);
@@ -90,6 +93,15 @@ half3 MwEvaluateDiffuseLighting(float3 positionWS, float4 positionCS, half3 norm
         k_MwDefaultShadowMask,
         directAmbientOcclusion);
     return environment + mainLight + additionalLights;
+}
+
+half3 MwMixRadialFog(half3 color, float3 positionWS)
+{
+    if (_VV_FogRange.w <= 0.5)
+        return color;
+
+    float fogAmount = saturate((distance(_WorldSpaceCameraPos.xyz, positionWS) - _VV_FogRange.x) * _VV_FogRange.z);
+    return lerp(color, _VV_FogColor.rgb, fogAmount);
 }
 
 #endif

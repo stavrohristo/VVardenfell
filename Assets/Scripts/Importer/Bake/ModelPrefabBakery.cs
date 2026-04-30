@@ -35,7 +35,8 @@ namespace VVardenfell.Importer.Bake
             MaterialBakery materials,
             TextureBakery textures,
             CollisionBakery collisions,
-            ActorAnimationBakery.Assignment actorAnimation = default)
+            ActorAnimationBakery.Assignment actorAnimation = default,
+            ModelObjectAnimationDef objectAnimation = null)
         {
             modelPath ??= string.Empty;
             if (_assignmentsByPath.TryGetValue(modelPath, out var existing))
@@ -45,7 +46,7 @@ namespace VVardenfell.Importer.Bake
                 ? collisions.AddOrGet(source.Collision)
                 : -1;
 
-            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex, actorAnimation);
+            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex, actorAnimation, objectAnimation);
             int index = _records.Count;
             _records.Add(record);
 
@@ -74,7 +75,8 @@ namespace VVardenfell.Importer.Bake
             MaterialBakery materials,
             TextureBakery textures,
             int collisionIndex,
-            ActorAnimationBakery.Assignment actorAnimation)
+            ActorAnimationBakery.Assignment actorAnimation,
+            ModelObjectAnimationDef objectAnimation)
         {
             if (source == null)
             {
@@ -88,6 +90,7 @@ namespace VVardenfell.Importer.Bake
                     ActorSkinMeshCount = actorAnimation.SkinMeshCount,
                     FirstActorClipIndex = actorAnimation.FirstClipIndex,
                     ActorClipCount = actorAnimation.ClipCount,
+                    ObjectAnimation = CloneObjectAnimation(objectAnimation),
                     Nodes = Array.Empty<ModelPrefabNodeDef>(),
                     ChildIndices = Array.Empty<int>(),
                 };
@@ -154,6 +157,7 @@ namespace VVardenfell.Importer.Bake
                 ActorSkinMeshCount = actorAnimation.SkinMeshCount,
                 FirstActorClipIndex = actorAnimation.FirstClipIndex,
                 ActorClipCount = actorAnimation.ClipCount,
+                ObjectAnimation = CloneObjectAnimation(objectAnimation),
                 Nodes = nodes,
                 ChildIndices = childIndices,
             };
@@ -209,8 +213,70 @@ namespace VVardenfell.Importer.Bake
                 ActorSkinMeshCount = source?.ActorSkinMeshCount ?? 0,
                 FirstActorClipIndex = source?.FirstActorClipIndex ?? -1,
                 ActorClipCount = source?.ActorClipCount ?? 0,
+                ObjectAnimation = CloneObjectAnimation(source?.ObjectAnimation),
                 Nodes = clonedNodes,
                 ChildIndices = clonedChildIndices,
+            };
+        }
+
+        static ModelObjectAnimationDef CloneObjectAnimation(ModelObjectAnimationDef source)
+        {
+            if (source == null)
+                return null;
+
+            var clips = source.Clips ?? Array.Empty<ModelObjectAnimationClipDef>();
+            var clonedClips = new ModelObjectAnimationClipDef[clips.Length];
+            for (int i = 0; i < clips.Length; i++)
+            {
+                var clip = clips[i];
+                clonedClips[i] = new ModelObjectAnimationClipDef
+                {
+                    Name = clip?.Name ?? string.Empty,
+                    Duration = clip?.Duration ?? 0f,
+                    FirstTrackIndex = clip?.FirstTrackIndex ?? -1,
+                    TrackCount = clip?.TrackCount ?? 0,
+                    FirstTextMarkerIndex = clip?.FirstTextMarkerIndex ?? -1,
+                    TextMarkerCount = clip?.TextMarkerCount ?? 0,
+                };
+            }
+
+            var tracks = source.Tracks ?? Array.Empty<ModelObjectAnimationTrackDef>();
+            var clonedTracks = new ModelObjectAnimationTrackDef[tracks.Length];
+            for (int i = 0; i < tracks.Length; i++)
+            {
+                var track = tracks[i];
+                clonedTracks[i] = new ModelObjectAnimationTrackDef
+                {
+                    TargetNodeIndex = track?.TargetNodeIndex ?? -1,
+                    Kind = track?.Kind ?? ActorAnimationTrackKind.Translation,
+                    Interpolation = track?.Interpolation ?? ActorAnimationInterpolation.Linear,
+                    AxisOrder = track?.AxisOrder ?? 0,
+                    ControllerFlags = track?.ControllerFlags ?? 0,
+                    Frequency = track?.Frequency ?? 0f,
+                    Phase = track?.Phase ?? 0f,
+                    TimeStart = track?.TimeStart ?? 0f,
+                    TimeStop = track?.TimeStop ?? 0f,
+                    FirstKeyIndex = track?.FirstKeyIndex ?? -1,
+                    KeyCount = track?.KeyCount ?? 0,
+                };
+            }
+
+            var keys = source.Keys ?? Array.Empty<ActorAnimationKeyDef>();
+            var clonedKeys = new ActorAnimationKeyDef[keys.Length];
+            Array.Copy(keys, clonedKeys, clonedKeys.Length);
+
+            var markers = source.TextMarkers ?? Array.Empty<ModelObjectAnimationTextMarkerDef>();
+            var clonedMarkers = new ModelObjectAnimationTextMarkerDef[markers.Length];
+            Array.Copy(markers, clonedMarkers, clonedMarkers.Length);
+
+            return new ModelObjectAnimationDef
+            {
+                Status = source.Status,
+                DisabledReason = source.DisabledReason ?? string.Empty,
+                Clips = clonedClips,
+                Tracks = clonedTracks,
+                Keys = clonedKeys,
+                TextMarkers = clonedMarkers,
             };
         }
     }

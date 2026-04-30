@@ -80,7 +80,6 @@ Shader "VVardenfell/MwTerrain"
                 float3 positionWS  : TEXCOORD0;
                 float3 normalWS    : TEXCOORD1;
                 float2 uv          : TEXCOORD2;
-                float fogFactor    : TEXCOORD3;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -100,7 +99,6 @@ Shader "VVardenfell/MwTerrain"
                 OUT.positionWS  = pos.positionWS;
                 OUT.normalWS    = nrm.normalWS;
                 OUT.uv          = IN.uv;
-                OUT.fogFactor   = ComputeFogFactor(pos.positionCS.z);
                 // shadowCoord intentionally NOT computed here — see frag(). With
                 // cascades enabled, picking the cascade per-vertex and interpolating
                 // produces ring-shaped seams at cascade boundaries (follows the
@@ -162,7 +160,7 @@ Shader "VVardenfell/MwTerrain"
                 half3 N = normalize(IN.normalWS);
                 float3 lit = albedo * MwEvaluateDiffuseLighting(IN.positionWS, IN.positionCS, N);
 
-                lit = MixFog(lit, IN.fogFactor);
+                lit = MwMixRadialFog(lit, IN.positionWS);
 
                 return half4(lit, 1.0);
             }

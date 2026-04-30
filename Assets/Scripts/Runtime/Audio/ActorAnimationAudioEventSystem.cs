@@ -1,4 +1,5 @@
 using System;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
@@ -49,23 +50,17 @@ namespace VVardenfell.Runtime.Audio
                     continue;
 
                 ref readonly var actor = ref contentDb.Get(source.ValueRO.Definition);
-                for (int i = 0; i < events.Length; i++)
-                {
-                    var animationEvent = events[i];
-                    string group = animationEvent.Group.ToString();
-                    if (string.Equals(group, "sound", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string soundId = animationEvent.Value.ToString();
-                        if (contentDb.TryGetSoundHandle(soundId, out var sound) && sound.IsValid)
-                            EmitAudioRequest(ref audioState, ref ecb, entity, placedRef.ValueRO.Value, transform.ValueRO.Position, sound, 1f, 1f, spatial: true);
-                    }
-                    else if (string.Equals(group, "soundgen", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ParseSoundGeneratorEvent(animationEvent.Value.ToString(), out string typeName, out float volume, out float pitch);
-                        if (TryResolveSoundGenerator(contentDb, actor, entity, typeName, ref random, out var sound) && sound.IsValid)
-                            EmitAudioRequest(ref audioState, ref ecb, entity, placedRef.ValueRO.Value, transform.ValueRO.Position, sound, volume, pitch, spatial: true);
-                    }
-                }
+                ProcessAnimationEvents(
+                    contentDb,
+                    actor,
+                    entity,
+                    placedRef.ValueRO.Value,
+                    transform.ValueRO.Position,
+                    events,
+                    spatial: true,
+                    ref audioState,
+                    ref ecb,
+                    ref random);
             }
 
             ProcessLocalPlayerVisualAudio(contentDb, ref audioState, ref ecb, ref random);
@@ -99,22 +94,46 @@ namespace VVardenfell.Runtime.Audio
                     continue;
 
                 ref readonly var actor = ref contentDb.Get(source.ValueRO.Definition);
-                for (int i = 0; i < events.Length; i++)
+                ProcessAnimationEvents(
+                    contentDb,
+                    actor,
+                    entity,
+                    0u,
+                    transform.ValueRO.Position,
+                    events,
+                    spatial: false,
+                    ref audioState,
+                    ref ecb,
+                    ref random);
+            }
+        }
+
+        void ProcessAnimationEvents(
+            RuntimeContentDatabase contentDb,
+            in ActorDef actor,
+            Entity entity,
+            uint placedRefId,
+            float3 position,
+            DynamicBuffer<ActorAnimationEvent> events,
+            bool spatial,
+            ref InteractionAudioRequestState audioState,
+            ref EntityCommandBuffer ecb,
+            ref Unity.Mathematics.Random random)
+        {
+            for (int i = 0; i < events.Length; i++)
+            {
+                var animationEvent = events[i];
+                if (EqualsAsciiIgnoreCase(animationEvent.Group, "sound"))
                 {
-                    var animationEvent = events[i];
-                    string group = animationEvent.Group.ToString();
-                    if (string.Equals(group, "sound", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string soundId = animationEvent.Value.ToString();
-                        if (contentDb.TryGetSoundHandle(soundId, out var sound) && sound.IsValid)
-                            EmitAudioRequest(ref audioState, ref ecb, entity, 0u, transform.ValueRO.Position, sound, 1f, 1f, spatial: false);
-                    }
-                    else if (string.Equals(group, "soundgen", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ParseSoundGeneratorEvent(animationEvent.Value.ToString(), out string typeName, out float volume, out float pitch);
-                        if (TryResolveSoundGenerator(contentDb, actor, entity, typeName, ref random, out var sound) && sound.IsValid)
-                            EmitAudioRequest(ref audioState, ref ecb, entity, 0u, transform.ValueRO.Position, sound, volume, pitch, spatial: false);
-                    }
+                    string soundId = animationEvent.Value.ToString();
+                    if (contentDb.TryGetSoundHandle(soundId, out var sound) && sound.IsValid)
+                        EmitAudioRequest(ref audioState, ref ecb, entity, placedRefId, position, sound, 1f, 1f, spatial);
+                }
+                else if (EqualsAsciiIgnoreCase(animationEvent.Group, "soundgen"))
+                {
+                    ParseSoundGeneratorEvent(animationEvent.Value.ToString(), out string typeName, out float volume, out float pitch);
+                    if (TryResolveSoundGenerator(contentDb, actor, entity, typeName, ref random, out var sound) && sound.IsValid)
+                        EmitAudioRequest(ref audioState, ref ecb, entity, placedRefId, position, sound, volume, pitch, spatial);
                 }
             }
         }
@@ -165,6 +184,26 @@ namespace VVardenfell.Runtime.Audio
                 volume = parsedVolume;
             if (parts.Length >= 3 && float.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float parsedPitch))
                 pitch = parsedPitch;
+        }
+
+        static bool EqualsAsciiIgnoreCase(in FixedString64Bytes value, string expected)
+        {
+            if (value.Length != expected.Length)
+                return false;
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                byte left = value[i];
+                char right = expected[i];
+                if (left >= (byte)'A' && left <= (byte)'Z')
+                    left = (byte)(left + 32);
+                if (right >= 'A' && right <= 'Z')
+                    right = (char)(right + 32);
+                if (left != right)
+                    return false;
+            }
+
+            return true;
         }
 
         bool TryResolveSoundGenerator(

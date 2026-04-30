@@ -39,6 +39,8 @@ namespace VVardenfell.Importer.Bake
 
         private static readonly uint StatTag = EsmFourCC.Make('S', 'T', 'A', 'T');
         private static readonly uint DoorTag = EsmFourCC.Make('D', 'O', 'O', 'R');
+        private static readonly ConcurrentDictionary<string, int> s_AnimatedStaticRefCounts = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, int> s_UnsupportedObjectControllerRefCounts = new(StringComparer.OrdinalIgnoreCase);
 
 
         private const bool EnableModelPrefabWorldRefs = false;
@@ -99,6 +101,8 @@ namespace VVardenfell.Importer.Bake
             public readonly CollisionPayload AutoVisualStaticCollision;
             public readonly CollisionExtractionSource CollisionSource;
             public readonly ModelPrefabSource Prefab;
+            public readonly bool HasObjectAnimation;
+            public readonly bool HasUnsupportedObjectControllers;
 
             public ModelSource(
                 string modelPath,
@@ -107,7 +111,9 @@ namespace VVardenfell.Importer.Bake
                 CollisionPayload collision,
                 CollisionPayload autoVisualStaticCollision,
                 CollisionExtractionSource collisionSource,
-                ModelPrefabSource prefab)
+                ModelPrefabSource prefab,
+                bool hasObjectAnimation,
+                bool hasUnsupportedObjectControllers)
             {
                 ModelPath = modelPath;
                 Nif = nif;
@@ -116,6 +122,8 @@ namespace VVardenfell.Importer.Bake
                 AutoVisualStaticCollision = autoVisualStaticCollision;
                 CollisionSource = collisionSource;
                 Prefab = prefab;
+                HasObjectAnimation = hasObjectAnimation;
+                HasUnsupportedObjectControllers = hasUnsupportedObjectControllers;
             }
         }
 

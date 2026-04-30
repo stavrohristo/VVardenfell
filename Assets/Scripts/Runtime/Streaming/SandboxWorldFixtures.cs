@@ -7,7 +7,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Content;
-using VVardenfell.Runtime.Rendering;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -34,7 +33,6 @@ namespace VVardenfell.Runtime.Streaming
         public int VegetationStressUniqueStaticCount = 2;
         public bool VegetationStressRequireTreeAndBush = true;
         public bool VegetationStressSortRefsByRenderKey = true;
-        public bool VegetationStressUseStaticRefInstanceRenderer = false;
         public int VegetationStressGridColumns = 128;
         public float VegetationStressGridSpacing = 0.9f;
         public int2 VegetationStressExteriorCell = new(-2, -9);
@@ -126,7 +124,6 @@ namespace VVardenfell.Runtime.Streaming
             VegetationStressUniqueStaticCount = 2,
             VegetationStressRequireTreeAndBush = true,
             VegetationStressSortRefsByRenderKey = true,
-            VegetationStressUseStaticRefInstanceRenderer = true,
             VegetationStressGridColumns = 128,
             VegetationStressGridSpacing = 0.9f,
             VegetationStressExteriorCell = new int2(-2, -9),
@@ -172,21 +169,7 @@ namespace VVardenfell.Runtime.Streaming
             if (profile.GenerateVegetationStressGrid)
             {
                 var vegetationRefs = VegetationSandboxRefBuilder.Build(cache, contentDb, exteriorCells, profile);
-                if (profile.VegetationStressUseStaticRefInstanceRenderer)
-                {
-                    var renderer = WorldResources.StaticRefInstanceRenderer ?? new StaticRefInstanceRenderResources();
-                    WorldResources.StaticRefInstanceRenderer = renderer;
-                    renderer.Build(cache, vegetationRefs);
-                    Debug.Log(
-                        $"[VVardenfell][VegetationSandboxRenderDiag] generatedRefs={vegetationRefs.Length}, " +
-                        $"uniqueRenderKeys={renderer.UniqueRenderKeyCount}, staticInstanceBatches={renderer.BatchCount}, " +
-                        $"expectedForwardDraws={renderer.ExpectedForwardDrawCount}, ecsRenderShardRefsSpawned=0.");
-                }
-                else
-                {
-                    AddRange(exteriorRefs, profile.VegetationStressExteriorCell, vegetationRefs);
-                }
-
+                AddRange(exteriorRefs, profile.VegetationStressExteriorCell, vegetationRefs);
                 exteriorDoors[profile.VegetationStressExteriorCell] = new List<DoorRefEntry>();
             }
 

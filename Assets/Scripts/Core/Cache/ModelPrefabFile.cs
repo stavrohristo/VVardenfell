@@ -58,6 +58,7 @@ namespace VVardenfell.Core.Cache
         public int ActorSkinMeshCount;
         public int FirstActorClipIndex = -1;
         public int ActorClipCount;
+        public ModelObjectAnimationDef ObjectAnimation;
         public ModelPrefabNodeDef[] Nodes = Array.Empty<ModelPrefabNodeDef>();
         public int[] ChildIndices = Array.Empty<int>();
     }
@@ -70,7 +71,7 @@ namespace VVardenfell.Core.Cache
     public static class ModelPrefabFile
     {
         const uint Magic = 0x50464D44u; // 'DMFP'
-        const uint Version = 3u;
+        const uint Version = 4u;
 
         public static bool TryRead(string path, out ModelPrefabCatalogData data)
         {
@@ -157,6 +158,7 @@ namespace VVardenfell.Core.Cache
                 ActorSkinMeshCount = r.ReadInt32(),
                 FirstActorClipIndex = r.ReadInt32(),
                 ActorClipCount = r.ReadInt32(),
+                ObjectAnimation = ReadObjectAnimation(r),
                 Nodes = nodes,
                 ChildIndices = childIndices,
             };
@@ -213,6 +215,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.ActorSkinMeshCount ?? 0);
             w.Write(value?.FirstActorClipIndex ?? -1);
             w.Write(value?.ActorClipCount ?? 0);
+            WriteObjectAnimation(w, value?.ObjectAnimation);
         }
 
         static void WriteNode(BinaryWriter w, ModelPrefabNodeDef value)
@@ -241,6 +244,167 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.BoundsExtentsY ?? 0f);
             w.Write(value?.BoundsExtentsZ ?? 0f);
             w.Write(value?.Flags ?? 0);
+        }
+
+        static ModelObjectAnimationDef ReadObjectAnimation(BinaryReader r)
+        {
+            var status = (ModelObjectAnimationStatus)r.ReadByte();
+            string disabledReason = r.ReadString();
+            int clipCount = r.ReadInt32();
+            int trackCount = r.ReadInt32();
+            int keyCount = r.ReadInt32();
+            int markerCount = r.ReadInt32();
+            if (clipCount < 0 || trackCount < 0 || keyCount < 0 || markerCount < 0)
+                throw new InvalidDataException("Invalid object animation table sizes.");
+
+            var clips = new ModelObjectAnimationClipDef[clipCount];
+            for (int i = 0; i < clips.Length; i++)
+            {
+                clips[i] = new ModelObjectAnimationClipDef
+                {
+                    Name = r.ReadString(),
+                    Duration = r.ReadSingle(),
+                    FirstTrackIndex = r.ReadInt32(),
+                    TrackCount = r.ReadInt32(),
+                    FirstTextMarkerIndex = r.ReadInt32(),
+                    TextMarkerCount = r.ReadInt32(),
+                };
+            }
+
+            var tracks = new ModelObjectAnimationTrackDef[trackCount];
+            for (int i = 0; i < tracks.Length; i++)
+            {
+                tracks[i] = new ModelObjectAnimationTrackDef
+                {
+                    TargetNodeIndex = r.ReadInt32(),
+                    Kind = (ActorAnimationTrackKind)r.ReadByte(),
+                    Interpolation = (ActorAnimationInterpolation)r.ReadByte(),
+                    AxisOrder = r.ReadInt32(),
+                    ControllerFlags = r.ReadUInt16(),
+                    Frequency = r.ReadSingle(),
+                    Phase = r.ReadSingle(),
+                    TimeStart = r.ReadSingle(),
+                    TimeStop = r.ReadSingle(),
+                    FirstKeyIndex = r.ReadInt32(),
+                    KeyCount = r.ReadInt32(),
+                };
+            }
+
+            var keys = new ActorAnimationKeyDef[keyCount];
+            for (int i = 0; i < keys.Length; i++)
+            {
+                keys[i] = new ActorAnimationKeyDef
+                {
+                    Time = r.ReadSingle(),
+                    X = r.ReadSingle(),
+                    Y = r.ReadSingle(),
+                    Z = r.ReadSingle(),
+                    W = r.ReadSingle(),
+                    InX = r.ReadSingle(),
+                    InY = r.ReadSingle(),
+                    InZ = r.ReadSingle(),
+                    InW = r.ReadSingle(),
+                    OutX = r.ReadSingle(),
+                    OutY = r.ReadSingle(),
+                    OutZ = r.ReadSingle(),
+                    OutW = r.ReadSingle(),
+                };
+            }
+
+            var markers = new ModelObjectAnimationTextMarkerDef[markerCount];
+            for (int i = 0; i < markers.Length; i++)
+            {
+                markers[i] = new ModelObjectAnimationTextMarkerDef
+                {
+                    Time = r.ReadSingle(),
+                    Group = r.ReadString(),
+                    Value = r.ReadString(),
+                    Text = r.ReadString(),
+                    Kind = (ActorAnimationTextMarkerKind)r.ReadByte(),
+                    Sound = new SoundDefHandle { Value = r.ReadInt32() },
+                };
+            }
+
+            return new ModelObjectAnimationDef
+            {
+                Status = status,
+                DisabledReason = disabledReason,
+                Clips = clips,
+                Tracks = tracks,
+                Keys = keys,
+                TextMarkers = markers,
+            };
+        }
+
+        static void WriteObjectAnimation(BinaryWriter w, ModelObjectAnimationDef value)
+        {
+            var clips = value?.Clips ?? Array.Empty<ModelObjectAnimationClipDef>();
+            var tracks = value?.Tracks ?? Array.Empty<ModelObjectAnimationTrackDef>();
+            var keys = value?.Keys ?? Array.Empty<ActorAnimationKeyDef>();
+            var markers = value?.TextMarkers ?? Array.Empty<ModelObjectAnimationTextMarkerDef>();
+
+            w.Write((byte)(value?.Status ?? ModelObjectAnimationStatus.None));
+            w.Write(value?.DisabledReason ?? string.Empty);
+            w.Write(clips.Length);
+            w.Write(tracks.Length);
+            w.Write(keys.Length);
+            w.Write(markers.Length);
+
+            for (int i = 0; i < clips.Length; i++)
+            {
+                var clip = clips[i];
+                w.Write(clip?.Name ?? string.Empty);
+                w.Write(clip?.Duration ?? 0f);
+                w.Write(clip?.FirstTrackIndex ?? -1);
+                w.Write(clip?.TrackCount ?? 0);
+                w.Write(clip?.FirstTextMarkerIndex ?? -1);
+                w.Write(clip?.TextMarkerCount ?? 0);
+            }
+
+            for (int i = 0; i < tracks.Length; i++)
+            {
+                var track = tracks[i];
+                w.Write(track?.TargetNodeIndex ?? -1);
+                w.Write((byte)(track?.Kind ?? ActorAnimationTrackKind.Translation));
+                w.Write((byte)(track?.Interpolation ?? ActorAnimationInterpolation.Linear));
+                w.Write(track?.AxisOrder ?? 0);
+                w.Write(track?.ControllerFlags ?? 0);
+                w.Write(track?.Frequency ?? 0f);
+                w.Write(track?.Phase ?? 0f);
+                w.Write(track?.TimeStart ?? 0f);
+                w.Write(track?.TimeStop ?? 0f);
+                w.Write(track?.FirstKeyIndex ?? -1);
+                w.Write(track?.KeyCount ?? 0);
+            }
+
+            for (int i = 0; i < keys.Length; i++)
+            {
+                var key = keys[i];
+                w.Write(key.Time);
+                w.Write(key.X);
+                w.Write(key.Y);
+                w.Write(key.Z);
+                w.Write(key.W);
+                w.Write(key.InX);
+                w.Write(key.InY);
+                w.Write(key.InZ);
+                w.Write(key.InW);
+                w.Write(key.OutX);
+                w.Write(key.OutY);
+                w.Write(key.OutZ);
+                w.Write(key.OutW);
+            }
+
+            for (int i = 0; i < markers.Length; i++)
+            {
+                var marker = markers[i];
+                w.Write(marker.Time);
+                w.Write(marker.Group ?? string.Empty);
+                w.Write(marker.Value ?? string.Empty);
+                w.Write(marker.Text ?? string.Empty);
+                w.Write((byte)marker.Kind);
+                w.Write(marker.Sound.Value);
+            }
         }
     }
 }

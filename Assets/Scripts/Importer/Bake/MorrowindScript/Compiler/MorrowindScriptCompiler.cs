@@ -34,7 +34,6 @@ namespace VVardenfell.Importer.Bake
                     localList);
             }
 
-            LogSummary(programList, instructionList);
             programs = programList.ToArray();
             instructions = instructionList.ToArray();
             locals = localList.ToArray();
@@ -435,71 +434,6 @@ namespace VVardenfell.Importer.Bake
                 return (byte)MorrowindScriptValueKind.Float;
 
             return (byte)MorrowindScriptValueKind.Integer;
-        }
-
-        static void LogSummary(List<MorrowindScriptProgramDef> programs, List<MorrowindScriptInstructionDef> instructions)
-        {
-            int compiled = 0;
-            int disabled = 0;
-            int failed = 0;
-            int compiledAudio = 0;
-            int disabledAudioNamed = 0;
-            var disabledSamples = new List<string>(12);
-
-            for (int i = 0; i < programs.Count; i++)
-            {
-                var program = programs[i];
-                var status = (MorrowindScriptProgramStatus)program.Status;
-                if (status == MorrowindScriptProgramStatus.Compiled)
-                {
-                    compiled++;
-                    if (ProgramHasAudio(program, instructions))
-                        compiledAudio++;
-                }
-                else if (status == MorrowindScriptProgramStatus.DisabledUnsupported)
-                {
-                    disabled++;
-                    if (LooksLikeAudioScript(program))
-                    {
-                        disabledAudioNamed++;
-                        if (disabledSamples.Count < 12)
-                            disabledSamples.Add($"{program.Id}: {program.DisabledReason}");
-                    }
-                }
-                else if (status == MorrowindScriptProgramStatus.FailedInvalid)
-                {
-                    failed++;
-                }
-            }
-
-            UnityEngine.Debug.Log(
-                $"[VVardenfell][MWScript][BakeDiag] scripts={programs.Count} compiled={compiled} compiledAudio={compiledAudio} disabledUnsupported={disabled} disabledAudioNamed={disabledAudioNamed} failedInvalid={failed}"
-                + (disabledSamples.Count == 0 ? string.Empty : "\n  " + string.Join("\n  ", disabledSamples)));
-        }
-
-        static bool ProgramHasAudio(in MorrowindScriptProgramDef program, List<MorrowindScriptInstructionDef> instructions)
-        {
-            if (program.FirstInstructionIndex < 0 || program.InstructionCount <= 0)
-                return false;
-
-            int end = Math.Min(instructions.Count, program.FirstInstructionIndex + program.InstructionCount);
-            for (int i = program.FirstInstructionIndex; i < end; i++)
-            {
-                if (instructions[i].Opcode == (byte)MorrowindScriptOpcode.EmitAudioRequest)
-                    return true;
-            }
-
-            return false;
-        }
-
-        static bool LooksLikeAudioScript(in MorrowindScriptProgramDef program)
-        {
-            string id = program.Id ?? string.Empty;
-            string reason = program.DisabledReason ?? string.Empty;
-            return id.IndexOf("sound", StringComparison.OrdinalIgnoreCase) >= 0
-                || id.IndexOf("amb", StringComparison.OrdinalIgnoreCase) >= 0
-                || reason.IndexOf("sound", StringComparison.OrdinalIgnoreCase) >= 0
-                || reason.IndexOf("Play", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static string StripComment(string line)

@@ -9,6 +9,7 @@ using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -25,6 +26,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static readonly HashSet<string> s_UnsupportedSpawnModeWarnings = new();
         static readonly HashSet<string> s_ActorPrefabVisualWarnings = new();
+        static readonly HashSet<int> s_DisabledObjectAnimationWarnings = new();
 
         static readonly ProfilerMarker k_LogicalRefs = new("VV.Spawn.LogicalRefs");
         static readonly ProfilerMarker k_LogicalRefCreate = new("VV.Spawn.LogicalRefs.Create");
@@ -533,6 +535,7 @@ namespace VVardenfell.Runtime.Streaming
             });
 
             ApplyRefRootMetadata(em, root, entry, isInterior, exteriorCell, interiorCellId);
+            ApplyObjectAnimationState(em, root, entry);
 
             if (linkedEntities != null)
             {
@@ -560,6 +563,38 @@ namespace VVardenfell.Runtime.Streaming
 
             AppendSpawnedEntities(root, spawnedEntities, linkedEntities);
             return root;
+        }
+
+        static void ApplyObjectAnimationState(EntityManager em, Entity root, RefEntry entry)
+        {
+            if (root == Entity.Null || !em.Exists(root) || !IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind))
+                return;
+
+            var modelDefs = WorldResources.Cache?.ModelPrefabCatalog?.Records;
+            if (modelDefs == null || (uint)entry.ModelPrefabIndex >= (uint)modelDefs.Length)
+                return;
+
+            var animation = modelDefs[entry.ModelPrefabIndex]?.ObjectAnimation;
+            if (animation == null || animation.Status == ModelObjectAnimationStatus.None)
+                return;
+
+            if (!animation.IsEnabled)
+            {
+                WarnDisabledObjectAnimation(entry.ModelPrefabIndex, animation.DisabledReason);
+                return;
+            }
+
+            if (!em.HasComponent<ObjectAnimationState>(root))
+            {
+                em.AddComponentData(root, new ObjectAnimationState
+                {
+                    ModelPrefabIndex = entry.ModelPrefabIndex,
+                    ClipIndex = 0,
+                    PreviousTime = 0f,
+                    CurrentTime = 0f,
+                    Active = 0,
+                });
+            }
         }
 
         static void ApplyRefRootMetadata(
@@ -593,6 +628,18 @@ namespace VVardenfell.Runtime.Streaming
                     em.AddComponentData(entity, new CellLink { Value = exteriorCell });
                 WorldResources.RegisterExteriorCellEntity(exteriorCell, entity);
             }
+
+            var location = new LogicalRefLocation
+            {
+                ExteriorCell = exteriorCell,
+                InteriorCellId = isInterior ? interiorCellId : default,
+                InteriorCellHash = isInterior ? InteriorCellIdHash.Hash(interiorCellId) : 0UL,
+                IsInterior = (byte)(isInterior ? 1 : 0),
+            };
+            if (em.HasComponent<LogicalRefLocation>(entity))
+                em.SetComponentData(entity, location);
+            else
+                em.AddComponentData(entity, location);
 
             var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Collider>>();
             if ((uint)entry.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[entry.CollisionIndex].IsCreated)
@@ -640,6 +687,11 @@ namespace VVardenfell.Runtime.Streaming
             if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
                 return;
             if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab
+                && IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind))
+            {
+                return;
+            }
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab
                 && BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode))
                 return;
 
@@ -651,6 +703,23 @@ namespace VVardenfell.Runtime.Streaming
                 ? ((RefSpawnMode)entry.SpawnModeRaw).ToString()
                 : $"unknown({entry.SpawnModeRaw})";
             Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
+        }
+
+        static bool IsObjectAnimationRuntimeEligible(ContentReferenceKind kind)
+        {
+            return kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Door
+                or ContentReferenceKind.Container
+                or ContentReferenceKind.Light;
+        }
+
+        static void WarnDisabledObjectAnimation(int modelPrefabIndex, string reason)
+        {
+            if (!s_DisabledObjectAnimationWarnings.Add(modelPrefabIndex))
+                return;
+
+            Debug.LogWarning(
+                $"[VVardenfell][ObjectAnimation] model prefab {modelPrefabIndex} has baked object animation metadata but animation is disabled: {reason}");
         }
 
         static LogicalRefEntityDescriptor BuildLogicalRefDescriptor(

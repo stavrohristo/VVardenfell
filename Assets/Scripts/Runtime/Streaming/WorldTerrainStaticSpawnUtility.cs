@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.Streaming
                 new Material[] { managed.TerrainMat },
                 new Mesh[] { managed.TerrainMesh });
 
-            Entity terrainEntity = CreateTerrainEntity(em, coord, managed);
+            Entity terrainEntity = CreateTerrainEntity(em, coord, managed, active);
             byte terrainColliderCount = 0;
             if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
             {
@@ -113,7 +113,7 @@ namespace VVardenfell.Runtime.Streaming
             return true;
         }
 
-        static Entity CreateTerrainEntity(EntityManager em, int2 coord, WorldResources.PerCellManaged managed)
+        static Entity CreateTerrainEntity(EntityManager em, int2 coord, WorldResources.PerCellManaged managed, bool active)
         {
             Entity terrainEntity = em.CreateEntity();
             em.SetName(terrainEntity, $"Terrain({coord.x},{coord.y})");
@@ -123,6 +123,7 @@ namespace VVardenfell.Runtime.Streaming
                 WorldResources.Desc,
                 managed.TerrainRma,
                 MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+            em.SetComponentEnabled<MaterialMeshInfo>(terrainEntity, active);
 
             float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;

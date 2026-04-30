@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Rendering;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 
@@ -771,6 +772,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 {
                     MainCameraUtility.GetRequiredCamera().fieldOfView = v;
                 },
+                FogDistanceScale = RuntimeVideoSettingsUtility.ApplyFogDistanceScale,
                 Gamma = v => Screen.brightness = v,
                 Resolution = (w, h, refresh) =>
                 {
@@ -813,6 +815,7 @@ namespace VVardenfell.Runtime.UI.Shell
             HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
 
             MainCameraUtility.GetRequiredCamera().fieldOfView = _config.Fov;
+            RuntimeVideoSettingsUtility.ApplyFogDistanceScale(_config.FogDistanceScale);
             Screen.brightness = _config.Gamma;
             QualitySettings.vSyncCount = Mathf.Clamp(_config.VSync, 0, 2);
             Screen.fullScreenMode = _config.WindowMode switch

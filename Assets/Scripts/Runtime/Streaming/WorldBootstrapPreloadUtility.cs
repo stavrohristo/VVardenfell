@@ -433,7 +433,7 @@ namespace VVardenfell.Runtime.Streaming
             for (int i = 0; i < refs.Length; i++)
             {
                 int raw = refs[i].SpawnModeRaw;
-                if (raw != (int)RefSpawnMode.RenderShard)
+                if (!IsSupportedWorldSpawnMode(refs[i]))
                 {
                     string mode = System.Enum.IsDefined(typeof(RefSpawnMode), raw)
                         ? ((RefSpawnMode)raw).ToString()
@@ -443,11 +443,30 @@ namespace VVardenfell.Runtime.Streaming
                         cellLabel,
                         path,
                         WorldBootstrapPreloadFailureKind.UnsupportedSpawnMode,
-                        $"ref {i} uses spawn mode {mode}; normal world cells must be baked as {RefSpawnMode.RenderShard}");
+                        $"ref {i} uses unsupported spawn mode {mode} for content kind {(ContentReferenceKind)refs[i].ContentKind}");
                 }
             }
 
             return null;
+        }
+
+        static bool IsSupportedWorldSpawnMode(in RefEntry entry)
+        {
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
+                return true;
+
+            if (entry.SpawnModeRaw != (int)RefSpawnMode.ModelPrefab)
+                return false;
+
+            return IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind);
+        }
+
+        static bool IsObjectAnimationRuntimeEligible(ContentReferenceKind kind)
+        {
+            return kind is ContentReferenceKind.Activator
+                or ContentReferenceKind.Door
+                or ContentReferenceKind.Container
+                or ContentReferenceKind.Light;
         }
 
         static void TryAttachPlacementAudit(CellData cell, string auditPath)

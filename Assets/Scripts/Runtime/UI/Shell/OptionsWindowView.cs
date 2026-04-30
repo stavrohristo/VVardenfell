@@ -36,6 +36,7 @@ namespace VVardenfell.Runtime.UI.Shell
             public Action<int> WindowMode;
             public Action<int> VSync;
             public Action<float> Fov;
+            public Action<float> FogDistanceScale;
             public Action<float> Gamma;
 
             public Action<float> MasterVolume;
@@ -158,7 +159,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly MorrowindButtonView _closeButton;
         TabId _activeTab = TabId.Preferences;
 
-        SliderView _uiScaleSlider, _hudScaleSlider, _fovSlider, _gammaSlider;
+        SliderView _uiScaleSlider, _hudScaleSlider, _fovSlider, _fogDistanceSlider, _gammaSlider;
         SliderView _masterSlider, _musicSlider, _effectsSlider, _footstepsSlider, _voiceSlider;
         SliderView _transparencySlider;
         SliderView _difficultySlider;
@@ -233,6 +234,7 @@ namespace VVardenfell.Runtime.UI.Shell
             ApplySliderValue(_uiScaleSlider, _config.UiScale);
             ApplySliderValue(_hudScaleSlider, _config.HudScale);
             ApplySliderValue(_fovSlider, _config.Fov);
+            ApplySliderValue(_fogDistanceSlider, _config.FogDistanceScale);
             ApplySliderValue(_gammaSlider, _config.Gamma);
 
             ApplySliderValue(_masterSlider, _config.MasterVolume);

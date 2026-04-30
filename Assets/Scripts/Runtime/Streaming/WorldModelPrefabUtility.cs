@@ -6,6 +6,7 @@ using Unity.Transforms;
 using UnityEngine.Rendering;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using Material = UnityEngine.Material;
@@ -148,6 +149,20 @@ namespace VVardenfell.Runtime.Streaming
             {
                 var node = def.Nodes[i];
                 var entity = entities[i];
+
+                if (def.ObjectAnimation?.IsEnabled == true)
+                {
+                    em.AddComponentData(entity, new ObjectAnimationNode
+                    {
+                        Root = root,
+                        ModelPrefabIndex = modelPrefabIndex,
+                        NodeIndex = i,
+                        ParentIndex = node.ParentIndex,
+                        BindPosition = new float3(node.PosX, node.PosY, node.PosZ),
+                        BindRotation = new quaternion(node.RotX, node.RotY, node.RotZ, node.RotW),
+                        BindScale = node.Scale,
+                    });
+                }
 
                 if (i != rootIndex && node.ParentIndex >= 0 && node.ParentIndex < entities.Length)
                     em.AddComponentData(entity, new Parent { Value = entities[node.ParentIndex] });
