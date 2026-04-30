@@ -41,6 +41,22 @@ namespace VVardenfell.Runtime.Components
         public byte PendingPickedItemPrune;
     }
 
+    public struct ScriptActivationEvent : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public uint Sequence;
+        public byte Kind;
+    }
+
+    public struct ScriptDefaultActivationRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public uint Sequence;
+        public byte Kind;
+    }
+
     public struct DoorInteractable : IComponentData
     {
         public byte IsTeleport;

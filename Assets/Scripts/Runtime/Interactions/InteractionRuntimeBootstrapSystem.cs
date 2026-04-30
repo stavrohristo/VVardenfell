@@ -29,6 +29,8 @@ namespace VVardenfell.Runtime.Interactions
                 SolidHitEntity = Entity.Null,
             }, ref ecb, created);
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InteractionRuntimeState(), ref ecb, created);
+            RuntimeBootstrapUtility.EnsureBuffer<ScriptActivationEvent>(EntityManager, runtimeEntity, ref ecb, created);
+            RuntimeBootstrapUtility.EnsureBuffer<ScriptDefaultActivationRequest>(EntityManager, runtimeEntity, ref ecb, created);
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InteractionActivationRequest
             {
                 TargetEntity = Entity.Null,

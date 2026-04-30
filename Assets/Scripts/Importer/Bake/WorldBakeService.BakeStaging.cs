@@ -216,6 +216,7 @@ namespace VVardenfell.Importer.Bake
                 throw stageFailure;
             FlushAnimatedStaticRefWarnings();
             FlushUnsupportedObjectControllerWarnings();
+            FlushDroppedBakeRefWarnings();
 
             progress.Current = workItems.Count;
             yield return null;
@@ -248,6 +249,7 @@ namespace VVardenfell.Importer.Bake
             yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
+            FlushDroppedBakeRefWarnings();
             yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
             for (int i = 0; i < stagedCells.Length; i++)
@@ -532,6 +534,13 @@ namespace VVardenfell.Importer.Bake
 
                 if (model == null || model.Meshes.Length == 0)
                 {
+                    RecordDroppedBakeRef(
+                        workItem,
+                        reference.FormId,
+                        reference.BaseId,
+                        hasBaseRecord ? rec.Model : string.Empty,
+                        contentReference,
+                        hasBaseRecord ? "model produced no renderable meshes" : "missing base record");
                     staged.CollisionNoColliderCount++;
                     continue;
                 }
@@ -828,6 +837,23 @@ namespace VVardenfell.Importer.Bake
         }
 
 
+        private static void RecordDroppedBakeRef(
+            CellBakeWorkItem workItem,
+            uint placedRefId,
+            string baseId,
+            string modelPath,
+            ContentReference contentReference,
+            string reason)
+        {
+            string cellLabel = FormatCellBakeLabel(workItem);
+            string message =
+                $"[VVardenfell][DroppedRefBake] {cellLabel} ref {placedRefId:X8} base='{baseId ?? string.Empty}' "
+                + $"model='{modelPath ?? string.Empty}' content={contentReference.Kind}:{contentReference.HandleValue} "
+                + $"was not baked: {reason}.";
+            s_DroppedBakeRefWarnings.TryAdd(message, 0);
+        }
+
+
         private static void FlushAnimatedStaticRefWarnings()
         {
             if (s_AnimatedStaticRefCounts.IsEmpty)
@@ -855,6 +881,26 @@ namespace VVardenfell.Importer.Bake
             }
 
             s_UnsupportedObjectControllerRefCounts.Clear();
+        }
+
+
+        private static void FlushDroppedBakeRefWarnings()
+        {
+            if (s_DroppedBakeRefWarnings.IsEmpty)
+                return;
+
+            foreach (var pair in s_DroppedBakeRefWarnings)
+                UnityEngine.Debug.LogWarning(pair.Key);
+
+            s_DroppedBakeRefWarnings.Clear();
+        }
+
+
+        private static string FormatCellBakeLabel(CellBakeWorkItem workItem)
+        {
+            return workItem.IsInterior
+                ? $"interior '{workItem.Cell.Name ?? string.Empty}'"
+                : $"exterior ({workItem.Cell.GridX},{workItem.Cell.GridY})";
         }
 
 

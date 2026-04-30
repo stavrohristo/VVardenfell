@@ -398,7 +398,16 @@ namespace VVardenfell.Importer.Bake
                 }
 
                 if (!modelPrefabs.TryGetAssignment(placed.ModelPath, out var assignment))
+                {
+                    RecordDroppedBakeRef(
+                        staged.WorkItem,
+                        placed.PlacedRefId,
+                        string.Empty,
+                        placed.ModelPath,
+                        placed.ContentReference,
+                        "model-prefab assignment was not found");
                     continue;
+                }
 
                 if (assignment.CollisionIndex >= 0)
                     collisionIndices.Add(assignment.CollisionIndex);

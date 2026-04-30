@@ -261,6 +261,12 @@ namespace VVardenfell.Core.Cache
         GetCellChanged = 24,
         GetSoundPlaying = 25,
         GetMenuMode = 26,
+        GetJournalIndex = 27,
+        GetSecondsPassed = 28,
+        Negate = 29,
+        GetOnActivate = 30,
+        Activate = 31,
+        Rotate = 32,
     }
 
     public enum MorrowindScriptAudioKind : byte

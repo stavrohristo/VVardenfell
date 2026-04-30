@@ -6,6 +6,7 @@ using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -17,6 +18,11 @@ namespace VVardenfell.Runtime.MorrowindScript
     {
         EntityQuery _scriptQuery;
         BufferLookup<MorrowindScriptGlobalValue> _globalsLookup;
+        BufferLookup<MorrowindQuestJournalIndex> _questJournalLookup;
+        ComponentLookup<LocalTransform> _transformLookup;
+        ComponentLookup<LocalToWorld> _localToWorldLookup;
+        ComponentLookup<Parent> _parentLookup;
+        ComponentLookup<InteractionActivationProxyTag> _activationProxyLookup;
         byte _hasLastCellContext;
         byte _lastInteriorActive;
         int2 _lastExteriorCell;
@@ -28,11 +34,21 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
                 ComponentType.ReadWrite<MorrowindScriptStackValue>(),
+                ComponentType.ReadOnly<LogicalRefChild>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadOnly<LogicalRefLocation>(),
-                ComponentType.ReadOnly<LocalTransform>());
+                ComponentType.ReadWrite<LocalTransform>());
             _globalsLookup = state.GetBufferLookup<MorrowindScriptGlobalValue>(false);
+            _questJournalLookup = state.GetBufferLookup<MorrowindQuestJournalIndex>(true);
+            _transformLookup = state.GetComponentLookup<LocalTransform>(false);
+            _localToWorldLookup = state.GetComponentLookup<LocalToWorld>(false);
+            _parentLookup = state.GetComponentLookup<Parent>(true);
+            _activationProxyLookup = state.GetComponentLookup<InteractionActivationProxyTag>(true);
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<InteractionRuntimeState>();
+            state.RequireForUpdate<ScriptActivationEvent>();
+            state.RequireForUpdate<ScriptDefaultActivationRequest>();
+            state.RequireForUpdate<InteractionActivationRequest>();
             state.RequireForUpdate<LoadedCellsMap>();
         }
 
@@ -43,11 +59,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
+            Entity interactionRuntimeEntity = SystemAPI.GetSingletonEntity<InteractionRuntimeState>();
             ref var runtimeState = ref SystemAPI.GetSingletonRW<MorrowindScriptRuntimeState>().ValueRW;
             uint sequenceBase = runtimeState.NextAudioRequestSequence;
             int scriptCount = _scriptQuery.CalculateEntityCount();
             runtimeState.NextAudioRequestSequence += (uint)math.max(1, scriptCount + 1);
             _globalsLookup.Update(ref state);
+            _questJournalLookup.Update(ref state);
+            _transformLookup.Update(ref state);
+            _localToWorldLookup.Update(ref state);
+            _parentLookup.Update(ref state);
+            _activationProxyLookup.Update(ref state);
             var activeSources = state.EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
             activeSources.Clear();
 
@@ -55,6 +77,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             var playingSoundKeys = new NativeArray<ulong>(playingBuffer.Length, Allocator.TempJob);
             for (int i = 0; i < playingBuffer.Length; i++)
                 playingSoundKeys[i] = playingBuffer[i].LoopKey;
+
+            var activationBuffer = state.EntityManager.GetBuffer<ScriptActivationEvent>(interactionRuntimeEntity);
+            var activationEvents = new NativeArray<ScriptActivationEvent>(activationBuffer.Length, Allocator.TempJob);
+            for (int i = 0; i < activationBuffer.Length; i++)
+                activationEvents[i] = activationBuffer[i];
 
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
             byte interiorActive = 0;
@@ -119,6 +146,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Instructions = catalog.Instructions,
                 OpcodeHandlers = catalog.OpcodeHandlers,
                 Globals = _globalsLookup,
+                QuestJournal = _questJournalLookup,
+                Transforms = _transformLookup,
+                LocalToWorlds = _localToWorldLookup,
+                Parents = _parentLookup,
+                ActivationProxies = _activationProxyLookup,
                 ActiveExteriorCells = loadedCells.Active,
                 ActiveInteriorCellHash = activeInteriorCellHash,
                 InteriorActive = interiorActive,
@@ -133,6 +165,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 CellChanged = cellChanged,
                 HasMenuMode = hasMenuMode,
                 MenuMode = menuMode,
+                SecondsPassed = math.max(0f, SystemAPI.Time.DeltaTime),
+                InteractionRuntimeEntity = interactionRuntimeEntity,
+                ActivationEvents = activationEvents,
             };
 
             state.Dependency = job.Schedule(_scriptQuery, state.Dependency);
@@ -140,6 +175,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             playingSoundKeys.Dispose();
+            activationEvents.Dispose();
 
             if (hasCellChanged != 0)
             {
@@ -157,6 +193,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public NativeArray<MorrowindScriptInstructionRuntime> Instructions;
             [ReadOnly] public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindScriptGlobalValue> Globals;
+            [ReadOnly] public BufferLookup<MorrowindQuestJournalIndex> QuestJournal;
+            [NativeDisableParallelForRestriction] public ComponentLookup<LocalTransform> Transforms;
+            [NativeDisableParallelForRestriction] public ComponentLookup<LocalToWorld> LocalToWorlds;
+            [ReadOnly] public ComponentLookup<Parent> Parents;
+            [ReadOnly] public ComponentLookup<InteractionActivationProxyTag> ActivationProxies;
             [ReadOnly] public NativeHashSet<int2> ActiveExteriorCells;
             public ulong ActiveInteriorCellHash;
             public byte InteriorActive;
@@ -171,6 +212,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             public byte CellChanged;
             public byte HasMenuMode;
             public byte MenuMode;
+            public float SecondsPassed;
+            public Entity InteractionRuntimeEntity;
+            [ReadOnly] public NativeArray<ScriptActivationEvent> ActivationEvents;
 
             void Execute(
                 [EntityIndexInQuery] int sortKey,
@@ -178,9 +222,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ref MorrowindScriptInstance instance,
                 DynamicBuffer<MorrowindScriptLocalValue> locals,
                 DynamicBuffer<MorrowindScriptStackValue> stack,
+                DynamicBuffer<LogicalRefChild> children,
                 in PlacedRefIdentity placedRef,
                 in LogicalRefLocation location,
-                in LocalTransform transform)
+                ref LocalTransform transform)
             {
                 if (instance.Status != (byte)MorrowindScriptInstanceStatus.Running)
                     return;
@@ -210,7 +255,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (stack.Length < stackCapacity)
                     stack.ResizeUninitialized(stackCapacity);
 
+                if (!QuestJournal.HasBuffer(RuntimeEntity))
+                {
+                    Fault(ref instance, "Missing quest journal runtime buffer.");
+                    return;
+                }
+
                 var globalBuffer = Globals[RuntimeEntity];
+                var questJournal = QuestJournal[RuntimeEntity];
                 var context = new MorrowindScriptExecutionContext
                 {
                     Entity = entity,
@@ -224,7 +276,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     LocalCount = locals.Length,
                     Globals = globalBuffer.Length == 0 ? null : (MorrowindScriptGlobalValue*)globalBuffer.GetUnsafePtr(),
                     GlobalCount = globalBuffer.Length,
+                    QuestJournal = questJournal.Length == 0 ? null : (MorrowindQuestJournalIndex*)questJournal.GetUnsafeReadOnlyPtr(),
+                    QuestJournalCount = questJournal.Length,
                     Position = transform.Position,
+                    Transform = (LocalTransform*)UnsafeUtility.AddressOf(ref transform),
                     PlayerPosition = PlayerPosition,
                     PlayingScriptSoundKeys = PlayingScriptSoundKeys.Length == 0 ? null : (ulong*)PlayingScriptSoundKeys.GetUnsafeReadOnlyPtr(),
                     PlayingScriptSoundKeyCount = PlayingScriptSoundKeys.Length,
@@ -235,6 +290,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                     CellChanged = CellChanged,
                     HasMenuMode = HasMenuMode,
                     MenuMode = MenuMode,
+                    SecondsPassed = SecondsPassed,
+                    InteractionRuntimeEntity = InteractionRuntimeEntity,
+                    ActivationEvents = ActivationEvents.Length == 0 ? null : (ScriptActivationEvent*)ActivationEvents.GetUnsafeReadOnlyPtr(),
+                    ActivationEventCount = ActivationEvents.Length,
+                    MatchedActivationEventIndex = -1,
                 };
 
                 int pc = 0;
@@ -255,6 +315,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                     OpcodeHandlers[instruction.Opcode].Invoke(&context, &instruction);
                     if (context.Faulted != 0)
                         break;
+
+                    if (context.TransformRotationRequested != 0)
+                    {
+                        ApplyRotationDelta(entity, ref transform, children, context.TransformRotationDelta);
+                        context.TransformRotationRequested = 0;
+                    }
+
                     if (context.Halted != 0)
                         break;
 
@@ -267,7 +334,43 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return;
                 }
 
+                if (context.ObservedOnActivate != 0)
+                    instance.SuppressActivation = 1;
+
                 instance.ProgramCounter = 0;
+            }
+
+            void ApplyRotationDelta(Entity entity, ref LocalTransform transform, DynamicBuffer<LogicalRefChild> children, quaternion delta)
+            {
+                RotateEntity(entity, ref transform, delta);
+                for (int i = 0; i < children.Length; i++)
+                {
+                    Entity child = children[i].Value;
+                    if (child == Entity.Null
+                        || child == entity
+                        || ActivationProxies.HasComponent(child)
+                        || Parents.HasComponent(child)
+                        || !Transforms.HasComponent(child))
+                    {
+                        continue;
+                    }
+
+                    var childTransform = Transforms[child];
+                    RotateEntity(child, ref childTransform, delta);
+                    Transforms[child] = childTransform;
+                }
+            }
+
+            void RotateEntity(Entity entity, ref LocalTransform transform, quaternion delta)
+            {
+                transform.Rotation = math.normalize(math.mul(delta, transform.Rotation));
+                if (LocalToWorlds.HasComponent(entity))
+                {
+                    LocalToWorlds[entity] = new LocalToWorld
+                    {
+                        Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
+                    };
+                }
             }
 
             bool IsScriptLocationActive(in LogicalRefLocation location)

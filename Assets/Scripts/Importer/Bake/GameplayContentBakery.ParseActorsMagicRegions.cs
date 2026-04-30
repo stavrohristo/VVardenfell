@@ -861,6 +861,7 @@ namespace VVardenfell.Importer.Bake
                 data.Scripts,
                 data.Sounds,
                 data.Globals,
+                data.Dialogues,
                 out data.MorrowindScriptPrograms,
                 out data.MorrowindScriptInstructions,
                 out data.MorrowindScriptLocals);

@@ -41,6 +41,7 @@ namespace VVardenfell.Importer.Bake
         private static readonly uint DoorTag = EsmFourCC.Make('D', 'O', 'O', 'R');
         private static readonly ConcurrentDictionary<string, int> s_AnimatedStaticRefCounts = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, int> s_UnsupportedObjectControllerRefCounts = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, byte> s_DroppedBakeRefWarnings = new(StringComparer.OrdinalIgnoreCase);
 
 
         private const bool EnableModelPrefabWorldRefs = false;

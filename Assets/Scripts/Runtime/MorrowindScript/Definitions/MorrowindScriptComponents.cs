@@ -24,6 +24,7 @@ namespace VVardenfell.Runtime.Components
         public int ProgramIndex;
         public int ProgramCounter;
         public byte Status;
+        public byte SuppressActivation;
         public FixedString128Bytes DisabledReason;
     }
 
@@ -46,6 +47,16 @@ namespace VVardenfell.Runtime.Components
         public int IntValue;
         public float FloatValue;
         public byte ValueKind;
+    }
+
+    public struct MorrowindQuestJournalState : IComponentData
+    {
+        public int QuestCount;
+    }
+
+    public struct MorrowindQuestJournalIndex : IBufferElementData
+    {
+        public int Index;
     }
 
     public struct MorrowindScriptActiveSource : IBufferElementData

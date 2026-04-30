@@ -44,6 +44,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
             }
 
+            EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
+            {
+                QuestCount = contentDb.DialogueCount,
+            });
+            var journal = EntityManager.AddBuffer<MorrowindQuestJournalIndex>(runtime);
+            journal.ResizeUninitialized(contentDb.DialogueCount);
+            for (int i = 0; i < journal.Length; i++)
+                journal[i] = default;
+
             EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
         }
