@@ -74,7 +74,6 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerFixedStepMovementSystem))]
-    [UpdateBefore(typeof(PlayerInteractionRaycastSystem))]
     public partial class PlayerPhysicsViewPoseSystem : SystemBase
     {
         EntityQuery _playerQuery;

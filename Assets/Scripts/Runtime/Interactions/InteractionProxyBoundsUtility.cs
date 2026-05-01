@@ -51,6 +51,15 @@ namespace VVardenfell.Runtime.Interactions
         static bool TryGetWorldBounds(EntityManager entityManager, Entity entity, out AABB worldBounds)
         {
             worldBounds = default;
+            if (TryGetRenderWorldBounds(entityManager, entity, out worldBounds))
+                return true;
+
+            return TryGetPhysicsWorldBounds(entityManager, entity, out worldBounds);
+        }
+
+        static bool TryGetRenderWorldBounds(EntityManager entityManager, Entity entity, out AABB worldBounds)
+        {
+            worldBounds = default;
             if (!entityManager.HasComponent<RenderBounds>(entity) || !entityManager.HasComponent<LocalToWorld>(entity))
                 return false;
 
@@ -66,6 +75,63 @@ namespace VVardenfell.Runtime.Interactions
             {
                 Center = center,
                 Extents = extents,
+            };
+            return true;
+        }
+
+        static bool TryGetPhysicsWorldBounds(EntityManager entityManager, Entity entity, out AABB worldBounds)
+        {
+            worldBounds = default;
+            if (!entityManager.HasComponent<PhysicsCollider>(entity) || !TryBuildRigidBody(entityManager, entity, out RigidBody body))
+                return false;
+
+            Aabb aabb = body.CalculateAabb();
+            worldBounds = new AABB
+            {
+                Center = (aabb.Min + aabb.Max) * 0.5f,
+                Extents = (aabb.Max - aabb.Min) * 0.5f,
+            };
+            return true;
+        }
+
+        static bool TryBuildRigidBody(EntityManager entityManager, Entity entity, out RigidBody body)
+        {
+            body = default;
+            var collider = entityManager.GetComponentData<PhysicsCollider>(entity);
+            if (!collider.Value.IsCreated)
+                return false;
+
+            if (entityManager.HasComponent<LocalToWorld>(entity))
+            {
+                var matrix = entityManager.GetComponentData<LocalToWorld>(entity).Value;
+                float3 c0 = matrix.c0.xyz;
+                float3 c1 = matrix.c1.xyz;
+                float3 c2 = matrix.c2.xyz;
+                float scale = math.length(c0);
+                if (scale <= 1e-5f)
+                    return false;
+
+                var rotation = new quaternion(new float3x3(c0 / scale, c1 / scale, c2 / scale));
+                body = new RigidBody
+                {
+                    Collider = collider.Value,
+                    Entity = entity,
+                    WorldFromBody = new RigidTransform(rotation, matrix.c3.xyz),
+                    Scale = scale,
+                };
+                return true;
+            }
+
+            if (!entityManager.HasComponent<LocalTransform>(entity))
+                return false;
+
+            var transform = entityManager.GetComponentData<LocalTransform>(entity);
+            body = new RigidBody
+            {
+                Collider = collider.Value,
+                Entity = entity,
+                WorldFromBody = new RigidTransform(transform.Rotation, transform.Position),
+                Scale = transform.Scale,
             };
             return true;
         }

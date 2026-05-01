@@ -322,16 +322,19 @@ namespace VVardenfell.Importer.Bake
         {
             if (instructions.Count > firstInstruction)
                 instructions.RemoveRange(firstInstruction, instructions.Count - firstInstruction);
-            if (locals.Count > firstLocal)
-                locals.RemoveRange(firstLocal, locals.Count - firstLocal);
 
-            programs.Add(CreateDisabled(
-                script,
-                scriptIndex,
-                firstInstruction,
-                firstLocal,
-                $"line {lineIndex + 1}: {reason}",
-                MorrowindScriptProgramStatus.DisabledUnsupported));
+            programs.Add(new MorrowindScriptProgramDef
+            {
+                Id = script.Id,
+                SourceScriptIndex = scriptIndex,
+                Status = (byte)MorrowindScriptProgramStatus.DisabledUnsupported,
+                DisabledReason = $"line {lineIndex + 1}: {reason}",
+                FirstInstructionIndex = firstInstruction,
+                InstructionCount = 0,
+                FirstLocalIndex = locals.Count == firstLocal ? -1 : firstLocal,
+                LocalCount = locals.Count - firstLocal,
+                MaxStack = 1,
+            });
         }
 
         static MorrowindScriptProgramDef CreateDisabled(

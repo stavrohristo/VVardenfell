@@ -62,7 +62,8 @@ namespace VVardenfell.Runtime.Interactions
                         continue;
                     }
 
-                    Entity proxyEntity = QueueCreateProxyEntity(ref ecb, logicalEntity, worldBounds, exteriorActive);
+                    bool followsActor = EntityManager.HasComponent<PassiveActorPresence>(logicalEntity);
+                    Entity proxyEntity = QueueCreateProxyEntity(ref ecb, logicalEntity, worldBounds, exteriorActive, followsActor);
                     if (EntityManager.HasComponent<InteractionActivationProxyState>(logicalEntity))
                     {
                         ecb.SetComponent(logicalEntity, new InteractionActivationProxyState
@@ -89,7 +90,7 @@ namespace VVardenfell.Runtime.Interactions
             }
         }
 
-        Entity QueueCreateProxyEntity(ref EntityCommandBuffer ecb, Entity logicalEntity, in AABB worldBounds, bool exteriorActive)
+        Entity QueueCreateProxyEntity(ref EntityCommandBuffer ecb, Entity logicalEntity, in AABB worldBounds, bool exteriorActive, bool followsActor)
         {
             float3 size = math.max(worldBounds.Extents * 2f, new float3(0.16f));
             BlobAssetReference<Collider> collider = BoxCollider.Create(
@@ -118,7 +119,8 @@ namespace VVardenfell.Runtime.Interactions
                 temporary: true);
             ecb.AddComponent(proxyEntity, new LogicalRefParent { Value = logicalEntity });
             ecb.AddComponent<InteractionActivationProxyTag>(proxyEntity);
-            ecb.AddComponent<Unity.Transforms.Static>(proxyEntity);
+            if (!followsActor)
+                ecb.AddComponent<Unity.Transforms.Static>(proxyEntity);
 
             if (EntityManager.HasComponent<CellLink>(logicalEntity))
                 ecb.AddComponent(proxyEntity, EntityManager.GetComponentData<CellLink>(logicalEntity));

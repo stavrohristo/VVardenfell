@@ -18,6 +18,7 @@ using Collider = Unity.Physics.Collider;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Physics;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -28,6 +29,7 @@ namespace VVardenfell.Runtime.Interactions
     static class InteractionTargetResolver
     {
         public const float MaxInteractDistance = 2.25f;
+        const float MinUsableHitFraction = 0.001f;
 
         public static PlayerInteractionRaycastHit CastFromViewRay(
             in PhysicsWorldSingleton physicsWorld,
@@ -50,8 +52,8 @@ namespace VVardenfell.Runtime.Interactions
                 Filter = InteractionCollisionLayers.SolidQueryFilter,
             };
 
-            bool hasProxyHit = physicsWorld.CastRay(activationInput, out Unity.Physics.RaycastHit proxyHit);
-            bool hasSolidHit = physicsWorld.CastRay(solidInput, out Unity.Physics.RaycastHit solidHit);
+            bool hasProxyHit = TryCastNearestUsableHit(physicsWorld, activationInput, out Unity.Physics.RaycastHit proxyHit);
+            bool hasSolidHit = TryCastNearestUsableHit(physicsWorld, solidInput, out Unity.Physics.RaycastHit solidHit);
 
             var hit = new PlayerInteractionRaycastHit
             {
@@ -91,6 +93,40 @@ namespace VVardenfell.Runtime.Interactions
             }
 
             return hit;
+        }
+
+        static bool TryCastNearestUsableHit(
+            in PhysicsWorldSingleton physicsWorld,
+            in RaycastInput input,
+            out Unity.Physics.RaycastHit nearestHit)
+        {
+            nearestHit = default;
+            var hits = new NativeList<Unity.Physics.RaycastHit>(Allocator.Temp);
+            try
+            {
+                if (!physicsWorld.CastRay(input, ref hits))
+                    return false;
+
+                bool found = false;
+                float nearestFraction = float.PositiveInfinity;
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var hit = hits[i];
+                    if (hit.Fraction <= MinUsableHitFraction || hit.Fraction >= nearestFraction)
+                        continue;
+
+                    nearestHit = hit;
+                    nearestFraction = hit.Fraction;
+                    found = true;
+                }
+
+                return found;
+            }
+            finally
+            {
+                if (hits.IsCreated)
+                    hits.Dispose();
+            }
         }
 
         static void SetPrimaryHit(ref PlayerInteractionRaycastHit hit, Entity entity, float3 position, float3 normal, float fraction)
@@ -298,25 +334,36 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionRaycastSystem : SystemBase
     {
-        EntityQuery _viewQuery;
+        EntityQuery _playerQuery;
         EntityQuery _raycastHitQuery;
 
         protected override void OnCreate()
         {
-            _viewQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
+            _playerQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<LocalPlayerPresentationPose>());
             _raycastHitQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
-            RequireForUpdate(_viewQuery);
+            RequireForUpdate(_playerQuery);
             RequireForUpdate(_raycastHitQuery);
             RequireForUpdate<PhysicsWorldSingleton>();
         }
 
         protected override void OnUpdate()
         {
-            var viewPose = _viewQuery.GetSingleton<PlayerPhysicsViewPose>();
+            var presentationPose = _playerQuery.GetSingleton<LocalPlayerPresentationPose>();
+            if (presentationPose.Initialized == 0)
+                return;
+
+            var viewPose = new PlayerPhysicsViewPose
+            {
+                Position = presentationPose.ViewPosition,
+                Rotation = presentationPose.ViewRotation,
+                FixedTick = presentationPose.LastFixedTick,
+            };
             var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
             uint sequence = hitRef.ValueRO.Sequence + 1u;
@@ -324,7 +371,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionRaycastSystem))]
     public partial class InteractionTargetResolutionSystem : SystemBase
     {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using VVardenfell.Core.Cache;
 
@@ -17,6 +18,8 @@ namespace VVardenfell.Importer.Bake
             var dialogueLookup = BuildDialogueLookup(dialogues);
             var carryableLookup = BuildCarryableLookup(data);
             var factionLookup = BuildFactionLookup(data);
+            var globalLookup = BuildGlobalLookup(data);
+            var localLookup = BuildScriptLocalLookup(data);
             var infoOwners = BuildInfoOwners(dialogues, infos.Length);
             int scriptsWithResults = 0;
             int supportedScripts = 0;
@@ -41,7 +44,7 @@ namespace VVardenfell.Importer.Bake
                     if (line.Length == 0)
                         continue;
 
-                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, line, out string reason))
+                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, line, out string reason))
                     {
                         supportedLines++;
                         continue;
@@ -92,6 +95,8 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogues,
             Dictionary<string, CarryableCompileInfo> carryables,
             Dictionary<string, FactionCompileInfo> factions,
+            Dictionary<string, GlobalCompileInfo> globals,
+            HashSet<string> scriptLocals,
             string line,
             out string reason)
         {
@@ -255,7 +260,89 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
+            if (TryValidateSetCommand(globals, scriptLocals, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateActorAiSettingCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
             reason = $"Unsupported V1 dialogue result command '{line}'.";
+            return false;
+        }
+
+        static bool TryValidateActorAiSettingCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!IsActorAiSettingCommand(command))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                reason = $"Explicit AI setting target '{target}' is not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
+                return true;
+
+            reason = $"{command} result requires one integer value: '{line}'.";
+            return false;
+        }
+
+        static bool IsActorAiSettingCommand(string command)
+            => string.Equals(command, "sethello", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "modhello", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "setfight", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "modfight", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "setflee", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "modflee", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "setalarm", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(command, "modalarm", StringComparison.OrdinalIgnoreCase);
+
+        static bool TryValidateSetCommand(
+            Dictionary<string, GlobalCompileInfo> globals,
+            HashSet<string> scriptLocals,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0 || !string.Equals(tokens[0], "set", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (tokens.Length != 4 || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase))
+            {
+                reason = $"Set result supports only 'set <local-or-global> to <literal-number>' in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            string target = tokens[1];
+            if (target.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                reason = $"Explicit Set targets are not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(tokens[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                reason = $"Set result requires a literal numeric value in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            string normalizedTarget = ContentId.NormalizeId(target);
+            if (globals.ContainsKey(normalizedTarget) || scriptLocals.Contains(normalizedTarget))
+                return true;
+
+            reason = $"Set result target '{target}' is not a baked global or known script local.";
             return false;
         }
 
@@ -453,6 +540,38 @@ namespace VVardenfell.Importer.Bake
             return lookup;
         }
 
+        static Dictionary<string, GlobalCompileInfo> BuildGlobalLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, GlobalCompileInfo>(StringComparer.OrdinalIgnoreCase);
+            if (data?.Globals == null)
+                return lookup;
+
+            for (int i = 0; i < data.Globals.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(data.Globals[i].Id);
+                if (!string.IsNullOrEmpty(normalizedId))
+                    lookup[normalizedId] = new GlobalCompileInfo();
+            }
+
+            return lookup;
+        }
+
+        static HashSet<string> BuildScriptLocalLookup(GameplayContentData data)
+        {
+            var lookup = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (data?.MorrowindScriptLocals == null)
+                return lookup;
+
+            for (int i = 0; i < data.MorrowindScriptLocals.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(data.MorrowindScriptLocals[i].Name);
+                if (!string.IsNullOrEmpty(normalizedId))
+                    lookup.Add(normalizedId);
+            }
+
+            return lookup;
+        }
+
         static Dictionary<string, CarryableCompileInfo> BuildCarryableLookup(GameplayContentData data)
         {
             var lookup = new Dictionary<string, CarryableCompileInfo>(StringComparer.OrdinalIgnoreCase);
@@ -641,6 +760,10 @@ namespace VVardenfell.Importer.Bake
         }
 
         struct FactionCompileInfo
+        {
+        }
+
+        struct GlobalCompileInfo
         {
         }
     }

@@ -37,19 +37,22 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ecb.AddComponent(logicalEntity, instance);
 
+            var locals = contentDb.GetMorrowindScriptLocals(programHandle);
+            if (locals.Length > 0)
+            {
+                var localBuffer = ecb.AddBuffer<MorrowindScriptLocalValue>(logicalEntity);
+                for (int i = 0; i < locals.Length; i++)
+                {
+                    byte valueKind = locals[i].ValueKind;
+                    localBuffer.Add(new MorrowindScriptLocalValue
+                    {
+                        ValueKind = valueKind,
+                    });
+                }
+            }
+
             if (status != MorrowindScriptProgramStatus.Compiled)
                 return true;
-
-            var localBuffer = ecb.AddBuffer<MorrowindScriptLocalValue>(logicalEntity);
-            var locals = contentDb.GetMorrowindScriptLocals(programHandle);
-            for (int i = 0; i < locals.Length; i++)
-            {
-                byte valueKind = locals[i].ValueKind;
-                localBuffer.Add(new MorrowindScriptLocalValue
-                {
-                    ValueKind = valueKind,
-                });
-            }
 
             ecb.AddBuffer<MorrowindScriptStackValue>(logicalEntity);
             return true;

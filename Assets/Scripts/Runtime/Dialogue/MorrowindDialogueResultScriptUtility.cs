@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
@@ -91,6 +93,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyPlayerReputationResult(entityManager, line))
                     continue;
 
+                if (TryApplySetResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyActorAiSettingResult(entityManager, ref session, line))
+                    continue;
+
                 if (StartsWithCommand(line, "goodbye"))
                 {
                     goodbye = true;
@@ -104,6 +112,265 @@ namespace VVardenfell.Runtime.MorrowindScript
             MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, entityManager, session.SpeakerEntity, session.SpeakerActor);
             return goodbye;
         }
+
+        static bool TryApplySetResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 4
+                || !string.Equals(tokens[0], "set", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase)
+                || tokens[1].IndexOf("->", StringComparison.Ordinal) >= 0
+                || !TryParseNumericLiteral(tokens[3], out float value))
+            {
+                return false;
+            }
+
+            string target = tokens[1];
+            if (TryApplyLocalSet(contentDb, entityManager, ref session, target, value, out bool localResolved))
+                return true;
+
+            if (localResolved)
+                return true;
+
+            return TryApplyGlobalSet(contentDb, entityManager, target, value);
+        }
+
+        static bool TryApplyActorAiSettingResult(
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.IsNullOrWhiteSpace(target)
+                || !TryResolveActorAiSettingCommand(command, out ActorAiSettingKind kind, out bool isMod))
+            {
+                return false;
+            }
+
+            if (session.SpeakerEntity == Entity.Null
+                || !entityManager.Exists(session.SpeakerEntity)
+                || !entityManager.HasComponent<ActorAiSettingsState>(session.SpeakerEntity))
+            {
+                return true;
+            }
+
+            var settings = entityManager.GetComponentData<ActorAiSettingsState>(session.SpeakerEntity);
+            switch (kind)
+            {
+                case ActorAiSettingKind.Hello:
+                    settings.Hello = isMod ? settings.Hello + value : value;
+                    break;
+                case ActorAiSettingKind.Fight:
+                    settings.Fight = isMod ? settings.Fight + value : value;
+                    break;
+                case ActorAiSettingKind.Flee:
+                    settings.Flee = isMod ? settings.Flee + value : value;
+                    break;
+                case ActorAiSettingKind.Alarm:
+                    settings.Alarm = isMod ? settings.Alarm + value : value;
+                    break;
+                default:
+                    return false;
+            }
+
+            entityManager.SetComponentData(session.SpeakerEntity, settings);
+            return true;
+        }
+
+        static bool TryResolveActorAiSettingCommand(string command, out ActorAiSettingKind kind, out bool isMod)
+        {
+            kind = ActorAiSettingKind.None;
+            isMod = false;
+            if (string.Equals(command, "sethello", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Hello;
+                return true;
+            }
+
+            if (string.Equals(command, "modhello", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Hello;
+                isMod = true;
+                return true;
+            }
+
+            if (string.Equals(command, "setfight", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Fight;
+                return true;
+            }
+
+            if (string.Equals(command, "modfight", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Fight;
+                isMod = true;
+                return true;
+            }
+
+            if (string.Equals(command, "setflee", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Flee;
+                return true;
+            }
+
+            if (string.Equals(command, "modflee", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Flee;
+                isMod = true;
+                return true;
+            }
+
+            if (string.Equals(command, "setalarm", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Alarm;
+                return true;
+            }
+
+            if (string.Equals(command, "modalarm", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = ActorAiSettingKind.Alarm;
+                isMod = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool TryApplyLocalSet(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string target,
+            float value,
+            out bool localResolved)
+        {
+            localResolved = false;
+            if (contentDb == null
+                || !session.SpeakerActor.IsValid
+                || session.SpeakerEntity == Entity.Null
+                || !entityManager.Exists(session.SpeakerEntity))
+            {
+                return false;
+            }
+
+            ref readonly var actor = ref contentDb.Get(session.SpeakerActor);
+            if (string.IsNullOrWhiteSpace(actor.ScriptId)
+                || !contentDb.TryGetMorrowindScriptProgramHandle(actor.ScriptId, out var programHandle)
+                || !programHandle.IsValid)
+            {
+                return false;
+            }
+
+            var localsDef = contentDb.GetMorrowindScriptLocals(programHandle);
+            int localIndex = -1;
+            byte valueKind = 0;
+            for (int i = 0; i < localsDef.Length; i++)
+            {
+                if (string.Equals(localsDef[i].Name, target, StringComparison.OrdinalIgnoreCase))
+                {
+                    localIndex = i;
+                    valueKind = localsDef[i].ValueKind;
+                    break;
+                }
+            }
+
+            if (localIndex < 0)
+                return false;
+
+            localResolved = true;
+            if (!entityManager.HasBuffer<MorrowindScriptLocalValue>(session.SpeakerEntity))
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] speaker '{actor.Id}' has script '{actor.ScriptId}' local '{target}', but no runtime local buffer.");
+
+            var locals = entityManager.GetBuffer<MorrowindScriptLocalValue>(session.SpeakerEntity);
+            if ((uint)localIndex >= (uint)locals.Length)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] speaker '{actor.Id}' local buffer is too small for script '{actor.ScriptId}' local '{target}'.");
+
+            locals[localIndex] = BuildScriptValue(value, valueKind);
+            return true;
+        }
+
+        static bool TryApplyGlobalSet(RuntimeContentDatabase contentDb, EntityManager entityManager, string target, float value)
+        {
+            if (contentDb == null
+                || !contentDb.TryGetGlobalHandle(target, out var globalHandle)
+                || !globalHandle.IsValid)
+            {
+                return false;
+            }
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadWrite<MorrowindScriptGlobalValue>());
+            if (query.IsEmptyIgnoreFilter)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] global '{target}' was set before MWScript globals were bootstrapped.");
+
+            var globals = entityManager.GetBuffer<MorrowindScriptGlobalValue>(query.GetSingletonEntity());
+            if ((uint)globalHandle.Index >= (uint)globals.Length)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] global buffer is too small for '{target}'.");
+
+            ref readonly var global = ref contentDb.GetGlobal(globalHandle);
+            globals[globalHandle.Index] = BuildGlobalValue(value, ResolveGlobalKind(global));
+            return true;
+        }
+
+        static MorrowindScriptLocalValue BuildScriptValue(float value, byte valueKind)
+        {
+            if (valueKind == (byte)MorrowindScriptValueKind.Float)
+            {
+                return new MorrowindScriptLocalValue
+                {
+                    FloatValue = value,
+                    IntValue = (int)value,
+                    ValueKind = valueKind,
+                };
+            }
+
+            int intValue = (int)value;
+            return new MorrowindScriptLocalValue
+            {
+                IntValue = intValue,
+                FloatValue = intValue,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            };
+        }
+
+        static MorrowindScriptGlobalValue BuildGlobalValue(float value, byte valueKind)
+        {
+            if (valueKind == (byte)MorrowindScriptValueKind.Float)
+            {
+                return new MorrowindScriptGlobalValue
+                {
+                    FloatValue = value,
+                    IntValue = (int)value,
+                    ValueKind = valueKind,
+                };
+            }
+
+            int intValue = (int)value;
+            return new MorrowindScriptGlobalValue
+            {
+                IntValue = intValue,
+                FloatValue = intValue,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            };
+        }
+
+        static byte ResolveGlobalKind(in GenericRecordDef global)
+        {
+            if (!string.IsNullOrWhiteSpace(global.Name) && global.Name[0] == 'f')
+                return (byte)MorrowindScriptValueKind.Float;
+
+            return (byte)MorrowindScriptValueKind.Integer;
+        }
+
+        static bool TryParseNumericLiteral(string token, out float value)
+            => float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
 
         static bool TryApplyChoiceResult(string line, DynamicBuffer<MorrowindDialogueChoice> choices, ref bool choicesReset)
         {
@@ -565,6 +832,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (current.Length > 0)
                 tokens.Add(current.ToString());
             return tokens.ToArray();
+        }
+
+        enum ActorAiSettingKind : byte
+        {
+            None = 0,
+            Hello = 1,
+            Fight = 2,
+            Flee = 3,
+            Alarm = 4,
         }
     }
 }

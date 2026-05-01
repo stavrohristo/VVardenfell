@@ -975,7 +975,6 @@ namespace VVardenfell.Importer.Bake
             BuildSpellArrays(state.Spells, s_SpellEffects, out data.Spells, ref data.MagicEffectInstances);
             BuildEnchantmentArrays(state.Enchantments, s_EnchantmentEffects, out data.Enchantments, ref data.MagicEffectInstances);
             BuildRegionArrays(state.Regions, out data.Regions, out data.RegionSoundRefs);
-            MorrowindDialogueResultScriptCoverage.Log(data);
             BuildExplicitRefTargetMap(recordSourcePaths, out var explicitRefTargets, out var ambiguousExplicitRefTargets);
             MorrowindScriptCompiler.Build(
                 data.Scripts,
@@ -988,6 +987,7 @@ namespace VVardenfell.Importer.Bake
                 out data.MorrowindScriptPrograms,
                 out data.MorrowindScriptInstructions,
                 out data.MorrowindScriptLocals);
+            MorrowindDialogueResultScriptCoverage.Log(data);
 
             s_SpellEffects.Clear();
             s_EnchantmentEffects.Clear();

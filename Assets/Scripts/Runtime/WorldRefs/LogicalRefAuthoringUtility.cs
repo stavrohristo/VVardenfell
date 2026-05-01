@@ -201,6 +201,13 @@ namespace VVardenfell.Runtime.Components
             {
                 BaseDisposition = actor.Disposition,
             });
+            ecb.AddComponent(logicalEntity, new ActorAiSettingsState
+            {
+                Hello = actor.AiData.Hello,
+                Fight = actor.AiData.Fight,
+                Flee = actor.AiData.Flee,
+                Alarm = actor.AiData.Alarm,
+            });
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
                 statSeed.Attributes,
