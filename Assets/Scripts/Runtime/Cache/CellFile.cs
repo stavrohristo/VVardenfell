@@ -191,7 +191,7 @@ namespace VVardenfell.Runtime.Cache
                         cell.Refs[i] = new RefEntry
                         {
                             SpawnModeRaw = r.ReadInt32(),
-                            RenderShardIndex = r.ReadInt32(),
+                            ModelPrefabIndex = r.ReadInt32(),
                             LocalMeshIndex = r.ReadInt32(),
                             LocalMaterialIndex = r.ReadInt32(),
                             SliceIndex = r.ReadInt32(),

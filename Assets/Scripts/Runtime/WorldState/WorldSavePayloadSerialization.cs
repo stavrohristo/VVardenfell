@@ -14,8 +14,14 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 11;
-        const int PreviousPayloadVersion = 10;
+        const int PayloadVersion = 16;
+        const int PreviousPayloadVersion = 15;
+        const int PlayerFactionJoinedPayloadVersion = 16;
+        const int PlayerFactionPayloadVersion = 15;
+        const int DialoguePayloadVersion = 14;
+        const int QuestJournalDatePayloadVersion = 13;
+        const int QuestJournalPayloadVersion = 12;
+        const int WeatherPayloadVersion = 10;
         const int LegacyPayloadVersion = 9;
 
         static void ValidatePayloadHeader(BinaryReader r)
@@ -25,7 +31,13 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != PreviousPayloadVersion && version != LegacyPayloadVersion)
+            if (version != PayloadVersion
+                && version != PreviousPayloadVersion
+                && version != DialoguePayloadVersion
+                && version != QuestJournalDatePayloadVersion
+                && version != QuestJournalPayloadVersion
+                && version != WeatherPayloadVersion
+                && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
         }
 
@@ -64,6 +76,12 @@ namespace VVardenfell.Runtime.WorldState
 
             WriteActorStats(w, payload.ActorStats);
             WriteActorIdentity(w, payload.PlayerIdentity);
+            w.Write(payload.PlayerFactions?.Length ?? 0);
+            if (payload.PlayerFactions != null)
+            {
+                for (int i = 0; i < payload.PlayerFactions.Length; i++)
+                    WritePlayerFaction(w, payload.PlayerFactions[i]);
+            }
             w.Write(payload.KnownSpells?.Length ?? 0);
             if (payload.KnownSpells != null)
             {
@@ -103,6 +121,8 @@ namespace VVardenfell.Runtime.WorldState
                     WriteJournalEntry(w, payload.JournalEntries[i]);
             }
 
+            WriteQuestJournalPayload(w, payload.QuestJournal);
+            WriteDialoguePayload(w, payload.Dialogue);
             WriteTimePayload(w, payload.Time);
             WriteWeatherPayload(w, payload.Weather);
         }
@@ -114,7 +134,13 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion && version != PreviousPayloadVersion && version != LegacyPayloadVersion)
+            if (version != PayloadVersion
+                && version != PreviousPayloadVersion
+                && version != DialoguePayloadVersion
+                && version != QuestJournalDatePayloadVersion
+                && version != QuestJournalPayloadVersion
+                && version != WeatherPayloadVersion
+                && version != LegacyPayloadVersion)
                 throw new InvalidDataException($"unsupported save version {version}");
 
             var payload = new WorldSavePayload
@@ -126,6 +152,18 @@ namespace VVardenfell.Runtime.WorldState
             };
 
             payload.PlayerIdentity = ReadActorIdentity(r);
+
+            if (version >= PlayerFactionPayloadVersion)
+            {
+                int factionCount = ReadCount(r, "player faction");
+                payload.PlayerFactions = new PlayerFactionMembership[factionCount];
+                for (int i = 0; i < factionCount; i++)
+                    payload.PlayerFactions[i] = ReadPlayerFaction(r, version);
+            }
+            else
+            {
+                payload.PlayerFactions = null;
+            }
 
             int knownSpellCount = ReadCount(r, "known spell");
             payload.KnownSpells = new PlayerKnownSpell[knownSpellCount];
@@ -159,7 +197,25 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < journalCount; i++)
                 payload.JournalEntries[i] = ReadJournalEntry(r);
 
-            if (version >= PreviousPayloadVersion)
+            payload.QuestJournal = version >= QuestJournalPayloadVersion
+                ? ReadQuestJournalPayload(r, version)
+                : new MorrowindQuestJournalSavePayload
+                {
+                    NextEntrySequence = 1u,
+                    States = Array.Empty<MorrowindQuestJournalStateSavePayload>(),
+                    Entries = Array.Empty<MorrowindQuestJournalEntrySavePayload>(),
+                };
+
+            payload.Dialogue = version >= DialoguePayloadVersion
+                ? ReadDialoguePayload(r)
+                : new MorrowindDialogueSavePayload
+                {
+                    NextTopicEntrySequence = 1u,
+                    KnownTopicDialogueIndices = Array.Empty<int>(),
+                    TopicEntries = Array.Empty<MorrowindTopicJournalEntrySavePayload>(),
+                };
+
+            if (version >= WeatherPayloadVersion)
             {
                 payload.Time = ReadTimePayload(r);
                 payload.Weather = ReadWeatherPayload(r, version);
@@ -230,7 +286,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static MorrowindWeatherSavePayload ReadWeatherPayload(BinaryReader r, int version)
         {
-            if (version == PreviousPayloadVersion)
+            if (version == WeatherPayloadVersion)
             {
                 var legacy = new MorrowindWeatherSavePayload
                 {
@@ -341,6 +397,158 @@ namespace VVardenfell.Runtime.WorldState
                 Content = ReadContentReference(r),
                 Count = r.ReadInt32(),
             };
+        }
+
+        static void WritePlayerFaction(BinaryWriter w, in PlayerFactionMembership value)
+        {
+            w.Write(value.FactionIndex);
+            w.Write(value.Rank);
+            w.Write(value.Reputation);
+            w.Write(value.Joined);
+            w.Write(value.Expelled);
+        }
+
+        static PlayerFactionMembership ReadPlayerFaction(BinaryReader r, int version)
+        {
+            return new PlayerFactionMembership
+            {
+                FactionIndex = r.ReadInt32(),
+                Rank = r.ReadInt32(),
+                Reputation = r.ReadInt32(),
+                Joined = version >= PlayerFactionJoinedPayloadVersion ? r.ReadByte() : (byte)1,
+                Expelled = r.ReadByte(),
+            };
+        }
+
+        static void WriteQuestJournalPayload(BinaryWriter w, in MorrowindQuestJournalSavePayload value)
+        {
+            w.Write(value.NextEntrySequence);
+            w.Write(value.States?.Length ?? 0);
+            if (value.States != null)
+            {
+                for (int i = 0; i < value.States.Length; i++)
+                {
+                    w.Write(value.States[i].DialogueIndex);
+                    w.Write(value.States[i].Index);
+                    w.Write(value.States[i].Started);
+                    w.Write(value.States[i].Finished);
+                }
+            }
+
+            w.Write(value.Entries?.Length ?? 0);
+            if (value.Entries != null)
+            {
+                for (int i = 0; i < value.Entries.Length; i++)
+                {
+                    w.Write(value.Entries[i].Sequence);
+                    w.Write(value.Entries[i].DialogueIndex);
+                    w.Write(value.Entries[i].InfoIndex);
+                    w.Write(value.Entries[i].JournalIndex);
+                    w.Write(value.Entries[i].Day);
+                    w.Write(value.Entries[i].Month);
+                    w.Write(value.Entries[i].DayOfMonth);
+                    w.Write(value.Entries[i].QuestStatus);
+                }
+            }
+        }
+
+        static void WriteDialoguePayload(BinaryWriter w, in MorrowindDialogueSavePayload value)
+        {
+            w.Write(value.NextTopicEntrySequence);
+            w.Write(value.KnownTopicDialogueIndices?.Length ?? 0);
+            if (value.KnownTopicDialogueIndices != null)
+            {
+                for (int i = 0; i < value.KnownTopicDialogueIndices.Length; i++)
+                    w.Write(value.KnownTopicDialogueIndices[i]);
+            }
+
+            w.Write(value.TopicEntries?.Length ?? 0);
+            if (value.TopicEntries != null)
+            {
+                for (int i = 0; i < value.TopicEntries.Length; i++)
+                {
+                    w.Write(value.TopicEntries[i].Sequence);
+                    w.Write(value.TopicEntries[i].DialogueIndex);
+                    w.Write(value.TopicEntries[i].InfoIndex);
+                    w.Write(value.TopicEntries[i].ActorPlacedRefId);
+                    w.Write(value.TopicEntries[i].ActorId ?? string.Empty);
+                    w.Write(value.TopicEntries[i].Day);
+                    w.Write(value.TopicEntries[i].Month);
+                    w.Write(value.TopicEntries[i].DayOfMonth);
+                }
+            }
+        }
+
+        static MorrowindQuestJournalSavePayload ReadQuestJournalPayload(BinaryReader r, int version)
+        {
+            var payload = new MorrowindQuestJournalSavePayload
+            {
+                NextEntrySequence = r.ReadUInt32(),
+            };
+
+            int stateCount = ReadCount(r, "quest journal state");
+            payload.States = new MorrowindQuestJournalStateSavePayload[stateCount];
+            for (int i = 0; i < stateCount; i++)
+            {
+                payload.States[i] = new MorrowindQuestJournalStateSavePayload
+                {
+                    DialogueIndex = r.ReadInt32(),
+                    Index = r.ReadInt32(),
+                    Started = r.ReadByte(),
+                    Finished = r.ReadByte(),
+                };
+            }
+
+            int entryCount = ReadCount(r, "quest journal entry");
+            payload.Entries = new MorrowindQuestJournalEntrySavePayload[entryCount];
+            for (int i = 0; i < entryCount; i++)
+            {
+                payload.Entries[i] = new MorrowindQuestJournalEntrySavePayload
+                {
+                    Sequence = r.ReadUInt32(),
+                    DialogueIndex = r.ReadInt32(),
+                    InfoIndex = r.ReadInt32(),
+                    JournalIndex = r.ReadInt32(),
+                    Day = version >= QuestJournalDatePayloadVersion ? r.ReadInt32() : 0,
+                    Month = version >= QuestJournalDatePayloadVersion ? r.ReadInt32() : 0,
+                    DayOfMonth = version >= QuestJournalDatePayloadVersion ? r.ReadInt32() : 0,
+                    QuestStatus = r.ReadByte(),
+                };
+            }
+
+            return payload;
+        }
+
+        static MorrowindDialogueSavePayload ReadDialoguePayload(BinaryReader r)
+        {
+            var payload = new MorrowindDialogueSavePayload
+            {
+                NextTopicEntrySequence = r.ReadUInt32(),
+            };
+
+            int knownCount = ReadCount(r, "known dialogue topic");
+            payload.KnownTopicDialogueIndices = new int[knownCount];
+            for (int i = 0; i < knownCount; i++)
+                payload.KnownTopicDialogueIndices[i] = r.ReadInt32();
+
+            int entryCount = ReadCount(r, "dialogue topic journal entry");
+            payload.TopicEntries = new MorrowindTopicJournalEntrySavePayload[entryCount];
+            for (int i = 0; i < entryCount; i++)
+            {
+                payload.TopicEntries[i] = new MorrowindTopicJournalEntrySavePayload
+                {
+                    Sequence = r.ReadUInt32(),
+                    DialogueIndex = r.ReadInt32(),
+                    InfoIndex = r.ReadInt32(),
+                    ActorPlacedRefId = r.ReadUInt32(),
+                    ActorId = r.ReadString(),
+                    Day = r.ReadInt32(),
+                    Month = r.ReadInt32(),
+                    DayOfMonth = r.ReadInt32(),
+                };
+            }
+
+            return payload;
         }
 
         static void WriteJournalEntry(BinaryWriter w, in WorldJournalEntry value)

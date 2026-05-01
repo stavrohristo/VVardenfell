@@ -120,6 +120,30 @@ namespace VVardenfell.Runtime.Shell
             }
         }
 
+        public static int AddVisitedLocationsByCellNamePrefix(string cellNamePrefix)
+        {
+            if (string.IsNullOrWhiteSpace(cellNamePrefix))
+                throw new ArgumentException("ShowMap substring must not be empty.", nameof(cellNamePrefix));
+
+            int count = 0;
+            foreach (var pair in WorldResources.Cells)
+            {
+                string cellId = pair.Value?.CellId;
+                if (string.IsNullOrWhiteSpace(cellId)
+                    || !cellId.StartsWith(cellNamePrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int before = s_VisitedLocationCells.Count;
+                AddVisitedLocation(pair.Key);
+                if (s_VisitedLocationCells.Count != before)
+                    count++;
+            }
+
+            return count;
+        }
+
         public static GlobalMapOverlayPayload CaptureOverlayPayload()
         {
             EnsureBuilt();

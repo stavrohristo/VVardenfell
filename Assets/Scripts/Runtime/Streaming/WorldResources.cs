@@ -21,8 +21,8 @@ namespace VVardenfell.Runtime.Streaming
 {
     /// <summary>
     /// Managed process-wide storage for anything the runtime pipeline needs to touch that
-    /// Burst cannot: Unity Mesh/Material/Texture2D references, the cache loader, per-bucket
-    /// <see cref="RenderMeshArray"/>s, ref prefab entities.
+    /// Burst cannot: Unity Mesh/Material/Texture2D references, the cache loader, and
+    /// model-prefab texture buckets.
     ///
     /// Kept as a static singleton rather than a managed <see cref="IComponentData"/> —
     /// the managed systems access this directly on the main thread; Burst systems never
@@ -55,21 +55,9 @@ namespace VVardenfell.Runtime.Streaming
         /// </summary>
         public static Material TerrainFallbackMat;
         /// <summary>
-        /// One <see cref="RenderMeshArray"/> per texture-dimension bucket. Each RMA holds
-        /// <see cref="BlendVariantCount"/> materials (blend variants bound to that bucket's
-        /// <see cref="RefBaseArrays"/> slot) + the full mesh set. Refs are Instantiated from
-        /// the <see cref="RefPrefabs"/> entry whose RMA matches their texture's bucket.
+        /// Shared render settings used when building model-prefab render leaves.
         /// </summary>
-        public static RenderMeshArray[] RefsRmas;
         public static RenderMeshDescription Desc;
-        /// <summary>
-        /// One prefab-tagged ref entity per texture-dimension bucket, parallel to
-        /// <see cref="RefsRmas"/>. A ref is Instantiated from the prefab whose bucket
-        /// matches its texture (<see cref="TexBucketInfo"/>). Batch Instantiate carries
-        /// the per-prefab RMA onto the clones — the only efficient way to assign a managed
-        /// shared component to N entities in Entities 1.3.
-        /// </summary>
-        public static Entity[] RefPrefabs;
         public static Entity[] ModelPrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableCreaturePrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableItemPrefabs;
@@ -83,21 +71,10 @@ namespace VVardenfell.Runtime.Streaming
         public static int MaxActorShadowCasters = 128;
 
         /// <summary>
-        /// Per-mesh local AABB, indexed by MeshIndex. Built once at bootstrap from
-        /// <c>cache.Meshes[i].bounds</c> so the ref-spawn path can write a correct
-        /// <see cref="RenderBounds"/> per ref — without this, all clones inherit the
-        /// prototype's mesh-0 bounds and culling goes wrong once MaterialMeshInfo is
-        /// rewritten.
-        /// </summary>
-        public static NativeArray<AABB> MeshBounds;
-        public static NativeArray<int2> RefShardMeshRanges;
-        public static NativeArray<int> RefShardGlobalMeshIndices;
-
-        /// <summary>
         /// Per-bucket Texture2DArrays. Each array is native-sized (<c>w × h</c>) with a full
         /// mip chain — no texture up/down-scale, proper trilinear + anisotropic filtering.
-        /// Parallel to <see cref="RefsRmas"/>: bucket <c>b</c>'s RT is bound as <c>_BaseArray</c>
-        /// on every material in <c>RefsRmas[b]</c>.
+        /// Model-prefab render leaves bind these arrays through their bucket-specific
+        /// material variants.
         /// </summary>
         public static RenderTexture[] RefBaseArrays;
 
@@ -116,7 +93,7 @@ namespace VVardenfell.Runtime.Streaming
 
         /// <summary>
         /// Number of blend-variant materials per bucket (typically ≤3: Opaque / AlphaTest /
-        /// AlphaBlend). Equal to <c>cache.Materials.Length / RefsRmas.Length</c>.
+        /// AlphaBlend). Equal to the number of material records baked per texture bucket.
         /// </summary>
         public static int BlendVariantCount;
 
@@ -287,9 +264,6 @@ namespace VVardenfell.Runtime.Streaming
                 ActorCapsuleCollider.Dispose();
                 ActorCapsuleCollider = default;
             }
-            if (MeshBounds.IsCreated) MeshBounds.Dispose();
-            if (RefShardMeshRanges.IsCreated) RefShardMeshRanges.Dispose();
-            if (RefShardGlobalMeshIndices.IsCreated) RefShardGlobalMeshIndices.Dispose();
             ActorEntitiesGraphicsRenderer?.Dispose();
             ActorEntitiesGraphicsRenderer = null;
             if (RefBaseArrays != null)
@@ -314,10 +288,8 @@ namespace VVardenfell.Runtime.Streaming
             TerrainFallbackMat = null;
             TerrainTemplate = null;
             TerrainShader = null;
-            RefsRmas = null;
             Cache = null;
             RuntimeMode = BootstrapRuntimeMode.Vanilla;
-            RefPrefabs = null;
             ModelPrefabs = null;
             SpawnableCreaturePrefabs = null;
             SpawnableItemPrefabs = null;

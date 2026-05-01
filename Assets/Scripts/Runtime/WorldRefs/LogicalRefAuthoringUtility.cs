@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
-                    TryQueueDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    TryQueueScriptedDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     return true;
@@ -77,7 +77,9 @@ namespace VVardenfell.Runtime.Components
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
-                    TryQueueDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    if (!hasScriptedDoorMotion && attachDoorInteractable && doorInteractable.IsTeleport == 0)
+                        QueueDoorMotion(ref ecb, logicalEntity, DoorMotionAuthoringUtility.BuildOpenMwDoorMotion());
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
                     if (attachDoorInteractable)
@@ -148,15 +150,21 @@ namespace VVardenfell.Runtime.Components
             }
         }
 
-        static void TryQueueDoorMotion(
+        static bool TryQueueScriptedDoorMotion(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             RuntimeContentDatabase contentDb,
             string scriptId)
         {
             if (!DoorMotionAuthoringUtility.TryBuild(contentDb, scriptId, out DoorMotionState motion))
-                return;
+                return false;
 
+            QueueDoorMotion(ref ecb, logicalEntity, motion);
+            return true;
+        }
+
+        static void QueueDoorMotion(ref EntityCommandBuffer ecb, Entity logicalEntity, DoorMotionState motion)
+        {
             ecb.AddComponent(logicalEntity, motion);
             ecb.AddComponent<DoorActivated>(logicalEntity);
             ecb.SetComponentEnabled<DoorActivated>(logicalEntity, false);
@@ -189,6 +197,10 @@ namespace VVardenfell.Runtime.Components
             ecb.AddComponent(logicalEntity, statSeed.Skills);
             ecb.AddComponent(logicalEntity, statSeed.Vitals);
             ecb.AddComponent(logicalEntity, statSeed.EffectModifiers);
+            ecb.AddComponent(logicalEntity, new ActorDispositionState
+            {
+                BaseDisposition = actor.Disposition,
+            });
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
                 statSeed.Attributes,

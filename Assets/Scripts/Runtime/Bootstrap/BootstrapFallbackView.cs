@@ -52,7 +52,6 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
         MorrowindButtonView _sandboxButton;
-        MorrowindButtonView _vegetationSandboxButton;
         Text _pathPromptText;
         Text _pathErrorText;
         Text _modePromptText;
@@ -368,26 +367,6 @@ namespace VVardenfell.Runtime.Bootstrap
             ReplaceButtonLabel(_sandboxButton, "Sandbox");
             _sandboxButton.Button.onClick.AddListener(OnSandboxPressed);
 
-            var vegetationSandboxRect = RuntimeUiFactory.CreateAnchoredRect(
-                "VegetationSandboxButtonRow",
-                _modeRoot,
-                new Vector2(0f, 1f),
-                new Vector2(1f, 1f),
-                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
-                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
-            vegetationSandboxRect.pivot = new Vector2(0f, 1f);
-
-            _vegetationSandboxButton = RuntimeUiFactory.CreateMorrowindButton(
-                "VegetationSandboxButton",
-                vegetationSandboxRect,
-                _theme,
-                "Vegetation Sandbox",
-                1f,
-                BodyTextColor,
-                ButtonCenterColor);
-            RuntimeUiFactory.Stretch(_vegetationSandboxButton.Root);
-            ReplaceButtonLabel(_vegetationSandboxButton, "Vegetation Sandbox");
-            _vegetationSandboxButton.Button.onClick.AddListener(OnVegetationSandboxPressed);
         }
 
         void BuildProgressView()
@@ -576,11 +555,6 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnSandboxPressed()
         {
             _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
-        }
-
-        void OnVegetationSandboxPressed()
-        {
-            _onModeSelected?.Invoke(BootstrapRuntimeMode.VegetationSandbox);
         }
 
         void OnDestroy()

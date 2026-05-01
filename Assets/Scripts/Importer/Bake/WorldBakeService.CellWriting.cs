@@ -382,25 +382,6 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static bool IsScriptedLogicalOnlyActivator(GameplayContentData gameplayContent, ContentReference contentReference)
-        {
-            if (gameplayContent == null
-                || contentReference.Kind != ContentReferenceKind.Activator
-                || contentReference.HandleValue <= 0)
-            {
-                return false;
-            }
-
-            var activators = gameplayContent.Activators ?? Array.Empty<BaseDef>();
-            int activatorIndex = contentReference.HandleValue - 1;
-            if ((uint)activatorIndex >= (uint)activators.Length)
-                return false;
-
-            string scriptId = activators[activatorIndex].ScriptId;
-            return !string.IsNullOrWhiteSpace(scriptId);
-        }
-
-
         private static byte[] BuildTerrainNormalBytes(LandRecord land)
         {
             var bytes = new byte[land.Normals.Length];
@@ -440,7 +421,7 @@ namespace VVardenfell.Importer.Bake
             {
                 var r = refs[i];
                 w.Write(r.SpawnModeRaw);
-                w.Write(r.RenderShardIndex);
+                w.Write(r.ModelPrefabIndex);
                 w.Write(r.LocalMeshIndex);
                 w.Write(r.LocalMaterialIndex);
                 w.Write(r.SliceIndex);

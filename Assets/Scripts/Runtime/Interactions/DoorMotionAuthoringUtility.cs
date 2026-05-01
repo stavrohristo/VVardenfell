@@ -9,6 +9,22 @@ namespace VVardenfell.Runtime.Interactions
 {
     static class DoorMotionAuthoringUtility
     {
+        const float OpenMwDoorRangeDegrees = 90f;
+        const float OpenMwDoorSpeedDegreesPerSecond = 90f;
+        const byte OpenMwDoorAxis = 2;
+
+        public static DoorMotionState BuildOpenMwDoorMotion()
+        {
+            return new DoorMotionState
+            {
+                Progress = 0f,
+                TargetProgress = 0f,
+                RangeRadians = math.radians(OpenMwDoorRangeDegrees),
+                SpeedRadiansPerSecond = math.radians(OpenMwDoorSpeedDegreesPerSecond),
+                Axis = OpenMwDoorAxis,
+            };
+        }
+
         public static bool TryBuild(RuntimeContentDatabase contentDb, string scriptId, out DoorMotionState state)
         {
             state = default;

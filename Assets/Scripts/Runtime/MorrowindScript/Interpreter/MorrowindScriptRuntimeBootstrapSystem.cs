@@ -47,14 +47,32 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
             {
                 QuestCount = contentDb.DialogueCount,
+                NextEntrySequence = 1u,
             });
             var journal = EntityManager.AddBuffer<MorrowindQuestJournalIndex>(runtime);
             journal.ResizeUninitialized(contentDb.DialogueCount);
             for (int i = 0; i < journal.Length; i++)
                 journal[i] = default;
+            EntityManager.AddBuffer<MorrowindQuestJournalEntry>(runtime);
+            EntityManager.AddBuffer<MorrowindQuestJournalRequest>(runtime);
+
+            EntityManager.AddComponentData(runtime, new MorrowindDialogueState
+            {
+                DialogueCount = contentDb.DialogueCount,
+                NextTopicEntrySequence = 1u,
+                NextSessionSequence = 1u,
+            });
+            var topics = EntityManager.AddBuffer<MorrowindKnownDialogueTopic>(runtime);
+            topics.ResizeUninitialized(contentDb.DialogueCount);
+            for (int i = 0; i < topics.Length; i++)
+                topics[i] = default;
+            EntityManager.AddBuffer<MorrowindTopicJournalEntry>(runtime);
+            EntityManager.AddBuffer<MorrowindDialogueRequest>(runtime);
 
             EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
         }
 
         static byte ResolveGlobalKind(in GenericRecordDef global)

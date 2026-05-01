@@ -176,10 +176,9 @@ namespace VVardenfell.Runtime.Streaming
 
                 progress?.CompleteStage("Refs gathered");
                 progress?.BeginStage("Spawn refs", "Instantiating and applying refs", totalRefs);
-                var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
                 for (int i = 0; i < totalRefs; i++)
                 {
-                    spawnedRefEntities[i] = WorldRefSpawnUtility.SpawnExteriorRef(em, refArr[i], coordArr[i], shardCatalog);
+                    spawnedRefEntities[i] = WorldRefSpawnUtility.SpawnExteriorRef(em, refArr[i], coordArr[i]);
                     int completed = i + 1;
                     if (completed == totalRefs || (completed % RefGatherBatchSize) == 0)
                     {
@@ -317,8 +316,7 @@ namespace VVardenfell.Runtime.Streaming
             if (!streamableAlreadySpawned && refs != null && refs.Length > 0)
             {
                 var spawnedRefEntities = new Entity[refs.Length];
-                var shardCatalog = WorldResources.Cache?.RenderShardCatalog?.Records;
-                WorldRefSpawnUtility.SpawnExteriorRefs(em, refs, coord, shardCatalog, spawnedRefEntities);
+                WorldRefSpawnUtility.SpawnExteriorRefs(em, refs, coord, spawnedRefEntities);
 
                 var refArray = new NativeArray<RefEntry>(refs.Length, Allocator.Temp);
                 for (int i = 0; i < refs.Length; i++)

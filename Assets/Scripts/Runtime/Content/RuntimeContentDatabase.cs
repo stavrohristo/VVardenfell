@@ -62,6 +62,7 @@ namespace VVardenfell.Runtime.Content
         public int SoundCount => Data.Sounds.Length;
         public int DialogueCount => Data.Dialogues.Length;
         public int DialogueInfoCount => Data.DialogueInfos.Length;
+        public int DialogueConditionCount => Data.DialogueConditions?.Length ?? 0;
         public int SpellCount => Data.Spells.Length;
         public int EnchantmentCount => Data.Enchantments.Length;
         public int MagicEffectCount => Data.MagicEffects.Length;

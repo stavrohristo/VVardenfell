@@ -452,21 +452,10 @@ namespace VVardenfell.Runtime.Streaming
 
         static bool IsSupportedWorldSpawnMode(in RefEntry entry)
         {
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.LogicalOnly)
                 return true;
 
-            if (entry.SpawnModeRaw != (int)RefSpawnMode.ModelPrefab)
-                return false;
-
-            return IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind);
-        }
-
-        static bool IsObjectAnimationRuntimeEligible(ContentReferenceKind kind)
-        {
-            return kind is ContentReferenceKind.Activator
-                or ContentReferenceKind.Door
-                or ContentReferenceKind.Container
-                or ContentReferenceKind.Light;
+            return entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab;
         }
 
         static void TryAttachPlacementAudit(CellData cell, string auditPath)

@@ -92,6 +92,8 @@ namespace VVardenfell.Runtime.Interactions
 
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
+    [UpdateAfter(typeof(DoorMotionActivationSystem))]
+    [UpdateBefore(typeof(DoorMotionSystem))]
     public partial class TeleportDoorTransitionSystem : SystemBase
     {
         static readonly float3 InteriorWorldOffset = float3.zero;

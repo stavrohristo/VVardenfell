@@ -48,6 +48,68 @@ namespace VVardenfell.Runtime.UI.Shell
                 out error);
         }
 
+        public static bool TryCloseJournal(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.CloseJournal = 1;
+                },
+                out error);
+        }
+
+        public static bool TryCloseDialogue(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.CloseDialogue = 1;
+                },
+                out error);
+        }
+
+        public static bool TrySelectDialogueTopic(int dialogueIndex, out string error)
+        {
+            return TryMutateRequest<MorrowindDialogueResponseRequest>(
+                "Dialogue response request state",
+                (ref MorrowindDialogueResponseRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)MorrowindDialogueResponseAction.SelectTopic;
+                    request.DialogueIndex = dialogueIndex;
+                },
+                out error);
+        }
+
+        public static bool TryDialogueGoodbye(out string error)
+        {
+            return TryMutateRequest<MorrowindDialogueResponseRequest>(
+                "Dialogue response request state",
+                static (ref MorrowindDialogueResponseRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)MorrowindDialogueResponseAction.Goodbye;
+                    request.DialogueIndex = -1;
+                },
+                out error);
+        }
+
+        public static bool TryAnswerDialogueChoice(int choiceValue, out string error)
+        {
+            return TryMutateRequest<MorrowindDialogueResponseRequest>(
+                "Dialogue response request state",
+                (ref MorrowindDialogueResponseRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)MorrowindDialogueResponseAction.AnswerChoice;
+                    request.DialogueIndex = -1;
+                    request.ChoiceValue = choiceValue;
+                },
+                out error);
+        }
+
         /// <summary>
         /// Flip the MW_Window_Pinnable state for one of the inventory-group
         /// subwindows. Pinned windows stay visible on the HUD layer after the
@@ -309,6 +371,112 @@ namespace VVardenfell.Runtime.UI.Shell
                 static (ref MapWindowRequest request) =>
                 {
                     request.PendingCenterOnPlayer = 1;
+                },
+                out error);
+        }
+
+        public static bool TrySetJournalWindowRect(Rect normalizedRect, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
+                },
+                out error);
+        }
+
+        public static bool TrySetJournalShowAll(bool showAll, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingShowAllChange = 1;
+                    request.ShowAll = showAll ? (byte)1 : (byte)0;
+                },
+                out error);
+        }
+
+        public static bool TrySelectJournalQuest(int dialogueIndex, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedDialogueIndex = dialogueIndex;
+                },
+                out error);
+        }
+
+        public static bool TryOpenJournalQuest(int dialogueIndex, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedDialogueIndex = dialogueIndex;
+                    request.PendingModeChange = 1;
+                    request.Mode = 1;
+                    request.PendingOverlayChange = 1;
+                    request.OverlayOpen = 0;
+                    request.PendingPageChange = 1;
+                    request.Page = 0;
+                },
+                out error);
+        }
+
+        public static bool TryOpenJournalMainBook(out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                static (ref JournalWindowRequest request) =>
+                {
+                    request.PendingModeChange = 1;
+                    request.Mode = 0;
+                    request.PendingOverlayChange = 1;
+                    request.OverlayOpen = 0;
+                    request.PendingPageChange = 1;
+                    request.Page = -1;
+                },
+                out error);
+        }
+
+        public static bool TrySetJournalOverlay(bool open, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingOverlayChange = 1;
+                    request.OverlayOpen = open ? (byte)1 : (byte)0;
+                },
+                out error);
+        }
+
+        public static bool TrySetJournalPage(int page, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingPageChange = 1;
+                    request.Page = page;
+                },
+                out error);
+        }
+
+        public static bool TrySetJournalScroll(float questScrollY, float entryScrollY, out string error)
+        {
+            return TryMutateRequest<JournalWindowRequest>(
+                "Journal window request state",
+                (ref JournalWindowRequest request) =>
+                {
+                    request.PendingScrollChange = 1;
+                    request.QuestScrollY = Mathf.Clamp01(questScrollY);
+                    request.EntryScrollY = Mathf.Clamp01(entryScrollY);
                 },
                 out error);
         }

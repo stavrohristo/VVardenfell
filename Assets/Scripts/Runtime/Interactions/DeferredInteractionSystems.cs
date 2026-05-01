@@ -25,6 +25,8 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<DialogueReadinessState>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<MorrowindDialogueState>();
+            RequireForUpdate<MorrowindDialogueSession>();
         }
 
         protected override void OnUpdate()
@@ -65,7 +67,22 @@ namespace VVardenfell.Runtime.Interactions
             dialogue.LastActivationSequence = sequence;
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
-            RuntimeShellStateUtility.ShowDialog(ref shell, displayName, "Dialogue is not implemented yet.");
+            RuntimeShellStateUtility.OpenDialogue(ref shell);
+
+            ref var dialogueState = ref SystemAPI.GetSingletonRW<MorrowindDialogueState>().ValueRW;
+            ref var session = ref SystemAPI.GetSingletonRW<MorrowindDialogueSession>().ValueRW;
+            session = new MorrowindDialogueSession
+            {
+                Active = 1,
+                NeedsGreeting = 1,
+                Sequence = dialogueState.NextSessionSequence++,
+                SpeakerEntity = target,
+                SpeakerPlacedRefId = placedRefId,
+                SpeakerActor = dialogue.PendingActor,
+                SelectedTopicDialogueIndex = -1,
+                LastInfoIndex = -1,
+                SpeakerId = RuntimeFixedStringUtility.ToFixed128OrDefault(displayName),
+            };
 
             ClearFocus();
 

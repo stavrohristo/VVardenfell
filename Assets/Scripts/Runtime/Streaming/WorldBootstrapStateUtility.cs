@@ -19,6 +19,7 @@ namespace VVardenfell.Runtime.Streaming
             out NativeHashSet<int2> available,
             out LoadedCellsMap loadedMap,
             out LogicalRefLookup logicalRefLookup,
+            out PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             out LoadQueue loadQueue,
             out UnloadList unloadList,
             out PendingCellPhysicsLoad pendingPhysicsLoad,
@@ -35,6 +36,10 @@ namespace VVardenfell.Runtime.Streaming
             logicalRefLookup = new LogicalRefLookup
             {
                 Map = new NativeParallelHashMap<uint, Entity>(System.Math.Max(cellCap * 8, 1024), Allocator.Persistent),
+            };
+            placedRefRuntimeStateLookup = new PlacedRefRuntimeStateLookup
+            {
+                DisabledByPlacedRef = new NativeParallelHashMap<uint, byte>(System.Math.Max(cellCap * 8, 1024), Allocator.Persistent),
             };
             loadQueue = new LoadQueue
             {
@@ -84,6 +89,7 @@ namespace VVardenfell.Runtime.Streaming
             NativeHashSet<int2> available,
             LoadedCellsMap loadedMap,
             LogicalRefLookup logicalRefLookup,
+            PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             LoadQueue loadQueue,
             UnloadList unloadList,
             PendingCellPhysicsLoad pendingPhysicsLoad,
@@ -104,6 +110,7 @@ namespace VVardenfell.Runtime.Streaming
             em.AddComponentData(singleton, new AvailableCells { Set = available });
             em.AddComponentData(singleton, loadedMap);
             em.AddComponentData(singleton, logicalRefLookup);
+            em.AddComponentData(singleton, placedRefRuntimeStateLookup);
             em.AddComponentData(singleton, loadQueue);
             em.AddComponentData(singleton, unloadList);
             em.AddComponentData(singleton, pendingPhysicsLoad);
@@ -204,6 +211,7 @@ namespace VVardenfell.Runtime.Streaming
             NativeHashSet<int2> available,
             LoadedCellsMap loadedMap,
             LogicalRefLookup logicalRefLookup,
+            PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             LoadQueue loadQueue,
             UnloadList unloadList,
             PendingCellPhysicsLoad pendingPhysicsLoad,
@@ -219,6 +227,8 @@ namespace VVardenfell.Runtime.Streaming
                 loadedMap.Active.Dispose();
             if (logicalRefLookup.Map.IsCreated)
                 logicalRefLookup.Map.Dispose();
+            if (placedRefRuntimeStateLookup.DisabledByPlacedRef.IsCreated)
+                placedRefRuntimeStateLookup.DisabledByPlacedRef.Dispose();
             if (loadQueue.Queue.IsCreated)
                 loadQueue.Queue.Dispose();
             if (unloadList.PendingEntityDestroy.IsCreated)
@@ -261,7 +271,15 @@ namespace VVardenfell.Runtime.Streaming
             foreach (var e in em.CreateEntityQuery(typeof(LogicalRefLookup)).ToEntityArray(Allocator.Temp))
             {
                 var lookup = em.GetComponentData<LogicalRefLookup>(e);
-                lookup.Map.Dispose();
+                if (lookup.Map.IsCreated)
+                    lookup.Map.Dispose();
+            }
+
+            foreach (var e in em.CreateEntityQuery(typeof(PlacedRefRuntimeStateLookup)).ToEntityArray(Allocator.Temp))
+            {
+                var lookup = em.GetComponentData<PlacedRefRuntimeStateLookup>(e);
+                if (lookup.DisabledByPlacedRef.IsCreated)
+                    lookup.DisabledByPlacedRef.Dispose();
             }
 
             foreach (var e in em.CreateEntityQuery(typeof(LoadQueue)).ToEntityArray(Allocator.Temp))

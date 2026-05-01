@@ -64,6 +64,11 @@ namespace VVardenfell.Runtime.Components
         public float BurdenMagnitude;
     }
 
+    public struct ActorDispositionState : IComponentData
+    {
+        public int BaseDisposition;
+    }
+
     public enum ActorActiveMagicEffectSourceKind : byte
     {
         Unknown = 0,

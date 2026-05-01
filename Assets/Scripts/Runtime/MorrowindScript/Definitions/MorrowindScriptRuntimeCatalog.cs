@@ -22,6 +22,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public short Operand1;
         public int Int0;
         public int Int1;
+        public int Int2;
         public float Float0;
         public float Float1;
     }
@@ -75,6 +76,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Operand1 = source.Operand1,
                     Int0 = source.Int0,
                     Int1 = source.Int1,
+                    Int2 = source.Int2,
                     Float0 = source.Float0,
                     Float1 = source.Float1,
                 };

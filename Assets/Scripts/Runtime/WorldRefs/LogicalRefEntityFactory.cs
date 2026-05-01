@@ -39,6 +39,7 @@ namespace VVardenfell.Runtime.WorldRefs
             ecb.SetName(logicalEntity, new FixedString64Bytes($"LogicalRef({descriptor.PlacedRefId:X8})"));
             ecb.AddComponent(logicalEntity, new LogicalRefTag());
             ecb.AddComponent(logicalEntity, new PlacedRefIdentity { Value = descriptor.PlacedRefId });
+            ecb.AddComponent(logicalEntity, new PlacedRefRuntimeState());
             if (descriptor.AddRuntimeSpawnIdentity)
             {
                 ecb.AddComponent(logicalEntity, new RuntimeSpawnedRefIdentity

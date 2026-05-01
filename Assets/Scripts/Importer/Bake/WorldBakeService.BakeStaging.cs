@@ -113,9 +113,6 @@ namespace VVardenfell.Importer.Bake
             bakeryLayers.TryLoadExisting(CachePaths.TerrainLayers);
             var bakeryCollisions = new CollisionBakery();
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
-            var bakeryRenderShards = new RenderShardBakery();
-            bakeryRenderShards.TryLoadExisting(CachePaths.RenderShards);
-            bool forceCellRebuildForRenderShards = !File.Exists(CachePaths.RenderShards) || bakeryRenderShards.Count == 0;
             var bakeryModelPrefabs = new ModelPrefabBakery();
             var bakeryActorAnimations = new ActorAnimationBakery();
             var bakeryObjectAnimations = new ObjectAnimationBakery(gameplayContent);
@@ -193,7 +190,7 @@ namespace VVardenfell.Importer.Bake
                                     ltexMap,
                                     previousStateByKey,
                                     modelCache,
-                                    forceCellRebuildForRenderShards);
+                                    false);
                                 Interlocked.Increment(ref plannedCount);
                             }
                             return worker;
@@ -250,7 +247,6 @@ namespace VVardenfell.Importer.Bake
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             FlushDroppedBakeRefWarnings();
-            yield return AssignRenderShardIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryTextures, bakeryRenderShards);
 
             for (int i = 0; i < stagedCells.Length; i++)
                 cellStates[i] = BuildCellState(stagedCells[i]);
@@ -259,7 +255,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 13;
+            progress.Total = 12;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -280,26 +276,20 @@ namespace VVardenfell.Importer.Bake
                 bakeryMaterials.WriteCatalog(CachePaths.MaterialCatalog);
             }
 
-            progress.Label = "render_shards.bin";
-            progress.Current = 3;
-            yield return null;
-            if (bakeryRenderShards.Modified || !File.Exists(CachePaths.RenderShards))
-                RenderShardFile.Write(CachePaths.RenderShards, bakeryRenderShards.BuildCatalog());
-
             progress.Label = "model_prefabs.bin";
-            progress.Current = 4;
+            progress.Current = 3;
             yield return null;
             if (bakeryModelPrefabs.Modified || bakeryObjectAnimations.Modified || !File.Exists(CachePaths.ModelPrefabs))
                 ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
 
             progress.Label = "actor_animations.bin";
-            progress.Current = 5;
+            progress.Current = 4;
             yield return null;
             if (bakeryActorAnimations.Modified || !ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
                 ActorAnimationFile.Write(CachePaths.ActorAnimations, bakeryActorAnimations.BuildCatalog());
 
             progress.Label = "textures.bin";
-            progress.Current = 6;
+            progress.Current = 5;
             yield return null;
             if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
             {
@@ -308,13 +298,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 7;
+            progress.Current = 6;
             yield return null;
             if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers);
 
             progress.Label = "collisions.bin";
-            progress.Current = 8;
+            progress.Current = 7;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -323,26 +313,26 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 9;
+            progress.Current = 8;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 10;
+            progress.Current = 9;
             yield return null;
 
             progress.Label = "world_collision_validation.txt";
-            progress.Current = 11;
+            progress.Current = 10;
             yield return null;
 
             progress.Label = "ui.bin";
-            progress.Current = 12;
+            progress.Current = 11;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 13;
+            progress.Current = 12;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
@@ -500,22 +490,7 @@ namespace VVardenfell.Importer.Bake
                 bool hasBaseRecord = recordIndex.TryGet(reference.BaseId, out var rec);
                 bool isDoorRecord = hasBaseRecord && rec.Tag == DoorTag;
                 bool isStat = hasBaseRecord && rec.Tag == StatTag;
-                bool isInteractable = !isStat;
                 var contentReference = ResolveGameplayContentReference(gameplayContentLookup, reference.BaseId);
-                if (IsScriptedLogicalOnlyActivator(gameplayContent, contentReference))
-                {
-                    staged.CollisionNoColliderCount++;
-                    staged.PlacedRefs.Add(new StagedPlacedRefData(
-                        string.Empty,
-                        reference.FormId,
-                        -1,
-                        contentReference,
-                        pos,
-                        rot,
-                        reference.Scale));
-                    continue;
-                }
-
                 if (contentReference.Kind == ContentReferenceKind.Actor)
                 {
                     staged.CollisionNoColliderCount++;
@@ -616,46 +591,15 @@ namespace VVardenfell.Importer.Bake
                     RecordUnsupportedObjectControllerRef(model.ModelPath);
                 }
 
-                bool useModelPrefab = (EnableModelPrefabWorldRefs && contentReference.Kind == ContentReferenceKind.Actor)
-                    || (model.HasObjectAnimation && IsObjectAnimationEligibleContent(contentReference.Kind));
-                if (useModelPrefab)
-                {
-                    staged.PlacedRefs.Add(new StagedPlacedRefData(
-                        model.ModelPath,
-                        reference.FormId,
-                        doorMetaIndex,
-                        contentReference,
-                        pos,
-                        rot,
-                        reference.Scale));
-                    continue;
-                }
-
-                for (int meshIndex = 0; meshIndex < model.Meshes.Length; meshIndex++)
-                {
-                    var built = model.Meshes[meshIndex];
-                    ushort apFlags = built.AlphaFlags;
-                    uint matFlags = 0;
-                    if ((apFlags & 0x0001) != 0)
-                        matFlags |= CacheFormat.MatFlagAlphaBlend;
-                    if ((apFlags & 0x0200) != 0)
-                        matFlags |= CacheFormat.MatFlagAlphaClip;
-                    matFlags = CacheFormat.PackAlphaThreshold(matFlags, built.AlphaThreshold);
-
-                    staged.PendingRefs.Add(new StagedRefData(
-                        built,
-                        meshIndex == 0 && collisionAssignment == PlacedRefCollisionAssignment.PerPlacedRef ? model.Collision : default,
-                        $"{rec.Model}#{meshIndex}",
-                        matFlags,
-                        built.TexturePath,
-                        isInteractable,
-                        reference.FormId,
-                        meshIndex == 0 ? doorMetaIndex : -1,
-                        contentReference,
-                        pos,
-                        rot,
-                        reference.Scale));
-                }
+                staged.PlacedRefs.Add(new StagedPlacedRefData(
+                    model.ModelPath,
+                    reference.FormId,
+                    doorMetaIndex,
+                    contentReference,
+                    pos,
+                    rot,
+                    reference.Scale,
+                    collisionAssignment == PlacedRefCollisionAssignment.PerPlacedRef));
             }
 
             staged.StaticCollision = staticVerts.Count > 0
@@ -875,7 +819,6 @@ namespace VVardenfell.Importer.Bake
                 + $"was not baked: {reason}.";
             s_DroppedBakeRefWarnings.TryAdd(message, 0);
         }
-
 
         private static void FlushAnimatedStaticRefWarnings()
         {

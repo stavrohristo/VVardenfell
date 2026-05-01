@@ -218,6 +218,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value.PcRank);
             w.Write(value.QuestStatus);
             w.Write(value.FactionLess);
+            w.Write(value.FirstSelectRuleIndex);
             w.Write(value.SelectRuleCount);
         }
 
@@ -247,7 +248,35 @@ namespace VVardenfell.Core.Cache
                 PcRank = r.ReadSByte(),
                 QuestStatus = r.ReadByte(),
                 FactionLess = r.ReadBoolean(),
+                FirstSelectRuleIndex = r.ReadInt32(),
                 SelectRuleCount = r.ReadInt32(),
+            };
+        }
+
+
+        static void WriteDialogueCondition(BinaryWriter w, DialogueConditionDef value)
+        {
+            WriteString(w, value.Variable);
+            w.Write(value.IntValue);
+            w.Write(value.FloatValue);
+            w.Write(value.ValueKind);
+            w.Write(value.Index);
+            w.Write(value.Function);
+            w.Write(value.Comparison);
+        }
+
+
+        static DialogueConditionDef ReadDialogueCondition(BinaryReader r)
+        {
+            return new DialogueConditionDef
+            {
+                Variable = ReadString(r),
+                IntValue = r.ReadInt32(),
+                FloatValue = r.ReadSingle(),
+                ValueKind = r.ReadByte(),
+                Index = r.ReadByte(),
+                Function = r.ReadByte(),
+                Comparison = r.ReadByte(),
             };
         }
 

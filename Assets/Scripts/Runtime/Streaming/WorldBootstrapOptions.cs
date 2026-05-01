@@ -23,8 +23,7 @@ namespace VVardenfell.Runtime.Streaming
         public SandboxWorldProfile SandboxProfile { get; }
 
         public bool IsSandbox => BootstrapRuntimeModeUtility.IsSandboxMode(Mode);
-        public bool RequiresRenderShardRefs => !IsSandbox || (SandboxProfile?.GenerateVegetationStressGrid ?? false);
-        public bool RequiresFullCellPreload => !IsSandbox || (SandboxProfile?.GenerateVegetationStressGrid ?? false);
+        public bool RequiresFullCellPreload => !IsSandbox;
         public bool QueueInitialExteriorCells => !IsSandbox || (SandboxProfile?.QueueInitialExteriorCells ?? false);
         public bool SpawnLocalPlayer => !IsSandbox || (SandboxProfile?.SpawnLocalPlayer ?? true);
 

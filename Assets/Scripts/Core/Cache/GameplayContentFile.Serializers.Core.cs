@@ -170,6 +170,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value.Operand1);
             w.Write(value.Int0);
             w.Write(value.Int1);
+            w.Write(value.Int2);
             w.Write(value.Float0);
             w.Write(value.Float1);
         }
@@ -184,6 +185,7 @@ namespace VVardenfell.Core.Cache
                 Operand1 = r.ReadInt16(),
                 Int0 = r.ReadInt32(),
                 Int1 = r.ReadInt32(),
+                Int2 = r.ReadInt32(),
                 Float0 = r.ReadSingle(),
                 Float1 = r.ReadSingle(),
             };

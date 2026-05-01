@@ -52,11 +52,41 @@ namespace VVardenfell.Runtime.Components
     public struct MorrowindQuestJournalState : IComponentData
     {
         public int QuestCount;
+        public uint NextEntrySequence;
     }
 
     public struct MorrowindQuestJournalIndex : IBufferElementData
     {
         public int Index;
+        public byte Started;
+        public byte Finished;
+    }
+
+    public struct MorrowindQuestJournalEntry : IBufferElementData
+    {
+        public uint Sequence;
+        public int DialogueIndex;
+        public int InfoIndex;
+        public int JournalIndex;
+        public int Day;
+        public int Month;
+        public int DayOfMonth;
+        public byte QuestStatus;
+    }
+
+    public enum MorrowindQuestJournalRequestOperation : byte
+    {
+        Journal = 0,
+        SetIndex = 1,
+    }
+
+    public struct MorrowindQuestJournalRequest : IBufferElementData
+    {
+        public int DialogueIndex;
+        public int InfoIndex;
+        public int JournalIndex;
+        public byte QuestStatus;
+        public byte Operation;
     }
 
     public struct MorrowindScriptActiveSource : IBufferElementData
@@ -67,6 +97,22 @@ namespace VVardenfell.Runtime.Components
     public struct MorrowindScriptPlayingSound : IBufferElementData
     {
         public ulong LoopKey;
+    }
+
+    public struct MorrowindScriptRefStateRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public byte Disabled;
+    }
+
+    public struct MorrowindScriptTransformRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public float Radians;
+        public byte Axis;
+        public byte Operation;
     }
 
     public struct MorrowindScriptAudioRequest : IComponentData

@@ -73,6 +73,8 @@ namespace VVardenfell.Runtime.UI.Shell
         StatsWindowView _statsView;
         SpellWindowView _spellView;
         MapWindowView _mapView;
+        JournalWindowView _journalView;
+        DialogueWindowView _dialogueView;
         SaveLoadBrowserView _saveLoadBrowserView;
         OptionsWindowView _optionsView;
         RuntimeUiPopupLayer _popupLayer;
@@ -87,6 +89,8 @@ namespace VVardenfell.Runtime.UI.Shell
         bool _pauseMenuOpen;
         bool _modalOpen;
         bool _optionsOpen;
+        bool _journalVisible;
+        bool _dialogueVisible;
 
         readonly List<PauseMenuButtonView> _buttons = new();
 
@@ -168,6 +172,22 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 RequestMapWindowRectUpdate,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Map));
+            _journalView = new JournalWindowView(
+                _rootRect,
+                _theme,
+                RequestJournalQuestSelection,
+                RequestJournalShowAll,
+                RequestJournalPage,
+                RequestJournalOverlay,
+                RequestJournalMainBook,
+                RequestJournalClose);
+            _dialogueView = new DialogueWindowView(
+                _rootRect,
+                _theme,
+                RequestDialogueTopicSelection,
+                RequestDialogueChoiceSelection,
+                RequestDialogueGoodbye,
+                RequestDialogueClose);
             _saveLoadBrowserView = new SaveLoadBrowserView(
                 _rootRect,
                 _theme,
@@ -208,6 +228,8 @@ namespace VVardenfell.Runtime.UI.Shell
             SpellWindowViewModel spellModel,
             MapWindowViewModel mapModel,
             SaveLoadBrowserViewModel saveLoadModel,
+            JournalWindowViewModel journalModel,
+            DialogueWindowViewModel dialogueModel,
             RuntimeShellMenuActionId selectedAction,
             bool pauseMenuOpen,
             bool modalOpen,
@@ -228,8 +250,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 _pauseMenuOpen = false;
                 _modalOpen = false;
                 _optionsOpen = false;
+                _journalVisible = false;
+                _dialogueVisible = false;
                 if (optionsWasOpen)
                     _optionsView?.SetVisible(false);
+                _journalView?.SetVisible(false);
+                _dialogueView?.SetVisible(false);
                 return;
             }
 
@@ -246,15 +272,21 @@ namespace VVardenfell.Runtime.UI.Shell
             bool spellVisible = spellModel != null;
             bool mapVisible = mapModel != null;
             bool saveLoadVisible = saveLoadModel != null;
+            bool journalVisible = journalModel != null;
+            bool dialogueVisible = dialogueModel != null;
             bool inventoryOpened = !_inventoryVisible && inventoryVisible;
             bool containerOpened = !_containerVisible && containerVisible;
             bool pauseOpened = !_pauseMenuOpen && pauseMenuOpen;
             bool modalClosed = _modalOpen && !modalOpen;
+            bool journalOpened = !_journalVisible && journalVisible;
+            bool dialogueOpened = !_dialogueVisible && dialogueVisible;
 
             _inventoryVisible = inventoryVisible;
             _containerVisible = containerVisible;
             _pauseMenuOpen = pauseMenuOpen;
             _modalOpen = modalOpen;
+            _journalVisible = journalVisible;
+            _dialogueVisible = dialogueVisible;
 
             _hudView.Sync(hudModel);
             SetActiveIfChanged(
@@ -266,6 +298,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _statsView.Sync(statsModel);
             _spellView.Sync(spellModel);
             _mapView.Sync(mapModel);
+            _journalView.Sync(journalModel);
+            _dialogueView.Sync(dialogueModel);
 
             // Options sits on top of the pause menu while open; while it's visible
             // the pause backdrop + any save/load overlay stay hidden so the user
@@ -302,7 +336,10 @@ namespace VVardenfell.Runtime.UI.Shell
                 ClearSelectionIfOwned();
             }
 
-            if (!pauseMenuOpen && !inventoryVisible && !containerVisible && !saveLoadVisible)
+            if (journalOpened || dialogueOpened)
+                ClearSelectionIfOwned();
+
+            if (!pauseMenuOpen && !inventoryVisible && !containerVisible && !saveLoadVisible && !journalVisible && !dialogueVisible)
                 ClearSelectionIfOwned();
         }
 
@@ -518,6 +555,17 @@ namespace VVardenfell.Runtime.UI.Shell
                 || (_suiteRoot != null && selected.transform.IsChildOf(_suiteRoot)))
             {
                 _eventSystem.SetSelectedGameObject(null);
+                return;
+            }
+
+            if (_journalView != null && _journalView.OwnsSelection(selected))
+            {
+                _eventSystem.SetSelectedGameObject(null);
+            }
+
+            if (_dialogueView != null && _dialogueView.OwnsSelection(selected))
+            {
+                _eventSystem.SetSelectedGameObject(null);
             }
         }
 
@@ -566,6 +614,72 @@ namespace VVardenfell.Runtime.UI.Shell
             Rect rect = RuntimeWindowSurfaceUtility.CaptureNormalizedRect(_mapView.Root, _suiteRoot);
             if (!RuntimeShellRequestBridge.TrySetMapWindowRect(rect, out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed updating map window rect: {error}");
+        }
+
+        void RequestJournalQuestSelection(int dialogueIndex)
+        {
+            if (!RuntimeShellRequestBridge.TryOpenJournalQuest(dialogueIndex, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed opening journal quest {dialogueIndex}: {error}");
+        }
+
+        void RequestJournalShowAll(bool showAll)
+        {
+            if (!RuntimeShellRequestBridge.TrySetJournalShowAll(showAll, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed setting journal filter: {error}");
+        }
+
+        void RequestJournalScroll(float questScrollY, float entryScrollY)
+        {
+            if (!RuntimeShellRequestBridge.TrySetJournalScroll(questScrollY, entryScrollY, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed updating journal scroll: {error}");
+        }
+
+        void RequestJournalPage(int page)
+        {
+            if (!RuntimeShellRequestBridge.TrySetJournalPage(page, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed updating journal page: {error}");
+        }
+
+        void RequestJournalOverlay(bool open)
+        {
+            if (!RuntimeShellRequestBridge.TrySetJournalOverlay(open, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed updating journal overlay: {error}");
+        }
+
+        void RequestJournalMainBook()
+        {
+            if (!RuntimeShellRequestBridge.TryOpenJournalMainBook(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed opening main journal book: {error}");
+        }
+
+        void RequestJournalClose()
+        {
+            if (!RuntimeShellRequestBridge.TryCloseJournal(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed closing journal: {error}");
+        }
+
+        void RequestDialogueTopicSelection(int dialogueIndex)
+        {
+            if (!RuntimeShellRequestBridge.TrySelectDialogueTopic(dialogueIndex, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed selecting dialogue topic {dialogueIndex}: {error}");
+        }
+
+        void RequestDialogueChoiceSelection(int choiceValue)
+        {
+            if (!RuntimeShellRequestBridge.TryAnswerDialogueChoice(choiceValue, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed selecting dialogue choice {choiceValue}: {error}");
+        }
+
+        void RequestDialogueGoodbye()
+        {
+            if (!RuntimeShellRequestBridge.TryDialogueGoodbye(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed requesting dialogue goodbye: {error}");
+        }
+
+        void RequestDialogueClose()
+        {
+            if (!RuntimeShellRequestBridge.TryCloseDialogue(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed closing dialogue: {error}");
         }
 
         void RequestInventoryFilterText(string value)

@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -23,22 +24,26 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
+            Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
-            if (journalEntity == Entity.Null || runtimeEntity == Entity.Null || spawnEntity == Entity.Null)
+            if (journalEntity == Entity.Null || questJournalEntity == Entity.Null || runtimeEntity == Entity.Null || spawnEntity == Entity.Null)
             {
                 error = "Runtime journal state is not ready for continue load.";
                 return false;
             }
 
-            ClearRuntimeState(entityManager, journalEntity, runtimeEntity, spawnEntity);
-            ApplyPayload(entityManager, payload, journalEntity, runtimeEntity, spawnEntity);
+            ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
+            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, runtimeEntity, spawnEntity, out error))
+                return false;
 
             init.PlayerPosition = payload.PlayerPosition;
             init.PlayerRotation = payload.PlayerRotation;
             init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
             init.PlayerActorStats = payload.ActorStats;
             init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+            if (payload.PlayerFactions != null)
+                PopulateInitializationFactions(entityManager, payload.PlayerFactions);
             PopulateInitializationSpellbook(entityManager, payload.KnownSpells);
             PopulateInitializationActiveEffects(entityManager, payload.ActiveMagicEffects);
 
@@ -68,6 +73,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!TryGetReplayEntities(
                     entityManager,
                     out Entity journalEntity,
+                    out Entity questJournalEntity,
                     out Entity runtimeEntity,
                     out Entity spawnEntity,
                     out Entity playerEntity,
@@ -80,8 +86,9 @@ namespace VVardenfell.Runtime.WorldState
             if (!TryValidateWorldRestorePrereqs(entityManager, out error))
                 return false;
 
-            ClearRuntimeState(entityManager, journalEntity, runtimeEntity, spawnEntity);
-            ApplyPayload(entityManager, payload, journalEntity, runtimeEntity, spawnEntity);
+            ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
+            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, runtimeEntity, spawnEntity, out error))
+                return false;
             ApplyPlayerPayload(entityManager, playerEntity, viewEntity, payload);
 
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
@@ -108,10 +115,11 @@ namespace VVardenfell.Runtime.WorldState
             RefreshMapDiscoveryState(entityManager);
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
+            Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
-            if (journalEntity != Entity.Null && runtimeEntity != Entity.Null && spawnEntity != Entity.Null)
-                ClearRuntimeState(entityManager, journalEntity, runtimeEntity, spawnEntity);
+            if (journalEntity != Entity.Null && questJournalEntity != Entity.Null && runtimeEntity != Entity.Null && spawnEntity != Entity.Null)
+                ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
 
             if (preserveShell && WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeShellState>(entityManager) is Entity shellEntity && shellEntity != Entity.Null)
             {
@@ -121,6 +129,8 @@ namespace VVardenfell.Runtime.WorldState
                 shell.PauseMenuOpen = 0;
                 shell.ModalOpen = 0;
                 shell.SaveLoadBrowserOpen = 0;
+                shell.JournalOpen = 0;
+                shell.DialogueOpen = 0;
                 shell.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
                 shell.ModalTitle = default;
                 shell.ModalBody = default;
@@ -174,6 +184,7 @@ namespace VVardenfell.Runtime.WorldState
                     payload.ActorStats.EffectModifiers,
                     derived));
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            ApplyPlayerFactionPayload(entityManager, playerEntity, payload.PlayerFactions);
             entityManager.SetComponentData(playerEntity, new PlayerCharacterControl());
             entityManager.SetComponentData(playerEntity, new PlayerCharacterState());
             entityManager.SetComponentData(playerEntity, new MorrowindMovementInput());
@@ -252,6 +263,18 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
             }
 
+            if (payload.QuestJournal.States == null || payload.QuestJournal.Entries == null)
+            {
+                error = "Save payload is missing quest journal data.";
+                return false;
+            }
+
+            if (payload.Dialogue.KnownTopicDialogueIndices == null || payload.Dialogue.TopicEntries == null)
+            {
+                error = "Save payload is missing dialogue topic data.";
+                return false;
+            }
+
             if (payload.KnownSpells == null)
             {
                 error = "Save payload is missing spellbook data.";
@@ -320,6 +343,7 @@ namespace VVardenfell.Runtime.WorldState
         static bool TryGetReplayEntities(
             EntityManager entityManager,
             out Entity journalEntity,
+            out Entity questJournalEntity,
             out Entity runtimeEntity,
             out Entity spawnEntity,
             out Entity playerEntity,
@@ -327,6 +351,7 @@ namespace VVardenfell.Runtime.WorldState
             out string error)
         {
             journalEntity = Entity.Null;
+            questJournalEntity = Entity.Null;
             runtimeEntity = Entity.Null;
             spawnEntity = Entity.Null;
             playerEntity = Entity.Null;
@@ -338,6 +363,13 @@ namespace VVardenfell.Runtime.WorldState
                     out journalEntity,
                     out error,
                     "world journal",
+                    "for save replay"))
+                return false;
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<MorrowindQuestJournalState>(
+                    entityManager,
+                    out questJournalEntity,
+                    out error,
+                    "quest journal",
                     "for save replay"))
                 return false;
             if (!WorldStateEntityQueryUtility.TryGetExactlyOneBufferOwner<PlayerInventoryItem>(
@@ -394,6 +426,49 @@ namespace VVardenfell.Runtime.WorldState
             {
                 if (knownSpells[i].Spell.IsValid)
                     buffer.Add(knownSpells[i]);
+            }
+        }
+
+        static void PopulateInitializationFactions(EntityManager entityManager, PlayerFactionMembership[] factions)
+        {
+            Entity initEntity = WorldStateEntityQueryUtility.GetSingletonEntity<GameInitializationSingleton>(entityManager);
+            if (initEntity == Entity.Null || factions == null)
+                return;
+
+            if (!entityManager.HasBuffer<PlayerFactionMembership>(initEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<PlayerFactionMembership>(initEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+
+            DynamicBuffer<PlayerFactionMembership> buffer = entityManager.GetBuffer<PlayerFactionMembership>(initEntity);
+            buffer.Clear();
+            for (int i = 0; i < factions.Length; i++)
+            {
+                if (factions[i].FactionIndex >= 0)
+                    buffer.Add(factions[i]);
+            }
+        }
+
+        static void ApplyPlayerFactionPayload(EntityManager entityManager, Entity playerEntity, PlayerFactionMembership[] factions)
+        {
+            if (factions == null)
+                return;
+
+            if (!entityManager.HasBuffer<PlayerFactionMembership>(playerEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<PlayerFactionMembership>(playerEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+
+            var buffer = entityManager.GetBuffer<PlayerFactionMembership>(playerEntity);
+            buffer.Clear();
+            for (int i = 0; i < factions.Length; i++)
+            {
+                if (factions[i].FactionIndex >= 0)
+                    buffer.Add(factions[i]);
             }
         }
 
@@ -520,13 +595,15 @@ namespace VVardenfell.Runtime.WorldState
             });
         }
 
-        static void ClearRuntimeState(EntityManager entityManager, Entity journalEntity, Entity runtimeEntity, Entity spawnEntity)
+        static void ClearRuntimeState(EntityManager entityManager, Entity journalEntity, Entity questJournalEntity, Entity runtimeEntity, Entity spawnEntity)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
             entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
+            ClearQuestJournal(entityManager, questJournalEntity);
+            ClearDialogue(entityManager, questJournalEntity);
             entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity).Clear();
@@ -542,13 +619,16 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(spawnEntity, spawnResult);
         }
 
-        static void ApplyPayload(
+        static bool ApplyPayload(
             EntityManager entityManager,
             in WorldSavePayload payload,
             Entity journalEntity,
+            Entity questJournalEntity,
             Entity runtimeEntity,
-            Entity spawnEntity)
+            Entity spawnEntity,
+            out string error)
         {
+            error = null;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             QueueRestoreMapDiscoveryPayload(entityManager, ref ecb, payload.ExteriorMapDiscovery);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
@@ -570,6 +650,11 @@ namespace VVardenfell.Runtime.WorldState
                 NextSequence = math.max(payload.NextJournalSequence, maxSequence),
             });
 
+            if (!ApplyQuestJournalPayload(entityManager, questJournalEntity, payload.QuestJournal, out error))
+                return false;
+            if (!ApplyDialoguePayload(entityManager, questJournalEntity, payload.Dialogue, out error))
+                return false;
+
             var inventory = entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity);
             for (int i = 0; i < payload.Inventory.Length; i++)
             {
@@ -589,6 +674,205 @@ namespace VVardenfell.Runtime.WorldState
 
             ApplyTimePayload(entityManager, payload.Time);
             ApplyWeatherPayload(entityManager, payload.Weather);
+            return true;
+        }
+
+        static void ClearQuestJournal(EntityManager entityManager, Entity questJournalEntity)
+        {
+            var state = entityManager.GetComponentData<MorrowindQuestJournalState>(questJournalEntity);
+            state.NextEntrySequence = 1u;
+            entityManager.SetComponentData(questJournalEntity, state);
+
+            var questStates = entityManager.GetBuffer<MorrowindQuestJournalIndex>(questJournalEntity);
+            for (int i = 0; i < questStates.Length; i++)
+                questStates[i] = default;
+
+            entityManager.GetBuffer<MorrowindQuestJournalEntry>(questJournalEntity).Clear();
+            entityManager.GetBuffer<MorrowindQuestJournalRequest>(questJournalEntity).Clear();
+        }
+
+        static void ClearDialogue(EntityManager entityManager, Entity dialogueEntity)
+        {
+            if (!entityManager.HasComponent<MorrowindDialogueState>(dialogueEntity))
+                return;
+
+            var state = entityManager.GetComponentData<MorrowindDialogueState>(dialogueEntity);
+            state.NextTopicEntrySequence = 1u;
+            entityManager.SetComponentData(dialogueEntity, state);
+
+            var knownTopics = entityManager.GetBuffer<MorrowindKnownDialogueTopic>(dialogueEntity);
+            for (int i = 0; i < knownTopics.Length; i++)
+                knownTopics[i] = default;
+
+            entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity).Clear();
+            entityManager.GetBuffer<MorrowindDialogueRequest>(dialogueEntity).Clear();
+        }
+
+        static bool ApplyQuestJournalPayload(
+            EntityManager entityManager,
+            Entity questJournalEntity,
+            in MorrowindQuestJournalSavePayload payload,
+            out string error)
+        {
+            error = null;
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null)
+            {
+                error = "Runtime content database is not ready for quest journal replay.";
+                return false;
+            }
+
+            var state = entityManager.GetComponentData<MorrowindQuestJournalState>(questJournalEntity);
+            var questStates = entityManager.GetBuffer<MorrowindQuestJournalIndex>(questJournalEntity);
+            var entries = entityManager.GetBuffer<MorrowindQuestJournalEntry>(questJournalEntity);
+            if (state.QuestCount != questStates.Length || questStates.Length != contentDb.DialogueCount)
+            {
+                error = $"Quest journal replay count mismatch: state={state.QuestCount} buffer={questStates.Length} content={contentDb.DialogueCount}.";
+                return false;
+            }
+
+            for (int i = 0; i < payload.States.Length; i++)
+            {
+                var saved = payload.States[i];
+                if ((uint)saved.DialogueIndex >= (uint)questStates.Length)
+                {
+                    error = $"Quest journal save references invalid dialogue index {saved.DialogueIndex}.";
+                    return false;
+                }
+
+                questStates[saved.DialogueIndex] = new MorrowindQuestJournalIndex
+                {
+                    Index = saved.Index,
+                    Started = saved.Started,
+                    Finished = saved.Finished,
+                };
+            }
+
+            uint maxSequence = 0u;
+            int dialogueInfoCount = contentDb.Data.DialogueInfos?.Length ?? 0;
+            for (int i = 0; i < payload.Entries.Length; i++)
+            {
+                var saved = payload.Entries[i];
+                if ((uint)saved.DialogueIndex >= (uint)questStates.Length)
+                {
+                    error = $"Quest journal entry references invalid dialogue index {saved.DialogueIndex}.";
+                    return false;
+                }
+
+                if ((uint)saved.InfoIndex >= (uint)dialogueInfoCount)
+                {
+                    error = $"Quest journal entry references invalid info index {saved.InfoIndex}.";
+                    return false;
+                }
+
+                entries.Add(new MorrowindQuestJournalEntry
+                {
+                    Sequence = saved.Sequence,
+                    DialogueIndex = saved.DialogueIndex,
+                    InfoIndex = saved.InfoIndex,
+                    JournalIndex = saved.JournalIndex,
+                    Day = saved.Day,
+                    Month = saved.Month,
+                    DayOfMonth = saved.DayOfMonth,
+                    QuestStatus = saved.QuestStatus,
+                });
+                if (saved.Sequence > maxSequence)
+                    maxSequence = saved.Sequence;
+            }
+
+            state.NextEntrySequence = math.max(math.max(1u, payload.NextEntrySequence), maxSequence + 1u);
+            entityManager.SetComponentData(questJournalEntity, state);
+            return true;
+        }
+
+        static bool ApplyDialoguePayload(
+            EntityManager entityManager,
+            Entity dialogueEntity,
+            in MorrowindDialogueSavePayload payload,
+            out string error)
+        {
+            error = null;
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null)
+            {
+                error = "Runtime content database is not ready for dialogue replay.";
+                return false;
+            }
+
+            if (!entityManager.HasComponent<MorrowindDialogueState>(dialogueEntity))
+            {
+                error = "Runtime dialogue state is not ready for save replay.";
+                return false;
+            }
+
+            var state = entityManager.GetComponentData<MorrowindDialogueState>(dialogueEntity);
+            var knownTopics = entityManager.GetBuffer<MorrowindKnownDialogueTopic>(dialogueEntity);
+            var entries = entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity);
+            if (state.DialogueCount != knownTopics.Length || knownTopics.Length != contentDb.DialogueCount)
+            {
+                error = $"Dialogue replay count mismatch: state={state.DialogueCount} buffer={knownTopics.Length} content={contentDb.DialogueCount}.";
+                return false;
+            }
+
+            for (int i = 0; i < payload.KnownTopicDialogueIndices.Length; i++)
+            {
+                int dialogueIndex = payload.KnownTopicDialogueIndices[i];
+                if ((uint)dialogueIndex >= (uint)knownTopics.Length)
+                {
+                    error = $"Dialogue save references invalid known topic index {dialogueIndex}.";
+                    return false;
+                }
+
+                if (contentDb.Data.Dialogues[dialogueIndex].Type != DialogueDefType.Topic)
+                {
+                    error = $"Dialogue save references non-topic known dialogue index {dialogueIndex}.";
+                    return false;
+                }
+
+                knownTopics[dialogueIndex] = new MorrowindKnownDialogueTopic { Known = 1 };
+            }
+
+            uint maxSequence = 0u;
+            int infoCount = contentDb.Data.DialogueInfos?.Length ?? 0;
+            for (int i = 0; i < payload.TopicEntries.Length; i++)
+            {
+                var saved = payload.TopicEntries[i];
+                if ((uint)saved.DialogueIndex >= (uint)knownTopics.Length)
+                {
+                    error = $"Topic journal entry references invalid dialogue index {saved.DialogueIndex}.";
+                    return false;
+                }
+
+                if (contentDb.Data.Dialogues[saved.DialogueIndex].Type != DialogueDefType.Topic)
+                {
+                    error = $"Topic journal entry references non-topic dialogue index {saved.DialogueIndex}.";
+                    return false;
+                }
+
+                if ((uint)saved.InfoIndex >= (uint)infoCount)
+                {
+                    error = $"Topic journal entry references invalid info index {saved.InfoIndex}.";
+                    return false;
+                }
+
+                entries.Add(new MorrowindTopicJournalEntry
+                {
+                    Sequence = saved.Sequence,
+                    DialogueIndex = saved.DialogueIndex,
+                    InfoIndex = saved.InfoIndex,
+                    ActorPlacedRefId = saved.ActorPlacedRefId,
+                    ActorId = RuntimeFixedStringUtility.ToFixed128OrDefault(saved.ActorId),
+                    Day = saved.Day,
+                    Month = saved.Month,
+                    DayOfMonth = saved.DayOfMonth,
+                });
+                if (saved.Sequence > maxSequence)
+                    maxSequence = saved.Sequence;
+            }
+
+            state.NextTopicEntrySequence = math.max(math.max(1u, payload.NextTopicEntrySequence), maxSequence + 1u);
+            entityManager.SetComponentData(dialogueEntity, state);
+            return true;
         }
 
         static void ApplyTimePayload(EntityManager entityManager, MorrowindTimeSavePayload payload)

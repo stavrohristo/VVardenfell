@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Shell
             {
                 state.InventoryOpen = 1;
                 state.PauseMenuOpen = 0;
+                state.JournalOpen = 0;
             }
             else if (state.InventoryOpen != 0 && state.PauseMenuOpen != 0)
                 state.InventoryOpen = 0;
@@ -37,6 +38,16 @@ namespace VVardenfell.Runtime.Shell
                 state.InventoryOpen = 0;
                 state.ContainerOpen = 0;
                 state.PauseMenuOpen = 1;
+                state.JournalOpen = 0;
+            }
+
+            if (state.JournalOpen != 0)
+            {
+                state.InventoryOpen = 0;
+                state.ContainerOpen = 0;
+                state.PauseMenuOpen = 0;
+                state.SaveLoadBrowserOpen = 0;
+                state.OptionsOpen = 0;
             }
 
             RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);

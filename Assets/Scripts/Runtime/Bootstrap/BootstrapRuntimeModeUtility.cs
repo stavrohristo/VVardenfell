@@ -4,8 +4,7 @@ namespace VVardenfell.Runtime.Bootstrap
     {
         public static bool IsSandboxMode(BootstrapRuntimeMode mode)
         {
-            return mode == BootstrapRuntimeMode.Sandbox
-                || mode == BootstrapRuntimeMode.VegetationSandbox;
+            return mode == BootstrapRuntimeMode.Sandbox;
         }
     }
 }

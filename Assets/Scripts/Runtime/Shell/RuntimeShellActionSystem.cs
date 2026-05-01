@@ -77,6 +77,25 @@ namespace VVardenfell.Runtime.Shell
                 }
             }
 
+            if (request.CloseJournal != 0)
+            {
+                request.CloseJournal = 0;
+                RuntimeShellStateUtility.CloseJournal(ref state);
+            }
+
+            if (request.CloseDialogue != 0)
+            {
+                request.CloseDialogue = 0;
+                RuntimeShellStateUtility.CloseDialogue(ref state);
+                if (SystemAPI.TryGetSingletonRW<MorrowindDialogueSession>(out var sessionRef))
+                    sessionRef.ValueRW = new MorrowindDialogueSession
+                    {
+                        SelectedTopicDialogueIndex = -1,
+                        ChoiceDialogueIndex = -1,
+                        LastInfoIndex = -1,
+                    };
+            }
+
             if (request.Pending == 0)
             {
                 RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);

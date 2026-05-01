@@ -8,11 +8,29 @@ namespace VVardenfell.Importer.Bake
 {
     internal static class MorrowindScriptCompiler
     {
+        struct IfBlockState
+        {
+            public int PendingFalseJump;
+            public bool HasElse;
+            public List<int> EndJumps;
+        }
+
+        struct DialogueCompileInfo
+        {
+            public int Index;
+            public DialogueDefType Type;
+            public int FirstInfoIndex;
+            public int InfoCount;
+        }
+
         public static void Build(
             GenericRecordDef[] scripts,
             SoundDef[] sounds,
             GenericRecordDef[] globals,
             DialogueDef[] dialogues,
+            DialogueInfoDef[] dialogueInfos,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
             out MorrowindScriptProgramDef[] programs,
             out MorrowindScriptInstructionDef[] instructions,
             out MorrowindScriptLocalDef[] locals)
@@ -33,6 +51,9 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     globalLookup,
                     dialogueLookup,
+                    dialogueInfos,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
                     programList,
                     instructionList,
                     localList);
@@ -49,7 +70,10 @@ namespace VVardenfell.Importer.Bake
             int scriptIndex,
             Dictionary<string, SoundDefHandle> sounds,
             Dictionary<string, (int Index, byte Kind)> globals,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogues,
+            Dictionary<string, DialogueCompileInfo> dialogues,
+            DialogueInfoDef[] dialogueInfos,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
             List<MorrowindScriptProgramDef> programs,
             List<MorrowindScriptInstructionDef> instructions,
             List<MorrowindScriptLocalDef> locals)
@@ -59,7 +83,7 @@ namespace VVardenfell.Importer.Bake
             int maxStack = 0;
             int stackDepth = 0;
             var localLookup = new Dictionary<string, (int Index, byte Kind)>(StringComparer.OrdinalIgnoreCase);
-            var ifStack = new Stack<int>();
+            var ifStack = new List<IfBlockState>();
 
             if (string.IsNullOrWhiteSpace(script.Id))
             {
@@ -86,6 +110,8 @@ namespace VVardenfell.Importer.Bake
                         globals,
                         sounds,
                         dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
                         instructions,
                         ifStack,
                         ref stackDepth,
@@ -101,18 +127,44 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
+                if (TryCompileElseIf(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        instructions,
+                        ifStack,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string elseIfFailure))
+                {
+                    continue;
+                }
+
+                if (elseIfFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, elseIfFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileElse(line, instructions, ifStack, out string elseFailure))
+                    continue;
+
+                if (elseFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, elseFailure, lineIndex);
+                    return;
+                }
+
                 if (TryCompileEndif(line, instructions, ifStack, out string endifFailure))
                     continue;
 
                 if (endifFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, endifFailure, lineIndex);
-                    return;
-                }
-
-                if (StartsWithCommand(line, "else") || StartsWithCommand(line, "elseif"))
-                {
-                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, "else/elseif are not supported in MWScript V2.", lineIndex);
                     return;
                 }
 
@@ -134,6 +186,61 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
+                if (TryCompileJournal(line, dialogues, dialogueInfos, instructions, out string journalFailure))
+                {
+                    continue;
+                }
+
+                if (journalFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, journalFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileSetJournalIndex(line, dialogues, instructions, out string setJournalIndexFailure))
+                {
+                    continue;
+                }
+
+                if (setJournalIndexFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setJournalIndexFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileTopicCommand(line, dialogues, instructions, out string topicFailure))
+                {
+                    continue;
+                }
+
+                if (topicFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, topicFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileStopScript(line, script.Id, instructions, out string stopScriptFailure))
+                {
+                    continue;
+                }
+
+                if (stopScriptFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, stopScriptFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileRefStateCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string refStateFailure))
+                {
+                    continue;
+                }
+
+                if (refStateFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, refStateFailure, lineIndex);
+                    return;
+                }
+
                 if (TryCompileActivate(line, instructions, out string activateFailure))
                 {
                     continue;
@@ -145,7 +252,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileRotate(line, instructions, out string rotateFailure))
+                if (TryCompileRotate(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string rotateFailure))
                 {
                     continue;
                 }
@@ -153,6 +260,17 @@ namespace VVardenfell.Importer.Bake
                 if (rotateFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, rotateFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileSetAngle(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string setAngleFailure))
+                {
+                    continue;
+                }
+
+                if (setAngleFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setAngleFailure, lineIndex);
                     return;
                 }
 
@@ -392,9 +510,11 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
             List<MorrowindScriptInstructionDef> instructions,
-            Stack<int> ifStack,
+            List<IfBlockState> ifStack,
             ref int stackDepth,
             ref int maxStack,
             out string failure)
@@ -410,7 +530,18 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!TryCompileCondition(condition, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileCondition(
+                    condition,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
                 return false;
 
             instructions.Add(new MorrowindScriptInstructionDef
@@ -419,14 +550,134 @@ namespace VVardenfell.Importer.Bake
                 Int0 = 0,
             });
             stackDepth = Math.Max(0, stackDepth - 1);
-            ifStack.Push(instructions.Count - 1);
+            ifStack.Add(new IfBlockState
+            {
+                PendingFalseJump = instructions.Count - 1,
+                EndJumps = new List<int>(),
+            });
+            return true;
+        }
+
+        static bool TryCompileElseIf(
+            string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            List<IfBlockState> ifStack,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (!StartsWithCommand(line, "elseif"))
+                return false;
+
+            if (ifStack.Count == 0)
+            {
+                failure = "elseif without matching if.";
+                return false;
+            }
+
+            int frameIndex = ifStack.Count - 1;
+            var frame = ifStack[frameIndex];
+            if (frame.HasElse)
+            {
+                failure = "elseif after else is not valid.";
+                return false;
+            }
+
+            string condition = TrimEnclosingParentheses(line.Substring("elseif".Length).Trim());
+            if (string.IsNullOrWhiteSpace(condition))
+            {
+                failure = "elseif statement is missing a condition.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.Jump,
+                Int0 = 0,
+            });
+            frame.EndJumps.Add(instructions.Count - 1);
+            PatchJump(instructions, frame.PendingFalseJump, instructions.Count);
+
+            if (!TryCompileCondition(
+                    condition,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+                return false;
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.JumpIfZero,
+                Int0 = 0,
+            });
+            stackDepth = Math.Max(0, stackDepth - 1);
+            frame.PendingFalseJump = instructions.Count - 1;
+            ifStack[frameIndex] = frame;
+            return true;
+        }
+
+        static bool TryCompileElse(
+            string line,
+            List<MorrowindScriptInstructionDef> instructions,
+            List<IfBlockState> ifStack,
+            out string failure)
+        {
+            failure = null;
+            if (!StartsWithCommand(line, "else"))
+                return false;
+
+            if (ifStack.Count == 0)
+            {
+                failure = "else without matching if.";
+                return false;
+            }
+
+            string rest = line.Substring("else".Length).Trim();
+            if (rest.Length != 0)
+            {
+                failure = $"else statement does not support trailing tokens: '{line}'.";
+                return false;
+            }
+
+            int frameIndex = ifStack.Count - 1;
+            var frame = ifStack[frameIndex];
+            if (frame.HasElse)
+            {
+                failure = "duplicate else in if block.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.Jump,
+                Int0 = 0,
+            });
+            frame.EndJumps.Add(instructions.Count - 1);
+            PatchJump(instructions, frame.PendingFalseJump, instructions.Count);
+            frame.PendingFalseJump = -1;
+            frame.HasElse = true;
+            ifStack[frameIndex] = frame;
             return true;
         }
 
         static bool TryCompileEndif(
             string line,
             List<MorrowindScriptInstructionDef> instructions,
-            Stack<int> ifStack,
+            List<IfBlockState> ifStack,
             out string failure)
         {
             failure = null;
@@ -439,11 +690,24 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            int jumpIndex = ifStack.Pop();
-            var jump = instructions[jumpIndex];
-            jump.Int0 = instructions.Count - jumpIndex - 1;
-            instructions[jumpIndex] = jump;
+            int frameIndex = ifStack.Count - 1;
+            var frame = ifStack[frameIndex];
+            ifStack.RemoveAt(frameIndex);
+
+            if (frame.PendingFalseJump >= 0)
+                PatchJump(instructions, frame.PendingFalseJump, instructions.Count);
+
+            for (int i = 0; i < frame.EndJumps.Count; i++)
+                PatchJump(instructions, frame.EndJumps[i], instructions.Count);
+
             return true;
+        }
+
+        static void PatchJump(List<MorrowindScriptInstructionDef> instructions, int jumpIndex, int targetIndex)
+        {
+            var jump = instructions[jumpIndex];
+            jump.Int0 = targetIndex - jumpIndex - 1;
+            instructions[jumpIndex] = jump;
         }
 
         static bool TryCompileCondition(
@@ -451,7 +715,9 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -460,10 +726,57 @@ namespace VVardenfell.Importer.Bake
             failure = null;
             if (condition.IndexOf("->", StringComparison.Ordinal) >= 0)
             {
-                failure = $"Explicit reference conditions are not supported in MWScript V2: '{condition}'.";
-                return false;
+                if (!TrySplitExplicitReference(condition, out string explicitTargetId, out string explicitCondition))
+                {
+                    failure = $"Invalid explicit reference condition '{condition}'.";
+                    return false;
+                }
+
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out uint targetPlacedRefId, out failure))
+                    return false;
+
+                return TryCompileConditionCore(
+                    explicitCondition,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    dialogueLookup,
+                    MorrowindScriptRefTargetMode.PlacedRef,
+                    targetPlacedRefId,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure);
             }
 
+            return TryCompileConditionCore(
+                condition,
+                localLookup,
+                globalLookup,
+                soundLookup,
+                dialogueLookup,
+                MorrowindScriptRefTargetMode.Self,
+                0u,
+                instructions,
+                ref stackDepth,
+                ref maxStack,
+                out failure);
+        }
+
+        static bool TryCompileConditionCore(
+            string condition,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            MorrowindScriptRefTargetMode refTargetMode,
+            uint refTargetPlacedRefId,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
             string[] tokens = SplitConditionTokens(condition);
             if (tokens.Length == 0)
             {
@@ -473,7 +786,7 @@ namespace VVardenfell.Importer.Bake
 
             int comparisonIndex = FindComparisonToken(tokens);
             if (comparisonIndex < 0)
-                return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure);
+                return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure);
 
             if (FindComparisonToken(tokens, comparisonIndex + 1) >= 0)
             {
@@ -481,10 +794,23 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!TryCompileExpression(tokens, 0, comparisonIndex, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileExpression(tokens, 0, comparisonIndex, localLookup, globalLookup, soundLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure))
                 return false;
 
-            if (!TryCompileExpression(tokens, comparisonIndex + 1, tokens.Length - comparisonIndex - 1, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileExpression(
+                    tokens,
+                    comparisonIndex + 1,
+                    tokens.Length - comparisonIndex - 1,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    dialogueLookup,
+                    MorrowindScriptRefTargetMode.Self,
+                    0u,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
                 return false;
 
             if (!TryMapComparisonOpcode(tokens[comparisonIndex], out MorrowindScriptOpcode opcode))
@@ -505,7 +831,9 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            MorrowindScriptRefTargetMode refTargetMode,
+            uint refTargetPlacedRefId,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -515,6 +843,26 @@ namespace VVardenfell.Importer.Bake
             if (count <= 0)
             {
                 failure = "Expression is missing.";
+                return false;
+            }
+
+            if (count == 1
+                && tokens[start].Equals("getdisabled", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetDisabled,
+                    Operand0 = (byte)refTargetMode,
+                    Int0 = unchecked((int)refTargetPlacedRefId),
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (refTargetMode == MorrowindScriptRefTargetMode.PlacedRef)
+            {
+                failure = $"Explicit reference expression '{string.Join(" ", tokens, start, count)}' is not supported in MWScript V1.";
                 return false;
             }
 
@@ -654,7 +1002,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -722,7 +1070,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -759,7 +1107,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
-            Dictionary<string, (int Index, DialogueDefType Type)> dialogueLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -787,7 +1135,20 @@ namespace VVardenfell.Importer.Bake
                 operatorIndex = FindArithmeticOperator(tokens, start, count, 1);
 
             if (operatorIndex < 0)
-                return TryCompileExpression(tokens, start, count, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure);
+                return TryCompileExpression(
+                    tokens,
+                    start,
+                    count,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    dialogueLookup,
+                    MorrowindScriptRefTargetMode.Self,
+                    0u,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure);
 
             if (!TryCompileArithmeticTokens(tokens, start, operatorIndex - start, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
                 return false;
@@ -852,6 +1213,314 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
+        static bool TryCompileJournal(
+            string line,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            DialogueInfoDef[] dialogueInfos,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "journal"))
+                    return false;
+
+                failure = $"Explicit Journal references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!StartsWithCommand(line, "journal"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 3)
+            {
+                failure = $"Journal command requires quest id and integer stage in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            string journalId = NormalizeToken(tokens[1]).Trim('"');
+            string normalizedJournalId = ContentId.NormalizeId(journalId);
+            if (!dialogueLookup.TryGetValue(normalizedJournalId, out var dialogue))
+            {
+                failure = $"Journal references unknown journal '{journalId}'.";
+                return false;
+            }
+
+            if (dialogue.Type != DialogueDefType.Journal)
+            {
+                failure = $"Journal references non-journal dialogue '{journalId}'.";
+                return false;
+            }
+
+            if (!int.TryParse(NormalizeToken(tokens[2]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int stage))
+            {
+                failure = $"Journal command requires a literal integer stage in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.Journal,
+                Operand0 = ResolveJournalQuestStatus(dialogue, dialogueInfos, stage, out int infoIndex),
+                Int0 = dialogue.Index,
+                Int1 = stage,
+                Int2 = infoIndex,
+            });
+            return true;
+        }
+
+        static bool TryCompileSetJournalIndex(
+            string line,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "setjournalindex"))
+                    return false;
+
+                failure = $"Explicit SetJournalIndex references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!StartsWithCommand(line, "setjournalindex"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 3)
+            {
+                failure = $"SetJournalIndex command requires quest id and integer stage in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            string journalId = NormalizeToken(tokens[1]).Trim('"');
+            string normalizedJournalId = ContentId.NormalizeId(journalId);
+            if (!dialogueLookup.TryGetValue(normalizedJournalId, out var dialogue))
+            {
+                failure = $"SetJournalIndex references unknown journal '{journalId}'.";
+                return false;
+            }
+
+            if (dialogue.Type != DialogueDefType.Journal)
+            {
+                failure = $"SetJournalIndex references non-journal dialogue '{journalId}'.";
+                return false;
+            }
+
+            if (!int.TryParse(NormalizeToken(tokens[2]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int stage))
+            {
+                failure = $"SetJournalIndex command requires a literal integer stage in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.SetJournalIndex,
+                Int0 = dialogue.Index,
+                Int1 = stage,
+                Int2 = -1,
+            });
+            return true;
+        }
+
+        static byte ResolveJournalQuestStatus(
+            in DialogueCompileInfo dialogue,
+            DialogueInfoDef[] dialogueInfos,
+            int stage,
+            out int infoIndex)
+        {
+            infoIndex = -1;
+            dialogueInfos ??= Array.Empty<DialogueInfoDef>();
+            int end = Math.Min(dialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                if (i < 0 || dialogueInfos[i].DispositionOrJournalIndex != stage)
+                    continue;
+
+                infoIndex = i;
+                return dialogueInfos[i].QuestStatus;
+            }
+
+            return 0;
+        }
+
+        static bool TryCompileTopicCommand(
+            string line,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            string commandLine = StripExplicitReferencePrefix(line);
+            if (StartsWithCommand(commandLine, "addtopic"))
+            {
+                if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+                {
+                    failure = $"Explicit AddTopic references are not supported in MWScript V1: '{line}'.";
+                    return false;
+                }
+
+                string[] tokens = SplitCommandTokens(line);
+                if (tokens.Length != 2)
+                {
+                    failure = $"AddTopic requires one literal topic id in MWScript V1: '{line}'.";
+                    return false;
+                }
+
+                string topicId = NormalizeToken(tokens[1]).Trim('"');
+                string normalizedTopicId = ContentId.NormalizeId(topicId);
+                if (!dialogueLookup.TryGetValue(normalizedTopicId, out var dialogue))
+                {
+                    failure = $"AddTopic references unknown topic '{topicId}'.";
+                    return false;
+                }
+
+                if (dialogue.Type != DialogueDefType.Topic)
+                {
+                    failure = $"AddTopic references non-topic dialogue '{topicId}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.AddTopic,
+                    Int0 = dialogue.Index,
+                });
+                return true;
+            }
+
+            if (StartsWithCommand(commandLine, "filljournal"))
+            {
+                if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+                {
+                    failure = $"Explicit FillJournal references are not supported in MWScript V1: '{line}'.";
+                    return false;
+                }
+
+                string[] tokens = SplitCommandTokens(line);
+                if (tokens.Length != 1)
+                {
+                    failure = $"FillJournal takes no arguments in MWScript V1: '{line}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.FillJournal,
+                    Int0 = -1,
+                });
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool TryCompileStopScript(
+            string line,
+            string currentScriptId,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "stopscript"))
+                    return false;
+
+                failure = $"Explicit StopScript references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!StartsWithCommand(line, "stopscript"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2)
+            {
+                failure = $"StopScript command requires one script id in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            string targetScriptId = NormalizeToken(tokens[1]).Trim('"');
+            if (!ContentId.NormalizeId(targetScriptId).Equals(ContentId.NormalizeId(currentScriptId), StringComparison.OrdinalIgnoreCase))
+            {
+                failure = $"StopScript currently supports only the current object script '{currentScriptId}', not '{targetScriptId}'.";
+                return false;
+            }
+
+            // V1 object-script support only: OpenMW StopScript targets global scripts,
+            // but global/start script runtime does not exist here yet.
+            instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.StopScript });
+            return true;
+        }
+
+        static bool TryCompileRefStateCommand(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string sourceLine = line;
+            string explicitTargetId = null;
+
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit reference command '{line}'.";
+                    return false;
+                }
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length == 0)
+                return false;
+
+            string command = NormalizeToken(tokens[0]);
+            byte disabled;
+            if (command.Equals("enable", StringComparison.OrdinalIgnoreCase))
+                disabled = 0;
+            else if (command.Equals("disable", StringComparison.OrdinalIgnoreCase))
+                disabled = 1;
+            else
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    return false;
+
+                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            }
+
+            if (tokens.Length != 1)
+            {
+                failure = $"Enable/Disable commands do not support arguments in MWScript V1: '{sourceLine}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.RequestSetDisabled,
+                Operand0 = (byte)targetMode,
+                Operand1 = disabled,
+                Int0 = unchecked((int)targetPlacedRefId),
+            });
+            return true;
+        }
+
         static bool TryCompileActivate(
             string line,
             List<MorrowindScriptInstructionDef> instructions,
@@ -880,20 +1549,37 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryCompileRotate(
             string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!StartsWithCommand(line, "rotate"))
-                return false;
-
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
             if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
             {
-                failure = $"Explicit Rotate references are not supported in MWScript V2: '{line}'.";
-                return false;
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit Rotate command '{line}'.";
+                    return false;
+                }
             }
 
-            string[] tokens = SplitCommandTokens(line);
+            if (!StartsWithCommand(commandLine, "rotate"))
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    return false;
+
+                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
             if (tokens.Length != 3)
             {
                 failure = $"Rotate command requires axis and speed in MWScript V2: '{line}'.";
@@ -901,9 +1587,9 @@ namespace VVardenfell.Importer.Bake
             }
 
             string axis = NormalizeToken(tokens[1]).Trim('"');
-            if (!axis.Equals("x", StringComparison.OrdinalIgnoreCase))
+            if (!TryMapRotateAxis(axis, out byte axisIndex))
             {
-                failure = $"Rotate command currently supports only the implicit local X axis in MWScript V2: '{line}'.";
+                failure = $"Rotate command has unsupported axis '{tokens[1]}'.";
                 return false;
             }
 
@@ -916,8 +1602,73 @@ namespace VVardenfell.Importer.Bake
             instructions.Add(new MorrowindScriptInstructionDef
             {
                 Opcode = (byte)MorrowindScriptOpcode.Rotate,
-                Operand0 = 0,
+                Operand0 = (byte)targetMode,
+                Operand1 = axisIndex,
+                Int0 = unchecked((int)targetPlacedRefId),
                 Float0 = speed,
+            });
+            return true;
+        }
+
+        static bool TryCompileSetAngle(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit SetAngle command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, "setangle"))
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    return false;
+
+                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 3)
+            {
+                failure = $"SetAngle command requires axis and angle in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string axis = NormalizeToken(tokens[1]).Trim('"');
+            if (!TryMapRotateAxis(axis, out byte axisIndex))
+            {
+                failure = $"SetAngle command has unsupported axis '{tokens[1]}'.";
+                return false;
+            }
+
+            if (!float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float angle))
+            {
+                failure = $"SetAngle command has invalid angle '{tokens[2]}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.SetAngle,
+                Operand0 = (byte)targetMode,
+                Operand1 = axisIndex,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Float0 = angle,
             });
             return true;
         }
@@ -977,6 +1728,30 @@ namespace VVardenfell.Importer.Bake
                 Float1 = pitch,
             });
             return true;
+        }
+
+        static bool TryMapRotateAxis(string axis, out byte axisIndex)
+        {
+            if (axis.Equals("x", StringComparison.OrdinalIgnoreCase))
+            {
+                axisIndex = 0;
+                return true;
+            }
+
+            if (axis.Equals("y", StringComparison.OrdinalIgnoreCase))
+            {
+                axisIndex = 1;
+                return true;
+            }
+
+            if (axis.Equals("z", StringComparison.OrdinalIgnoreCase))
+            {
+                axisIndex = 2;
+                return true;
+            }
+
+            axisIndex = 0;
+            return false;
         }
 
         static bool TryMapComparisonOpcode(string op, out MorrowindScriptOpcode opcode)
@@ -1089,14 +1864,22 @@ namespace VVardenfell.Importer.Bake
             return lookup;
         }
 
-        static Dictionary<string, (int Index, DialogueDefType Type)> BuildDialogueLookup(DialogueDef[] dialogues)
+        static Dictionary<string, DialogueCompileInfo> BuildDialogueLookup(DialogueDef[] dialogues)
         {
-            var lookup = new Dictionary<string, (int Index, DialogueDefType Type)>(StringComparer.OrdinalIgnoreCase);
+            var lookup = new Dictionary<string, DialogueCompileInfo>(StringComparer.OrdinalIgnoreCase);
             if (dialogues == null)
                 return lookup;
 
             for (int i = 0; i < dialogues.Length; i++)
-                lookup[ContentId.NormalizeId(dialogues[i].Id)] = (i, dialogues[i].Type);
+            {
+                lookup[ContentId.NormalizeId(dialogues[i].Id)] = new DialogueCompileInfo
+                {
+                    Index = i,
+                    Type = dialogues[i].Type,
+                    FirstInfoIndex = dialogues[i].FirstInfoIndex,
+                    InfoCount = dialogues[i].InfoCount,
+                };
+            }
             return lookup;
         }
 
@@ -1376,6 +2159,58 @@ namespace VVardenfell.Importer.Bake
         {
             int arrow = line.IndexOf("->", StringComparison.Ordinal);
             return arrow < 0 ? line : line.Substring(arrow + 2).TrimStart();
+        }
+
+        static bool TrySplitExplicitReference(string line, out string targetId, out string commandOrExpression)
+        {
+            targetId = null;
+            commandOrExpression = null;
+            int arrow = line.IndexOf("->", StringComparison.Ordinal);
+            if (arrow < 0)
+                return false;
+
+            targetId = NormalizeExplicitRefId(line.Substring(0, arrow));
+            commandOrExpression = line.Substring(arrow + 2).TrimStart();
+            return targetId.Length > 0 && commandOrExpression.Length > 0;
+        }
+
+        static bool TryResolveExplicitRefTarget(
+            string targetId,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            out uint targetPlacedRefId,
+            out string failure)
+        {
+            targetPlacedRefId = 0u;
+            failure = null;
+            string normalizedId = ContentId.NormalizeId(targetId);
+            if (normalizedId.Equals("player", StringComparison.OrdinalIgnoreCase))
+            {
+                failure = "Explicit Player references are not supported in MWScript V1.";
+                return false;
+            }
+
+            if (ambiguousExplicitRefTargets != null && ambiguousExplicitRefTargets.Contains(normalizedId))
+            {
+                failure = $"Explicit reference id '{targetId}' resolves to multiple placed refs; fanout is not supported in MWScript V1.";
+                return false;
+            }
+
+            if (explicitRefTargets == null || !explicitRefTargets.TryGetValue(normalizedId, out targetPlacedRefId) || targetPlacedRefId == 0u)
+            {
+                failure = $"Explicit reference id '{targetId}' does not resolve to a unique baked placed ref.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static string NormalizeExplicitRefId(string targetId)
+        {
+            targetId = NormalizeToken(targetId);
+            if (targetId.Length >= 2 && targetId[0] == '"' && targetId[targetId.Length - 1] == '"')
+                targetId = targetId.Substring(1, targetId.Length - 2);
+            return targetId.Trim();
         }
 
         static string NormalizeSetExpressionReferences(string expression)

@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Interactions
 {
@@ -55,71 +56,13 @@ namespace VVardenfell.Runtime.Interactions
             EntityManager.SetComponentData(entity, state);
 
             quaternion delta = quaternion.AxisAngle(ResolveAxis(state.Axis), deltaRadians);
-            ApplyRotation(entity, delta);
+            LogicalRefRotationUtility.ApplyDelta(EntityManager, entity, delta);
 
             if (math.abs(state.TargetProgress - state.Progress) <= 0.0001f)
                 EntityManager.SetComponentEnabled<DoorActivated>(entity, false);
         }
 
-        void ApplyRotation(Entity entity, quaternion delta)
-        {
-            RemoveStaticIfPresent(entity);
-            RotateEntity(entity, delta);
-
-            if (!EntityManager.HasBuffer<LogicalRefChild>(entity))
-                return;
-
-            var children = EntityManager.GetBuffer<LogicalRefChild>(entity);
-            for (int i = 0; i < children.Length; i++)
-            {
-                Entity child = children[i].Value;
-                if (child == Entity.Null
-                    || child == entity
-                    || !EntityManager.Exists(child)
-                    || EntityManager.HasComponent<InteractionActivationProxyTag>(child)
-                    || EntityManager.HasComponent<Parent>(child)
-                    || !EntityManager.HasComponent<LocalTransform>(child))
-                {
-                    continue;
-                }
-
-                RemoveStaticIfPresent(child);
-                RotateEntity(child, delta);
-            }
-        }
-
-        void RotateEntity(Entity entity, quaternion delta)
-        {
-            if (!EntityManager.HasComponent<LocalTransform>(entity))
-                return;
-
-            var transform = EntityManager.GetComponentData<LocalTransform>(entity);
-            transform.Rotation = math.normalize(math.mul(delta, transform.Rotation));
-            EntityManager.SetComponentData(entity, transform);
-
-            if (EntityManager.HasComponent<LocalToWorld>(entity))
-            {
-                EntityManager.SetComponentData(entity, new LocalToWorld
-                {
-                    Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
-                });
-            }
-        }
-
-        void RemoveStaticIfPresent(Entity entity)
-        {
-            if (EntityManager.HasComponent<Unity.Transforms.Static>(entity))
-                EntityManager.RemoveComponent<Unity.Transforms.Static>(entity);
-        }
-
         static float3 ResolveAxis(byte axis)
-        {
-            return axis switch
-            {
-                1 => new float3(0f, 0f, 1f),
-                2 => new float3(0f, 1f, 0f),
-                _ => new float3(1f, 0f, 0f),
-            };
-        }
+            => LogicalRefRotationUtility.ResolveAxis(axis);
     }
 }

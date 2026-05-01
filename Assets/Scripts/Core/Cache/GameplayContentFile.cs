@@ -47,6 +47,106 @@ namespace VVardenfell.Core.Cache
         Unknown = 255,
     }
 
+    public enum DialogueConditionFunction : byte
+    {
+        FacReactionLowest = 0,
+        FacReactionHighest = 1,
+        RankRequirement = 2,
+        Reputation = 3,
+        HealthPercent = 4,
+        PcReputation = 5,
+        PcLevel = 6,
+        PcHealthPercent = 7,
+        PcMagicka = 8,
+        PcFatigue = 9,
+        PcStrength = 10,
+        PcBlock = 11,
+        PcArmorer = 12,
+        PcMediumArmor = 13,
+        PcHeavyArmor = 14,
+        PcBluntWeapon = 15,
+        PcLongBlade = 16,
+        PcAxe = 17,
+        PcSpear = 18,
+        PcAthletics = 19,
+        PcEnchant = 20,
+        PcDestruction = 21,
+        PcAlteration = 22,
+        PcIllusion = 23,
+        PcConjuration = 24,
+        PcMysticism = 25,
+        PcRestoration = 26,
+        PcAlchemy = 27,
+        PcUnarmored = 28,
+        PcSecurity = 29,
+        PcSneak = 30,
+        PcAcrobatics = 31,
+        PcLightArmor = 32,
+        PcShortBlade = 33,
+        PcMarksman = 34,
+        PcMercantile = 35,
+        PcSpeechcraft = 36,
+        PcHandToHand = 37,
+        PcGender = 38,
+        PcExpelled = 39,
+        PcCommonDisease = 40,
+        PcBlightDisease = 41,
+        PcClothingModifier = 42,
+        PcCrimeLevel = 43,
+        SameSex = 44,
+        SameRace = 45,
+        SameFaction = 46,
+        FactionRankDifference = 47,
+        Detected = 48,
+        Alarmed = 49,
+        Choice = 50,
+        PcIntelligence = 51,
+        PcWillpower = 52,
+        PcAgility = 53,
+        PcSpeed = 54,
+        PcEndurance = 55,
+        PcPersonality = 56,
+        PcLuck = 57,
+        PcCorprus = 58,
+        Weather = 59,
+        PcVampire = 60,
+        Level = 61,
+        Attacked = 62,
+        TalkedToPc = 63,
+        PcHealth = 64,
+        CreatureTarget = 65,
+        FriendHit = 66,
+        Fight = 67,
+        Hello = 68,
+        Alarm = 69,
+        Flee = 70,
+        ShouldAttack = 71,
+        Werewolf = 72,
+        PcWerewolfKills = 73,
+        Global = 74,
+        Local = 75,
+        Journal = 76,
+        Item = 77,
+        Dead = 78,
+        NotId = 79,
+        NotFaction = 80,
+        NotClass = 81,
+        NotRace = 82,
+        NotCell = 83,
+        NotLocal = 84,
+        None = 255,
+    }
+
+    public enum DialogueConditionComparison : byte
+    {
+        Equal = (byte)'0',
+        NotEqual = (byte)'1',
+        Greater = (byte)'2',
+        GreaterOrEqual = (byte)'3',
+        Less = (byte)'4',
+        LessOrEqual = (byte)'5',
+    }
+
     public enum MusicTrackCategory : byte
     {
         Explore = 1,
@@ -267,6 +367,20 @@ namespace VVardenfell.Core.Cache
         GetOnActivate = 30,
         Activate = 31,
         Rotate = 32,
+        GetDisabled = 33,
+        RequestSetDisabled = 34,
+        SetAngle = 35,
+        Journal = 36,
+        StopScript = 37,
+        SetJournalIndex = 38,
+        AddTopic = 39,
+        FillJournal = 40,
+    }
+
+    public enum MorrowindScriptRefTargetMode : byte
+    {
+        Self = 0,
+        PlacedRef = 1,
     }
 
     public enum MorrowindScriptAudioKind : byte
@@ -299,6 +413,7 @@ namespace VVardenfell.Core.Cache
         public short Operand1;
         public int Int0;
         public int Int1;
+        public int Int2;
         public float Float0;
         public float Float1;
     }
@@ -617,7 +732,19 @@ namespace VVardenfell.Core.Cache
         public sbyte PcRank;
         public byte QuestStatus;
         public bool FactionLess;
+        public int FirstSelectRuleIndex;
         public int SelectRuleCount;
+    }
+
+    public struct DialogueConditionDef
+    {
+        public string Variable;
+        public int IntValue;
+        public float FloatValue;
+        public byte ValueKind;
+        public byte Index;
+        public byte Function;
+        public byte Comparison;
     }
 
     public struct MagicEffectInstanceDef
@@ -973,6 +1100,7 @@ namespace VVardenfell.Core.Cache
         public SoundDef[] Sounds = Array.Empty<SoundDef>();
         public DialogueDef[] Dialogues = Array.Empty<DialogueDef>();
         public DialogueInfoDef[] DialogueInfos = Array.Empty<DialogueInfoDef>();
+        public DialogueConditionDef[] DialogueConditions = Array.Empty<DialogueConditionDef>();
         public SpellDef[] Spells = Array.Empty<SpellDef>();
         public EnchantmentDef[] Enchantments = Array.Empty<EnchantmentDef>();
         public MagicEffectDef[] MagicEffects = Array.Empty<MagicEffectDef>();
@@ -1047,6 +1175,7 @@ namespace VVardenfell.Core.Cache
             WriteSoundArray(w, data?.Sounds);
             WriteDialogueArray(w, data?.Dialogues);
             WriteDialogueInfoArray(w, data?.DialogueInfos);
+            WriteDialogueConditionArray(w, data?.DialogueConditions);
             WriteSpellArray(w, data?.Spells);
             WriteEnchantmentArray(w, data?.Enchantments);
             WriteMagicEffectArray(w, data?.MagicEffects);
@@ -1126,6 +1255,7 @@ namespace VVardenfell.Core.Cache
                 Sounds = ReadSoundArray(r),
                 Dialogues = ReadDialogueArray(r),
                 DialogueInfos = ReadDialogueInfoArray(r),
+                DialogueConditions = ReadDialogueConditionArray(r),
                 Spells = ReadSpellArray(r),
                 Enchantments = ReadEnchantmentArray(r),
                 MagicEffects = ReadMagicEffectArray(r),

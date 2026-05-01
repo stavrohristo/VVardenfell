@@ -47,6 +47,7 @@ namespace VVardenfell.Runtime.Shell
             bool toggleInventoryPressed = (keyboard?.tabKey.wasPressedThisFrame ?? false)
                 || (keyboard?.iKey.wasPressedThisFrame ?? false)
                 || (gamepad?.buttonWest.wasPressedThisFrame ?? false);
+            bool toggleJournalPressed = keyboard?.jKey.wasPressedThisFrame ?? false;
 
             if (state.ModalOpen != 0)
             {
@@ -62,20 +63,50 @@ namespace VVardenfell.Runtime.Shell
             {
                 if (togglePausePressed || backPressed || toggleInventoryPressed)
                     ContainerWindowRuntimeUtility.CloseContainer(ref state, ref containerState);
+                else if (toggleJournalPressed)
+                    RuntimeShellStateUtility.OpenJournal(ref state);
             }
             else if (state.InventoryOpen != 0)
             {
                 if (togglePausePressed || backPressed || toggleInventoryPressed)
                     RuntimeShellStateUtility.CloseInventory(ref state);
+                else if (toggleJournalPressed)
+                    RuntimeShellStateUtility.OpenJournal(ref state);
             }
             else if (state.PauseMenuOpen != 0)
             {
                 if (togglePausePressed || backPressed)
                     RuntimeShellStateUtility.ClosePause(ref state);
+                else if (toggleJournalPressed)
+                    RuntimeShellStateUtility.OpenJournal(ref state);
+            }
+            else if (state.JournalOpen != 0)
+            {
+                if (togglePausePressed || backPressed || toggleJournalPressed)
+                    RuntimeShellStateUtility.CloseJournal(ref state);
+            }
+            else if (state.DialogueOpen != 0)
+            {
+                if (togglePausePressed || backPressed)
+                {
+                    RuntimeShellStateUtility.CloseDialogue(ref state);
+                    if (SystemAPI.TryGetSingletonRW<MorrowindDialogueSession>(out var sessionRef))
+                    {
+                        sessionRef.ValueRW = new MorrowindDialogueSession
+                        {
+                            SelectedTopicDialogueIndex = -1,
+                            LastInfoIndex = -1,
+                        };
+                    }
+                }
             }
             else if (toggleInventoryPressed)
             {
                 RuntimeShellStateUtility.OpenInventory(ref state);
+            }
+            else if (toggleJournalPressed)
+            {
+                RuntimeShellStateUtility.OpenJournal(ref state);
             }
             else if (togglePausePressed)
             {

@@ -53,7 +53,6 @@ namespace VVardenfell.Importer.Bake
         public readonly struct BakedRef
         {
             public readonly int SpawnModeRaw;
-            public readonly int RenderShardIndex;
             public readonly int ModelPrefabIndex;
             public readonly int LocalMeshIndex;
             public readonly int LocalMaterialIndex;
@@ -69,7 +68,7 @@ namespace VVardenfell.Importer.Bake
 
             public BakedRef(
                 RefSpawnMode spawnMode,
-                int renderShardIndex,
+                int modelPrefabIndex,
                 int localMeshIndex,
                 int localMaterialIndex,
                 int slice,
@@ -83,8 +82,7 @@ namespace VVardenfell.Importer.Bake
                 float scale)
             {
                 SpawnModeRaw = (int)spawnMode;
-                RenderShardIndex = renderShardIndex;
-                ModelPrefabIndex = renderShardIndex;
+                ModelPrefabIndex = modelPrefabIndex;
                 LocalMeshIndex = localMeshIndex;
                 LocalMaterialIndex = localMaterialIndex;
                 SliceIndex = slice;
@@ -228,7 +226,7 @@ namespace VVardenfell.Importer.Bake
             {
                 var r = refs[i];
                 w.Write(r.SpawnModeRaw);
-                w.Write(r.RenderShardIndex);
+                w.Write(r.ModelPrefabIndex);
                 w.Write(r.LocalMeshIndex);
                 w.Write(r.LocalMaterialIndex);
                 w.Write(r.SliceIndex);

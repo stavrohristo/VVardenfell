@@ -10,6 +10,9 @@ namespace VVardenfell.Runtime.Shell
         public static void OpenPause(ref RuntimeShellState state)
         {
             state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
             state.PauseMenuOpen = 1;
             state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
             ClearModal(ref state);
@@ -19,7 +22,21 @@ namespace VVardenfell.Runtime.Shell
         {
             state.InventoryOpen = 1;
             state.PauseMenuOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
             state.SelectedAction = (byte)RuntimeShellMenuActionId.Inventory;
+            ClearModal(ref state);
+        }
+
+        public static void OpenJournal(ref RuntimeShellState state)
+        {
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 0;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.DialogueOpen = 0;
+            state.JournalOpen = 1;
             ClearModal(ref state);
         }
 
@@ -32,6 +49,30 @@ namespace VVardenfell.Runtime.Shell
         public static void ClosePause(ref RuntimeShellState state)
         {
             state.PauseMenuOpen = 0;
+            ClearModal(ref state);
+        }
+
+        public static void CloseJournal(ref RuntimeShellState state)
+        {
+            state.JournalOpen = 0;
+            ClearModal(ref state);
+        }
+
+        public static void OpenDialogue(ref RuntimeShellState state)
+        {
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 0;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 1;
+            ClearModal(ref state);
+        }
+
+        public static void CloseDialogue(ref RuntimeShellState state)
+        {
+            state.DialogueOpen = 0;
             ClearModal(ref state);
         }
 
@@ -58,8 +99,11 @@ namespace VVardenfell.Runtime.Shell
         public static void ShowDialog(ref RuntimeShellState state, string title, string body)
         {
             state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
             state.PauseMenuOpen = 1;
             state.SaveLoadBrowserOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
             state.ModalOpen = 1;
             state.ModalTitle = ToFixedTitle(title);
             state.ModalBody = ToFixedBody(body);
@@ -70,6 +114,8 @@ namespace VVardenfell.Runtime.Shell
             state.InventoryOpen = 0;
             state.ContainerOpen = 0;
             state.PauseMenuOpen = 1;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
             state.ModalOpen = 0;
             state.SaveLoadBrowserOpen = 1;
             browser.Visible = 1;
@@ -88,7 +134,9 @@ namespace VVardenfell.Runtime.Shell
                 || state.PauseMenuOpen != 0
                 || state.ModalOpen != 0
                 || state.SaveLoadBrowserOpen != 0
-                || state.OptionsOpen != 0;
+                || state.OptionsOpen != 0
+                || state.JournalOpen != 0
+                || state.DialogueOpen != 0;
 
             RuntimeShellPresentationGate.BlocksGameplayInput = !BootstrapPresentationGate.BlocksGameplayInput && shellBlocksGameplay;
             ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);

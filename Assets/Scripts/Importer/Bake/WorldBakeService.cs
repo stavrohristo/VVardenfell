@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Jobs;
@@ -42,9 +41,6 @@ namespace VVardenfell.Importer.Bake
         private static readonly ConcurrentDictionary<string, int> s_AnimatedStaticRefCounts = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, int> s_UnsupportedObjectControllerRefCounts = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, byte> s_DroppedBakeRefWarnings = new(StringComparer.OrdinalIgnoreCase);
-
-
-        private const bool EnableModelPrefabWorldRefs = false;
 
 
         private readonly struct CellBakeWorkItem
@@ -168,6 +164,7 @@ namespace VVardenfell.Importer.Bake
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
             public readonly ContentReference ContentReference;
+            public readonly bool AttachModelCollision;
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly float Scale;
@@ -179,18 +176,19 @@ namespace VVardenfell.Importer.Bake
                 ContentReference contentReference,
                 Vector3 position,
                 Quaternion rotation,
-                float scale)
+                float scale,
+                bool attachModelCollision = false)
             {
                 ModelPath = modelPath ?? string.Empty;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
                 ContentReference = contentReference;
+                AttachModelCollision = attachModelCollision;
                 Position = position;
                 Rotation = rotation;
                 Scale = scale;
             }
         }
-
 
         private readonly struct StagedRefData
         {
@@ -370,64 +368,6 @@ namespace VVardenfell.Importer.Bake
             NoCollider,
             CellStaticAggregate,
             PerPlacedRef,
-        }
-
-
-        private readonly struct RenderShardRequestKey : System.IEquatable<RenderShardRequestKey>
-        {
-            public readonly int BucketKey;
-            public readonly string FamilyKey;
-            public readonly int GlobalMeshIndex;
-
-            public RenderShardRequestKey(int bucketKey, string familyKey, int globalMeshIndex)
-            {
-                BucketKey = bucketKey;
-                FamilyKey = familyKey ?? string.Empty;
-                GlobalMeshIndex = globalMeshIndex;
-            }
-
-            public bool Equals(RenderShardRequestKey other)
-                => BucketKey == other.BucketKey
-                   && GlobalMeshIndex == other.GlobalMeshIndex
-                   && string.Equals(FamilyKey, other.FamilyKey, StringComparison.Ordinal);
-
-            public override bool Equals(object obj)
-                => obj is RenderShardRequestKey other && Equals(other);
-
-            public override int GetHashCode()
-                => HashCode.Combine(BucketKey, GlobalMeshIndex, StringComparer.Ordinal.GetHashCode(FamilyKey ?? string.Empty));
-        }
-
-
-        private readonly struct RenderShardResolvedAssignment
-        {
-            public readonly int RenderShardIndex;
-            public readonly int LocalMeshIndex;
-
-            public RenderShardResolvedAssignment(int renderShardIndex, int localMeshIndex)
-            {
-                RenderShardIndex = renderShardIndex;
-                LocalMeshIndex = localMeshIndex;
-            }
-        }
-
-
-        private sealed class RenderShardRequestKeyComparer : IComparer<RenderShardRequestKey>
-        {
-            public static readonly RenderShardRequestKeyComparer Instance = new();
-
-            public int Compare(RenderShardRequestKey x, RenderShardRequestKey y)
-            {
-                int bucketCompare = x.BucketKey.CompareTo(y.BucketKey);
-                if (bucketCompare != 0)
-                    return bucketCompare;
-
-                int familyCompare = string.CompareOrdinal(x.FamilyKey, y.FamilyKey);
-                if (familyCompare != 0)
-                    return familyCompare;
-
-                return x.GlobalMeshIndex.CompareTo(y.GlobalMeshIndex);
-            }
         }
 
 

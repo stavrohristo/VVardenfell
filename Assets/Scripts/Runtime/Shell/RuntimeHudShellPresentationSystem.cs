@@ -65,6 +65,9 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<StatsWindowState>();
             RequireForUpdate<SpellWindowState>();
             RequireForUpdate<MapWindowState>();
+            RequireForUpdate<JournalWindowState>();
+            RequireForUpdate<MorrowindQuestJournalState>();
+            RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<PlayerInventoryItem>();
             RequireForUpdate<ContainerSessionItem>();
         }
@@ -103,6 +106,7 @@ namespace VVardenfell.Runtime.Shell
             var statsState = SystemAPI.GetSingleton<StatsWindowState>();
             var spellState = SystemAPI.GetSingleton<SpellWindowState>();
             var mapState = SystemAPI.GetSingleton<MapWindowState>();
+            var journalState = SystemAPI.GetSingleton<JournalWindowState>();
             var saveLoadState = SystemAPI.GetSingleton<SaveLoadBrowserState>();
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
             var containerItems = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
@@ -134,7 +138,7 @@ namespace VVardenfell.Runtime.Shell
                 inventory,
                 spellState);
             StatsWindowViewModel statsModel = statsVisible
-                ? BuildStatsModel(RuntimeContentDatabase.Active, statsState, playerStats)
+                ? BuildStatsModel(RuntimeContentDatabase.Active, EntityManager, statsState, playerStats)
                 : null;
             if (statsModel != null)
                 statsModel.Pinned = statsState.Pinned != 0;
@@ -151,6 +155,23 @@ namespace VVardenfell.Runtime.Shell
             SaveLoadBrowserViewModel saveLoadModel = shell.SaveLoadBrowserOpen != 0
                 ? BuildSaveLoadBrowserModel(saveLoadState)
                 : null;
+            JournalWindowViewModel journalModel = shell.JournalOpen != 0
+                ? BuildJournalModel(
+                    RuntimeContentDatabase.Active,
+                    journalState,
+                    SystemAPI.GetSingletonBuffer<MorrowindQuestJournalIndex>(true),
+                    SystemAPI.GetSingletonBuffer<MorrowindQuestJournalEntry>(true),
+                    SystemAPI.GetSingletonBuffer<MorrowindTopicJournalEntry>(true))
+                : null;
+            DialogueWindowViewModel dialogueModel = shell.DialogueOpen != 0
+                ? BuildDialogueModel(
+                    RuntimeContentDatabase.Active,
+                    EntityManager,
+                    SystemAPI.GetSingleton<MorrowindDialogueSession>(),
+                    SystemAPI.GetSingletonBuffer<MorrowindDialogueSessionLine>(true),
+                    SystemAPI.GetSingletonBuffer<MorrowindKnownDialogueTopic>(true),
+                    SystemAPI.GetSingletonBuffer<MorrowindDialogueChoice>(true))
+                : null;
 
             _view.Sync(
                 visible,
@@ -161,6 +182,8 @@ namespace VVardenfell.Runtime.Shell
                 spellModel,
                 mapModel,
                 saveLoadModel,
+                journalModel,
+                dialogueModel,
                 (RuntimeShellMenuActionId)shell.SelectedAction,
                 shell.PauseMenuOpen != 0,
                 shell.ModalOpen != 0,

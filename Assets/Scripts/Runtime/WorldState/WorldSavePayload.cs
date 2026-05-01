@@ -10,6 +10,7 @@ namespace VVardenfell.Runtime.WorldState
         public float PlayerPitchDegrees;
         public ActorRuntimeStatSeed ActorStats;
         public ActorIdentitySet PlayerIdentity;
+        public PlayerFactionMembership[] PlayerFactions;
         public bool InteriorActive;
         public string ActiveInteriorCellId;
         public uint NextJournalSequence;
@@ -20,8 +21,56 @@ namespace VVardenfell.Runtime.WorldState
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
         public GlobalMapOverlayPayload GlobalMapOverlay;
         public WorldJournalEntry[] JournalEntries;
+        public MorrowindQuestJournalSavePayload QuestJournal;
+        public MorrowindDialogueSavePayload Dialogue;
         public MorrowindTimeSavePayload Time;
         public MorrowindWeatherSavePayload Weather;
+    }
+
+    public struct MorrowindQuestJournalSavePayload
+    {
+        public uint NextEntrySequence;
+        public MorrowindQuestJournalStateSavePayload[] States;
+        public MorrowindQuestJournalEntrySavePayload[] Entries;
+    }
+
+    public struct MorrowindQuestJournalStateSavePayload
+    {
+        public int DialogueIndex;
+        public int Index;
+        public byte Started;
+        public byte Finished;
+    }
+
+    public struct MorrowindQuestJournalEntrySavePayload
+    {
+        public uint Sequence;
+        public int DialogueIndex;
+        public int InfoIndex;
+        public int JournalIndex;
+        public int Day;
+        public int Month;
+        public int DayOfMonth;
+        public byte QuestStatus;
+    }
+
+    public struct MorrowindDialogueSavePayload
+    {
+        public uint NextTopicEntrySequence;
+        public int[] KnownTopicDialogueIndices;
+        public MorrowindTopicJournalEntrySavePayload[] TopicEntries;
+    }
+
+    public struct MorrowindTopicJournalEntrySavePayload
+    {
+        public uint Sequence;
+        public int DialogueIndex;
+        public int InfoIndex;
+        public uint ActorPlacedRefId;
+        public string ActorId;
+        public int Day;
+        public int Month;
+        public int DayOfMonth;
     }
 
     public struct MorrowindTimeSavePayload

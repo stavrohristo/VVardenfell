@@ -235,9 +235,7 @@ namespace VVardenfell.Runtime.Bootstrap
             if (!BootstrapRuntimeModeUtility.IsSandboxMode(mode))
                 return true;
 
-            var profile = mode == BootstrapRuntimeMode.VegetationSandbox
-                ? SandboxWorldFixtures.VegetationStress
-                : SandboxWorldFixtures.Active;
+            var profile = SandboxWorldFixtures.Active;
             return profile?.SpawnLocalPlayer ?? true;
         }
 

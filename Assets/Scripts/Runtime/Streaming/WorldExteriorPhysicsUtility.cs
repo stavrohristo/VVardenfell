@@ -33,6 +33,7 @@ namespace VVardenfell.Runtime.Streaming
             using var _ = k_PhysicsSync.Auto();
 
             SyncRegisteredExteriorPhysics(em, desired);
+            SyncLinkedExteriorPhysics(em, desired);
         }
 
         static void SetRegisteredCellPhysicsActive(EntityManager em, int2 coord, bool active)
@@ -84,6 +85,33 @@ namespace VVardenfell.Runtime.Streaming
                         VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(em, entity);
                 }
             }
+        }
+
+        static void SyncLinkedExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
+        {
+            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                .WithAll<CellLink, RuntimeColliderSource>();
+            var query = em.CreateEntityQuery(queryBuilder);
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var links = query.ToComponentDataArray<CellLink>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity entity = entities[i];
+                if (entity == Entity.Null || !em.Exists(entity))
+                    continue;
+
+                bool disabled = em.HasComponent<PlacedRefRuntimeState>(entity)
+                    && em.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0;
+                bool shouldBeActive = !disabled && desired.Contains(links[i].Value);
+                bool isActive = em.HasComponent<PhysicsCollider>(entity);
+                if (shouldBeActive && !isActive)
+                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(em, entity);
+                else if (!shouldBeActive && isActive)
+                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(em, entity);
+            }
+
+            query.Dispose();
+            queryBuilder.Dispose();
         }
     }
 }

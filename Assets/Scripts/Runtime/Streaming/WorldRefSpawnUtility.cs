@@ -34,107 +34,30 @@ namespace VVardenfell.Runtime.Streaming
         static readonly ProfilerMarker k_LogicalRefLink = new("VV.Spawn.LogicalRefs.LinkChildren");
         static readonly ProfilerMarker k_LogicalRefLookup = new("VV.Spawn.LogicalRefs.Lookup");
 
-        internal static Entity SpawnExteriorRef(EntityManager em, RefEntry entry, int2 coord, RenderShardRecord[] shardCatalog)
+        internal static Entity SpawnExteriorRef(EntityManager em, RefEntry entry, int2 coord)
         {
             string cellLabel = $"exterior ({coord.x},{coord.y})";
-            WarnUnsupportedSpawnMode(entry, cellLabel);
-            return (RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab
-                ? SpawnModelPrefabRef(em, entry, false, coord, default, float3.zero, null, cellLabel)
-                : SpawnRenderShardRef(em, entry, false, coord, default, float3.zero, shardCatalog, cellLabel);
+            return SpawnRef(em, entry, false, coord, default, float3.zero, null, cellLabel);
         }
 
         internal static void SpawnExteriorRefs(
             EntityManager em,
             RefEntry[] refs,
             int2 coord,
-            RenderShardRecord[] shardCatalog,
             Entity[] spawnedRefEntities)
         {
             if (refs == null || spawnedRefEntities == null)
                 return;
 
             string cellLabel = $"exterior ({coord.x},{coord.y})";
-            Dictionary<int, List<int>> renderShardGroups = null;
             for (int i = 0; i < refs.Length && i < spawnedRefEntities.Length; i++)
-            {
-                RefEntry entry = refs[i];
-                WarnUnsupportedSpawnMode(entry, cellLabel);
-                if ((RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab)
-                {
-                    spawnedRefEntities[i] = SpawnModelPrefabRef(em, entry, false, coord, default, float3.zero, null, cellLabel);
-                    continue;
-                }
-
-                if (!TryGetRenderShardPrefab(entry, out _))
-                {
-                    if (!IsLogicalOnlyRef(entry))
-                        WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
-                    spawnedRefEntities[i] = Entity.Null;
-                    continue;
-                }
-
-                renderShardGroups ??= new Dictionary<int, List<int>>();
-                if (!renderShardGroups.TryGetValue(entry.RenderShardIndex, out var indices))
-                {
-                    indices = new List<int>();
-                    renderShardGroups.Add(entry.RenderShardIndex, indices);
-                }
-
-                indices.Add(i);
-            }
-
-            if (renderShardGroups == null)
-                return;
-
-            foreach (var pair in renderShardGroups)
-            {
-                if (!TryGetRenderShardPrefab(refs[pair.Value[0]], out Entity prefab))
-                    continue;
-
-                using var instances = new NativeArray<Entity>(pair.Value.Count, Allocator.Temp);
-                em.Instantiate(prefab, instances);
-                for (int i = 0; i < pair.Value.Count; i++)
-                {
-                    int refIndex = pair.Value[i];
-                    Entity entity = instances[i];
-                    spawnedRefEntities[refIndex] = entity;
-                    ApplyRenderShardRefData(
-                        em,
-                        entity,
-                        refs[refIndex],
-                        false,
-                        coord,
-                        default,
-                        float3.zero,
-                        shardCatalog);
-                }
-            }
+                spawnedRefEntities[i] = SpawnRef(em, refs[i], false, coord, default, float3.zero, null, cellLabel);
         }
 
         internal static Entity SpawnInteriorRef(EntityManager em, RefEntry entry, float3 worldOffset, FixedString128Bytes interiorCellId, List<Entity> spawnedEntities)
         {
             string cellLabel = $"interior '{interiorCellId}'";
-            WarnUnsupportedSpawnMode(entry, cellLabel);
-            Entity root;
-            if ((RefSpawnMode)entry.SpawnModeRaw == RefSpawnMode.ModelPrefab)
-            {
-                root = SpawnModelPrefabRef(em, entry, true, default, interiorCellId, worldOffset, spawnedEntities, cellLabel);
-            }
-            else
-            {
-                root = SpawnRenderShardRef(
-                    em,
-                    entry,
-                    true,
-                    default,
-                    interiorCellId,
-                    worldOffset,
-                    WorldResources.Cache?.RenderShardCatalog?.Records,
-                    cellLabel);
-                AppendSpawnedEntities(em, root, spawnedEntities);
-            }
-
-            return root;
+            return SpawnRef(em, entry, true, default, interiorCellId, worldOffset, spawnedEntities, cellLabel);
         }
 
         internal static int BuildLogicalRefs(
@@ -311,10 +234,10 @@ namespace VVardenfell.Runtime.Streaming
 
         static bool IsLogicalOnlyRef(in RefEntry entry)
         {
-            if ((RefSpawnMode)entry.SpawnModeRaw != RefSpawnMode.RenderShard)
+            if ((RefSpawnMode)entry.SpawnModeRaw != RefSpawnMode.LogicalOnly)
                 return false;
 
-            if (entry.RenderShardIndex >= 0 || entry.ModelPrefabIndex >= 0)
+            if (entry.ModelPrefabIndex >= 0)
                 return false;
 
             ContentReferenceKind kind = (ContentReferenceKind)entry.ContentKind;
@@ -463,83 +386,27 @@ namespace VVardenfell.Runtime.Streaming
             return Entity.Null;
         }
 
-        static Entity SpawnRenderShardRef(
+        static Entity SpawnRef(
             EntityManager em,
             RefEntry entry,
             bool isInterior,
             int2 exteriorCell,
             FixedString128Bytes interiorCellId,
             float3 worldOffset,
-            RenderShardRecord[] shardCatalog,
+            List<Entity> spawnedEntities,
             string cellLabel)
         {
-            if (!TryGetRenderShardPrefab(entry, out Entity prefab))
+            switch ((RefSpawnMode)entry.SpawnModeRaw)
             {
-                if (!IsLogicalOnlyRef(entry))
-                    WarnDroppedRef(entry, cellLabel, DescribeRenderShardFailure(entry));
-                return Entity.Null;
+                case RefSpawnMode.ModelPrefab:
+                    return SpawnModelPrefabRef(em, entry, isInterior, exteriorCell, interiorCellId, worldOffset, spawnedEntities, cellLabel);
+                case RefSpawnMode.LogicalOnly:
+                    return Entity.Null;
+                default:
+                    WarnUnsupportedSpawnMode(entry, cellLabel);
+                    WarnDroppedRef(entry, cellLabel, $"unsupported spawn mode {entry.SpawnModeRaw}");
+                    return Entity.Null;
             }
-
-            var entity = em.Instantiate(prefab);
-            ApplyRenderShardRefData(
-                em,
-                entity,
-                entry,
-                isInterior,
-                exteriorCell,
-                interiorCellId,
-                worldOffset,
-                shardCatalog);
-            return entity;
-        }
-
-        static bool TryGetRenderShardPrefab(RefEntry entry, out Entity prefab)
-        {
-            prefab = Entity.Null;
-            if (entry.RenderShardIndex < 0 || entry.LocalMeshIndex < 0 || entry.LocalMaterialIndex < 0)
-                return false;
-
-            var prefabs = WorldResources.RefPrefabs;
-            if (prefabs == null || (uint)entry.RenderShardIndex >= (uint)prefabs.Length)
-                return false;
-
-            prefab = prefabs[entry.RenderShardIndex];
-            return prefab != Entity.Null;
-        }
-
-        static void ApplyRenderShardRefData(
-            EntityManager em,
-            Entity entity,
-            RefEntry entry,
-            bool isInterior,
-            int2 exteriorCell,
-            FixedString128Bytes interiorCellId,
-            float3 worldOffset,
-            RenderShardRecord[] shardCatalog)
-        {
-            float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
-            position += worldOffset;
-            quaternion rotation = new(entry.RotX, entry.RotY, entry.RotZ, entry.RotW);
-
-            em.SetComponentData(entity, LocalTransform.FromPositionRotationScale(position, rotation, entry.Scale));
-            em.SetComponentData(entity, new LocalToWorld
-            {
-                Value = float4x4.TRS(position, rotation, new float3(entry.Scale))
-            });
-            em.SetComponentData(entity, MaterialMeshInfo.FromRenderMeshArrayIndices(entry.LocalMaterialIndex, entry.LocalMeshIndex));
-
-            int textureSlice = entry.SliceIndex < 0 ? WorldResources.FallbackBucketSlice.y : WorldResources.TexBucketInfo[entry.SliceIndex].y;
-            em.SetComponentData(entity, new TextureSlice { Value = textureSlice });
-
-            int globalMeshIndex = TryResolveGlobalMeshIndex(shardCatalog, entry.RenderShardIndex, entry.LocalMeshIndex);
-            var aabb = (uint)globalMeshIndex < (uint)WorldResources.MeshBounds.Length
-                ? WorldResources.MeshBounds[globalMeshIndex]
-                : new AABB { Center = float3.zero, Extents = new float3(1f) };
-            em.SetComponentData(entity, new RenderBounds { Value = aabb });
-
-            ApplyRefRootMetadata(em, entity, entry, isInterior, exteriorCell, interiorCellId);
-            if (isInterior)
-                EnsureRenderEnabled(em, entity);
         }
 
         static Entity SpawnModelPrefabRef(
@@ -745,15 +612,9 @@ namespace VVardenfell.Runtime.Streaming
 
         static void WarnUnsupportedSpawnMode(RefEntry entry, string cellLabel)
         {
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.RenderShard)
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.LogicalOnly)
                 return;
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab
-                && IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind))
-            {
-                return;
-            }
-            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab
-                && BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode))
+            if (entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab)
                 return;
 
             string key = $"{cellLabel}:{entry.PlacedRefId}:{entry.SpawnModeRaw}";
@@ -761,14 +622,14 @@ namespace VVardenfell.Runtime.Streaming
                 return;
 
             string mode = FormatRefSpawnMode(entry.SpawnModeRaw);
-            Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with render-shard refs.");
+            Debug.LogWarning($"[VVardenfell] {cellLabel} ref {entry.PlacedRefId:X8} uses unsupported world spawn mode {mode}; rebuild cache pipeline {CacheFormat.WorldBakePipelineVersion} with model-prefab refs.");
         }
 
         static void WarnDroppedRef(RefEntry entry, string cellLabel, string reason)
         {
             cellLabel = string.IsNullOrEmpty(cellLabel) ? "unknown cell" : cellLabel;
             reason = string.IsNullOrEmpty(reason) ? "unknown spawn failure" : reason;
-            string key = $"{cellLabel}:{entry.PlacedRefId:X8}:{entry.SpawnModeRaw}:{entry.RenderShardIndex}:{entry.ModelPrefabIndex}:{reason}";
+            string key = $"{cellLabel}:{entry.PlacedRefId:X8}:{entry.SpawnModeRaw}:{entry.ModelPrefabIndex}:{reason}";
             if (!s_DroppedRefWarnings.Add(key))
                 return;
 
@@ -776,7 +637,7 @@ namespace VVardenfell.Runtime.Streaming
             string kind = FormatContentReferenceKind(entry.ContentKind);
             Debug.LogWarning(
                 $"[VVardenfell][DroppedRef] {cellLabel} ref {entry.PlacedRefId:X8} was not spawned: {reason}. "
-                + $"spawnMode={mode} renderShard={entry.RenderShardIndex} modelPrefab={entry.ModelPrefabIndex} "
+                + $"spawnMode={mode} modelPrefab={entry.ModelPrefabIndex} "
                 + $"mesh={entry.LocalMeshIndex} material={entry.LocalMaterialIndex} content={kind}:{entry.ContentHandleValue} "
                 + $"pos=({entry.PosX:F3}, {entry.PosY:F3}, {entry.PosZ:F3}).");
         }
@@ -798,28 +659,6 @@ namespace VVardenfell.Runtime.Streaming
             return System.Enum.IsDefined(typeof(ContentReferenceKind), kind)
                 ? kind.ToString()
                 : $"unknown({raw})";
-        }
-
-        static string DescribeRenderShardFailure(in RefEntry entry)
-        {
-            if (entry.SpawnModeRaw != (int)RefSpawnMode.RenderShard)
-                return $"unsupported spawn mode {entry.SpawnModeRaw} routed to render-shard spawn";
-            if (entry.RenderShardIndex < 0)
-                return "missing render-shard index";
-            if (entry.LocalMeshIndex < 0)
-                return "missing local mesh index";
-            if (entry.LocalMaterialIndex < 0)
-                return "missing local material index";
-
-            var prefabs = WorldResources.RefPrefabs;
-            if (prefabs == null)
-                return "render-shard prefab table is null";
-            if ((uint)entry.RenderShardIndex >= (uint)prefabs.Length)
-                return $"render-shard index {entry.RenderShardIndex} is outside prefab table length {prefabs.Length}";
-            if (prefabs[entry.RenderShardIndex] == Entity.Null)
-                return $"render-shard prefab {entry.RenderShardIndex} is null";
-
-            return "render-shard prefab lookup failed";
         }
 
         static string DescribeModelPrefabFailure(in RefEntry entry, Entity[] prefabs)
@@ -949,17 +788,6 @@ namespace VVardenfell.Runtime.Streaming
                 DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
                 DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
             };
-        }
-
-        static int TryResolveGlobalMeshIndex(RenderShardRecord[] shardCatalog, int renderShardIndex, int localMeshIndex)
-        {
-            if (shardCatalog == null || (uint)renderShardIndex >= (uint)shardCatalog.Length)
-                return -1;
-
-            var globalMeshIndices = shardCatalog[renderShardIndex]?.GlobalMeshIndices;
-            return globalMeshIndices != null && (uint)localMeshIndex < (uint)globalMeshIndices.Length
-                ? globalMeshIndices[localMeshIndex]
-                : -1;
         }
 
     }

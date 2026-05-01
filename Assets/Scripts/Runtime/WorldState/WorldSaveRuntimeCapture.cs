@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Runtime.Components;
@@ -18,12 +19,16 @@ namespace VVardenfell.Runtime.WorldState
             Entity playerEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlayerTag>(entityManager);
             Entity viewEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlayerViewComponent>(entityManager);
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
+            Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
+            Entity dialogueEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindDialogueState>(entityManager);
             Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
             Entity transitionEntity = WorldStateEntityQueryUtility.GetSingletonEntity<InteriorTransitionState>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
             if (playerEntity == Entity.Null
                 || viewEntity == Entity.Null
                 || journalEntity == Entity.Null
+                || questJournalEntity == Entity.Null
+                || dialogueEntity == Entity.Null
                 || inventoryEntity == Entity.Null
                 || transitionEntity == Entity.Null
                 || spawnEntity == Entity.Null)
@@ -44,7 +49,10 @@ namespace VVardenfell.Runtime.WorldState
             var identity = entityManager.HasComponent<ActorIdentitySet>(playerEntity)
                 ? entityManager.GetComponentData<ActorIdentitySet>(playerEntity)
                 : ActorIdentitySet.DefaultPlayer();
+            var playerFactions = CapturePlayerFactions(entityManager, playerEntity);
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
+            var questJournalPayload = CaptureQuestJournalPayload(entityManager, questJournalEntity);
+            var dialoguePayload = CaptureDialoguePayload(entityManager, dialogueEntity);
             var transition = entityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
             var timePayload = CaptureTimePayload(entityManager);
@@ -86,11 +94,14 @@ namespace VVardenfell.Runtime.WorldState
                 PlayerPitchDegrees = view.LocalPitchDegrees,
                 ActorStats = actorStats,
                 PlayerIdentity = identity,
+                PlayerFactions = playerFactions,
                 InteriorActive = transition.InteriorActive != 0 && transition.ActiveInteriorCellId.Length > 0,
                 ActiveInteriorCellId = transition.ActiveInteriorCellId.ToString(),
                 NextJournalSequence = journalState.NextSequence,
                 NextRuntimeRefId = spawnState.NextRuntimeRefId,
                 JournalEntries = journalEntries,
+                QuestJournal = questJournalPayload,
+                Dialogue = dialoguePayload,
                 Inventory = inventoryEntries,
                 KnownSpells = knownSpells,
                 ActiveMagicEffects = activeMagicEffects,
@@ -100,6 +111,99 @@ namespace VVardenfell.Runtime.WorldState
                 Weather = weatherPayload,
             };
             return true;
+        }
+
+        static PlayerFactionMembership[] CapturePlayerFactions(EntityManager entityManager, Entity playerEntity)
+        {
+            if (!entityManager.HasBuffer<PlayerFactionMembership>(playerEntity))
+                return Array.Empty<PlayerFactionMembership>();
+
+            var buffer = entityManager.GetBuffer<PlayerFactionMembership>(playerEntity);
+            var result = new PlayerFactionMembership[buffer.Length];
+            for (int i = 0; i < buffer.Length; i++)
+                result[i] = buffer[i];
+            return result;
+        }
+
+        static MorrowindDialogueSavePayload CaptureDialoguePayload(EntityManager entityManager, Entity dialogueEntity)
+        {
+            var state = entityManager.GetComponentData<MorrowindDialogueState>(dialogueEntity);
+            var knownTopics = entityManager.GetBuffer<MorrowindKnownDialogueTopic>(dialogueEntity);
+            var known = new List<int>();
+            for (int i = 0; i < knownTopics.Length; i++)
+            {
+                if (knownTopics[i].Known != 0)
+                    known.Add(i);
+            }
+
+            var topicEntries = entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity);
+            var entryPayloads = new MorrowindTopicJournalEntrySavePayload[topicEntries.Length];
+            for (int i = 0; i < topicEntries.Length; i++)
+            {
+                entryPayloads[i] = new MorrowindTopicJournalEntrySavePayload
+                {
+                    Sequence = topicEntries[i].Sequence,
+                    DialogueIndex = topicEntries[i].DialogueIndex,
+                    InfoIndex = topicEntries[i].InfoIndex,
+                    ActorPlacedRefId = topicEntries[i].ActorPlacedRefId,
+                    ActorId = topicEntries[i].ActorId.ToString(),
+                    Day = topicEntries[i].Day,
+                    Month = topicEntries[i].Month,
+                    DayOfMonth = topicEntries[i].DayOfMonth,
+                };
+            }
+
+            return new MorrowindDialogueSavePayload
+            {
+                NextTopicEntrySequence = state.NextTopicEntrySequence,
+                KnownTopicDialogueIndices = known.ToArray(),
+                TopicEntries = entryPayloads,
+            };
+        }
+
+        static MorrowindQuestJournalSavePayload CaptureQuestJournalPayload(EntityManager entityManager, Entity questJournalEntity)
+        {
+            var state = entityManager.GetComponentData<MorrowindQuestJournalState>(questJournalEntity);
+            var questStates = entityManager.GetBuffer<MorrowindQuestJournalIndex>(questJournalEntity);
+            var nonDefaultStates = new List<MorrowindQuestJournalStateSavePayload>();
+            for (int i = 0; i < questStates.Length; i++)
+            {
+                var quest = questStates[i];
+                if (quest.Index == 0 && quest.Started == 0 && quest.Finished == 0)
+                    continue;
+
+                nonDefaultStates.Add(new MorrowindQuestJournalStateSavePayload
+                {
+                    DialogueIndex = i,
+                    Index = quest.Index,
+                    Started = quest.Started,
+                    Finished = quest.Finished,
+                });
+            }
+
+            var entries = entityManager.GetBuffer<MorrowindQuestJournalEntry>(questJournalEntity);
+            var entryPayloads = new MorrowindQuestJournalEntrySavePayload[entries.Length];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                entryPayloads[i] = new MorrowindQuestJournalEntrySavePayload
+                {
+                    Sequence = entries[i].Sequence,
+                    DialogueIndex = entries[i].DialogueIndex,
+                    InfoIndex = entries[i].InfoIndex,
+                    JournalIndex = entries[i].JournalIndex,
+                    Day = entries[i].Day,
+                    Month = entries[i].Month,
+                    DayOfMonth = entries[i].DayOfMonth,
+                    QuestStatus = entries[i].QuestStatus,
+                };
+            }
+
+            return new MorrowindQuestJournalSavePayload
+            {
+                NextEntrySequence = state.NextEntrySequence,
+                States = nonDefaultStates.ToArray(),
+                Entries = entryPayloads,
+            };
         }
 
         static MorrowindTimeSavePayload CaptureTimePayload(EntityManager entityManager)

@@ -137,6 +137,14 @@ namespace VVardenfell.Core.Cache
             => ReadArray<DialogueInfoDef>(r, ReadDialogueInfo);
 
 
+        static void WriteDialogueConditionArray(BinaryWriter w, DialogueConditionDef[] values)
+            => WriteArray<DialogueConditionDef>(w, values, WriteDialogueCondition);
+
+
+        static DialogueConditionDef[] ReadDialogueConditionArray(BinaryReader r)
+            => ReadArray<DialogueConditionDef>(r, ReadDialogueCondition);
+
+
         static void WriteSpellArray(BinaryWriter w, SpellDef[] values)
             => WriteArray<SpellDef>(w, values, WriteSpell);
 

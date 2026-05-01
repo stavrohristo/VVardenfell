@@ -79,6 +79,30 @@ namespace VVardenfell.Runtime.Shell
                 GlobalZoom = 1f,
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MapWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new JournalWindowState
+            {
+                Rect = new RuntimeWindowRect
+                {
+                    X = 0.12f,
+                    Y = 0.08f,
+                    Width = 0.76f,
+                    Height = 0.78f,
+                },
+                SelectedDialogueIndex = -1,
+                Page = -1,
+                QuestScrollY = 1f,
+                EntryScrollY = 1f,
+            });
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new JournalWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindDialogueSession
+            {
+                SelectedTopicDialogueIndex = -1,
+                ChoiceDialogueIndex = -1,
+                LastInfoIndex = -1,
+            });
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindDialogueResponseRequest());
+            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueSessionLine>(EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueChoice>(EntityManager, runtimeEntity);
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,

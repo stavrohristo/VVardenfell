@@ -1,5 +1,6 @@
 ﻿using System;
 using Unity.Collections;
+using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -10,7 +11,11 @@ namespace VVardenfell.Runtime.Shell
 {
     public partial class RuntimeHudShellPresentationSystem
     {
-        static StatsWindowViewModel BuildStatsModel(RuntimeContentDatabase contentDb, in StatsWindowState state, in PlayerPresentationStats playerStats)
+        static StatsWindowViewModel BuildStatsModel(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            in StatsWindowState state,
+            in PlayerPresentationStats playerStats)
         {
             var attributes = BuildAttributeRows(playerStats);
             BuildSkillRows(contentDb, playerStats, out var majorSkills, out var minorSkills, out var miscSkills);
@@ -38,7 +43,7 @@ namespace VVardenfell.Runtime.Shell
                 MajorSkills = majorSkills,
                 MinorSkills = minorSkills,
                 MiscSkills = miscSkills,
-                Factions = BuildFactionRows(contentDb, playerStats),
+                Factions = BuildFactionRows(contentDb, entityManager, playerStats),
                 BirthSignName = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ToDisplay(playerStats.Identity.BirthSignName, string.Empty) : string.Empty,
                 ReputationText = playerStats.HasPlayer ? playerStats.Identity.Reputation.ToString() : string.Empty,
             };
@@ -130,36 +135,61 @@ namespace VVardenfell.Runtime.Shell
             };
         }
 
-        static StatsWindowFactionRow[] BuildFactionRows(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats)
+        static StatsWindowFactionRow[] BuildFactionRows(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            in PlayerPresentationStats playerStats)
         {
             if (!playerStats.HasPlayer
                 || contentDb == null
-                || !contentDb.TryGetActorHandle("player", out var actorHandle)
-                || !actorHandle.IsValid)
+                || playerStats.PlayerEntity == Entity.Null
+                || !entityManager.Exists(playerStats.PlayerEntity)
+                || !entityManager.HasBuffer<PlayerFactionMembership>(playerStats.PlayerEntity))
             {
                 return Array.Empty<StatsWindowFactionRow>();
             }
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            if (string.IsNullOrWhiteSpace(actor.FactionId)
-                || !contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle)
-                || !factionHandle.IsValid)
+            var memberships = entityManager.GetBuffer<PlayerFactionMembership>(playerStats.PlayerEntity, true);
+            int count = 0;
+            for (int i = 0; i < memberships.Length; i++)
             {
-                return Array.Empty<StatsWindowFactionRow>();
+                if (IsVisibleFactionMembership(contentDb, memberships[i]))
+                    count++;
             }
 
-            ref readonly var faction = ref contentDb.GetFaction(factionHandle);
-            if (faction.Hidden != 0)
+            if (count == 0)
                 return Array.Empty<StatsWindowFactionRow>();
 
-            return new[]
+            var rows = new StatsWindowFactionRow[count];
+            int write = 0;
+            for (int i = 0; i < memberships.Length; i++)
             {
-                new StatsWindowFactionRow
+                var membership = memberships[i];
+                if (!IsVisibleFactionMembership(contentDb, membership))
+                    continue;
+
+                ref readonly var faction = ref contentDb.Data.Factions[membership.FactionIndex];
+                rows[write++] = new StatsWindowFactionRow
                 {
-                    Name = RuntimeContentMetadataResolver.ResolveFactionDisplayName(faction, actor.FactionId),
-                    Rank = RuntimeContentMetadataResolver.ResolveFactionRankName(faction, actor.Rank),
-                },
-            };
+                    Name = RuntimeContentMetadataResolver.ResolveFactionDisplayName(faction, faction.Id),
+                    Rank = RuntimeContentMetadataResolver.ResolveFactionRankName(faction, membership.Rank),
+                };
+            }
+
+            return rows;
+        }
+
+        static bool IsVisibleFactionMembership(RuntimeContentDatabase contentDb, in PlayerFactionMembership membership)
+        {
+            if (membership.Joined == 0
+                || membership.Expelled != 0
+                || (uint)membership.FactionIndex >= (uint)contentDb.FactionCount)
+            {
+                return false;
+            }
+
+            ref readonly var faction = ref contentDb.Data.Factions[membership.FactionIndex];
+            return faction.Hidden == 0;
         }
 
         static string ResolveAttributeValue(int attributeIndex, in PlayerPresentationStats playerStats)

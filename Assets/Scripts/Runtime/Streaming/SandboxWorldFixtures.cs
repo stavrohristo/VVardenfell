@@ -28,17 +28,6 @@ namespace VVardenfell.Runtime.Streaming
         public float2 ActorInspectionGridOrigin = new(5f, 5f);
         public bool GroundActorInspectionGrid = true;
         public float ActorInspectionGridHeight = 10f;
-        public bool GenerateVegetationStressGrid = false;
-        public int VegetationStressInstanceCount = 0;
-        public int VegetationStressUniqueStaticCount = 2;
-        public bool VegetationStressRequireTreeAndBush = true;
-        public bool VegetationStressSortRefsByRenderKey = true;
-        public int VegetationStressGridColumns = 128;
-        public float VegetationStressGridSpacing = 0.9f;
-        public int2 VegetationStressExteriorCell = new(-2, -9);
-        public float2 VegetationStressGridOrigin = new(1f, 1f);
-        public bool GroundVegetationStressGrid = true;
-        public float VegetationStressGridHeight = 10f;
         public SandboxSpawnSpec[] Spawns = Array.Empty<SandboxSpawnSpec>();
     }
 
@@ -111,28 +100,6 @@ namespace VVardenfell.Runtime.Streaming
             Spawns = Array.Empty<SandboxSpawnSpec>(),
         };
 
-        public static SandboxWorldProfile VegetationStress => new()
-        {
-            PlayerStartPosition = ExteriorCellPosition(new int2(-2, -9), 4f, 10f, 4f),
-            PlayerStartRotation = quaternion.identity,
-            ClearVanillaStaticCollision = true,
-            QueueInitialExteriorCells = false,
-            SpawnLocalPlayer = false,
-            GenerateActorInspectionGrid = false,
-            GenerateVegetationStressGrid = true,
-            VegetationStressInstanceCount = 8192,
-            VegetationStressUniqueStaticCount = 2,
-            VegetationStressRequireTreeAndBush = true,
-            VegetationStressSortRefsByRenderKey = true,
-            VegetationStressGridColumns = 128,
-            VegetationStressGridSpacing = 0.9f,
-            VegetationStressExteriorCell = new int2(-2, -9),
-            VegetationStressGridOrigin = new float2(1f, 1f),
-            GroundVegetationStressGrid = true,
-            VegetationStressGridHeight = 10f,
-            Spawns = Array.Empty<SandboxSpawnSpec>(),
-        };
-
         internal static float3 ExteriorCellPosition(int2 cell, float localX, float y, float localZ)
         {
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
@@ -165,13 +132,6 @@ namespace VVardenfell.Runtime.Streaming
             var interiorRefs = new Dictionary<string, List<RefEntry>>(StringComparer.OrdinalIgnoreCase);
             var exteriorDoors = new Dictionary<int2, List<DoorRefEntry>>();
             var interiorDoors = new Dictionary<string, List<DoorRefEntry>>(StringComparer.OrdinalIgnoreCase);
-
-            if (profile.GenerateVegetationStressGrid)
-            {
-                var vegetationRefs = VegetationSandboxRefBuilder.Build(cache, contentDb, exteriorCells, profile);
-                AddRange(exteriorRefs, profile.VegetationStressExteriorCell, vegetationRefs);
-                exteriorDoors[profile.VegetationStressExteriorCell] = new List<DoorRefEntry>();
-            }
 
             ClearVanillaRefs(preload, profile.ClearVanillaStaticCollision);
 
@@ -414,6 +374,9 @@ namespace VVardenfell.Runtime.Streaming
             entry = new RefEntry
             {
                 ModelPrefabIndex = hasModel ? descriptor.ModelPrefabIndex : -1,
+                LocalMeshIndex = -1,
+                LocalMaterialIndex = -1,
+                SliceIndex = -1,
                 CollisionIndex = hasModel ? descriptor.CollisionIndex : -1,
                 PlacedRefId = SandboxPlacedRefBase + (uint)index + 1u,
                 DoorMetaIndex = -1,
@@ -427,7 +390,7 @@ namespace VVardenfell.Runtime.Streaming
                 RotZ = spec.Rotation.value.z,
                 RotW = spec.Rotation.value.w,
                 Scale = scale,
-                SpawnModeRaw = (int)RefSpawnMode.ModelPrefab,
+                SpawnModeRaw = (int)(hasModel ? RefSpawnMode.ModelPrefab : RefSpawnMode.LogicalOnly),
             };
 
             if (content.Kind == ContentReferenceKind.Door && spec.DoorDestination.Enabled)

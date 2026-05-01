@@ -50,7 +50,6 @@ namespace VVardenfell.Runtime.Cache
         public Mesh[] Meshes { get; private set; }
         public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
-        public RenderShardCatalogData RenderShardCatalog { get; private set; }
         public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
         public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
         public Texture2D[] Textures { get; private set; }
@@ -101,9 +100,6 @@ namespace VVardenfell.Runtime.Cache
                 BuildTexturePathLookup(textureHashes);
                 texturePayloadState = new TexturePayloadReadState(textureHashes.Length);
                 texturePayloadTask = StartLongRunningTask(() => ReadTexturePayloadsOnWorker(textureHashes, texturePayloadState));
-                if (!RenderShardFile.TryRead(CachePaths.RenderShards, out var renderShardCatalog) || renderShardCatalog?.Records == null)
-                    throw new InvalidDataException("render_shards.bin unreadable");
-                RenderShardCatalog = renderShardCatalog;
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
@@ -143,8 +139,8 @@ namespace VVardenfell.Runtime.Cache
             progress?.BeginStage("Mesh deserialization", "Preparing meshes", 0);
             yield return ReadMeshesIncremental(progress, meshPayloadTask);
 
-            progress?.BeginStage("Ref shards + materials", "Building reference shards", 0);
-            yield return BuildBucketedRefArraysIncremental(progress);
+            progress?.BeginStage("Ref materials", "Building reference texture buckets", 0);
+            yield return BuildReferenceMaterialBucketsIncremental(progress);
 
             progress?.BeginStage("Terrain layer arrays", "Preparing terrain layers", 1);
             if (File.Exists(CachePaths.TerrainLayers))
@@ -467,7 +463,7 @@ namespace VVardenfell.Runtime.Cache
             return dot >= 0 ? path.Substring(0, dot) + extension : path + extension;
         }
 
-        private IEnumerator BuildBucketedRefArraysIncremental(RuntimeLoadProgress progress)
+        private IEnumerator BuildReferenceMaterialBucketsIncremental(RuntimeLoadProgress progress)
         {
             var matRecords = Importer.Bake.MaterialBakery.ReadAll(CachePaths.Materials);
             var refShader = Shader.Find("VVardenfell/MwRef");
@@ -510,7 +506,6 @@ namespace VVardenfell.Runtime.Cache
 
             RenderTexture[] rts = new RenderTexture[keys.Length];
             Material[] materials = new Material[keys.Length * matRecords.Length];
-            var bucketMaterials = new Material[keys.Length][];
             var texBucketInfo = new NativeArray<int2>(
                 Textures.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
@@ -521,8 +516,6 @@ namespace VVardenfell.Runtime.Cache
             int completed = 0;
             int yieldedAt = 0;
             int fallbackSlice = 0;
-            NativeArray<int2> shardRanges = default;
-            NativeArray<int> shardGlobalMeshIndices = default;
 
             bool success = false;
             try
@@ -576,7 +569,6 @@ namespace VVardenfell.Runtime.Cache
                         rt.GenerateMips();
                         completed++;
 
-                        var bucketMats = new Material[matRecords.Length];
                         for (int mi = 0; mi < matRecords.Length; mi++)
                         {
                             var record = matRecords[mi];
@@ -588,12 +580,10 @@ namespace VVardenfell.Runtime.Cache
                             };
                             material.SetTexture("_BaseArray", rt);
                             ApplyAlpha(material, record.Flags);
-                            bucketMats[mi] = material;
                             materials[b * matRecords.Length + mi] = material;
                             completed++;
                         }
 
-                        bucketMaterials[b] = bucketMats;
                         if (b == fallbackBucket)
                             fallbackSlice = whiteSliceInBucket;
                     }
@@ -610,89 +600,16 @@ namespace VVardenfell.Runtime.Cache
                     }
                 }
 
-                var records = RenderShardCatalog?.Records ?? Array.Empty<RenderShardRecord>();
-                if (records.Length == 0)
-                    throw new InvalidDataException("render_shards.bin contains no shard records.");
-
                 if (fallbackBucket < 0)
                     throw new InvalidDataException($"runtime texture bucket map missing fallback key 0x{fallbackBucketKey:X8}.");
 
-                var bucketIndexByKey = new Dictionary<int, int>(keys.Length);
-                for (int i = 0; i < keys.Length; i++)
-                    bucketIndexByKey[keys[i]] = i;
-
-                int remappedShardCount = 0;
-                int invalidShardMeshCount = 0;
-                var remappedBuckets = new HashSet<int>();
-                Mesh invalidShardMeshFallback = null;
-
-                var rmas = new RenderMeshArray[records.Length];
-                shardRanges = new NativeArray<int2>(records.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-                int totalShardMeshIndices = 0;
-                for (int shardIndex = 0; shardIndex < records.Length; shardIndex++)
-                    totalShardMeshIndices += records[shardIndex]?.GlobalMeshIndices?.Length ?? 0;
-                shardGlobalMeshIndices = new NativeArray<int>(totalShardMeshIndices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-
-                int shardGlobalCursor = 0;
-                for (int shardIndex = 0; shardIndex < records.Length; shardIndex++)
-                {
-                    var record = records[shardIndex];
-                    if (!bucketIndexByKey.TryGetValue(record.BucketKey, out int bucketIndex))
-                    {
-                        remappedShardCount++;
-                        remappedBuckets.Add(record.BucketKey);
-                        bucketIndex = fallbackBucket;
-                    }
-
-                    var globalMeshIndices = record.GlobalMeshIndices ?? Array.Empty<int>();
-                    var shardMeshes = new Mesh[globalMeshIndices.Length];
-                    shardRanges[shardIndex] = new int2(shardGlobalCursor, globalMeshIndices.Length);
-                    for (int meshIndex = 0; meshIndex < globalMeshIndices.Length; meshIndex++)
-                    {
-                        int globalMeshIndex = globalMeshIndices[meshIndex];
-                        if ((uint)globalMeshIndex >= (uint)Meshes.Length)
-                        {
-                            invalidShardMeshCount++;
-                            invalidShardMeshFallback ??= CreateInvalidShardMeshFallback();
-                            shardMeshes[meshIndex] = invalidShardMeshFallback;
-                            shardGlobalMeshIndices[shardGlobalCursor++] = -1;
-                            continue;
-                        }
-
-                        shardMeshes[meshIndex] = Meshes[globalMeshIndex];
-                        shardGlobalMeshIndices[shardGlobalCursor++] = globalMeshIndex;
-                    }
-
-                    rmas[shardIndex] = new RenderMeshArray(bucketMaterials[bucketIndex], shardMeshes);
-                }
-
                 WorldResources.RefBaseArrays = rts;
-                WorldResources.RefsRmas = rmas;
-                WorldResources.RefShardMeshRanges = shardRanges;
-                WorldResources.RefShardGlobalMeshIndices = shardGlobalMeshIndices;
                 WorldResources.TexBucketInfo = texBucketInfo;
                 WorldResources.FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
                 WorldResources.BlendVariantCount = matRecords.Length;
                 Materials = materials;
 
-                progress?.CompleteStage("Reference shards ready");
-                RenderShardFile.LogShardStats(RenderShardCatalog, "runtime load");
-                if (remappedShardCount > 0)
-                {
-                    var missingBuckets = new StringBuilder();
-                    int bucketCount = 0;
-                    foreach (int missing in remappedBuckets)
-                    {
-                        if (bucketCount > 0)
-                            missingBuckets.Append(", ");
-                        missingBuckets.AppendFormat("0x{0:X8}", missing);
-                        bucketCount++;
-                    }
-
-                    Debug.LogWarning($"[VVardenfell] remapped {remappedShardCount} render shard(s) ({missingBuckets}) to fallback bucket due to missing bucket keys.");
-                }
-                if (invalidShardMeshCount > 0)
-                    Debug.LogWarning($"[VVardenfell] replaced {invalidShardMeshCount} invalid render shard mesh slot(s) with a fallback mesh. Rebake the cache to remove stale shard data.");
+                progress?.CompleteStage("Reference materials ready");
                 success = true;
             }
             finally
@@ -715,10 +632,6 @@ namespace VVardenfell.Runtime.Cache
                             UnityEngine.Object.Destroy(materials[i]);
                     }
 
-                    if (shardRanges.IsCreated)
-                        shardRanges.Dispose();
-                    if (shardGlobalMeshIndices.IsCreated)
-                        shardGlobalMeshIndices.Dispose();
                     if (texBucketInfo.IsCreated)
                         texBucketInfo.Dispose();
                 }
@@ -1081,38 +994,6 @@ namespace VVardenfell.Runtime.Cache
                     IndexBytes = null;
                 }
             }
-        }
-
-        private static Mesh CreateInvalidShardMeshFallback()
-        {
-            var mesh = new Mesh
-            {
-                name = "VV:InvalidRenderShardFallback",
-                indexFormat = IndexFormat.UInt16,
-            };
-
-            mesh.SetVertices(new[]
-            {
-                new Vector3(0f, 0f, 0f),
-                new Vector3(0f, 0.001f, 0f),
-                new Vector3(0.001f, 0f, 0f),
-            });
-            mesh.SetNormals(new[]
-            {
-                Vector3.up,
-                Vector3.up,
-                Vector3.up,
-            });
-            mesh.SetUVs(0, new[]
-            {
-                Vector2.zero,
-                Vector2.zero,
-                Vector2.zero,
-            });
-            mesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0, calculateBounds: false);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 0.001f);
-            mesh.UploadMeshData(true);
-            return mesh;
         }
 
         private static void ReadExactly(BinaryReader r, byte[] buffer, int length)

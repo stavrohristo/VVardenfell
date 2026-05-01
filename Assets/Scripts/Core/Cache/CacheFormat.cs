@@ -15,15 +15,15 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 44;
+        public const uint FormatVersion = 46;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 26;
-        public const uint GameplayContentVersion = 27;
+        public const uint WorldBakePipelineVersion = 29;
+        public const uint GameplayContentVersion = 35;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized
@@ -63,15 +63,16 @@ namespace VVardenfell.Core.Cache
 
     public enum RefSpawnMode : int
     {
-        RenderShard = 0,
+        LogicalOnly = 0,
         ModelPrefab = 1,
     }
 
     /// <summary>
     /// Fixed-size ref entry in a cell file.
     ///
-    /// World refs now use a mixed-mode layout:
-    /// - <see cref="RefSpawnMode.RenderShard"/> keeps the legacy submesh-centric actor path.
+    /// World refs now use a model-prefab layout:
+    /// - <see cref="RefSpawnMode.LogicalOnly"/> stores placed refs that gameplay needs but
+    ///   no renderable model should be spawned for.
     /// - <see cref="RefSpawnMode.ModelPrefab"/> stores one placed-ref-centric entry that
     ///   resolves to a baked model-prefab graph.
     ///
@@ -88,12 +89,11 @@ namespace VVardenfell.Core.Cache
     [StructLayout(LayoutKind.Explicit, Pack = 1, Size = 72)]
     public struct RefEntry
     {
-        [FieldOffset(0)] public int PrimaryIndex;        // 4 - RenderShardIndex or ModelPrefabIndex by SpawnMode
-        [FieldOffset(0)] public int RenderShardIndex;
+        [FieldOffset(0)] public int PrimaryIndex;        // 4 - ModelPrefabIndex by SpawnMode, or -1 for LogicalOnly
         [FieldOffset(0)] public int ModelPrefabIndex;
-        [FieldOffset(4)] public int LocalMeshIndex;      // 4 - local mesh index within the shard RMA (legacy path)
-        [FieldOffset(8)] public int LocalMaterialIndex;  // 4 - local material index within the shard RMA (legacy path)
-        [FieldOffset(12)] public int SliceIndex;         // 4 - global texture index, or -1 for no texture (legacy path)
+        [FieldOffset(4)] public int LocalMeshIndex;      // 4 - reserved, currently -1
+        [FieldOffset(8)] public int LocalMaterialIndex;  // 4 - reserved, currently -1
+        [FieldOffset(12)] public int SliceIndex;         // 4 - reserved, currently -1
         [FieldOffset(16)] public int CollisionIndex;     // 4 - index into collisions.bin, or -1 if no per-ref collider
         [FieldOffset(20)] public uint PlacedRefId;       // 4 - stable CELL ref id (FRMR/FormId) shared by this placed object
         [FieldOffset(24)] public int DoorMetaIndex;      // 4 - index into the per-cell door metadata table, or -1

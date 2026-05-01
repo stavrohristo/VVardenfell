@@ -24,6 +24,8 @@ namespace VVardenfell.Runtime.Components
         public byte ModalOpen;
         public byte SaveLoadBrowserOpen;
         public byte OptionsOpen;
+        public byte JournalOpen;
+        public byte DialogueOpen;
         public byte SelectedAction;
         public FixedString128Bytes ModalTitle;
         public FixedString512Bytes ModalBody;
@@ -34,6 +36,8 @@ namespace VVardenfell.Runtime.Components
         public byte Pending;
         public byte DismissModal;
         public byte CloseOptions;
+        public byte CloseJournal;
+        public byte CloseDialogue;
         public byte Action;
         public byte PendingPinToggle;
         public byte PinWindow;
@@ -169,5 +173,36 @@ namespace VVardenfell.Runtime.Components
         public float PanY;
         public float Zoom;
         public byte PendingCenterOnPlayer;
+    }
+
+    public struct JournalWindowState : IComponentData
+    {
+        public byte Visible;
+        public byte ShowAll;
+        public byte Mode;
+        public byte OverlayOpen;
+        public RuntimeWindowRect Rect;
+        public int SelectedDialogueIndex;
+        public int Page;
+        public float QuestScrollY;
+        public float EntryScrollY;
+    }
+
+    public struct JournalWindowRequest : IComponentData
+    {
+        public RuntimeWindowRectRequest RectRequest;
+        public byte PendingShowAllChange;
+        public byte ShowAll;
+        public byte PendingSelectionChange;
+        public int SelectedDialogueIndex;
+        public byte PendingModeChange;
+        public byte Mode;
+        public byte PendingOverlayChange;
+        public byte OverlayOpen;
+        public byte PendingPageChange;
+        public int Page;
+        public byte PendingScrollChange;
+        public float QuestScrollY;
+        public float EntryScrollY;
     }
 }

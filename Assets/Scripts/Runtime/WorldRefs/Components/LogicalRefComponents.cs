@@ -16,6 +16,11 @@ namespace VVardenfell.Runtime.Components
         public uint Value;
     }
 
+    public struct PlacedRefRuntimeState : IComponentData
+    {
+        public byte Disabled;
+    }
+
     public struct LogicalRefTag : IComponentData
     {
     }
@@ -66,6 +71,11 @@ namespace VVardenfell.Runtime.Components
     public struct LogicalRefLookup : IComponentData
     {
         public NativeParallelHashMap<uint, Entity> Map;
+    }
+
+    public struct PlacedRefRuntimeStateLookup : IComponentData
+    {
+        public NativeParallelHashMap<uint, byte> DisabledByPlacedRef;
     }
 
     public struct DoorAuthoring : IComponentData

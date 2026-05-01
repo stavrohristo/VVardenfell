@@ -143,6 +143,7 @@ namespace VVardenfell.Importer.Bake
         {
             public DialogueDef Def;
             public readonly List<DialogueInfoDef> Infos = new();
+            public readonly List<List<DialogueConditionDef>> SelectRules = new();
             public readonly Dictionary<string, int> InfoIndexById = new(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -329,7 +330,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Label = "Building deterministic content arrays";
             progress.Current = recordSourcePaths.Length + 1;
-            GameplayContentData data = BuildContentData(state, config.InstallPath);
+            GameplayContentData data = BuildContentData(state, config.InstallPath, recordSourcePaths);
             yield return null;
 
             progress.Label = "Writing gameplay content cache";

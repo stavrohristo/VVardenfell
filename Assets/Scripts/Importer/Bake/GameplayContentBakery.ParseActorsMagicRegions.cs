@@ -376,7 +376,9 @@ namespace VVardenfell.Importer.Bake
                 Rank = -1,
                 Gender = -1,
                 PcRank = -1,
+                FirstSelectRuleIndex = -1,
             };
+            var selectRules = new List<DialogueConditionDef>();
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -436,8 +438,8 @@ namespace VVardenfell.Importer.Bake
                         info.Response = esm.ReadSubrecordString();
                         break;
                     case var tag when tag == ScvrTag:
-                        info.SelectRuleCount += 1;
-                        esm.SkipSubrecord();
+                        if (TryReadDialogueCondition(esm, info.Id, out var condition))
+                            selectRules.Add(condition);
                         break;
                     case var tag when tag == BnamTag:
                         info.ResultScript = esm.ReadSubrecordString();
@@ -473,20 +475,136 @@ namespace VVardenfell.Importer.Bake
                 if (dialogue.InfoIndexById.TryGetValue(info.Id, out int existingIndex))
                 {
                     dialogue.Infos.RemoveAt(existingIndex);
+                    dialogue.SelectRules.RemoveAt(existingIndex);
                     dialogue.InfoIndexById.Remove(info.Id);
                     RebuildInfoIndex(dialogue);
                 }
                 return;
             }
 
+            info.SelectRuleCount = selectRules.Count;
             if (dialogue.InfoIndexById.TryGetValue(info.Id, out int index))
             {
                 dialogue.Infos[index] = info;
+                dialogue.SelectRules[index] = selectRules;
             }
             else
             {
                 dialogue.InfoIndexById[info.Id] = dialogue.Infos.Count;
                 dialogue.Infos.Add(info);
+                dialogue.SelectRules.Add(selectRules);
+            }
+        }
+
+        static bool TryReadDialogueCondition(EsmReader esm, string infoId, out DialogueConditionDef condition)
+        {
+            condition = default;
+            string rule = esm.ReadSubrecordString();
+            if (rule.Length < 5)
+                throw new InvalidDataException($"Invalid SCVR rule size {rule.Length} in INFO '{infoId}'.");
+
+            if (rule[4] < '0' || rule[4] > '5')
+                throw new InvalidDataException($"Invalid SCVR comparison operator '{(int)rule[4]}' in INFO '{infoId}'.");
+
+            if (!TryResolveDialogueConditionFunction(rule, infoId, out byte function))
+                return false;
+
+            if (!esm.ReadSubrecordHeader(out var valueSub))
+                throw new InvalidDataException($"SCVR rule in INFO '{infoId}' is missing INTV/FLTV value.");
+
+            int intValue;
+            float floatValue;
+            byte valueKind;
+            if (valueSub.Tag == EsmFourCC.Make('I', 'N', 'T', 'V'))
+            {
+                intValue = esm.ReadInt32();
+                floatValue = intValue;
+                valueKind = (byte)MorrowindScriptValueKind.Integer;
+            }
+            else if (valueSub.Tag == EsmFourCC.Make('F', 'L', 'T', 'V'))
+            {
+                floatValue = esm.ReadFloat();
+                intValue = (int)floatValue;
+                valueKind = (byte)MorrowindScriptValueKind.Float;
+            }
+            else
+            {
+                throw new InvalidDataException($"SCVR rule in INFO '{infoId}' has invalid value subrecord '{valueSub.TagString}'.");
+            }
+
+            if (esm.SubrecordBytesLeft > 0)
+                esm.SkipSubrecord();
+
+            byte index = 0;
+            if (rule[0] >= '0' && rule[0] <= '9')
+                index = (byte)(rule[0] - '0');
+
+            condition = new DialogueConditionDef
+            {
+                Variable = rule.Length > 5 ? rule.Substring(5) : string.Empty,
+                IntValue = intValue,
+                FloatValue = floatValue,
+                ValueKind = valueKind,
+                Index = index,
+                Function = function,
+                Comparison = (byte)rule[4],
+            };
+            return true;
+        }
+
+        static bool TryResolveDialogueConditionFunction(string rule, string infoId, out byte function)
+        {
+            function = (byte)DialogueConditionFunction.None;
+            if (rule[1] == '1')
+            {
+                if (!int.TryParse(rule.Substring(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out int raw)
+                    || raw < (int)DialogueConditionFunction.FacReactionLowest
+                    || raw > (int)DialogueConditionFunction.PcWerewolfKills)
+                {
+                    throw new InvalidDataException($"Invalid SCVR function index in INFO '{infoId}'.");
+                }
+
+                function = (byte)raw;
+                return true;
+            }
+
+            switch (rule[1])
+            {
+                case '2':
+                    function = (byte)DialogueConditionFunction.Global;
+                    return true;
+                case '3':
+                    function = (byte)DialogueConditionFunction.Local;
+                    return true;
+                case '4':
+                    function = (byte)DialogueConditionFunction.Journal;
+                    return true;
+                case '5':
+                    function = (byte)DialogueConditionFunction.Item;
+                    return true;
+                case '6':
+                    function = (byte)DialogueConditionFunction.Dead;
+                    return true;
+                case '7':
+                    function = (byte)DialogueConditionFunction.NotId;
+                    return true;
+                case '8':
+                    function = (byte)DialogueConditionFunction.NotFaction;
+                    return true;
+                case '9':
+                    function = (byte)DialogueConditionFunction.NotClass;
+                    return true;
+                case 'A':
+                    function = (byte)DialogueConditionFunction.NotRace;
+                    return true;
+                case 'B':
+                    function = (byte)DialogueConditionFunction.NotCell;
+                    return true;
+                case 'C':
+                    function = (byte)DialogueConditionFunction.NotLocal;
+                    return true;
+                default:
+                    throw new InvalidDataException($"Invalid SCVR function '{rule[1]}' in INFO '{infoId}'.");
             }
         }
 
@@ -796,7 +914,7 @@ namespace VVardenfell.Importer.Bake
         static readonly Dictionary<string, List<MagicEffectInstanceDef>> s_EnchantmentEffects = new(StringComparer.OrdinalIgnoreCase);
 
 
-        static GameplayContentData BuildContentData(State state, string installPath)
+        static GameplayContentData BuildContentData(State state, string installPath, string[] recordSourcePaths)
         {
             var data = new GameplayContentData
             {
@@ -849,7 +967,7 @@ namespace VVardenfell.Importer.Bake
                 out data.PathGridNavigationPortals,
                 out data.PathGridNavigationAbstractEdges,
                 out data.PathGridNavigationNeighbors);
-            BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos);
+            BuildDialogueArrays(state.Dialogues, out data.Dialogues, out data.DialogueInfos, out data.DialogueConditions);
             BuildContainerContentArrays(data.Containers, state.ContainerItems, out data.ContainerContentRanges, out data.ContainerItems);
             BuildItemEquipmentArrays(data.Items, state.ItemEquipment, out data.ItemEquipment, out data.ItemEquipmentBodyParts);
             BuildItemLeveledListArrays(state.ItemLeveledLists, out data.ItemLeveledLists, out data.ItemLeveledListEntries);
@@ -857,11 +975,16 @@ namespace VVardenfell.Importer.Bake
             BuildSpellArrays(state.Spells, s_SpellEffects, out data.Spells, ref data.MagicEffectInstances);
             BuildEnchantmentArrays(state.Enchantments, s_EnchantmentEffects, out data.Enchantments, ref data.MagicEffectInstances);
             BuildRegionArrays(state.Regions, out data.Regions, out data.RegionSoundRefs);
+            MorrowindDialogueResultScriptCoverage.Log(data);
+            BuildExplicitRefTargetMap(recordSourcePaths, out var explicitRefTargets, out var ambiguousExplicitRefTargets);
             MorrowindScriptCompiler.Build(
                 data.Scripts,
                 data.Sounds,
                 data.Globals,
                 data.Dialogues,
+                data.DialogueInfos,
+                explicitRefTargets,
+                ambiguousExplicitRefTargets,
                 out data.MorrowindScriptPrograms,
                 out data.MorrowindScriptInstructions,
                 out data.MorrowindScriptLocals);
@@ -869,6 +992,53 @@ namespace VVardenfell.Importer.Bake
             s_SpellEffects.Clear();
             s_EnchantmentEffects.Clear();
             return data;
+        }
+
+        static void BuildExplicitRefTargetMap(
+            string[] recordSourcePaths,
+            out Dictionary<string, uint> explicitRefTargets,
+            out HashSet<string> ambiguousExplicitRefTargets)
+        {
+            explicitRefTargets = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            ambiguousExplicitRefTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (recordSourcePaths == null)
+                return;
+
+            for (int i = 0; i < recordSourcePaths.Length; i++)
+            {
+                using var esm = new EsmReader(recordSourcePaths[i]);
+                var cells = CellIndex.Enumerate(esm).ToArray();
+                for (int cellIndex = 0; cellIndex < cells.Length; cellIndex++)
+                {
+                    var refs = CellReader.ReadReferences(esm, cells[cellIndex]);
+                    for (int refIndex = 0; refIndex < refs.Count; refIndex++)
+                    {
+                        var reference = refs[refIndex];
+                        if (reference.Deleted
+                            || reference.FormId == 0u
+                            || string.IsNullOrWhiteSpace(reference.BaseId))
+                        {
+                            continue;
+                        }
+
+                        string normalizedBaseId = ContentId.NormalizeId(reference.BaseId);
+                        if (ambiguousExplicitRefTargets.Contains(normalizedBaseId))
+                            continue;
+
+                        if (!explicitRefTargets.TryGetValue(normalizedBaseId, out uint existingPlacedRefId))
+                        {
+                            explicitRefTargets.Add(normalizedBaseId, reference.FormId);
+                            continue;
+                        }
+
+                        if (existingPlacedRefId == reference.FormId)
+                            continue;
+
+                        explicitRefTargets.Remove(normalizedBaseId);
+                        ambiguousExplicitRefTargets.Add(normalizedBaseId);
+                    }
+                }
+            }
         }
 
 

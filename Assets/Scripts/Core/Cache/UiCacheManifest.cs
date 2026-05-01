@@ -67,6 +67,29 @@ namespace VVardenfell.Core.Cache
         // icons\k\stealth_sneak.dds). Hidden otherwise.
         public const string HudStealthSneakIcon = "bootstrap.hud.stealth.sneak";
 
+        public const string JournalBookBackground = "bootstrap.journal.book.background";
+        public const string JournalBookBookmark = "bootstrap.journal.book.bookmark";
+        public const string JournalBookPrevNormal = "bootstrap.journal.book.prev.normal";
+        public const string JournalBookPrevHighlight = "bootstrap.journal.book.prev.highlight";
+        public const string JournalBookPrevPressed = "bootstrap.journal.book.prev.pressed";
+        public const string JournalBookNextNormal = "bootstrap.journal.book.next.normal";
+        public const string JournalBookNextHighlight = "bootstrap.journal.book.next.highlight";
+        public const string JournalBookNextPressed = "bootstrap.journal.book.next.pressed";
+        public const string JournalBookCloseNormal = "bootstrap.journal.book.close.normal";
+        public const string JournalBookCloseHighlight = "bootstrap.journal.book.close.highlight";
+        public const string JournalBookClosePressed = "bootstrap.journal.book.close.pressed";
+        public const string JournalBookJournalNormal = "bootstrap.journal.book.journal.normal";
+        public const string JournalBookJournalHighlight = "bootstrap.journal.book.journal.highlight";
+        public const string JournalBookJournalPressed = "bootstrap.journal.book.journal.pressed";
+        public const string JournalBookCancelNormal = "bootstrap.journal.book.cancel.normal";
+        public const string JournalBookCancelHighlight = "bootstrap.journal.book.cancel.highlight";
+        public const string JournalBookCancelPressed = "bootstrap.journal.book.cancel.pressed";
+        public const string JournalBookOptionsNormal = "bootstrap.journal.book.options.normal";
+        public const string JournalBookOptionsHighlight = "bootstrap.journal.book.options.highlight";
+        public const string JournalBookQuests = "bootstrap.journal.book.quests";
+        public const string JournalBookQuestsAll = "bootstrap.journal.book.quests.all";
+        public const string JournalBookQuestsActive = "bootstrap.journal.book.quests.active";
+
         public static readonly string[] RequiredImageKeys =
         {
             MenuNewGameNormal,
@@ -119,6 +142,23 @@ namespace VVardenfell.Core.Cache
             HudCrosshair,
             HudCompass,
             HudStealthSneakIcon,
+            JournalBookBackground,
+            JournalBookBookmark,
+            JournalBookPrevNormal,
+            JournalBookPrevHighlight,
+            JournalBookPrevPressed,
+            JournalBookNextNormal,
+            JournalBookNextHighlight,
+            JournalBookNextPressed,
+            JournalBookCloseNormal,
+            JournalBookCloseHighlight,
+            JournalBookClosePressed,
+            JournalBookJournalNormal,
+            JournalBookJournalHighlight,
+            JournalBookJournalPressed,
+            JournalBookCancelNormal,
+            JournalBookCancelHighlight,
+            JournalBookCancelPressed,
         };
     }
 

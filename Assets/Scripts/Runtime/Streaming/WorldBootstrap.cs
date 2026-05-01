@@ -44,6 +44,7 @@ namespace VVardenfell.Runtime.Streaming
             NativeHashSet<int2> available = default;
             var loadedMap = default(LoadedCellsMap);
             var logicalRefLookup = default(LogicalRefLookup);
+            var placedRefRuntimeStateLookup = default(PlacedRefRuntimeStateLookup);
             var loadQueue = default(LoadQueue);
             var unloadList = default(UnloadList);
             var pendingPhysicsLoad = default(PendingCellPhysicsLoad);
@@ -58,12 +59,6 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;
 
-                if (options.RequiresRenderShardRefs)
-                {
-                    foreach (var step in WorldBootstrapResourceSetup.InstallMeshBounds(cache, progress))
-                        yield return step;
-                }
-
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
@@ -71,12 +66,6 @@ namespace VVardenfell.Runtime.Streaming
                     ? WorldBootstrapPreloadUtility.PreloadCells(cache)
                     : WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active));
                 collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
-
-                if (options.RequiresRenderShardRefs)
-                {
-                    foreach (var step in WorldBootstrapResourceSetup.InstallRenderShardRefPrefabs(em, progress))
-                        yield return step;
-                }
 
                 progress?.BeginStage("Background preload", "Waiting for cell preload and collider load", 2);
                 while (!preloadTask.IsCompleted || !collisionTask.IsCompleted)
@@ -111,6 +100,7 @@ namespace VVardenfell.Runtime.Streaming
                     out available,
                     out loadedMap,
                     out logicalRefLookup,
+                    out placedRefRuntimeStateLookup,
                     out loadQueue,
                     out unloadList,
                     out pendingPhysicsLoad,
@@ -168,6 +158,7 @@ namespace VVardenfell.Runtime.Streaming
                     available,
                     loadedMap,
                     logicalRefLookup,
+                    placedRefRuntimeStateLookup,
                     loadQueue,
                     unloadList,
                     pendingPhysicsLoad,
@@ -194,6 +185,7 @@ namespace VVardenfell.Runtime.Streaming
                         available,
                         loadedMap,
                         logicalRefLookup,
+                        placedRefRuntimeStateLookup,
                         loadQueue,
                         unloadList,
                         pendingPhysicsLoad,

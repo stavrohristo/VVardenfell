@@ -711,11 +711,13 @@ namespace VVardenfell.Importer.Bake
         static void BuildDialogueArrays(
             Dictionary<string, DialogueAccumulator> map,
             out DialogueDef[] dialogues,
-            out DialogueInfoDef[] infos)
+            out DialogueInfoDef[] infos,
+            out DialogueConditionDef[] conditions)
         {
             var ordered = map.OrderBy(pair => ContentId.NormalizeId(pair.Key), StringComparer.Ordinal).ToArray();
             var dialogueList = new List<DialogueDef>(ordered.Length);
             var infoList = new List<DialogueInfoDef>(ordered.Sum(pair => pair.Value.Infos.Count));
+            var conditionList = new List<DialogueConditionDef>();
 
             foreach (var pair in ordered)
             {
@@ -723,11 +725,29 @@ namespace VVardenfell.Importer.Bake
                 def.FirstInfoIndex = infoList.Count;
                 def.InfoCount = pair.Value.Infos.Count;
                 dialogueList.Add(def);
-                infoList.AddRange(pair.Value.Infos);
+                for (int i = 0; i < pair.Value.Infos.Count; i++)
+                {
+                    var info = pair.Value.Infos[i];
+                    var selectRules = i < pair.Value.SelectRules.Count ? pair.Value.SelectRules[i] : null;
+                    if (selectRules != null && selectRules.Count > 0)
+                    {
+                        info.FirstSelectRuleIndex = conditionList.Count;
+                        info.SelectRuleCount = selectRules.Count;
+                        conditionList.AddRange(selectRules);
+                    }
+                    else
+                    {
+                        info.FirstSelectRuleIndex = -1;
+                        info.SelectRuleCount = 0;
+                    }
+
+                    infoList.Add(info);
+                }
             }
 
             dialogues = dialogueList.ToArray();
             infos = infoList.ToArray();
+            conditions = conditionList.ToArray();
         }
 
 

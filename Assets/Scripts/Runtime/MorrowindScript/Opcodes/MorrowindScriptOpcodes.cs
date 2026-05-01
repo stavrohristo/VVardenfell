@@ -2,7 +2,6 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -26,15 +25,19 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int GlobalCount;
         public MorrowindQuestJournalIndex* QuestJournal;
         public int QuestJournalCount;
+        public NativeParallelHashMap<uint, byte> RefDisabledStates;
         public float SecondsPassed;
         public float3 Position;
-        public LocalTransform* Transform;
         public float3 PlayerPosition;
         public ulong* PlayingScriptSoundKeys;
         public int PlayingScriptSoundKeyCount;
         public uint PlacedRefId;
         public uint AudioSequenceBase;
         public Entity InteractionRuntimeEntity;
+        public Entity QuestJournalRuntimeEntity;
+        public Entity DialogueRuntimeEntity;
+        public Entity RefStateRuntimeEntity;
+        public Entity TransformRuntimeEntity;
         public ScriptActivationEvent* ActivationEvents;
         public int ActivationEventCount;
         public int MatchedActivationEventIndex;
@@ -44,8 +47,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         public byte HasMenuMode;
         public byte MenuMode;
         public byte ObservedOnActivate;
-        public byte TransformRotationRequested;
-        public quaternion TransformRotationDelta;
+        public byte SelfDisabled;
+        public byte StopRequested;
         public byte Halted;
         public byte Faulted;
     }
@@ -53,7 +56,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        const int OpcodeCount = 33;
+        const int OpcodeCount = 41;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {
@@ -95,6 +98,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             handlers[(int)MorrowindScriptOpcode.GetOnActivate] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetOnActivate);
             handlers[(int)MorrowindScriptOpcode.Activate] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Activate);
             handlers[(int)MorrowindScriptOpcode.Rotate] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Rotate);
+            handlers[(int)MorrowindScriptOpcode.GetDisabled] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetDisabled);
+            handlers[(int)MorrowindScriptOpcode.RequestSetDisabled] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(RequestSetDisabled);
+            handlers[(int)MorrowindScriptOpcode.SetAngle] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(SetAngle);
+            handlers[(int)MorrowindScriptOpcode.Journal] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Journal);
+            handlers[(int)MorrowindScriptOpcode.StopScript] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(StopScript);
+            handlers[(int)MorrowindScriptOpcode.SetJournalIndex] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(SetJournalIndex);
+            handlers[(int)MorrowindScriptOpcode.AddTopic] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AddTopic);
+            handlers[(int)MorrowindScriptOpcode.FillJournal] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(FillJournal);
             return handlers;
         }
 
@@ -106,6 +117,13 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         [BurstCompile]
         static void Return(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction) => context->Halted = 1;
+
+        [BurstCompile]
+        static void StopScript(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            context->StopRequested = 1;
+            context->Halted = 1;
+        }
 
         [BurstCompile]
         static void PushInt(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
@@ -372,6 +390,66 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         [BurstCompile]
+        static void Journal(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            int index = instruction->Int0;
+            if (context->QuestJournal == null || (uint)index >= (uint)context->QuestJournalCount)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->QuestJournalRuntimeEntity, new MorrowindQuestJournalRequest
+            {
+                DialogueIndex = index,
+                JournalIndex = instruction->Int1,
+                InfoIndex = instruction->Int2,
+                QuestStatus = instruction->Operand0,
+                Operation = (byte)MorrowindQuestJournalRequestOperation.Journal,
+            });
+        }
+
+        [BurstCompile]
+        static void SetJournalIndex(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            int index = instruction->Int0;
+            if (context->QuestJournal == null || (uint)index >= (uint)context->QuestJournalCount)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->QuestJournalRuntimeEntity, new MorrowindQuestJournalRequest
+            {
+                DialogueIndex = index,
+                JournalIndex = instruction->Int1,
+                InfoIndex = -1,
+                QuestStatus = 0,
+                Operation = (byte)MorrowindQuestJournalRequestOperation.SetIndex,
+            });
+        }
+
+        [BurstCompile]
+        static void AddTopic(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            context->Ecb.AppendToBuffer(context->SortKey, context->DialogueRuntimeEntity, new MorrowindDialogueRequest
+            {
+                DialogueIndex = instruction->Int0,
+                Operation = (byte)MorrowindDialogueRequestOperation.AddTopic,
+            });
+        }
+
+        [BurstCompile]
+        static void FillJournal(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            context->Ecb.AppendToBuffer(context->SortKey, context->DialogueRuntimeEntity, new MorrowindDialogueRequest
+            {
+                DialogueIndex = -1,
+                Operation = (byte)MorrowindDialogueRequestOperation.FillJournal,
+            });
+        }
+
+        [BurstCompile]
         static void GetSecondsPassed(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
             Push(context, new MorrowindScriptStackValue
@@ -431,21 +509,126 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void Rotate(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
-            if (context->Transform == null)
-            {
-                context->Faulted = 1;
-                return;
-            }
-
-            if (instruction->Operand0 != 0)
-            {
-                context->Faulted = 1;
-                return;
-            }
-
             float radians = math.radians(instruction->Float0 * context->SecondsPassed);
-            context->TransformRotationDelta = quaternion.AxisAngle(new float3(1f, 0f, 0f), radians);
-            context->TransformRotationRequested = 1;
+            EmitTransformRequest(context, instruction, radians, 0);
+        }
+
+        [BurstCompile]
+        static void SetAngle(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            float radians = math.radians(instruction->Float0);
+            EmitTransformRequest(context, instruction, radians, 1);
+        }
+
+        static void EmitTransformRequest(
+            MorrowindScriptExecutionContext* context,
+            MorrowindScriptInstructionRuntime* instruction,
+            float radians,
+            byte operation)
+        {
+            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if (targetPlacedRefId == 0u || context->TransformRuntimeEntity == Entity.Null || instruction->Operand1 < 0 || instruction->Operand1 > 2)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->TransformRuntimeEntity, new MorrowindScriptTransformRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                Radians = radians,
+                Axis = (byte)instruction->Operand1,
+                Operation = operation,
+            });
+        }
+
+        [BurstCompile]
+        static void GetDisabled(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            byte disabled;
+            if (instruction->Operand0 == (byte)MorrowindScriptRefTargetMode.Self)
+            {
+                disabled = context->SelfDisabled;
+            }
+            else if (instruction->Operand0 == (byte)MorrowindScriptRefTargetMode.PlacedRef)
+            {
+                uint placedRefId = unchecked((uint)instruction->Int0);
+                if (!context->RefDisabledStates.IsCreated)
+                {
+                    context->Faulted = 1;
+                    return;
+                }
+
+                if (!context->RefDisabledStates.TryGetValue(placedRefId, out disabled))
+                    disabled = 0;
+            }
+            else
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = disabled != 0 ? 1 : 0,
+                FloatValue = disabled != 0 ? 1f : 0f,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        [BurstCompile]
+        static void RequestSetDisabled(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if (targetPlacedRefId == 0u || context->RefStateRuntimeEntity == Entity.Null)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->RefStateRuntimeEntity, new MorrowindScriptRefStateRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                Disabled = (byte)(instruction->Operand1 != 0 ? 1 : 0),
+            });
+        }
+
+        static bool TryResolveRefTarget(
+            MorrowindScriptExecutionContext* context,
+            MorrowindScriptInstructionRuntime* instruction,
+            out uint targetPlacedRefId,
+            out Entity targetEntity)
+        {
+            if (instruction->Operand0 == (byte)MorrowindScriptRefTargetMode.Self)
+            {
+                targetPlacedRefId = context->PlacedRefId;
+                targetEntity = context->Entity;
+                return true;
+            }
+
+            if (instruction->Operand0 == (byte)MorrowindScriptRefTargetMode.PlacedRef)
+            {
+                targetPlacedRefId = unchecked((uint)instruction->Int0);
+                targetEntity = Entity.Null;
+                if (!context->RefDisabledStates.IsCreated)
+                {
+                    context->Faulted = 1;
+                    return false;
+                }
+
+                return true;
+            }
+
+            targetPlacedRefId = 0u;
+            targetEntity = Entity.Null;
+            context->Faulted = 1;
+            return false;
         }
 
         public static ulong BuildScriptLoopSourceKey(uint placedRefId, Entity sourceEntity)

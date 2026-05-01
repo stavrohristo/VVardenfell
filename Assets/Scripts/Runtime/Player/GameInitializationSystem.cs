@@ -114,6 +114,8 @@ namespace VVardenfell.Runtime.Player
                 init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
                 init.PlayerActorStats = payload.ActorStats;
                 init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+                if (payload.PlayerFactions != null)
+                    PopulateInitializationFactions(em, initEntity, payload.PlayerFactions);
                 PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
                 PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
                 WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
@@ -170,6 +172,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, effectModifiers);
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            PopulatePlayerFactions(em, initEntity, player);
             var playerSpells = em.AddBuffer<PlayerKnownSpell>(player);
             if (em.HasBuffer<PlayerKnownSpell>(initEntity))
             {
@@ -227,6 +230,46 @@ namespace VVardenfell.Runtime.Player
 
             MorrowindRuntimeLifecycleUtility.EnsureActive(em);
             ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+        }
+
+        static void PopulatePlayerFactions(EntityManager em, Entity initEntity, Entity player)
+        {
+            var factions = em.AddBuffer<PlayerFactionMembership>(player);
+            if (em.HasBuffer<PlayerFactionMembership>(initEntity))
+            {
+                var initFactions = em.GetBuffer<PlayerFactionMembership>(initEntity);
+                for (int i = 0; i < initFactions.Length; i++)
+                {
+                    if (initFactions[i].FactionIndex >= 0)
+                        factions.Add(initFactions[i]);
+                }
+
+                return;
+            }
+
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null
+                || !contentDb.TryGetActorHandle("player", out var actorHandle)
+                || !actorHandle.IsValid)
+            {
+                return;
+            }
+
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            if (string.IsNullOrWhiteSpace(actor.FactionId)
+                || !contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle)
+                || !factionHandle.IsValid)
+            {
+                return;
+            }
+
+            factions.Add(new PlayerFactionMembership
+            {
+                FactionIndex = factionHandle.Index,
+                Rank = actor.Rank,
+                Reputation = actor.Reputation,
+                Joined = 1,
+            });
         }
 
         void ConfigureStreamingAfterInitialization(EntityManager em, in GameInitializationSingleton init)
@@ -303,6 +346,23 @@ namespace VVardenfell.Runtime.Player
             {
                 if (knownSpells[i].Spell.IsValid)
                     buffer.Add(knownSpells[i]);
+            }
+        }
+
+        static void PopulateInitializationFactions(EntityManager em, Entity initEntity, PlayerFactionMembership[] factions)
+        {
+            var buffer = em.HasBuffer<PlayerFactionMembership>(initEntity)
+                ? em.GetBuffer<PlayerFactionMembership>(initEntity)
+                : em.AddBuffer<PlayerFactionMembership>(initEntity);
+
+            buffer.Clear();
+            if (factions == null)
+                return;
+
+            for (int i = 0; i < factions.Length; i++)
+            {
+                if (factions[i].FactionIndex >= 0)
+                    buffer.Add(factions[i]);
             }
         }
 

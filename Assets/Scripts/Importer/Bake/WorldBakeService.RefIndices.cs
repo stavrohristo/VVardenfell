@@ -22,286 +22,6 @@ namespace VVardenfell.Importer.Bake
 
     internal static partial class WorldBakeService
     {
-        private static IEnumerator AssignRenderShardIndicesIncremental(
-            List<StagedCellData> dirtyCells,
-            BakeProgress progress,
-            MeshBakery meshes,
-            TextureBakery textures,
-            RenderShardBakery renderShards)
-        {
-
-            progress.Stage = "Assigning render shards";
-            progress.Total = dirtyCells.Count;
-            progress.Current = 0;
-            progress.Label = dirtyCells.Count == 0 ? "No dirty cells to shard" : $"Assigning render shards 0/{dirtyCells.Count}";
-            yield return null;
-
-            if (dirtyCells.Count == 0)
-                yield break;
-
-            int maxWorkers = Math.Max(1, Environment.ProcessorCount);
-            int fallbackBucketKey = RenderShardBakery.PackBucketKey(1, 1);
-
-            string[] familyKeysByMeshIndex = Array.Empty<string>();
-            if (meshes.Count > 0)
-            {
-                familyKeysByMeshIndex = new string[meshes.Count];
-                int familyCompleted = 0;
-                var familyTask = Task.Run(() =>
-                {
-                    try
-                    {
-                        Parallel.For(
-                            0,
-                            familyKeysByMeshIndex.Length,
-                            new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
-                            meshIndex =>
-                            {
-                                string sourceLabel = meshes.GetSourceLabel(meshIndex);
-                                familyKeysByMeshIndex[meshIndex] = RenderShardBakery.NormalizeFamilyKey(sourceLabel);
-                                Interlocked.Increment(ref familyCompleted);
-                            });
-                    }
-                    finally
-                    {
-                    }
-                });
-
-                while (!familyTask.IsCompleted)
-                {
-                    progress.Total = familyKeysByMeshIndex.Length;
-                    progress.Current = familyCompleted;
-                    progress.Label = $"Precomputing shard families {familyCompleted}/{familyKeysByMeshIndex.Length}";
-                    yield return null;
-                }
-
-                familyTask.GetAwaiter().GetResult();
-
-                progress.Total = familyKeysByMeshIndex.Length;
-                progress.Current = familyKeysByMeshIndex.Length;
-                progress.Label = $"Precomputing shard families {familyKeysByMeshIndex.Length}/{familyKeysByMeshIndex.Length}";
-                yield return null;
-            }
-
-            int[] bucketKeysByTextureIndex = Array.Empty<int>();
-            if (textures.Count > 0)
-            {
-                bucketKeysByTextureIndex = new int[textures.Count];
-                for (int textureIndex = 0; textureIndex < textures.Count; textureIndex++)
-                    bucketKeysByTextureIndex[textureIndex] = GetTextureBucketKey(textures, textureIndex);
-            }
-
-            var localRequestSets = new ConcurrentBag<HashSet<RenderShardRequestKey>>();
-            int requestBuildCompleted = 0;
-            var requestBuildTask = Task.Run(() =>
-            {
-                try
-                {
-                    Parallel.ForEach(
-                        Partitioner.Create(0, dirtyCells.Count),
-                        new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
-                        () => new HashSet<RenderShardRequestKey>(),
-                        (range, _, localSet) =>
-                        {
-                            for (int cellIndex = range.Item1; cellIndex < range.Item2; cellIndex++)
-                            {
-                                var staged = dirtyCells[cellIndex];
-                                var bakedRefs = staged.BakedRefs;
-                                if (bakedRefs != null)
-                                {
-                                    for (int r = 0; r < bakedRefs.Count; r++)
-                                    {
-                                        var baked = bakedRefs[r];
-                                        if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
-                                            continue;
-                                        int globalMeshIndex = baked.LocalMeshIndex;
-                                        if (globalMeshIndex < 0)
-                                            continue;
-
-                                        int textureIndex = baked.SliceIndex;
-                                        int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
-                                            ? bucketKeysByTextureIndex[textureIndex]
-                                            : fallbackBucketKey;
-                                        string familyKey = (uint)globalMeshIndex < (uint)familyKeysByMeshIndex.Length
-                                            ? familyKeysByMeshIndex[globalMeshIndex]
-                                            : "__root__";
-                                        localSet.Add(new RenderShardRequestKey(bucketKey, familyKey, globalMeshIndex));
-                                    }
-                                }
-
-                                Interlocked.Increment(ref requestBuildCompleted);
-                            }
-
-                            return localSet;
-                        },
-                        localSet => localRequestSets.Add(localSet));
-                }
-                finally
-                {
-                }
-            });
-
-            while (!requestBuildTask.IsCompleted)
-            {
-                progress.Total = dirtyCells.Count;
-                progress.Current = requestBuildCompleted;
-                progress.Label = $"Building shard requests {requestBuildCompleted}/{dirtyCells.Count}";
-                yield return null;
-            }
-
-            requestBuildTask.GetAwaiter().GetResult();
-
-            progress.Total = dirtyCells.Count;
-            progress.Current = dirtyCells.Count;
-            progress.Label = $"Building shard requests {dirtyCells.Count}/{dirtyCells.Count}";
-            yield return null;
-
-            List<RenderShardRequestKey> sortedRequests;
-            {
-                var uniqueRequests = new HashSet<RenderShardRequestKey>();
-                foreach (var localSet in localRequestSets)
-                {
-                    if (localSet == null)
-                        continue;
-
-                    foreach (var request in localSet)
-                        uniqueRequests.Add(request);
-                }
-
-                sortedRequests = new List<RenderShardRequestKey>(uniqueRequests);
-                sortedRequests.Sort(RenderShardRequestKeyComparer.Instance);
-            }
-
-            progress.Total = Math.Max(1, sortedRequests.Count);
-            progress.Current = 0;
-            progress.Label = sortedRequests.Count == 0
-                ? "Resolving shard assignments 0/0"
-                : $"Resolving shard assignments 0/{sortedRequests.Count}";
-            yield return null;
-
-            int suspiciousShardCount = 0;
-            var resolvedAssignments = new Dictionary<RenderShardRequestKey, RenderShardResolvedAssignment>(sortedRequests.Count);
-            {
-                for (int i = 0; i < sortedRequests.Count; i++)
-                {
-                    var request = sortedRequests[i];
-                    var assignment = renderShards.GetOrAddAssignment(request.BucketKey, request.FamilyKey, request.GlobalMeshIndex);
-                    if (assignment.LocalMeshIndex == 0 && assignment.RenderShardIndex >= renderShards.Count - 1)
-                        suspiciousShardCount++;
-
-                    resolvedAssignments[request] = new RenderShardResolvedAssignment(
-                        assignment.RenderShardIndex,
-                        assignment.LocalMeshIndex);
-
-                    if (((i + 1) & 255) == 0 || i + 1 == sortedRequests.Count)
-                    {
-                        progress.Total = Math.Max(1, sortedRequests.Count);
-                        progress.Current = i + 1;
-                        progress.Label = $"Resolving shard assignments {i + 1}/{sortedRequests.Count}";
-                        yield return null;
-                    }
-                }
-            }
-
-            int applyCompleted = 0;
-            var applyTask = Task.Run(() =>
-            {
-                try
-                {
-                    Parallel.ForEach(
-                        Partitioner.Create(0, dirtyCells.Count),
-                        new ParallelOptions { MaxDegreeOfParallelism = maxWorkers },
-                        range =>
-                        {
-                            for (int cellIndex = range.Item1; cellIndex < range.Item2; cellIndex++)
-                            {
-                                var staged = dirtyCells[cellIndex];
-                                var bakedRefs = staged.BakedRefs;
-                                if (bakedRefs != null)
-                                {
-                                    for (int r = 0; r < bakedRefs.Count; r++)
-                                    {
-                                        var baked = bakedRefs[r];
-                                        if ((RefSpawnMode)baked.SpawnModeRaw != RefSpawnMode.RenderShard)
-                                            continue;
-                                        int globalMeshIndex = baked.LocalMeshIndex;
-                                        if (globalMeshIndex < 0)
-                                            continue;
-
-                                        int textureIndex = baked.SliceIndex;
-                                        int bucketKey = (uint)textureIndex < (uint)bucketKeysByTextureIndex.Length
-                                            ? bucketKeysByTextureIndex[textureIndex]
-                                            : fallbackBucketKey;
-                                        string familyKey = (uint)globalMeshIndex < (uint)familyKeysByMeshIndex.Length
-                                            ? familyKeysByMeshIndex[globalMeshIndex]
-                                            : "__root__";
-                                        var request = new RenderShardRequestKey(bucketKey, familyKey, globalMeshIndex);
-                                        var resolved = resolvedAssignments[request];
-
-                                        bakedRefs[r] = new CellBakery.BakedRef(
-                                            RefSpawnMode.RenderShard,
-                                            resolved.RenderShardIndex,
-                                            resolved.LocalMeshIndex,
-                                            baked.LocalMaterialIndex,
-                                            baked.SliceIndex,
-                                            baked.CollisionIndex,
-                                            baked.PlacedRefId,
-                                            baked.DoorMetaIndex,
-                                            baked.ContentHandleValue,
-                                            baked.ContentKind,
-                                            baked.PositionUnity,
-                                            baked.RotationUnity,
-                                            baked.Scale);
-                                    }
-                                }
-
-                                Interlocked.Increment(ref applyCompleted);
-                            }
-                        });
-                }
-                finally
-                {
-                }
-            });
-
-            while (!applyTask.IsCompleted)
-            {
-                progress.Total = dirtyCells.Count;
-                progress.Current = applyCompleted;
-                progress.Label = $"Applying shard assignments {applyCompleted}/{dirtyCells.Count}";
-                yield return null;
-            }
-
-            applyTask.GetAwaiter().GetResult();
-
-            progress.Total = dirtyCells.Count;
-            progress.Current = dirtyCells.Count;
-            progress.Label = $"Applying shard assignments {dirtyCells.Count}/{dirtyCells.Count}";
-            yield return null;
-
-            progress.Total = dirtyCells.Count;
-            progress.Current = dirtyCells.Count;
-            progress.Label = $"Assigning render shards {dirtyCells.Count}/{dirtyCells.Count}";
-            yield return null;
-
-            var catalog = renderShards.BuildCatalog();
-            RenderShardFile.LogShardStats(catalog, "bake");
-            if (suspiciousShardCount > 0)
-            {
-            }
-        }
-
-
-        private static int GetTextureBucketKey(TextureBakery textures, int textureIndex)
-        {
-            if (textureIndex < 0)
-                return RenderShardBakery.PackBucketKey(1, 1);
-
-            int2 dims = textures.GetBucketDimensions(textureIndex);
-            return RenderShardBakery.PackBucketKey(dims.x, dims.y);
-        }
-
-
         private static void ResolveDirtyCellIndices(
             StagedCellData staged,
             MeshBakery meshes,
@@ -314,8 +34,6 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, int> textureIndexCache,
             Dictionary<int, ushort> terrainLayerCache)
         {
-            try
-            {
             if (staged.PreparedRefs == null && staged.PlacedRefs == null)
                 return;
 
@@ -344,36 +62,8 @@ namespace VVardenfell.Importer.Bake
             var materialIndices = new HashSet<int>();
             var textureIndices = new HashSet<int>();
             var collisionIndices = new HashSet<int>();
-            for (int i = 0; i < preparedCount; i++)
-            {
-                var prepared = staged.PreparedRefs[i];
-                int meshIndex = meshes.AddOrGet(prepared.MeshSourceLabel, prepared.Built);
-                int materialIndex = GetMaterialIndex(prepared.MaterialFlags, materials, materialIndexCache);
-                int sliceIndex = GetTextureIndex(prepared.TexturePath, textures, textureIndexCache);
-                int collisionIndex = prepared.Collision.IsEmpty
-                    ? -1
-                    : collisions.AddOrGet(prepared.Collision);
-                meshIndices.Add(meshIndex);
-                materialIndices.Add(materialIndex);
-                if (sliceIndex >= 0)
-                    textureIndices.Add(sliceIndex);
-                if (collisionIndex >= 0)
-                    collisionIndices.Add(collisionIndex);
-                result.Add(new CellBakery.BakedRef(
-                    RefSpawnMode.RenderShard,
-                    -1,
-                    meshIndex,
-                    materialIndex,
-                    sliceIndex,
-                    collisionIndex,
-                    prepared.PlacedRefId,
-                    prepared.DoorMetaIndex,
-                    prepared.ContentReference.HandleValue,
-                    (int)prepared.ContentReference.Kind,
-                    prepared.Position,
-                    prepared.Rotation,
-                    prepared.Scale));
-            }
+            if (preparedCount != 0)
+                throw new InvalidOperationException($"{staged.WorkItem.Key} produced {preparedCount} deprecated prepared refs after model-prefab ref conversion.");
 
             for (int i = 0; i < placedCount; i++)
             {
@@ -381,7 +71,7 @@ namespace VVardenfell.Importer.Bake
                 if (string.IsNullOrEmpty(placed.ModelPath))
                 {
                     result.Add(new CellBakery.BakedRef(
-                        RefSpawnMode.RenderShard,
+                        RefSpawnMode.LogicalOnly,
                         -1,
                         -1,
                         -1,
@@ -409,8 +99,9 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                if (assignment.CollisionIndex >= 0)
-                    collisionIndices.Add(assignment.CollisionIndex);
+                int collisionIndex = placed.AttachModelCollision ? assignment.CollisionIndex : -1;
+                if (collisionIndex >= 0)
+                    collisionIndices.Add(collisionIndex);
 
                 result.Add(new CellBakery.BakedRef(
                     RefSpawnMode.ModelPrefab,
@@ -418,7 +109,7 @@ namespace VVardenfell.Importer.Bake
                     -1,
                     -1,
                     -1,
-                    assignment.CollisionIndex,
+                    collisionIndex,
                     placed.PlacedRefId,
                     placed.DoorMetaIndex,
                     placed.ContentReference.HandleValue,
@@ -443,10 +134,6 @@ namespace VVardenfell.Importer.Bake
             else
             {
                 staged.GlobalTerrainLayerIndices = Array.Empty<int>();
-            }
-            }
-            finally
-            {
             }
         }
 

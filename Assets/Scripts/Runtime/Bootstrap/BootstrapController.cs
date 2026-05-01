@@ -603,13 +603,6 @@ namespace VVardenfell.Runtime.Bootstrap
                     return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
             }
 
-            if (mode == BootstrapRuntimeMode.VegetationSandbox)
-            {
-                var profile = SandboxWorldFixtures.VegetationStress;
-                if (profile != null)
-                    return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
-            }
-
             return WorldBootstrapOptions.Vanilla;
         }
 
