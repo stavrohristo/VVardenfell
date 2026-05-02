@@ -332,6 +332,7 @@ namespace VVardenfell.Importer.Bake
             public ushort[] LayerGrid;
             public List<CellBakery.BakedRef> BakedRefs;
             public List<DoorRefEntry> DoorEntries;
+            public List<PlacedRefSoulEntry> CapturedSouls;
             public CellBakery.StaticCollision StaticCollision;
             public List<StagedPlacedRefData> PlacedRefs;
             public List<StagedRefData> PendingRefs;
@@ -389,8 +390,10 @@ namespace VVardenfell.Importer.Bake
             public byte[] WorldMapBytes;
             public byte[] RefBytes;
             public byte[] DoorBytes;
+            public byte[] CapturedSoulBytes;
             public int RefCount;
             public int DoorCount;
+            public int CapturedSoulCount;
             public BuiltCellBlobData BlobData;
             public FinalCellWriteBuffer FinalBuffer;
         }
@@ -416,6 +419,8 @@ namespace VVardenfell.Importer.Bake
             public byte[] RefBytes;
             public byte[] DoorCountBytes;
             public byte[] DoorBytes;
+            public byte[] CapturedSoulCountBytes;
+            public byte[] CapturedSoulBytes;
         }
 
 

@@ -56,6 +56,7 @@ namespace VVardenfell.Runtime.Movement
         public const byte JumpAcceptedFlag = 1 << 4;
         public const byte RunFlag = 1 << 5;
         public const byte SneakFlag = 1 << 6;
+        public const byte ForceSneakFlag = 1 << 7;
 
         public float3 Inertia;
         public float3 LastVelocity;
@@ -106,6 +107,12 @@ namespace VVardenfell.Runtime.Movement
         {
             readonly get => (Flags & SneakFlag) != 0;
             set => SetFlag(SneakFlag, value);
+        }
+
+        public bool ForceSneak
+        {
+            readonly get => (Flags & ForceSneakFlag) != 0;
+            set => SetFlag(ForceSneakFlag, value);
         }
 
         void SetFlag(byte flag, bool value)

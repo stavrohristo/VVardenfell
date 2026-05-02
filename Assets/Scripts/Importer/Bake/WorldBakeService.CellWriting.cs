@@ -238,6 +238,8 @@ namespace VVardenfell.Importer.Bake
                 RefBytes = preparedWrite.RefBytes,
                 DoorCountBytes = BuildUInt32Bytes((uint)preparedWrite.DoorCount),
                 DoorBytes = preparedWrite.DoorBytes,
+                CapturedSoulCountBytes = BuildUInt32Bytes((uint)preparedWrite.CapturedSoulCount),
+                CapturedSoulBytes = preparedWrite.CapturedSoulBytes,
             };
         }
 
@@ -327,6 +329,8 @@ namespace VVardenfell.Importer.Bake
                 WriteSegment(fs, preparedWrite.FinalBuffer.RefBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.DoorCountBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.DoorBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulCountBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulBytes);
 
                 fs.Flush(flushToDisk: true);
 
@@ -468,6 +472,24 @@ namespace VVardenfell.Importer.Bake
             return ms.ToArray();
         }
 
+        private static byte[] BuildCapturedSoulBytes(IReadOnlyList<PlacedRefSoulEntry> entries)
+        {
+            int count = entries?.Count ?? 0;
+            if (count == 0)
+                return null;
+
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            for (int i = 0; i < count; i++)
+            {
+                var entry = entries[i];
+                w.Write(entry.PlacedRefId);
+                w.Write(entry.SoulId ?? string.Empty);
+            }
+
+            return ms.ToArray();
+        }
+
 
         private static byte[] BuildCellHeaderBytes(PreparedCellWriteData preparedWrite)
         {
@@ -602,6 +624,13 @@ namespace VVardenfell.Importer.Bake
                 for (int i = 0; i < doorCount; i++)
                 {
                     SkipExact(r, 36L, "door table entry");
+                    r.ReadString();
+                }
+
+                uint capturedSoulCount = r.ReadUInt32();
+                for (int i = 0; i < capturedSoulCount; i++)
+                {
+                    SkipExact(r, sizeof(uint), "captured soul table entry placed ref id");
                     r.ReadString();
                 }
 
@@ -763,6 +792,7 @@ namespace VVardenfell.Importer.Bake
                     w.Write(reference.DoorDestRotX);
                     w.Write(reference.DoorDestRotY);
                     w.Write(reference.DoorDestRotZ);
+                    w.Write(reference.SoulId ?? string.Empty);
                     if (recordIndex.TryGet(reference.BaseId, out var rec))
                     {
                         w.Write(rec.Tag);

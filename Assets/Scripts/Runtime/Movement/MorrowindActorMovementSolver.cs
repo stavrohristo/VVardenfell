@@ -67,7 +67,8 @@ namespace VVardenfell.Runtime.Movement
             movementState.SpeedFactor = math.saturate(math.length(planarInput));
             movementState.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
             movementState.RunHeld = input.RunHeld;
-            movementState.SneakHeld = input.SneakHeld;
+            bool effectiveSneak = input.SneakHeld || movementState.ForceSneak;
+            movementState.SneakHeld = effectiveSneak;
 
             float3 forward = math.normalizesafe(math.mul(rotation, new float3(0f, 0f, 1f)));
             float3 right = math.normalizesafe(math.mul(rotation, new float3(1f, 0f, 0f)));
@@ -80,12 +81,12 @@ namespace VVardenfell.Runtime.Movement
             float3 desiredVelocity = float3.zero;
             if (moveLengthSq > MinInputEpsilonSq)
             {
-                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, input.SneakHeld, movementState.SpeedFactor, movementState.IsStrafing);
+                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, effectiveSneak, movementState.SpeedFactor, movementState.IsStrafing);
                 desiredVelocity = localMoveWorld * resolvedSpeed;
             }
 
             bool jumpRequested = input.JumpPressed;
-            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !input.SneakHeld;
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !effectiveSneak;
             if (canJump)
             {
                 movementState.JumpAccepted = true;
@@ -181,7 +182,8 @@ namespace VVardenfell.Runtime.Movement
             movementState.SpeedFactor = math.saturate(math.length(planarInput));
             movementState.IsStrafing = math.abs(planarInput.x) > math.abs(planarInput.y) * 2f;
             movementState.RunHeld = input.RunHeld;
-            movementState.SneakHeld = input.SneakHeld;
+            bool effectiveSneak = input.SneakHeld || movementState.ForceSneak;
+            movementState.SneakHeld = effectiveSneak;
 
             float3 forward = math.normalizesafe(math.mul(rotation, new float3(0f, 0f, 1f)));
             float3 right = math.normalizesafe(math.mul(rotation, new float3(1f, 0f, 0f)));
@@ -194,12 +196,12 @@ namespace VVardenfell.Runtime.Movement
             float3 desiredVelocity = float3.zero;
             if (moveLengthSq > MinInputEpsilonSq)
             {
-                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, input.SneakHeld, movementState.SpeedFactor, movementState.IsStrafing);
+                float resolvedSpeed = speed.GetCurrentSpeed(input.RunHeld, effectiveSneak, movementState.SpeedFactor, movementState.IsStrafing);
                 desiredVelocity = localMoveWorld * resolvedSpeed;
             }
 
             bool jumpRequested = input.JumpPressed;
-            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !input.SneakHeld;
+            bool canJump = jumpRequested && hadSolidGroundBeforeMove && !effectiveSneak;
             if (canJump)
             {
                 movementState.JumpAccepted = true;

@@ -215,7 +215,12 @@ namespace VVardenfell.Runtime.Components
                 statSeed.Vitals,
                 statSeed.EffectModifiers,
                 inventoryWeight: 0f);
+            var knownSpells = ecb.AddBuffer<ActorKnownSpell>(logicalEntity);
+            var actorSpells = MorrowindActorMovementStats.BuildKnownSpellListFromActor(contentDb, actorHandle);
+            for (int i = 0; i < actorSpells.Length; i++)
+                knownSpells.Add(actorSpells[i]);
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
+            QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
 
             QueueActorCollider(ref ecb, logicalEntity);
 
@@ -250,6 +255,27 @@ namespace VVardenfell.Runtime.Components
             }
 
             QueueActorInventoryAndEquipment(ref ecb, logicalEntity, contentDb, actorHandle, placedRefId);
+        }
+
+        static void QueueActorFactionMembership(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            RuntimeContentDatabase contentDb,
+            in ActorDef actor)
+        {
+            if (string.IsNullOrWhiteSpace(actor.FactionId))
+                return;
+
+            if (!contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle) || !factionHandle.IsValid)
+                throw new InvalidOperationException($"Actor '{actor.Id}' references unknown faction '{actor.FactionId}'.");
+
+            var factions = ecb.AddBuffer<ActorFactionMembership>(logicalEntity);
+            factions.Add(new ActorFactionMembership
+            {
+                FactionIndex = factionHandle.Index,
+                Rank = actor.Rank,
+                Joined = 1,
+            });
         }
 
         static void QueueActorInventoryAndEquipment(

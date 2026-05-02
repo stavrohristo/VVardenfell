@@ -62,6 +62,17 @@ namespace VVardenfell.Runtime.Inventory
             ContentReference content,
             int count)
         {
+            AddOrIncrementContainerStack(items, placedRefId, content, default, 0, count);
+        }
+
+        public static void AddOrIncrementContainerStack(
+            DynamicBuffer<ContainerSessionItem> items,
+            uint placedRefId,
+            ContentReference content,
+            FixedString64Bytes soulId,
+            int soulActorHandleValue,
+            int count)
+        {
             if (!content.IsValid || count <= 0)
                 return;
 
@@ -69,7 +80,8 @@ namespace VVardenfell.Runtime.Inventory
             {
                 if (items[i].PlacedRefId != placedRefId
                     || items[i].Content.Kind != content.Kind
-                    || items[i].Content.HandleValue != content.HandleValue)
+                    || items[i].Content.HandleValue != content.HandleValue
+                    || !items[i].SoulId.Equals(soulId))
                 {
                     continue;
                 }
@@ -84,6 +96,8 @@ namespace VVardenfell.Runtime.Inventory
             {
                 PlacedRefId = placedRefId,
                 Content = content,
+                SoulId = soulId,
+                SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
             });
         }
@@ -132,13 +146,27 @@ namespace VVardenfell.Runtime.Inventory
             ContentReference content,
             int count)
         {
+            return AddInventoryStack(inventory, content, default, 0, count);
+        }
+
+        public static int AddInventoryStack(
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            ContentReference content,
+            FixedString64Bytes soulId,
+            int soulActorHandleValue,
+            int count)
+        {
             if (!content.IsValid || count <= 0)
                 return 0;
 
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (inventory[i].Content.Kind != content.Kind || inventory[i].Content.HandleValue != content.HandleValue)
+                if (inventory[i].Content.Kind != content.Kind
+                    || inventory[i].Content.HandleValue != content.HandleValue
+                    || !inventory[i].SoulId.Equals(soulId))
+                {
                     continue;
+                }
 
                 var entry = inventory[i];
                 entry.Count += count;
@@ -149,6 +177,8 @@ namespace VVardenfell.Runtime.Inventory
             inventory.Add(new PlayerInventoryItem
             {
                 Content = content,
+                SoulId = soulId,
+                SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
             });
             return count;

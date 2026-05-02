@@ -24,6 +24,7 @@ namespace VVardenfell.Importer.Bake
             var scriptLookup = BuildScriptProgramLookup(data);
             var actorLookup = BuildActorLookup(data);
             var explicitRefLookup = BuildExplicitRefLookup(data);
+            var placeableLookup = GameplayContentReferenceIndex.BuildPlaceableIndex(data);
             var spellLookup = BuildSpellLookup(data);
             var infoOwners = BuildInfoOwners(dialogues, infos.Length);
             int scriptsWithResults = 0;
@@ -49,7 +50,7 @@ namespace VVardenfell.Importer.Bake
                     if (line.Length == 0)
                         continue;
 
-                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, actorLocalLookup, scriptLookup, actorLookup, explicitRefLookup, spellLookup, line, out string reason))
+                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, actorLocalLookup, scriptLookup, actorLookup, explicitRefLookup, placeableLookup, spellLookup, line, out string reason))
                     {
                         supportedLines++;
                         continue;
@@ -106,6 +107,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, ScriptProgramCompileInfo> scripts,
             Dictionary<string, ActorCompileInfo> actors,
             Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
             Dictionary<string, SpellCompileInfo> spells,
             string line,
             out string reason)
@@ -239,27 +241,47 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateRefStateCommand(explicitRefs, line, out reason))
+            if (TryValidateRefStateCommand(explicitRefs, placeables, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidatePositionCellCommand(explicitRefs, line, out reason))
+            if (TryValidateMovementFlagCommand(explicitRefs, placeables, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateInventoryCommand(carryables, actors, explicitRefs, line, out reason))
+            if (TryValidatePositionCellCommand(explicitRefs, placeables, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidatePlayerSpellCommand(spells, line, out reason))
+            if (TryValidatePlaceAtPCCommand(carryables, actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateInventoryCommand(carryables, actors, explicitRefs, placeables, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateActorSpellCommand(spells, actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateScriptedCastCommand(spells, actors, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
             if (TryValidateDispositionCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateActorFactionCommand(actors, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -408,6 +430,7 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryValidateRefStateCommand(
             Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
             string line,
             out string reason)
         {
@@ -428,9 +451,43 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRef(explicitRefs, target))
+            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRefTarget(explicitRefs, placeables, target))
             {
-                reason = $"Explicit {command} target '{target}' is not a unique baked placed ref in dialogue result V1: '{line}'.";
+                reason = $"Explicit {command} target '{target}' is not a unique baked placed ref or active-resolvable content ref in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidateMovementFlagCommand(
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            bool forceSneak = string.Equals(command, "forcesneak", StringComparison.OrdinalIgnoreCase);
+            bool clearForceSneak = string.Equals(command, "clearforcesneak", StringComparison.OrdinalIgnoreCase);
+            if (!forceSneak && !clearForceSneak)
+                return false;
+
+            if (tokens.Length != 1)
+            {
+                reason = $"{command} result takes no arguments in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(target)
+                && !IsPlayerTarget(target)
+                && !KnownExplicitRefTarget(explicitRefs, placeables, target))
+            {
+                reason = $"Explicit {command} target '{target}' is not a unique baked placed ref or active-resolvable content ref in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -439,6 +496,7 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryValidatePositionCellCommand(
             Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
             string line,
             out string reason)
         {
@@ -451,9 +509,9 @@ namespace VVardenfell.Importer.Bake
             if (!string.Equals(command, "positioncell", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRef(explicitRefs, target))
+            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRefTarget(explicitRefs, placeables, target))
             {
-                reason = $"Explicit PositionCell target '{target}' is not a unique baked placed ref in dialogue result V1: '{line}'.";
+                reason = $"Explicit PositionCell target '{target}' is not a unique baked placed ref or active-resolvable content ref in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -475,6 +533,79 @@ namespace VVardenfell.Importer.Bake
             if (string.IsNullOrWhiteSpace(tokens[5]))
             {
                 reason = $"PositionCell result requires a non-empty cell id in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidatePlaceAtPCCommand(
+            Dictionary<string, CarryableCompileInfo> carryables,
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "placeatpc", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                reason = $"Explicit PlaceAtPC target '{target}' is not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 5)
+            {
+                reason = $"PlaceAtPC result requires content id, count, distance, and direction: '{line}'.";
+                return false;
+            }
+
+            string contentId = tokens[1].Trim('"');
+            string normalizedId = ContentId.NormalizeId(contentId);
+            bool knownSpawnable = false;
+            if (actors != null
+                && actors.TryGetValue(normalizedId, out var actor)
+                && actor.Kind == ActorDefKind.Creature)
+            {
+                knownSpawnable = true;
+            }
+            else if (carryables != null
+                     && carryables.TryGetValue(normalizedId, out var carryable)
+                     && (carryable.Kind == ContentReferenceKind.Item || carryable.Kind == ContentReferenceKind.Light))
+            {
+                knownSpawnable = true;
+            }
+
+            if (!knownSpawnable)
+            {
+                reason = $"PlaceAtPC result references unknown or unsupported spawnable content '{contentId}'.";
+                return false;
+            }
+
+            if (!int.TryParse(tokens[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int count)
+                || count < 0)
+            {
+                reason = $"PlaceAtPC result requires a non-negative literal integer count: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(tokens[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                reason = $"PlaceAtPC result requires a literal numeric distance: '{line}'.";
+                return false;
+            }
+
+            if (!int.TryParse(tokens[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int direction)
+                || direction < 0
+                || direction > 3)
+            {
+                reason = $"PlaceAtPC result direction must be a literal integer from 0 to 3: '{line}'.";
                 return false;
             }
 
@@ -1091,7 +1222,14 @@ namespace VVardenfell.Importer.Bake
             if (tokens.Length == 2 && !string.IsNullOrWhiteSpace(tokens[1]))
                 return true;
 
-            reason = $"MessageBox result supports one literal message string in dialogue result V1: '{line}'.";
+            if (tokens.Length == 3
+                && !string.IsNullOrWhiteSpace(tokens[1])
+                && IsOkButton(tokens[2]))
+            {
+                return true;
+            }
+
+            reason = $"MessageBox result supports one literal message string and optional literal Ok button in dialogue result V1: '{line}'.";
             return false;
         }
 
@@ -1125,6 +1263,35 @@ namespace VVardenfell.Importer.Bake
 
             reason = $"{command} result requires one integer value: '{line}'.";
             return false;
+        }
+
+        static bool TryValidateActorFactionCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "raiserank", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (tokens.Length != 1)
+            {
+                reason = $"RaiseRank result takes no arguments: '{line}'.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(target) && !IsPlayerTarget(target) && !KnownActor(actors, target))
+            {
+                reason = $"Explicit RaiseRank target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            return true;
         }
 
         static bool TryValidatePlayerFactionCommand(
@@ -1191,6 +1358,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, CarryableCompileInfo> carryables,
             Dictionary<string, ActorCompileInfo> actors,
             Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
             string line,
             out string reason)
         {
@@ -1209,9 +1377,9 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrWhiteSpace(target)
                 && !IsPlayerTarget(target)
                 && !KnownActor(actors, target)
-                && !KnownExplicitRef(explicitRefs, target))
+                && !KnownExplicitRefTarget(explicitRefs, placeables, target))
             {
-                reason = $"Explicit inventory target '{target}' is not a known actor or unique baked placed ref in dialogue result V1: '{line}'.";
+                reason = $"Explicit inventory target '{target}' is not a known actor, unique baked placed ref, or active-resolvable content ref in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -1221,7 +1389,7 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!int.TryParse(tokens[2], out _))
+            if (!IsSupportedInventoryCountToken(target, remove, tokens[1], tokens[2]))
             {
                 reason = $"{command} result requires integer count: '{line}'.";
                 return false;
@@ -1243,8 +1411,9 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
-        static bool TryValidatePlayerSpellCommand(
+        static bool TryValidateActorSpellCommand(
             Dictionary<string, SpellCompileInfo> spells,
+            Dictionary<string, ActorCompileInfo> actors,
             string line,
             out string reason)
         {
@@ -1259,9 +1428,9 @@ namespace VVardenfell.Importer.Bake
             if (!add && !remove)
                 return false;
 
-            if (!string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
+            if (!IsResolvableActorSpellTarget(actors, target))
             {
-                reason = $"{command} result supports only explicit Player target in dialogue result V1: '{line}'.";
+                reason = $"{command} result requires implicit speaker, explicit Player, or exact actor target in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -1281,12 +1450,83 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryValidateScriptedCastCommand(
+            Dictionary<string, SpellCompileInfo> spells,
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string casterTarget, out string command);
+            if (!string.Equals(command, "cast", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (tokens.Length != 3)
+            {
+                reason = $"Cast result requires spell id and actor target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (!IsResolvableActorSpellTarget(actors, casterTarget) || IsPlayerTarget(casterTarget))
+            {
+                reason = $"Cast result requires implicit speaker or exact non-player actor caster in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            string spellId = tokens[1].Trim('"');
+            if (!spells.TryGetValue(ContentId.NormalizeId(spellId), out var spell))
+            {
+                reason = $"Cast result references unknown spell '{spellId}'.";
+                return false;
+            }
+
+            if (!IsResolvableActorSpellTarget(actors, tokens[2]))
+            {
+                reason = $"Cast result requires exact actor target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            // TODO: Reintroduce effect-level validation when scripted casting is implemented beyond placeholder requests.
+            return true;
+        }
+
+        static bool IsResolvableActorSpellTarget(Dictionary<string, ActorCompileInfo> actors, string target)
+        {
+            if (string.IsNullOrWhiteSpace(target) || IsPlayerTarget(target))
+                return true;
+
+            return actors.ContainsKey(ContentId.NormalizeId(target.Trim('"')));
+        }
+
         static bool TryValidatePlayerCrimeCommand(string line, out string reason)
         {
             reason = string.Empty;
             string[] tokens = SplitCommandTokens(line);
             if (tokens.Length == 0)
                 return false;
+
+            if (string.Equals(tokens[0], "payfine", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(tokens[0], "payfinethief", StringComparison.OrdinalIgnoreCase))
+            {
+                if (tokens.Length == 1)
+                    return true;
+
+                reason = $"{tokens[0]} result takes no arguments in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (string.Equals(tokens[0], "gotojail", StringComparison.OrdinalIgnoreCase))
+            {
+                if (tokens.Length == 1)
+                    return true;
+
+                reason = $"GotoJail result takes no arguments in dialogue result V1: '{line}'.";
+                return false;
+            }
 
             if (!string.Equals(tokens[0], "setpccrimelevel", StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -1298,6 +1538,27 @@ namespace VVardenfell.Importer.Bake
             }
 
             return true;
+        }
+
+        static bool IsSupportedInventoryCountToken(
+            string target,
+            bool remove,
+            string itemId,
+            string countToken)
+        {
+            if (int.TryParse(countToken, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                return true;
+
+            if (!remove
+                || !IsPlayerTarget(target)
+                || !string.Equals(NormalizeGoldId(itemId), "gold_001", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return string.Equals(countToken, "getpccrimelevel", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(countToken, "crimegolddiscount", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(countToken, "crimegoldturnin", StringComparison.OrdinalIgnoreCase);
         }
 
         static Dictionary<string, DialogueCompileInfo> BuildDialogueLookup(DialogueDef[] dialogues)
@@ -1345,18 +1606,18 @@ namespace VVardenfell.Importer.Bake
 
             for (int i = 0; i < data.Actors.Length; i++)
             {
-                AddActorId(lookup, data.Actors[i].Id);
-                AddActorId(lookup, data.Actors[i].OriginalId);
+                AddActorId(lookup, data.Actors[i].Id, data.Actors[i].Kind);
+                AddActorId(lookup, data.Actors[i].OriginalId, data.Actors[i].Kind);
             }
 
             return lookup;
         }
 
-        static void AddActorId(Dictionary<string, ActorCompileInfo> lookup, string actorId)
+        static void AddActorId(Dictionary<string, ActorCompileInfo> lookup, string actorId, ActorDefKind kind)
         {
             string normalizedId = ContentId.NormalizeId(actorId);
             if (!string.IsNullOrEmpty(normalizedId))
-                lookup[normalizedId] = new ActorCompileInfo();
+                lookup[normalizedId] = new ActorCompileInfo { Kind = kind };
         }
 
         static Dictionary<string, ExplicitRefCompileInfo> BuildExplicitRefLookup(GameplayContentData data)
@@ -1385,10 +1646,32 @@ namespace VVardenfell.Importer.Bake
             {
                 string normalizedId = ContentId.NormalizeId(data.Spells[i].Id);
                 if (!string.IsNullOrEmpty(normalizedId))
-                    lookup[normalizedId] = new SpellCompileInfo();
+                {
+                    lookup[normalizedId] = new SpellCompileInfo
+                    {
+                        EffectIds = BuildSpellEffectIds(data, data.Spells[i]),
+                    };
+                }
             }
 
             return lookup;
+        }
+
+        static short[] BuildSpellEffectIds(GameplayContentData data, in SpellDef spell)
+        {
+            if (data?.MagicEffectInstances == null || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
+                return Array.Empty<short>();
+
+            int available = Math.Max(0, data.MagicEffectInstances.Length - spell.EffectStartIndex);
+            int count = Math.Min(spell.EffectCount, available);
+            if (count <= 0)
+                return Array.Empty<short>();
+
+            var effectIds = new short[count];
+            for (int i = 0; i < count; i++)
+                effectIds[i] = data.MagicEffectInstances[spell.EffectStartIndex + i].EffectId;
+
+            return effectIds;
         }
 
         static Dictionary<string, GlobalCompileInfo> BuildGlobalLookup(GameplayContentData data)
@@ -1629,11 +1912,27 @@ namespace VVardenfell.Importer.Bake
         static bool KnownExplicitRef(Dictionary<string, ExplicitRefCompileInfo> explicitRefs, string id)
             => explicitRefs != null && explicitRefs.ContainsKey(ContentId.NormalizeId(id));
 
+        static bool KnownExplicitRefTarget(
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, ContentReference> placeables,
+            string id)
+        {
+            string normalizedId = ContentId.NormalizeId(id);
+            if (string.IsNullOrWhiteSpace(normalizedId))
+                return false;
+
+            return (explicitRefs != null && explicitRefs.ContainsKey(normalizedId))
+                   || (placeables != null && placeables.TryGetValue(normalizedId, out var content) && content.IsValid);
+        }
+
         static bool KnownSpell(Dictionary<string, SpellCompileInfo> spells, string spellId)
             => spells != null && spells.ContainsKey(ContentId.NormalizeId(spellId));
 
         static bool IsPlayerTarget(string target)
             => string.Equals((target ?? string.Empty).Trim().Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
+
+        static bool IsOkButton(string value)
+            => string.Equals((value ?? string.Empty).Trim().Trim('"'), "ok", StringComparison.OrdinalIgnoreCase);
 
         static bool TrySplitActorLocalTarget(string target, out string actorId, out string localName)
         {
@@ -1660,11 +1959,14 @@ namespace VVardenfell.Importer.Bake
             {
                 SkipChoiceSeparators(text, ref index);
                 if (index >= text.Length)
-                    break;
+                    return true;
 
                 string choiceText;
+                bool quotedChoice = false;
+                int closingQuoteIndex = -1;
                 if (text[index] == '"')
                 {
+                    quotedChoice = true;
                     index++;
                     int textStart = index;
                     while (index < text.Length && text[index] != '"')
@@ -1674,6 +1976,7 @@ namespace VVardenfell.Importer.Bake
                         return false;
 
                     choiceText = text.Substring(textStart, index - textStart);
+                    closingQuoteIndex = index;
                     index++;
                 }
                 else
@@ -1690,16 +1993,16 @@ namespace VVardenfell.Importer.Bake
 
                 SkipChoiceSeparators(text, ref index);
 
-                int valueStart = index;
-                if (index < text.Length && (text[index] == '+' || text[index] == '-'))
-                    index++;
-                while (index < text.Length && char.IsDigit(text[index]))
-                    index++;
-
-                if (valueStart == index
-                    || !int.TryParse(text.Substring(valueStart, index - valueStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+                if (!TryReadChoiceInteger(text, ref index, out int value))
                 {
-                    return false;
+                    if (!quotedChoice
+                        || closingQuoteIndex < 0
+                        || !TrySplitTrailingChoiceInteger(choiceText, out choiceText, out value))
+                    {
+                        return false;
+                    }
+
+                    index = closingQuoteIndex;
                 }
 
                 choices.Add(new ChoicePair
@@ -1708,14 +2011,63 @@ namespace VVardenfell.Importer.Bake
                     Value = value,
                 });
             }
-
-            return choices.Count > 0;
         }
 
         static void SkipChoiceSeparators(string text, ref int index)
         {
             while (index < text.Length && (char.IsWhiteSpace(text[index]) || text[index] == ','))
                 index++;
+        }
+
+        static bool TryReadChoiceInteger(string text, ref int index, out int value)
+        {
+            int valueStart = index;
+            if (index < text.Length && (text[index] == '+' || text[index] == '-'))
+                index++;
+            while (index < text.Length && char.IsDigit(text[index]))
+                index++;
+
+            if (valueStart == index
+                || !int.TryParse(text.Substring(valueStart, index - valueStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            {
+                index = valueStart;
+                value = 0;
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TrySplitTrailingChoiceInteger(string text, out string choiceText, out int value)
+        {
+            choiceText = string.Empty;
+            value = 0;
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            int end = text.Length;
+            while (end > 0 && char.IsWhiteSpace(text[end - 1]))
+                end--;
+
+            int start = end;
+            while (start > 0 && char.IsDigit(text[start - 1]))
+                start--;
+
+            if (start == end)
+                return false;
+
+            if (start > 0 && (text[start - 1] == '+' || text[start - 1] == '-'))
+                start--;
+
+            if (start <= 0 || !char.IsWhiteSpace(text[start - 1]))
+                return false;
+
+            string valueText = text.Substring(start, end - start);
+            if (!int.TryParse(valueText, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+                return false;
+
+            choiceText = text.Substring(0, start).TrimEnd();
+            return choiceText.Length > 0;
         }
 
         static string[] SplitCommandTokens(string line)
@@ -1789,6 +2141,7 @@ namespace VVardenfell.Importer.Bake
 
         struct ActorCompileInfo
         {
+            public ActorDefKind Kind;
         }
 
         struct ExplicitRefCompileInfo
@@ -1797,6 +2150,7 @@ namespace VVardenfell.Importer.Bake
 
         struct SpellCompileInfo
         {
+            public short[] EffectIds;
         }
 
         struct GlobalCompileInfo

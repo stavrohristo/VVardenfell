@@ -29,6 +29,7 @@ namespace VVardenfell.Importer.Esm
         public static readonly uint DATA = Make('D', 'A', 'T', 'A');
         public static readonly uint FRMR = Make('F', 'R', 'M', 'R');
         public static readonly uint XSCL = Make('X', 'S', 'C', 'L');
+        public static readonly uint XSOL = Make('X', 'S', 'O', 'L');
         public static readonly uint DNAM = Make('D', 'N', 'A', 'M');
         public static readonly uint DODT = Make('D', 'O', 'D', 'T');
         public static readonly uint DELE = Make('D', 'E', 'L', 'E');

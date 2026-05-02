@@ -35,6 +35,12 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         void ApplyRequest(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
         {
+            if (request.Operation == 2)
+            {
+                ApplyRemoveSoulGem(request);
+                return;
+            }
+
             if (!request.Content.IsValid || request.Count == 0)
                 return;
 
@@ -70,6 +76,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 RemoveActorItem(actorInventory, request.Content, count);
         }
 
+        void ApplyRemoveSoulGem(in MorrowindScriptInventoryMutationRequest request)
+        {
+            if (request.TargetMode != (byte)MorrowindScriptRefTargetMode.Player || request.SoulActorHandleValue <= 0)
+                throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem supports only explicit Player targets with a known soul actor.");
+
+            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(EntityManager);
+            if (inventoryEntity == Entity.Null || !EntityManager.HasBuffer<PlayerInventoryItem>(inventoryEntity))
+                throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
+
+            RemovePlayerSoulGem(EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
+        }
+
         Entity ResolveTarget(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
         {
             if (request.TargetEntity != Entity.Null && EntityManager.Exists(request.TargetEntity))
@@ -85,7 +103,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (!SameContent(inventory[i].Content, content))
+                if (!SameContent(inventory[i].Content, content) || !inventory[i].SoulId.IsEmpty)
                     continue;
 
                 var entry = inventory[i];
@@ -123,11 +141,31 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
+        static void RemovePlayerSoulGem(DynamicBuffer<PlayerInventoryItem> inventory, int soulActorHandleValue)
+        {
+            for (int i = inventory.Length - 1; i >= 0; i--)
+            {
+                var entry = inventory[i];
+                if (entry.SoulActorHandleValue != soulActorHandleValue || entry.SoulId.IsEmpty)
+                    continue;
+
+                if (entry.Count <= 1)
+                {
+                    inventory.RemoveAt(i);
+                    return;
+                }
+
+                entry.Count--;
+                inventory[i] = entry;
+                return;
+            }
+        }
+
         static void AddActorItem(DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
         {
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (!SameContent(inventory[i].Content, content))
+                if (!SameContent(inventory[i].Content, content) || !inventory[i].SoulId.IsEmpty)
                     continue;
 
                 var entry = inventory[i];

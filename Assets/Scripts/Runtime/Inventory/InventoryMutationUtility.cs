@@ -126,8 +126,12 @@ namespace VVardenfell.Runtime.Inventory
 
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (inventory[i].Content.Kind != content.Kind || inventory[i].Content.HandleValue != content.HandleValue)
+                if (inventory[i].Content.Kind != content.Kind
+                    || inventory[i].Content.HandleValue != content.HandleValue
+                    || !inventory[i].SoulId.IsEmpty)
+                {
                     continue;
+                }
 
                 var entry = inventory[i];
                 entry.Count += count;

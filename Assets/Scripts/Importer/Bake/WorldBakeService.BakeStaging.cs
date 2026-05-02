@@ -461,6 +461,7 @@ namespace VVardenfell.Importer.Bake
                 PlacedRefs = canReuse ? null : new List<StagedPlacedRefData>(refs.Count),
                 PendingRefs = canReuse ? null : new List<StagedRefData>(refs.Count),
                 DoorEntries = canReuse ? null : new List<DoorRefEntry>(),
+                CapturedSouls = canReuse ? null : new List<PlacedRefSoulEntry>(),
                 CollisionMissingPayloadSamples = canReuse ? null : new List<string>(4),
             };
 
@@ -485,6 +486,15 @@ namespace VVardenfell.Importer.Bake
                 var reference = refs[i];
                 if (reference.Deleted)
                     continue;
+
+                if (!string.IsNullOrWhiteSpace(reference.SoulId))
+                {
+                    staged.CapturedSouls.Add(new PlacedRefSoulEntry
+                    {
+                        PlacedRefId = reference.FormId,
+                        SoulId = reference.SoulId.Trim(),
+                    });
+                }
 
                 CellBakery.ToUnityTransform(reference, out var pos, out var rot);
                 bool hasBaseRecord = recordIndex.TryGet(reference.BaseId, out var rec);

@@ -65,7 +65,7 @@ namespace VVardenfell.Runtime.Inventory
                         continue;
 
                     WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
-                    ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.Count);
+                    ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                     items.RemoveAt(i);
                     transferredStacks++;
                 }
@@ -82,7 +82,7 @@ namespace VVardenfell.Runtime.Inventory
                     if (entry.PlacedRefId == placedRefId && entry.Count > 0)
                     {
                         WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
-                        ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.Count);
+                        ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                         items.RemoveAt(selectedIndex);
                         transferredStacks = 1;
                     }

@@ -133,7 +133,7 @@ namespace VVardenfell.Runtime.Components
         }
     }
 
-    public struct PlayerKnownSpell : IBufferElementData
+    public struct ActorKnownSpell : IBufferElementData
     {
         public SpellDefHandle Spell;
     }

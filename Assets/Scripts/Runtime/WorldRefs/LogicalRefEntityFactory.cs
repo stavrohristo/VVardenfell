@@ -23,6 +23,8 @@ namespace VVardenfell.Runtime.WorldRefs
         public FixedString128Bytes InteriorCellId;
         public bool AttachDoorInteractable;
         public DoorInteractable DoorInteractable;
+        public FixedString64Bytes CapturedSoulId;
+        public int CapturedSoulActorHandleValue;
         public bool AddRuntimeSpawnIdentity;
         public byte RuntimeSpawnPersistencePolicy;
     }
@@ -39,7 +41,17 @@ namespace VVardenfell.Runtime.WorldRefs
             ecb.SetName(logicalEntity, new FixedString64Bytes($"LogicalRef({descriptor.PlacedRefId:X8})"));
             ecb.AddComponent(logicalEntity, new LogicalRefTag());
             ecb.AddComponent(logicalEntity, new PlacedRefIdentity { Value = descriptor.PlacedRefId });
+            ecb.AddComponent(logicalEntity, new LogicalRefContent { Value = descriptor.ContentReference });
             ecb.AddComponent(logicalEntity, new PlacedRefRuntimeState());
+            if (!descriptor.CapturedSoulId.IsEmpty && descriptor.CapturedSoulActorHandleValue > 0)
+            {
+                ecb.AddComponent(logicalEntity, new PlacedRefCapturedSoul
+                {
+                    SoulId = descriptor.CapturedSoulId,
+                    SoulActorHandleValue = descriptor.CapturedSoulActorHandleValue,
+                });
+            }
+
             if (descriptor.AddRuntimeSpawnIdentity)
             {
                 ecb.AddComponent(logicalEntity, new RuntimeSpawnedRefIdentity

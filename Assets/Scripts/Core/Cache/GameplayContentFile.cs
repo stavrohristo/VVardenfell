@@ -402,6 +402,11 @@ namespace VVardenfell.Core.Cache
         Position = 65,
         GetPCCrimeLevel = 66,
         SetPCCrimeLevel = 67,
+        HasSoulGem = 68,
+        GetPCSleep = 69,
+        WakeUpPC = 70,
+        SetMovementFlag = 71,
+        PlaceAtPC = 72,
     }
 
     public enum MorrowindScriptRefTargetMode : byte
@@ -409,6 +414,12 @@ namespace VVardenfell.Core.Cache
         Self = 0,
         PlacedRef = 1,
         Player = 2,
+        ActiveContentRef = 3,
+    }
+
+    public enum MorrowindScriptMovementFlagKind : byte
+    {
+        ForceSneak = 1,
     }
 
     public enum MorrowindScriptActorAiSettingKind : byte

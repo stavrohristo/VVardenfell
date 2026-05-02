@@ -84,8 +84,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptDispositionRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorVitalRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptInventoryMutationRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptCastRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptMessageBoxRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptShellRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptJailRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptMovementFlagRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptPlaceAtRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptOnDeathConsumeRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
         }

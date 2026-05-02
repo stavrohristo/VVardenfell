@@ -51,7 +51,7 @@ namespace VVardenfell.Runtime.WorldState
                 : ActorIdentitySet.DefaultPlayer();
             var playerCrime = entityManager.HasComponent<PlayerCrimeState>(playerEntity)
                 ? entityManager.GetComponentData<PlayerCrimeState>(playerEntity)
-                : default;
+                : PlayerCrimeState.Default;
             var playerFactions = CapturePlayerFactions(entityManager, playerEntity);
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
             var questJournalPayload = CaptureQuestJournalPayload(entityManager, questJournalEntity);
@@ -72,11 +72,11 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < inventory.Length; i++)
                 inventoryEntries[i] = inventory[i];
 
-            PlayerKnownSpell[] knownSpells = Array.Empty<PlayerKnownSpell>();
-            if (entityManager.HasBuffer<PlayerKnownSpell>(playerEntity))
+            ActorKnownSpell[] knownSpells = Array.Empty<ActorKnownSpell>();
+            if (entityManager.HasBuffer<ActorKnownSpell>(playerEntity))
             {
-                var spellBuffer = entityManager.GetBuffer<PlayerKnownSpell>(playerEntity);
-                knownSpells = new PlayerKnownSpell[spellBuffer.Length];
+                var spellBuffer = entityManager.GetBuffer<ActorKnownSpell>(playerEntity);
+                knownSpells = new ActorKnownSpell[spellBuffer.Length];
                 for (int i = 0; i < spellBuffer.Length; i++)
                     knownSpells[i] = spellBuffer[i];
             }

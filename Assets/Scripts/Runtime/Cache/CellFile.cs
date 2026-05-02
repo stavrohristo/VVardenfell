@@ -35,6 +35,7 @@ namespace VVardenfell.Runtime.Cache
 
         public RefEntry[] Refs;
         public DoorRefEntry[] Doors;
+        public PlacedRefSoulEntry[] CapturedSouls;
         public CellPlacementAuditData PlacementAudit;
 
         public bool HasStaticCollider => StaticColliderBlob.IsCreated;
@@ -58,6 +59,7 @@ namespace VVardenfell.Runtime.Cache
         static readonly ProfilerMarker k_ReadStaticColliderBlob = new("VV.Runtime.CellRead.StaticColliderBlob");
         static readonly ProfilerMarker k_ReadRefTable = new("VV.Runtime.CellRead.RefTable");
         static readonly ProfilerMarker k_ReadDoorTable = new("VV.Runtime.CellRead.DoorTable");
+        static readonly ProfilerMarker k_ReadCapturedSoulTable = new("VV.Runtime.CellRead.CapturedSoulTable");
 
         public static CellData Read(string path, bool isInterior = false, string cellId = null)
         {
@@ -238,6 +240,30 @@ namespace VVardenfell.Runtime.Cache
                             DestRotW = r.ReadSingle(),
                             DestinationCellId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} destination cell id"),
                         };
+                    }
+                }
+
+                cell.CapturedSouls = System.Array.Empty<PlacedRefSoulEntry>();
+                if (fs.Position < fs.Length)
+                {
+                    currentSection = "captured soul table count";
+                    EnsureRemaining(r, sizeof(uint), path, cellId, isInterior, currentSection);
+                    uint capturedSoulCount = r.ReadUInt32();
+
+                    currentSection = "captured soul table";
+                    using (k_ReadCapturedSoulTable.Auto())
+                    {
+                        cell.CapturedSouls = new PlacedRefSoulEntry[capturedSoulCount];
+                        for (int i = 0; i < capturedSoulCount; i++)
+                        {
+                            string entrySection = $"captured soul table entry {i}";
+                            EnsureRemaining(r, sizeof(uint), path, cellId, isInterior, entrySection);
+                            cell.CapturedSouls[i] = new PlacedRefSoulEntry
+                            {
+                                PlacedRefId = r.ReadUInt32(),
+                                SoulId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} soul id"),
+                            };
+                        }
                     }
                 }
 

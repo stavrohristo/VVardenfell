@@ -4,7 +4,8 @@ using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
-{    public enum PassiveActorFamily : byte
+{
+    public enum PassiveActorFamily : byte
     {
         None = 0,
         Npc = 1,
@@ -16,9 +17,20 @@ namespace VVardenfell.Runtime.Components
         public uint Value;
     }
 
+    public struct LogicalRefContent : IComponentData
+    {
+        public ContentReference Value;
+    }
+
     public struct PlacedRefRuntimeState : IComponentData
     {
         public byte Disabled;
+    }
+
+    public struct PlacedRefCapturedSoul : IComponentData
+    {
+        public FixedString64Bytes SoulId;
+        public int SoulActorHandleValue;
     }
 
     public struct LogicalRefTag : IComponentData
@@ -76,6 +88,18 @@ namespace VVardenfell.Runtime.Components
     public struct PlacedRefRuntimeStateLookup : IComponentData
     {
         public NativeParallelHashMap<uint, byte> DisabledByPlacedRef;
+    }
+
+    public struct ActiveExplicitRefTarget
+    {
+        public Entity Entity;
+        public uint PlacedRefId;
+        public byte Ambiguous;
+    }
+
+    public struct ActiveExplicitRefLookup : IComponentData
+    {
+        public NativeParallelHashMap<int, ActiveExplicitRefTarget> ByContentKey;
     }
 
     public struct DoorAuthoring : IComponentData

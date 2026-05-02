@@ -26,6 +26,7 @@ namespace VVardenfell.Runtime.Components
         public byte OptionsOpen;
         public byte JournalOpen;
         public byte DialogueOpen;
+        public byte PlayerSleeping;
         public byte SelectedAction;
         public FixedString128Bytes ModalTitle;
         public FixedString512Bytes ModalBody;

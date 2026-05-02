@@ -196,9 +196,9 @@ namespace VVardenfell.Runtime.WorldState
                 GroundNormal = math.up(),
             });
 
-            if (entityManager.HasBuffer<PlayerKnownSpell>(playerEntity))
+            if (entityManager.HasBuffer<ActorKnownSpell>(playerEntity))
             {
-                var spells = entityManager.GetBuffer<PlayerKnownSpell>(playerEntity);
+                var spells = entityManager.GetBuffer<ActorKnownSpell>(playerEntity);
                 spells.Clear();
                 if (payload.KnownSpells != null)
                 {
@@ -415,20 +415,20 @@ namespace VVardenfell.Runtime.WorldState
             return true;
         }
 
-        static void PopulateInitializationSpellbook(EntityManager entityManager, PlayerKnownSpell[] knownSpells)
+        static void PopulateInitializationSpellbook(EntityManager entityManager, ActorKnownSpell[] knownSpells)
         {
             Entity initEntity = WorldStateEntityQueryUtility.GetSingletonEntity<GameInitializationSingleton>(entityManager);
             if (initEntity == Entity.Null)
                 return;
 
-            if (!entityManager.HasBuffer<PlayerKnownSpell>(initEntity))
+            if (!entityManager.HasBuffer<ActorKnownSpell>(initEntity))
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
-                ecb.AddBuffer<PlayerKnownSpell>(initEntity);
+                ecb.AddBuffer<ActorKnownSpell>(initEntity);
                 WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             }
 
-            DynamicBuffer<PlayerKnownSpell> buffer = entityManager.GetBuffer<PlayerKnownSpell>(initEntity);
+            DynamicBuffer<ActorKnownSpell> buffer = entityManager.GetBuffer<ActorKnownSpell>(initEntity);
             buffer.Clear();
             if (knownSpells == null)
                 return;

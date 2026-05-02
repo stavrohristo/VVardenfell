@@ -89,7 +89,7 @@ namespace VVardenfell.Runtime.Interactions
                 : "item";
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
-            int stackCount = AddInventoryItem(inventory, content);
+            int stackCount = AddInventoryItem(inventory, content, target);
             if (!isRuntimeSpawnedItem)
             {
                 pickedItems.Add(new PickedItemRecord
@@ -131,8 +131,14 @@ namespace VVardenfell.Runtime.Interactions
             return false;
         }
 
-        static int AddInventoryItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content)
+        int AddInventoryItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, Entity target)
         {
+            if (EntityManager.Exists(target) && EntityManager.HasComponent<PlacedRefCapturedSoul>(target))
+            {
+                var soul = EntityManager.GetComponentData<PlacedRefCapturedSoul>(target);
+                return ContainerLootUtility.AddInventoryStack(inventory, content, soul.SoulId, soul.SoulActorHandleValue, 1);
+            }
+
             return ContainerLootUtility.AddInventoryStack(inventory, content, 1);
         }
 

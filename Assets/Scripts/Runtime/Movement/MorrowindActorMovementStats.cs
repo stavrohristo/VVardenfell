@@ -258,10 +258,10 @@ namespace VVardenfell.Runtime.Movement
             };
         }
 
-        public static PlayerKnownSpell[] BuildKnownSpellListFromActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        public static ActorKnownSpell[] BuildKnownSpellListFromActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
         {
             if (contentDb == null || !actorHandle.IsValid)
-                return Array.Empty<PlayerKnownSpell>();
+                return Array.Empty<ActorKnownSpell>();
 
             ref readonly var actor = ref contentDb.Get(actorHandle);
             var actorSpells = contentDb.GetActorSpells(actorHandle);
@@ -273,9 +273,9 @@ namespace VVardenfell.Runtime.Movement
                 && contentDb.GetRace(raceHandle).PowerSpellIds.Length > 0;
 
             if (actorSpells.Length == 0 && !hasRacePowers)
-                return Array.Empty<PlayerKnownSpell>();
+                return Array.Empty<ActorKnownSpell>();
 
-            var results = new List<PlayerKnownSpell>(actorSpells.Length + (hasRacePowers ? contentDb.GetRace(raceHandle).PowerSpellIds.Length : 0));
+            var results = new List<ActorKnownSpell>(actorSpells.Length + (hasRacePowers ? contentDb.GetRace(raceHandle).PowerSpellIds.Length : 0));
             for (int i = 0; i < actorSpells.Length; i++)
                 AddKnownSpell(contentDb, actorSpells[i].SpellId, results);
 
@@ -289,7 +289,7 @@ namespace VVardenfell.Runtime.Movement
             return results.ToArray();
         }
 
-        static void AddKnownSpell(RuntimeContentDatabase contentDb, string spellId, List<PlayerKnownSpell> results)
+        static void AddKnownSpell(RuntimeContentDatabase contentDb, string spellId, List<ActorKnownSpell> results)
         {
             if (string.IsNullOrWhiteSpace(spellId) || !contentDb.TryGetSpellHandle(spellId, out var spellHandle) || !spellHandle.IsValid)
                 return;
@@ -300,7 +300,7 @@ namespace VVardenfell.Runtime.Movement
                     return;
             }
 
-            results.Add(new PlayerKnownSpell
+            results.Add(new ActorKnownSpell
             {
                 Spell = spellHandle,
             });
@@ -310,12 +310,12 @@ namespace VVardenfell.Runtime.Movement
             RuntimeContentDatabase contentDb,
             out ActorRuntimeStatSeed stats,
             out ActorIdentitySet identity,
-            out PlayerKnownSpell[] knownSpells,
+            out ActorKnownSpell[] knownSpells,
             out PlayerInitialInventoryItem[] initialInventory)
         {
             stats = CreateDefaultPlayerSeed();
             identity = ActorIdentitySet.DefaultPlayer();
-            knownSpells = Array.Empty<PlayerKnownSpell>();
+            knownSpells = Array.Empty<ActorKnownSpell>();
             initialInventory = Array.Empty<PlayerInitialInventoryItem>();
 
             if (contentDb == null || !contentDb.TryGetActorHandle("player", out var actorHandle) || !actorHandle.IsValid)

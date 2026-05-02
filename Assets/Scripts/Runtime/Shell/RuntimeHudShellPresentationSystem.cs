@@ -55,7 +55,7 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorDerivedMovementStats>(),
                 ComponentType.ReadOnly<LocalTransform>(),
-                ComponentType.ReadOnly<PlayerKnownSpell>(),
+                ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffect>());
 
             RequireForUpdate<RuntimeShellState>();

@@ -183,8 +183,18 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
         public ContentReference Content;
         public int Count;
+        public int SoulActorHandleValue;
         public byte TargetMode;
         public byte Operation;
+    }
+
+    public struct MorrowindScriptCastRequest : IBufferElementData
+    {
+        public Entity CasterEntity;
+        public uint CasterPlacedRefId;
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public SpellDefHandle Spell;
     }
 
     public struct MorrowindScriptActorLocalSetRequest : IBufferElementData
@@ -237,6 +247,37 @@ namespace VVardenfell.Runtime.Components
     public struct MorrowindScriptMessageBoxRequest : IBufferElementData
     {
         public FixedString512Bytes Body;
+    }
+
+    public enum MorrowindScriptShellRequestOperation : byte
+    {
+        WakeUpPlayer = 1,
+    }
+
+    public struct MorrowindScriptShellRequest : IBufferElementData
+    {
+        public byte Operation;
+    }
+
+    public struct MorrowindScriptJailRequest : IBufferElementData
+    {
+        public int Days;
+    }
+
+    public struct MorrowindScriptMovementFlagRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public byte FlagKind;
+        public byte Enabled;
+    }
+
+    public struct MorrowindScriptPlaceAtRequest : IBufferElementData
+    {
+        public ContentReference Content;
+        public int Count;
+        public float Distance;
+        public byte Direction;
     }
 
     public struct MorrowindScriptAiPackageRequest : IBufferElementData

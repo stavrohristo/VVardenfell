@@ -24,6 +24,7 @@ namespace VVardenfell.Importer.Esm
             float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0;
             float scale = 1f;
             bool deleted = false;
+            string soulId = "";
             bool isDoor = false;
             string doorDest = "";
             float ddx = 0, ddy = 0, ddz = 0, ddrx = 0, ddry = 0, ddrz = 0;
@@ -35,6 +36,7 @@ namespace VVardenfell.Importer.Esm
                     formId, baseId,
                     px, py, pz, rx, ry, rz,
                     scale, deleted,
+                    soulId,
                     isDoor, doorDest,
                     ddx, ddy, ddz, ddrx, ddry, ddrz));
             }
@@ -42,7 +44,7 @@ namespace VVardenfell.Importer.Esm
             void ResetRef()
             {
                 inRef = true;
-                formId = 0; baseId = ""; scale = 1f; deleted = false;
+                formId = 0; baseId = ""; scale = 1f; deleted = false; soulId = "";
                 px = py = pz = rx = ry = rz = 0;
                 isDoor = false; doorDest = "";
                 ddx = ddy = ddz = ddrx = ddry = ddrz = 0;
@@ -78,6 +80,10 @@ namespace VVardenfell.Importer.Esm
                 {
                     scale = esm.ReadFloat();
                     if (esm.SubrecordBytesLeft > 0) esm.SkipSubrecord();
+                }
+                else if (tag == EsmFourCC.XSOL)
+                {
+                    soulId = esm.ReadSubrecordString();
                 }
                 else if (tag == EsmFourCC.DODT && sub.Size >= 24)
                 {

@@ -176,6 +176,7 @@ namespace VVardenfell.Runtime.Streaming
                                 contentReference,
                                 placedRefId,
                                 entry,
+                                contentDb,
                                 source.GetExteriorCell(i),
                                 isInterior,
                                 interiorCellId,
@@ -698,6 +699,7 @@ namespace VVardenfell.Runtime.Streaming
             ContentReference contentReference,
             uint placedRefId,
             RefEntry entry,
+            RuntimeContentDatabase contentDb,
             int2 exteriorCell,
             bool isInterior,
             FixedString128Bytes interiorCellId,
@@ -714,6 +716,14 @@ namespace VVardenfell.Runtime.Streaming
                     : TryResolveInteriorDoorInteractable(entry.PlacedRefId, InteriorCellIdHash.Hash(interiorCellId), out door);
             }
 
+            FixedString64Bytes capturedSoulId = default;
+            int capturedSoulActorHandleValue = 0;
+            if (TryResolveCapturedSoul(contentDb, placedRefId, exteriorCell, isInterior, interiorCellId, out string soulId, out ActorDefHandle actorHandle))
+            {
+                capturedSoulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(soulId);
+                capturedSoulActorHandleValue = actorHandle.Value;
+            }
+
             return new LogicalRefEntityDescriptor
             {
                 ContentReference = contentReference,
@@ -726,7 +736,48 @@ namespace VVardenfell.Runtime.Streaming
                 InteriorCellId = interiorCellId,
                 AttachDoorInteractable = attachDoor,
                 DoorInteractable = door,
+                CapturedSoulId = capturedSoulId,
+                CapturedSoulActorHandleValue = capturedSoulActorHandleValue,
             };
+        }
+
+        static bool TryResolveCapturedSoul(
+            RuntimeContentDatabase contentDb,
+            uint placedRefId,
+            int2 exteriorCell,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            out string soulId,
+            out ActorDefHandle actorHandle)
+        {
+            soulId = null;
+            actorHandle = default;
+            if (contentDb == null || placedRefId == 0u)
+                return false;
+
+            CellData cell = null;
+            if (isInterior)
+                WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(interiorCellId), out cell);
+            else
+                WorldResources.Cells.TryGetValue(exteriorCell, out cell);
+
+            if (cell?.CapturedSouls == null)
+                return false;
+
+            for (int i = 0; i < cell.CapturedSouls.Length; i++)
+            {
+                var entry = cell.CapturedSouls[i];
+                if (entry.PlacedRefId != placedRefId || string.IsNullOrWhiteSpace(entry.SoulId))
+                    continue;
+
+                if (!contentDb.TryGetActorHandle(entry.SoulId, out actorHandle) || !actorHandle.IsValid)
+                    return false;
+
+                soulId = entry.SoulId;
+                return true;
+            }
+
+            return false;
         }
 
         static bool TryGetContentReference(RefEntry entry, out ContentReference contentReference)

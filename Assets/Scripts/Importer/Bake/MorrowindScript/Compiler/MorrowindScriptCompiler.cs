@@ -36,8 +36,13 @@ namespace VVardenfell.Importer.Bake
             GenericRecordDef[] scripts,
             SoundDef[] sounds,
             ActorDef[] actors,
+            BaseDef[] activators,
+            BaseDef[] doors,
+            BaseDef[] containers,
             BaseDef[] items,
             LightDef[] lights,
+            GenericRecordDef[] statics,
+            ItemLeveledListDef[] creatureLeveledLists,
             ItemLeveledListDef[] itemLeveledLists,
             SpellDef[] spells,
             FactionDef[] factions,
@@ -55,6 +60,17 @@ namespace VVardenfell.Importer.Bake
             var soundLookup = BuildSoundLookup(sounds);
             var actorLookup = BuildActorLookup(actors);
             var carryableLookup = BuildCarryableLookup(items, lights, itemLeveledLists);
+            var placeAtSpawnableLookup = BuildPlaceAtSpawnableLookup(actors, items, lights);
+            var explicitContentTargets = BuildExplicitContentTargetLookup(
+                actors,
+                activators,
+                doors,
+                containers,
+                items,
+                lights,
+                statics,
+                creatureLeveledLists,
+                itemLeveledLists);
             var spellLookup = BuildSpellLookup(spells);
             var factionLookup = BuildFactionLookup(factions);
             var actorLocalLookup = BuildActorLocalLookup(actors, scripts);
@@ -73,6 +89,7 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     actorLookup,
                     carryableLookup,
+                    placeAtSpawnableLookup,
                     spellLookup,
                     factionLookup,
                     actorLocalLookup,
@@ -81,6 +98,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueInfos,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     programList,
                     instructionList,
                     localList,
@@ -100,6 +118,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, SoundDefHandle> sounds,
             Dictionary<string, int> actors,
             Dictionary<string, ContentReference> carryables,
+            Dictionary<string, ContentReference> placeAtSpawnables,
             Dictionary<string, SpellDefHandle> spells,
             Dictionary<string, int> factions,
             Dictionary<string, ActorLocalCompileInfo> actorLocals,
@@ -108,6 +127,7 @@ namespace VVardenfell.Importer.Bake
             DialogueInfoDef[] dialogueInfos,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptProgramDef> programs,
             List<MorrowindScriptInstructionDef> instructions,
             List<MorrowindScriptLocalDef> locals,
@@ -152,6 +172,7 @@ namespace VVardenfell.Importer.Bake
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
+                        explicitContentTargets,
                         instructions,
                         ifStack,
                         ref stackDepth,
@@ -180,6 +201,7 @@ namespace VVardenfell.Importer.Bake
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
+                        explicitContentTargets,
                         instructions,
                         ifStack,
                         ref stackDepth,
@@ -219,7 +241,7 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                if (TryCompileSet(line, localLookup, globals, sounds, actors, carryables, spells, factions, actorLocals, dialogues, explicitRefTargets, ambiguousExplicitRefTargets, instructions, ref stackDepth, ref maxStack, out string setFailure))
+                if (TryCompileSet(line, localLookup, globals, sounds, actors, carryables, spells, factions, actorLocals, dialogues, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, ref stackDepth, ref maxStack, out string setFailure))
                 {
                     stackDepth = Math.Max(0, stackDepth - 1);
                     continue;
@@ -244,6 +266,7 @@ namespace VVardenfell.Importer.Bake
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
+                        explicitContentTargets,
                         instructions,
                         ref stackDepth,
                         ref maxStack,
@@ -303,7 +326,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileRefStateCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string refStateFailure))
+                if (TryCompileRefStateCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string refStateFailure))
                 {
                     continue;
                 }
@@ -325,7 +348,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileRotate(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string rotateFailure))
+                if (TryCompileRotate(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string rotateFailure))
                 {
                     continue;
                 }
@@ -336,7 +359,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileSetAngle(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string setAngleFailure))
+                if (TryCompileSetAngle(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string setAngleFailure))
                 {
                     continue;
                 }
@@ -360,6 +383,7 @@ namespace VVardenfell.Importer.Bake
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
+                        explicitContentTargets,
                         instructions,
                         ref stackDepth,
                         ref maxStack,
@@ -375,7 +399,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompilePositionCell(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string positionCellFailure))
+                if (TryCompilePositionCell(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string positionCellFailure))
                 {
                     continue;
                 }
@@ -386,7 +410,18 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiWander(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiWanderFailure))
+                if (TryCompilePlaceAtPC(line, placeAtSpawnables, instructions, out string placeAtPCFailure))
+                {
+                    continue;
+                }
+
+                if (placeAtPCFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, placeAtPCFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileAiWander(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiWanderFailure))
                 {
                     continue;
                 }
@@ -397,7 +432,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiTravel(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiTravelFailure))
+                if (TryCompileAiTravel(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiTravelFailure))
                 {
                     continue;
                 }
@@ -408,7 +443,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiFollowFailure))
+                if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiFollowFailure))
                 {
                     continue;
                 }
@@ -419,7 +454,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiFollowCell(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiFollowCellFailure))
+                if (TryCompileAiFollowCell(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiFollowCellFailure))
                 {
                     continue;
                 }
@@ -430,7 +465,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileStartCombat(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string startCombatFailure))
+                if (TryCompileStartCombat(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string startCombatFailure))
                 {
                     continue;
                 }
@@ -441,7 +476,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileStopCombat(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string stopCombatFailure))
+                if (TryCompileStopCombat(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string stopCombatFailure))
                 {
                     continue;
                 }
@@ -452,7 +487,18 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileActorAiSetting(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string actorAiSettingFailure))
+                if (TryCompileMovementFlagCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string movementFlagFailure))
+                {
+                    continue;
+                }
+
+                if (movementFlagFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, movementFlagFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileActorAiSetting(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string actorAiSettingFailure))
                 {
                     continue;
                 }
@@ -463,7 +509,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileDisposition(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string dispositionFailure))
+                if (TryCompileDisposition(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string dispositionFailure))
                 {
                     continue;
                 }
@@ -474,7 +520,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileSetHealth(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string setHealthFailure))
+                if (TryCompileSetHealth(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string setHealthFailure))
                 {
                     continue;
                 }
@@ -485,7 +531,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileInventoryMutation(line, carryables, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string inventoryFailure))
+                if (TryCompileInventoryMutation(line, actors, carryables, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string inventoryFailure))
                 {
                     continue;
                 }
@@ -504,6 +550,17 @@ namespace VVardenfell.Importer.Bake
                 if (messageBoxFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, messageBoxFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileWakeUpPC(line, instructions, out string wakeUpPCFailure))
+                {
+                    continue;
+                }
+
+                if (wakeUpPCFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, wakeUpPCFailure, lineIndex);
                     return;
                 }
 
@@ -754,6 +811,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             List<IfBlockState> ifStack,
             ref int stackDepth,
@@ -784,6 +842,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -817,6 +876,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             List<IfBlockState> ifStack,
             ref int stackDepth,
@@ -841,6 +901,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ifStack,
                     ref stackDepth,
@@ -883,6 +944,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -993,6 +1055,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -1015,9 +1078,8 @@ namespace VVardenfell.Importer.Bake
                 }
                 else
                 {
-                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                         return false;
-                    targetMode = MorrowindScriptRefTargetMode.PlacedRef;
                 }
 
                 return TryCompileConditionCore(
@@ -1213,6 +1275,32 @@ namespace VVardenfell.Importer.Bake
 
             if (refTargetMode == MorrowindScriptRefTargetMode.Player)
             {
+                if (count >= 2
+                    && tokens[start].Equals("hassoulgem", StringComparison.OrdinalIgnoreCase))
+                {
+                    string soulId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+                    if (string.IsNullOrWhiteSpace(soulId))
+                    {
+                        failure = "HasSoulGem requires one creature id.";
+                        return false;
+                    }
+
+                    if (!actorLookup.TryGetValue(ContentId.NormalizeId(soulId), out int actorIndex))
+                    {
+                        failure = $"HasSoulGem references unknown actor '{soulId}'.";
+                        return false;
+                    }
+
+                    instructions.Add(new MorrowindScriptInstructionDef
+                    {
+                        Opcode = (byte)MorrowindScriptOpcode.HasSoulGem,
+                        Int0 = ActorDefHandle.FromIndex(actorIndex).Value,
+                    });
+                    stackDepth++;
+                    maxStack = Math.Max(maxStack, stackDepth);
+                    return true;
+                }
+
                 if (count >= 2
                     && tokens[start].Equals("getitemcount", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1549,6 +1637,14 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
+            if (token.Equals("getpcsleep", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetPCSleep });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
             if (token.Equals("onactivate", StringComparison.OrdinalIgnoreCase))
             {
                 instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetOnActivate });
@@ -1588,6 +1684,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -1621,6 +1718,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -1646,6 +1744,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -1680,6 +1779,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -1739,6 +1839,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -1770,7 +1871,7 @@ namespace VVardenfell.Importer.Bake
                     return false;
                 }
 
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out uint targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetRefKey, out failure))
                     return false;
 
                 string[] explicitTokens = SplitExpressionTokens(explicitExpression);
@@ -1793,8 +1894,8 @@ namespace VVardenfell.Importer.Bake
                     factionLookup,
                     actorLocalLookup,
                     dialogueLookup,
-                    MorrowindScriptRefTargetMode.PlacedRef,
-                    targetPlacedRefId,
+                    targetMode,
+                    targetRefKey,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -2256,6 +2357,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -2290,10 +2392,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             if (tokens.Length != 1)
@@ -2308,6 +2408,72 @@ namespace VVardenfell.Importer.Bake
                 Operand0 = (byte)targetMode,
                 Operand1 = disabled,
                 Int0 = unchecked((int)targetPlacedRefId),
+            });
+            return true;
+        }
+
+        static bool TryCompileMovementFlagCommand(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid movement flag command '{line}'.";
+                    return false;
+                }
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length == 0)
+                return false;
+
+            string command = NormalizeToken(tokens[0]);
+            bool enable;
+            if (command.Equals("forcesneak", StringComparison.OrdinalIgnoreCase))
+                enable = true;
+            else if (command.Equals("clearforcesneak", StringComparison.OrdinalIgnoreCase))
+                enable = false;
+            else
+                return false;
+
+            if (tokens.Length != 1)
+            {
+                failure = $"{command} command takes no arguments in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (explicitTargetId != null)
+            {
+                if (IsPlayerTarget(explicitTargetId))
+                {
+                    targetMode = MorrowindScriptRefTargetMode.Player;
+                }
+                else
+                {
+                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
+                        return false;
+                }
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.SetMovementFlag,
+                Operand0 = (byte)targetMode,
+                Operand1 = (short)MorrowindScriptMovementFlagKind.ForceSneak,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = enable ? 1 : 0,
             });
             return true;
         }
@@ -2342,6 +2508,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -2364,10 +2531,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2405,6 +2570,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -2427,10 +2593,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2468,6 +2632,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -2490,10 +2655,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2548,6 +2711,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
             ref int maxStack,
@@ -2572,10 +2736,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2608,6 +2770,7 @@ namespace VVardenfell.Importer.Bake
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
+                    explicitContentTargets,
                     instructions,
                     ref stackDepth,
                     ref maxStack,
@@ -2630,15 +2793,88 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
-        static bool TryCompileAiWander(
+        static bool TryCompilePlaceAtPC(
             string line,
-            IReadOnlyDictionary<string, uint> explicitRefTargets,
-            ISet<string> ambiguousExplicitRefTargets,
+            Dictionary<string, ContentReference> placeAtSpawnables,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "aiwander", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "placeatpc"))
+                    return false;
+
+                failure = $"Explicit PlaceAtPC references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!StartsWithCommand(line, "placeatpc"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 5)
+            {
+                failure = $"PlaceAtPC command requires content id, count, distance, and direction in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            string contentId = tokens[1].Trim('"');
+            if (!placeAtSpawnables.TryGetValue(ContentId.NormalizeId(contentId), out var content) || !content.IsValid)
+            {
+                failure = $"PlaceAtPC command references unknown or unsupported spawnable content '{contentId}'.";
+                return false;
+            }
+
+            if (!int.TryParse(NormalizeToken(tokens[2]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int count))
+            {
+                failure = $"PlaceAtPC command requires a literal integer count: '{line}'.";
+                return false;
+            }
+
+            if (count < 0)
+            {
+                failure = $"PlaceAtPC command count must be non-negative: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(NormalizeToken(tokens[3]), NumberStyles.Float, CultureInfo.InvariantCulture, out float distance))
+            {
+                failure = $"PlaceAtPC command requires a literal numeric distance: '{line}'.";
+                return false;
+            }
+
+            if (!int.TryParse(NormalizeToken(tokens[4]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int direction)
+                || direction < 0
+                || direction > 3)
+            {
+                failure = $"PlaceAtPC command direction must be a literal integer from 0 to 3: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.PlaceAtPC,
+                Operand0 = (byte)content.Kind,
+                Int0 = content.HandleValue,
+                Int1 = count,
+                Int2 = direction,
+                Float0 = Math.Max(0f, distance) * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryCompileAiWander(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aiwander", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2678,11 +2914,12 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "aitravel", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (!TrySplitOptionalExplicitCommand(line, "aitravel", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2726,11 +2963,12 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "aifollow", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (!TrySplitOptionalExplicitCommand(line, "aifollow", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2776,11 +3014,12 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "aifollowcell", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (!TrySplitOptionalExplicitCommand(line, "aifollowcell", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2836,11 +3075,12 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "stopcombat", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (!TrySplitOptionalExplicitCommand(line, "stopcombat", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2863,11 +3103,12 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
             failure = null;
-            if (!TrySplitOptionalExplicitCommand(line, "startcombat", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+            if (!TrySplitOptionalExplicitCommand(line, "startcombat", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
                 return false;
 
             string[] tokens = SplitCommandTokens(commandLine);
@@ -2890,6 +3131,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -2918,10 +3160,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             if (tokens.Length != 2 || !int.TryParse(NormalizeToken(tokens[1]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
@@ -3008,6 +3248,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -3036,10 +3277,8 @@ namespace VVardenfell.Importer.Bake
 
             if (explicitTargetId != null)
             {
-                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                     return false;
-
-                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             }
 
             if (tokens.Length != 2 || !int.TryParse(NormalizeToken(tokens[1]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
@@ -3063,6 +3302,7 @@ namespace VVardenfell.Importer.Bake
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -3092,10 +3332,8 @@ namespace VVardenfell.Importer.Bake
                 }
                 else
                 {
-                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                         return false;
-
-                    targetMode = MorrowindScriptRefTargetMode.PlacedRef;
                 }
             }
 
@@ -3117,9 +3355,11 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryCompileInventoryMutation(
             string line,
+            Dictionary<string, int> actors,
             Dictionary<string, ContentReference> carryables,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -3143,7 +3383,8 @@ namespace VVardenfell.Importer.Bake
 
             bool add = string.Equals(tokens[0], "additem", StringComparison.OrdinalIgnoreCase);
             bool remove = string.Equals(tokens[0], "removeitem", StringComparison.OrdinalIgnoreCase);
-            if (!add && !remove)
+            bool removeSoulGem = string.Equals(tokens[0], "removesoulgem", StringComparison.OrdinalIgnoreCase);
+            if (!add && !remove && !removeSoulGem)
                 return false;
 
             if (explicitTargetId != null)
@@ -3154,11 +3395,54 @@ namespace VVardenfell.Importer.Bake
                 }
                 else
                 {
-                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                         return false;
-
-                    targetMode = MorrowindScriptRefTargetMode.PlacedRef;
                 }
+            }
+
+            if (removeSoulGem)
+            {
+                if (targetMode != MorrowindScriptRefTargetMode.Player)
+                {
+                    failure = $"RemoveSoulGem supports only explicit Player target in MWScript V2: '{line}'.";
+                    return false;
+                }
+
+                if (tokens.Length < 2 || tokens.Length > 3)
+                {
+                    failure = $"RemoveSoulGem command requires a creature id and at most one ignored integer count in MWScript V2: '{line}'.";
+                    return false;
+                }
+
+                if (tokens.Length == 3
+                    && !int.TryParse(NormalizeToken(tokens[2]), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"RemoveSoulGem optional count must be a literal integer in MWScript V2: '{line}'.";
+                    return false;
+                }
+
+                string soulId = tokens[1].Trim('"');
+                if (string.IsNullOrWhiteSpace(soulId))
+                {
+                    failure = $"RemoveSoulGem command requires a creature id in MWScript V2: '{line}'.";
+                    return false;
+                }
+
+                if (!actors.TryGetValue(ContentId.NormalizeId(soulId), out int actorIndex))
+                {
+                    failure = $"RemoveSoulGem references unknown actor '{soulId}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.RequestInventoryMutation,
+                    Operand0 = (byte)targetMode,
+                    Int1 = ActorDefHandle.FromIndex(actorIndex).Value,
+                    Int2 = 1,
+                    Float0 = 2f,
+                });
+                return true;
             }
 
             if (tokens.Length != 3)
@@ -3221,7 +3505,7 @@ namespace VVardenfell.Importer.Bake
 
             if (!TryParseSingleQuotedMessageBoxBody(line, out string body))
             {
-                failure = $"MessageBox supports only one literal message string in MWScript V1: '{line}'.";
+                failure = $"MessageBox supports one literal message string and optional literal Ok button in MWScript V1: '{line}'.";
                 return false;
             }
 
@@ -3238,6 +3522,39 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompileWakeUpPC(
+            string line,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "wakeuppc"))
+                    return false;
+
+                failure = $"Explicit WakeUpPC references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!StartsWithCommand(line, "wakeuppc"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 1)
+            {
+                failure = $"WakeUpPC takes no arguments in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.WakeUpPC,
+            });
+            return true;
+        }
+
         static bool TryParseSingleQuotedMessageBoxBody(string line, out string body)
         {
             body = null;
@@ -3250,11 +3567,17 @@ namespace VVardenfell.Importer.Bake
                 return false;
 
             int endQuote = rest.IndexOf('"', 1);
-            if (endQuote < 0 || !string.IsNullOrWhiteSpace(rest.Substring(endQuote + 1)))
+            if (endQuote < 0)
                 return false;
 
             body = rest.Substring(1, endQuote - 1);
-            return true;
+            string suffix = rest.Substring(endQuote + 1).Trim();
+            if (suffix.Length == 0)
+                return true;
+
+            suffix = suffix.TrimStart(',', ' ', '\t', '\r', '\n');
+            return suffix.Equals("\"Ok\"", StringComparison.OrdinalIgnoreCase)
+                   || suffix.Equals("Ok", StringComparison.OrdinalIgnoreCase);
         }
 
         static bool TryParseAiFollowNumbers(
@@ -3292,6 +3615,7 @@ namespace VVardenfell.Importer.Bake
             string command,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             out MorrowindScriptRefTargetMode targetMode,
             out uint targetPlacedRefId,
             out string commandLine,
@@ -3317,10 +3641,8 @@ namespace VVardenfell.Importer.Bake
             if (explicitTargetId == null)
                 return true;
 
-            if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+            if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
                 return false;
-
-            targetMode = MorrowindScriptRefTargetMode.PlacedRef;
             return true;
         }
 
@@ -3553,6 +3875,111 @@ namespace VVardenfell.Importer.Bake
             {
                 for (int i = 0; i < lights.Length; i++)
                     AddContentReference(lookup, lights[i].Id, ContentReferenceKind.Light, LightDefHandle.FromIndex(i).Value);
+            }
+
+            if (itemLeveledLists != null)
+            {
+                for (int i = 0; i < itemLeveledLists.Length; i++)
+                    AddContentReference(lookup, itemLeveledLists[i].Id, ContentReferenceKind.LeveledItem, ItemLeveledListDefHandle.FromIndex(i).Value);
+            }
+
+            return lookup;
+        }
+
+        static Dictionary<string, ContentReference> BuildPlaceAtSpawnableLookup(
+            ActorDef[] actors,
+            BaseDef[] items,
+            LightDef[] lights)
+        {
+            var lookup = new Dictionary<string, ContentReference>(StringComparer.OrdinalIgnoreCase);
+            if (actors != null)
+            {
+                for (int i = 0; i < actors.Length; i++)
+                {
+                    if (actors[i].Kind != ActorDefKind.Creature)
+                        continue;
+
+                    AddContentReference(lookup, actors[i].Id, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
+                    AddContentReference(lookup, actors[i].OriginalId, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
+                }
+            }
+
+            if (items != null)
+            {
+                for (int i = 0; i < items.Length; i++)
+                    AddContentReference(lookup, items[i].Id, ContentReferenceKind.Item, ItemDefHandle.FromIndex(i).Value);
+            }
+
+            if (lights != null)
+            {
+                for (int i = 0; i < lights.Length; i++)
+                    AddContentReference(lookup, lights[i].Id, ContentReferenceKind.Light, LightDefHandle.FromIndex(i).Value);
+            }
+
+            return lookup;
+        }
+
+        static Dictionary<string, ContentReference> BuildExplicitContentTargetLookup(
+            ActorDef[] actors,
+            BaseDef[] activators,
+            BaseDef[] doors,
+            BaseDef[] containers,
+            BaseDef[] items,
+            LightDef[] lights,
+            GenericRecordDef[] statics,
+            ItemLeveledListDef[] creatureLeveledLists,
+            ItemLeveledListDef[] itemLeveledLists)
+        {
+            var lookup = new Dictionary<string, ContentReference>(StringComparer.OrdinalIgnoreCase);
+            if (actors != null)
+            {
+                for (int i = 0; i < actors.Length; i++)
+                {
+                    AddContentReference(lookup, actors[i].Id, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
+                    AddContentReference(lookup, actors[i].OriginalId, ContentReferenceKind.Actor, ActorDefHandle.FromIndex(i).Value);
+                }
+            }
+
+            if (activators != null)
+            {
+                for (int i = 0; i < activators.Length; i++)
+                    AddContentReference(lookup, activators[i].Id, ContentReferenceKind.Activator, ActivatorDefHandle.FromIndex(i).Value);
+            }
+
+            if (doors != null)
+            {
+                for (int i = 0; i < doors.Length; i++)
+                    AddContentReference(lookup, doors[i].Id, ContentReferenceKind.Door, DoorDefHandle.FromIndex(i).Value);
+            }
+
+            if (containers != null)
+            {
+                for (int i = 0; i < containers.Length; i++)
+                    AddContentReference(lookup, containers[i].Id, ContentReferenceKind.Container, ContainerDefHandle.FromIndex(i).Value);
+            }
+
+            if (items != null)
+            {
+                for (int i = 0; i < items.Length; i++)
+                    AddContentReference(lookup, items[i].Id, ContentReferenceKind.Item, ItemDefHandle.FromIndex(i).Value);
+            }
+
+            if (lights != null)
+            {
+                for (int i = 0; i < lights.Length; i++)
+                    AddContentReference(lookup, lights[i].Id, ContentReferenceKind.Light, LightDefHandle.FromIndex(i).Value);
+            }
+
+            if (statics != null)
+            {
+                for (int i = 0; i < statics.Length; i++)
+                    AddContentReference(lookup, statics[i].Id, ContentReferenceKind.Static, GenericRecordDefHandle.FromIndex(i).Value);
+            }
+
+            if (creatureLeveledLists != null)
+            {
+                for (int i = 0; i < creatureLeveledLists.Length; i++)
+                    AddContentReference(lookup, creatureLeveledLists[i].Id, ContentReferenceKind.LeveledCreature, CreatureLeveledListDefHandle.FromIndex(i).Value);
             }
 
             if (itemLeveledLists != null)
@@ -4005,10 +4432,13 @@ namespace VVardenfell.Importer.Bake
             string targetId,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
-            out uint targetPlacedRefId,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            out MorrowindScriptRefTargetMode targetMode,
+            out uint targetRefKey,
             out string failure)
         {
-            targetPlacedRefId = 0u;
+            targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            targetRefKey = 0u;
             failure = null;
             string normalizedId = ContentId.NormalizeId(targetId);
             if (normalizedId.Equals("player", StringComparison.OrdinalIgnoreCase))
@@ -4017,20 +4447,30 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (ambiguousExplicitRefTargets != null && ambiguousExplicitRefTargets.Contains(normalizedId))
+            if (explicitRefTargets != null && explicitRefTargets.TryGetValue(normalizedId, out uint targetPlacedRefId) && targetPlacedRefId != 0u)
             {
-                failure = $"Explicit reference id '{targetId}' resolves to multiple placed refs; fanout is not supported in MWScript V1.";
-                return false;
+                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+                targetRefKey = targetPlacedRefId;
+                return true;
             }
 
-            if (explicitRefTargets == null || !explicitRefTargets.TryGetValue(normalizedId, out targetPlacedRefId) || targetPlacedRefId == 0u)
+            if (explicitContentTargets != null
+                && explicitContentTargets.TryGetValue(normalizedId, out var content)
+                && content.IsValid)
             {
-                failure = $"Explicit reference id '{targetId}' does not resolve to a unique baked placed ref.";
-                return false;
+                targetMode = MorrowindScriptRefTargetMode.ActiveContentRef;
+                targetRefKey = unchecked((uint)PackActiveContentRef(content));
+                return true;
             }
 
-            return true;
+            failure = ambiguousExplicitRefTargets != null && ambiguousExplicitRefTargets.Contains(normalizedId)
+                ? $"Explicit reference id '{targetId}' resolves to multiple placed refs and no known placeable content target."
+                : $"Explicit reference id '{targetId}' does not resolve to a unique baked placed ref or known placeable content target.";
+            return false;
         }
+
+        static int PackActiveContentRef(ContentReference content)
+            => ((int)content.Kind << 24) | (content.HandleValue & 0x00FFFFFF);
 
         static string NormalizeExplicitRefId(string targetId)
         {

@@ -63,10 +63,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.RequireForUpdate<MorrowindQuestJournalRequest>();
             state.RequireForUpdate<MorrowindDialogueRequest>();
             state.RequireForUpdate<MorrowindScriptMessageBoxRequest>();
+            state.RequireForUpdate<MorrowindScriptShellRequest>();
+            state.RequireForUpdate<MorrowindScriptMovementFlagRequest>();
+            state.RequireForUpdate<MorrowindScriptPlaceAtRequest>();
             state.RequireForUpdate<MorrowindScriptOnDeathConsumeRequest>();
             state.RequireForUpdate<InteractionActivationRequest>();
             state.RequireForUpdate<LoadedCellsMap>();
             state.RequireForUpdate<PlacedRefRuntimeStateLookup>();
+            state.RequireForUpdate<ActiveExplicitRefLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -105,6 +109,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             actorVitalRequests.Clear();
             var messageBoxRequests = state.EntityManager.GetBuffer<MorrowindScriptMessageBoxRequest>(runtimeEntity);
             messageBoxRequests.Clear();
+            var shellRequests = state.EntityManager.GetBuffer<MorrowindScriptShellRequest>(runtimeEntity);
+            shellRequests.Clear();
+            var movementFlagRequests = state.EntityManager.GetBuffer<MorrowindScriptMovementFlagRequest>(runtimeEntity);
+            movementFlagRequests.Clear();
+            var placeAtRequests = state.EntityManager.GetBuffer<MorrowindScriptPlaceAtRequest>(runtimeEntity);
+            placeAtRequests.Clear();
             var onDeathConsumeRequests = state.EntityManager.GetBuffer<MorrowindScriptOnDeathConsumeRequest>(runtimeEntity);
             onDeathConsumeRequests.Clear();
 
@@ -120,6 +130,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
             var placedRefRuntimeStates = SystemAPI.GetSingleton<PlacedRefRuntimeStateLookup>();
+            var activeExplicitRefs = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0;
             FixedString128Bytes playerCellName = default;
@@ -143,11 +154,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             var playerInventoryItems = CopySingletonBuffer<PlayerInventoryItem>(state.EntityManager);
-            var playerKnownSpells = CopyEntityBuffer<PlayerKnownSpell>(state.EntityManager, playerEntity);
+            var actorKnownSpells = CopyEntityBuffer<ActorKnownSpell>(state.EntityManager, playerEntity);
             var playerFactions = CopyEntityBuffer<PlayerFactionMembership>(state.EntityManager, playerEntity);
-            int playerCrimeLevel = 0;
+            var playerCrime = PlayerCrimeState.Default;
             if (playerEntity != Entity.Null && state.EntityManager.HasComponent<PlayerCrimeState>(playerEntity))
-                playerCrimeLevel = state.EntityManager.GetComponentData<PlayerCrimeState>(playerEntity).Bounty;
+                playerCrime = state.EntityManager.GetComponentData<PlayerCrimeState>(playerEntity);
             var externalActorLocals = CopyExternalActorLocals(state.EntityManager);
             var actorAiStatuses = CopyActorAiStatusSnapshots(state.EntityManager);
             var refTransforms = CopyRefTransformSnapshots(state.EntityManager);
@@ -156,9 +167,13 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             byte hasMenuMode = 0;
             byte menuMode = 0;
+            byte hasPlayerSleeping = 0;
+            byte playerSleeping = 0;
             if (SystemAPI.TryGetSingleton<RuntimeShellState>(out var shell))
             {
                 hasMenuMode = 1;
+                hasPlayerSleeping = 1;
+                playerSleeping = shell.PlayerSleeping != 0 ? (byte)1 : (byte)0;
                 menuMode = shell.InventoryOpen != 0
                     || shell.ContainerOpen != 0
                     || shell.PauseMenuOpen != 0
@@ -206,6 +221,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 DeathCounts = _deathCountsLookup,
                 QuestJournal = _questJournalLookup,
                 RefDisabledStates = placedRefRuntimeStates.DisabledByPlacedRef,
+                ActiveExplicitRefs = activeExplicitRefs.ByContentKey,
                 RuntimeEntity = runtimeEntity,
                 RefStateRuntimeEntity = runtimeEntity,
                 TransformRuntimeEntity = runtimeEntity,
@@ -215,9 +231,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 PlayerPosition = playerPosition,
                 PlayerEntity = playerEntity,
                 PlayerInventoryItems = playerInventoryItems,
-                PlayerKnownSpells = playerKnownSpells,
+                ActorKnownSpells = actorKnownSpells,
                 PlayerFactions = playerFactions,
-                PlayerCrimeLevel = playerCrimeLevel,
+                PlayerCrime = playerCrime,
+                PlayerCrimeLevel = playerCrime.Bounty,
                 ExternalActorLocals = externalActorLocals,
                 ActorAiStatuses = actorAiStatuses,
                 RefTransforms = refTransforms,
@@ -229,10 +246,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 CellChanged = cellChanged,
                 HasMenuMode = hasMenuMode,
                 MenuMode = menuMode,
+                HasPlayerSleeping = hasPlayerSleeping,
+                PlayerSleeping = playerSleeping,
                 HasPlayerCellName = hasPlayerCellName,
                 PlayerCellName = playerCellName,
                 SecondsPassed = math.max(0f, SystemAPI.Time.DeltaTime),
                 InteractionRuntimeEntity = interactionRuntimeEntity,
+                ShellRuntimeEntity = runtimeEntity,
+                MovementRuntimeEntity = runtimeEntity,
+                PlaceAtRuntimeEntity = runtimeEntity,
                 ActivationEvents = activationEvents,
             };
 
@@ -267,8 +289,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             activationEvents.Dispose();
             if (playerInventoryItems.IsCreated)
                 playerInventoryItems.Dispose();
-            if (playerKnownSpells.IsCreated)
-                playerKnownSpells.Dispose();
+            if (actorKnownSpells.IsCreated)
+                actorKnownSpells.Dispose();
             if (playerFactions.IsCreated)
                 playerFactions.Dispose();
             if (externalActorLocals.IsCreated)
@@ -591,17 +613,21 @@ namespace VVardenfell.Runtime.MorrowindScript
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindActorDeathCount> DeathCounts;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindQuestJournalIndex> QuestJournal;
             [ReadOnly] public NativeParallelHashMap<uint, byte> RefDisabledStates;
+            [ReadOnly] public NativeParallelHashMap<int, ActiveExplicitRefTarget> ActiveExplicitRefs;
             public Entity RuntimeEntity;
             public Entity RefStateRuntimeEntity;
             public Entity TransformRuntimeEntity;
             public Entity AiRuntimeEntity;
+            public Entity ShellRuntimeEntity;
+            public Entity MovementRuntimeEntity;
             public EntityCommandBuffer.ParallelWriter Ecb;
             public uint AudioSequenceBase;
             public float3 PlayerPosition;
             public Entity PlayerEntity;
             [ReadOnly] public NativeArray<PlayerInventoryItem> PlayerInventoryItems;
-            [ReadOnly] public NativeArray<PlayerKnownSpell> PlayerKnownSpells;
+            [ReadOnly] public NativeArray<ActorKnownSpell> ActorKnownSpells;
             [ReadOnly] public NativeArray<PlayerFactionMembership> PlayerFactions;
+            public PlayerCrimeState PlayerCrime;
             public int PlayerCrimeLevel;
             public NativeArray<MorrowindScriptExternalActorLocalSnapshot> ExternalActorLocals;
             [ReadOnly] public NativeArray<MorrowindScriptActorAiStatusSnapshot> ActorAiStatuses;
@@ -614,10 +640,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             public byte CellChanged;
             public byte HasMenuMode;
             public byte MenuMode;
+            public byte HasPlayerSleeping;
+            public byte PlayerSleeping;
             public byte HasPlayerCellName;
             public FixedString128Bytes PlayerCellName;
             public float SecondsPassed;
             public Entity InteractionRuntimeEntity;
+            public Entity PlaceAtRuntimeEntity;
             [ReadOnly] public NativeArray<ScriptActivationEvent> ActivationEvents;
 
             public bool TryInterpret(
@@ -681,16 +710,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                     QuestJournal = questJournal.Length == 0 ? null : (MorrowindQuestJournalIndex*)questJournal.GetUnsafePtr(),
                     QuestJournalCount = questJournal.Length,
                     RefDisabledStates = RefDisabledStates,
+                    ActiveExplicitRefs = ActiveExplicitRefs,
                     Position = position,
                     Rotation = rotation,
                     PlayerPosition = PlayerPosition,
                     PlayerEntity = PlayerEntity,
                     PlayerInventory = PlayerInventoryItems.Length == 0 ? null : (PlayerInventoryItem*)PlayerInventoryItems.GetUnsafeReadOnlyPtr(),
                     PlayerInventoryCount = PlayerInventoryItems.Length,
-                    PlayerKnownSpells = PlayerKnownSpells.Length == 0 ? null : (PlayerKnownSpell*)PlayerKnownSpells.GetUnsafeReadOnlyPtr(),
-                    PlayerKnownSpellCount = PlayerKnownSpells.Length,
+                    ActorKnownSpells = ActorKnownSpells.Length == 0 ? null : (ActorKnownSpell*)ActorKnownSpells.GetUnsafeReadOnlyPtr(),
+                    ActorKnownSpellCount = ActorKnownSpells.Length,
                     PlayerFactions = PlayerFactions.Length == 0 ? null : (PlayerFactionMembership*)PlayerFactions.GetUnsafeReadOnlyPtr(),
                     PlayerFactionCount = PlayerFactions.Length,
+                    PlayerCrime = PlayerCrime,
                     PlayerCrimeLevel = PlayerCrimeLevel,
                     ExternalActorLocals = ExternalActorLocals.Length == 0 ? null : (MorrowindScriptExternalActorLocalSnapshot*)ExternalActorLocals.GetUnsafePtr(),
                     ExternalActorLocalCount = ExternalActorLocals.Length,
@@ -713,6 +744,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     CellChanged = CellChanged,
                     HasMenuMode = HasMenuMode,
                     MenuMode = MenuMode,
+                    HasPlayerSleeping = HasPlayerSleeping,
+                    PlayerSleeping = PlayerSleeping,
                     HasPlayerCellName = HasPlayerCellName,
                     PlayerCellName = PlayerCellName,
                     SecondsPassed = SecondsPassed,
@@ -720,6 +753,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                     QuestJournalRuntimeEntity = RuntimeEntity,
                     DialogueRuntimeEntity = RuntimeEntity,
                     MessageBoxRuntimeEntity = RuntimeEntity,
+                    ShellRuntimeEntity = ShellRuntimeEntity,
+                    MovementRuntimeEntity = MovementRuntimeEntity,
+                    PlaceAtRuntimeEntity = PlaceAtRuntimeEntity,
                     ActorVitalRuntimeEntity = RuntimeEntity,
                     OnDeathRuntimeEntity = RuntimeEntity,
                     RefStateRuntimeEntity = RefStateRuntimeEntity,

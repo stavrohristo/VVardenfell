@@ -89,12 +89,12 @@ namespace VVardenfell.Runtime.Shell
             if (!playerStats.HasPlayer
                 || contentDb == null
                 || !EntityManager.Exists(playerStats.PlayerEntity)
-                || !EntityManager.HasBuffer<PlayerKnownSpell>(playerStats.PlayerEntity))
+                || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
             {
                 return string.Empty;
             }
 
-            var knownSpells = EntityManager.GetBuffer<PlayerKnownSpell>(playerStats.PlayerEntity);
+            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity);
             int selected = state.SelectedSpellIndex;
             if (selected < 0 || selected >= knownSpells.Length)
                 return string.Empty;

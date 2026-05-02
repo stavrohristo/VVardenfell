@@ -215,6 +215,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 PlayerSettings = BootstrapController.ResolvePlayerMovementSettings(),
                 PlayerActorStats = playerStats,
                 PlayerIdentity = playerIdentity,
+                PlayerCrime = PlayerCrimeState.Default,
                 PlayerPosition = WorldBootstrap.DefaultPlayerSpawnPosition(),
                 PlayerRotation = quaternion.identity,
                 PlayerPitchDegrees = 0f,
@@ -223,7 +224,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 HasSerializedSavePayload = hasSerializedSavePayload,
                 SerializedSavePayloadStatus = RuntimeFixedStringUtility.ToFixed128OrDefault(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });
-            PopulateInitializationSpellbook(em.AddBuffer<PlayerKnownSpell>(initEntity), knownSpells);
+            PopulateInitializationSpellbook(em.AddBuffer<ActorKnownSpell>(initEntity), knownSpells);
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
             error = null;
             return true;
@@ -243,7 +244,7 @@ namespace VVardenfell.Runtime.Bootstrap
             RuntimeContentDatabase contentDb,
             out ActorRuntimeStatSeed stats,
             out ActorIdentitySet identity,
-            out PlayerKnownSpell[] knownSpells,
+            out ActorKnownSpell[] knownSpells,
             out PlayerInitialInventoryItem[] initialInventory)
         {
             if (MorrowindActorMovementStats.TryCreatePlayerSeedFromContent(
@@ -258,11 +259,11 @@ namespace VVardenfell.Runtime.Bootstrap
 
             stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed();
             identity = ActorIdentitySet.DefaultPlayer();
-            knownSpells = System.Array.Empty<PlayerKnownSpell>();
+            knownSpells = System.Array.Empty<ActorKnownSpell>();
             initialInventory = System.Array.Empty<PlayerInitialInventoryItem>();
         }
 
-        static void PopulateInitializationSpellbook(DynamicBuffer<PlayerKnownSpell> buffer, PlayerKnownSpell[] knownSpells)
+        static void PopulateInitializationSpellbook(DynamicBuffer<ActorKnownSpell> buffer, ActorKnownSpell[] knownSpells)
         {
             if (knownSpells == null)
                 return;

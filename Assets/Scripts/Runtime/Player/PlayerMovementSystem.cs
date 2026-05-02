@@ -82,6 +82,7 @@ namespace VVardenfell.Runtime.Player
             if (view.ControlledCharacter != playerEntity)
                 return;
 
+            bool requestedCrouch = movementInput.SneakHeld || movementState.ForceSneak;
             bool crouched = ResolveCrouchedState(
                 physicsWorld.CollisionWorld,
                 stanceColliders,
@@ -89,7 +90,7 @@ namespace VVardenfell.Runtime.Player
                 playerTransform.Position,
                 playerTransform.Rotation,
                 legacyState.Crouched,
-                movementInput.SneakHeld);
+                requestedCrouch);
             movementInput.SneakHeld = crouched;
             control.CrouchHeld = crouched;
             PhysicsCollider activeCollider = new PhysicsCollider
@@ -130,7 +131,7 @@ namespace VVardenfell.Runtime.Player
             legacyState.Grounded = movementState.Grounded;
             legacyState.WorldVelocity = movementState.LastVelocity;
             legacyState.Crouched = crouched;
-            legacyState.Sprinting = movementInput.RunHeld && !movementInput.SneakHeld && movementState.SpeedFactor > 0f;
+            legacyState.Sprinting = movementInput.RunHeld && !movementState.SneakHeld && movementState.SpeedFactor > 0f;
             if (legacyState.Grounded)
             {
                 legacyState.GroundedTime = legacyState.WasGrounded ? legacyState.GroundedTime + dt : dt;

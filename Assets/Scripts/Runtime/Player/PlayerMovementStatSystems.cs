@@ -4,13 +4,14 @@ using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
-    public partial class PlayerActiveMagicEffectSystem : SystemBase
+    public partial class ActorActiveMagicEffectSystem : SystemBase
     {
         const short BurdenEffectId = 7;
         const short FeatherEffectId = 8;
@@ -18,31 +19,34 @@ namespace VVardenfell.Runtime.Player
         const bool InjectDebugBuffs = false;
         const string DebugBuffSourceId = "vv_debug_buff_test";
 
-        EntityQuery _playerQuery;
+        EntityQuery _actorQuery;
 
         protected override void OnCreate()
         {
-            _playerQuery = GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<PlayerKnownSpell>(),
+            _actorQuery = GetEntityQuery(
+                ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>());
 
-            RequireForUpdate(_playerQuery);
+            RequireForUpdate(_actorQuery);
         }
 
         protected override void OnUpdate()
         {
-            if (_playerQuery.IsEmptyIgnoreFilter)
+            if (_actorQuery.IsEmptyIgnoreFilter)
                 return;
 
-            var knownSpells = _playerQuery.GetSingletonBuffer<PlayerKnownSpell>(isReadOnly: true);
-            var activeEffects = _playerQuery.GetSingletonBuffer<ActorActiveMagicEffect>(isReadOnly: false);
-            RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeEffects);
-            InjectDebugActiveEffects(activeEffects);
+            using var entities = _actorQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity entity = entities[i];
+                var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(entity, true);
+                var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(entity);
+                RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeEffects);
+                InjectDebugActiveEffects(activeEffects);
 
-            ref var modifiers = ref _playerQuery.GetSingletonRW<ActorEffectStatModifiers>().ValueRW;
-            modifiers = BuildSupportedModifiers(activeEffects);
+                EntityManager.SetComponentData(entity, BuildSupportedModifiers(activeEffects));
+            }
         }
 
         static void InjectDebugActiveEffects(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
@@ -90,7 +94,7 @@ namespace VVardenfell.Runtime.Player
 
         static void RebuildPassiveSpellEffects(
             RuntimeContentDatabase contentDb,
-            DynamicBuffer<PlayerKnownSpell> knownSpells,
+            DynamicBuffer<ActorKnownSpell> knownSpells,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects)
         {
             for (int i = activeEffects.Length - 1; i >= 0; i--)
@@ -109,7 +113,7 @@ namespace VVardenfell.Runtime.Player
                     continue;
 
                 ref readonly var spell = ref contentDb.Get(handle);
-                if (!IsPassiveSpellType(spell.SpellType) || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
+                if (!MorrowindActorMagicUtility.IsPassiveSpellType(spell.SpellType) || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                     continue;
 
                 int available = math.max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
@@ -162,12 +166,9 @@ namespace VVardenfell.Runtime.Player
             return modifiers;
         }
 
-        static bool IsPassiveSpellType(int spellType)
-            => spellType is 1 or 2 or 3 or 4;
-
     }
 
-    [UpdateAfter(typeof(PlayerActiveMagicEffectSystem))]
+    [UpdateAfter(typeof(ActorActiveMagicEffectSystem))]
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
     public partial class PlayerActorEncumbranceSystem : SystemBase
     {
@@ -273,8 +274,8 @@ namespace VVardenfell.Runtime.Player
 
             float fatigue = vitals.CurrentFatigue;
             fatigue -= context.GetMovementFatigueLossPerSecond(
-                movementInput.RunHeld && !movementInput.SneakHeld,
-                movementInput.SneakHeld,
+                movementInput.RunHeld && !movementState.SneakHeld,
+                movementState.SneakHeld,
                 movementState.SpeedFactor) * dt;
             if (movementState.JumpAccepted)
                 fatigue -= context.GetJumpFatigueLoss();

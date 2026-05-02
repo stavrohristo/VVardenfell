@@ -22,8 +22,8 @@ namespace VVardenfell.Core.Cache
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 29;
-        public const uint GameplayContentVersion = 54;
+        public const uint WorldBakePipelineVersion = 30;
+        public const uint GameplayContentVersion = 60;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized
@@ -129,6 +129,16 @@ namespace VVardenfell.Core.Cache
         public float DestPosX, DestPosY, DestPosZ;
         public float DestRotX, DestRotY, DestRotZ, DestRotW;
         public string DestinationCellId;
+    }
+
+    /// <summary>
+    /// Per-cell metadata for placed refs with an authored captured soul (CELL XSOL).
+    /// Kept out of <see cref="RefEntry"/> so the high-volume ref table remains fixed.
+    /// </summary>
+    public struct PlacedRefSoulEntry
+    {
+        public uint PlacedRefId;
+        public string SoulId;
     }
 
     public struct CellEnvironmentData

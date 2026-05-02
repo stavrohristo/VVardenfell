@@ -176,10 +176,10 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, init.PlayerCrime);
             PopulatePlayerFactions(em, initEntity, player);
-            var playerSpells = em.AddBuffer<PlayerKnownSpell>(player);
-            if (em.HasBuffer<PlayerKnownSpell>(initEntity))
+            var playerSpells = em.AddBuffer<ActorKnownSpell>(player);
+            if (em.HasBuffer<ActorKnownSpell>(initEntity))
             {
-                var initSpells = em.GetBuffer<PlayerKnownSpell>(initEntity);
+                var initSpells = em.GetBuffer<ActorKnownSpell>(initEntity);
                 for (int i = 0; i < initSpells.Length; i++)
                 {
                     if (initSpells[i].Spell.IsValid)
@@ -335,11 +335,11 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static void PopulateInitializationSpellbook(EntityManager em, Entity initEntity, PlayerKnownSpell[] knownSpells)
+        static void PopulateInitializationSpellbook(EntityManager em, Entity initEntity, ActorKnownSpell[] knownSpells)
         {
-            var buffer = em.HasBuffer<PlayerKnownSpell>(initEntity)
-                ? em.GetBuffer<PlayerKnownSpell>(initEntity)
-                : em.AddBuffer<PlayerKnownSpell>(initEntity);
+            var buffer = em.HasBuffer<ActorKnownSpell>(initEntity)
+                ? em.GetBuffer<ActorKnownSpell>(initEntity)
+                : em.AddBuffer<ActorKnownSpell>(initEntity);
 
             buffer.Clear();
             if (knownSpells == null)

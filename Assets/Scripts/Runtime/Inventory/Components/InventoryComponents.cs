@@ -7,12 +7,16 @@ namespace VVardenfell.Runtime.Components
     public struct PlayerInventoryItem : IBufferElementData
     {
         public ContentReference Content;
+        public FixedString64Bytes SoulId;
+        public int SoulActorHandleValue;
         public int Count;
     }
 
     public struct ActorInventoryItem : IBufferElementData
     {
         public ContentReference Content;
+        public FixedString64Bytes SoulId;
+        public int SoulActorHandleValue;
         public int Count;
         public int AuthoredOrder;
     }
@@ -43,6 +47,8 @@ namespace VVardenfell.Runtime.Components
     {
         public uint PlacedRefId;
         public ContentReference Content;
+        public FixedString64Bytes SoulId;
+        public int SoulActorHandleValue;
         public int Count;
     }
 

@@ -14,9 +14,10 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 19;
+        const int PayloadVersion = 21;
+        const int CapturedSoulInventoryPayloadVersion = 21;
+        const int PlayerCrimePayloadVersion = 19;
         const int PreviousPayloadVersion = 18;
-        const int PreviousCrimePayloadVersion = 18;
         const int PreviousPlayerFactionPayloadVersion = 16;
         const int ActorDeathCountPayloadVersion = 18;
         const int DialogueFactionReactionPayloadVersion = 17;
@@ -36,6 +37,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
                 && version != PreviousPlayerFactionPayloadVersion
                 && version != DialoguePayloadVersion
@@ -142,6 +144,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
                 && version != PreviousPlayerFactionPayloadVersion
                 && version != DialoguePayloadVersion
@@ -160,7 +163,7 @@ namespace VVardenfell.Runtime.WorldState
             };
 
             payload.PlayerIdentity = ReadActorIdentity(r);
-            payload.PlayerCrime = version >= PayloadVersion ? ReadPlayerCrime(r) : default;
+            payload.PlayerCrime = version >= PlayerCrimePayloadVersion ? ReadPlayerCrime(r, version) : PlayerCrimeState.Default;
 
             if (version >= PlayerFactionPayloadVersion)
             {
@@ -175,7 +178,7 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             int knownSpellCount = ReadCount(r, "known spell");
-            payload.KnownSpells = new PlayerKnownSpell[knownSpellCount];
+            payload.KnownSpells = new ActorKnownSpell[knownSpellCount];
             for (int i = 0; i < knownSpellCount; i++)
                 payload.KnownSpells[i] = ReadKnownSpell(r);
 
@@ -199,7 +202,7 @@ namespace VVardenfell.Runtime.WorldState
             int inventoryCount = ReadCount(r, "inventory");
             payload.Inventory = new PlayerInventoryItem[inventoryCount];
             for (int i = 0; i < inventoryCount; i++)
-                payload.Inventory[i] = ReadInventoryEntry(r);
+                payload.Inventory[i] = ReadInventoryEntry(r, version);
 
             int journalCount = ReadCount(r, "journal");
             payload.JournalEntries = new WorldJournalEntry[journalCount];
@@ -420,14 +423,27 @@ namespace VVardenfell.Runtime.WorldState
         static void WriteInventoryEntry(BinaryWriter w, in PlayerInventoryItem value)
         {
             WriteContentReference(w, value.Content);
+            w.Write(value.SoulId.ToString());
+            w.Write(value.SoulActorHandleValue);
             w.Write(value.Count);
         }
 
-        static PlayerInventoryItem ReadInventoryEntry(BinaryReader r)
+        static PlayerInventoryItem ReadInventoryEntry(BinaryReader r, int version)
         {
+            var content = ReadContentReference(r);
+            FixedString64Bytes soulId = default;
+            int soulActorHandleValue = 0;
+            if (version >= CapturedSoulInventoryPayloadVersion)
+            {
+                soulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString());
+                soulActorHandleValue = r.ReadInt32();
+            }
+
             return new PlayerInventoryItem
             {
-                Content = ReadContentReference(r),
+                Content = content,
+                SoulId = soulId,
+                SoulActorHandleValue = soulActorHandleValue,
                 Count = r.ReadInt32(),
             };
         }
@@ -811,22 +827,31 @@ namespace VVardenfell.Runtime.WorldState
         }
 
         static void WritePlayerCrime(BinaryWriter w, in PlayerCrimeState value)
-            => w.Write(value.Bounty);
-
-        static PlayerCrimeState ReadPlayerCrime(BinaryReader r)
         {
-            return new PlayerCrimeState
-            {
-                Bounty = Math.Max(0, r.ReadInt32()),
-            };
+            w.Write(value.Bounty);
+            w.Write(value.CurrentCrimeId);
+            w.Write(value.PaidCrimeId);
         }
 
-        static void WriteKnownSpell(BinaryWriter w, in PlayerKnownSpell value)
+        static PlayerCrimeState ReadPlayerCrime(BinaryReader r, int version)
+        {
+            var value = PlayerCrimeState.Default;
+            value.Bounty = Math.Max(0, r.ReadInt32());
+            if (version >= PayloadVersion)
+            {
+                value.CurrentCrimeId = r.ReadInt32();
+                value.PaidCrimeId = r.ReadInt32();
+            }
+
+            return value;
+        }
+
+        static void WriteKnownSpell(BinaryWriter w, in ActorKnownSpell value)
             => w.Write(value.Spell.Value);
 
-        static PlayerKnownSpell ReadKnownSpell(BinaryReader r)
+        static ActorKnownSpell ReadKnownSpell(BinaryReader r)
         {
-            return new PlayerKnownSpell
+            return new ActorKnownSpell
             {
                 Spell = new SpellDefHandle { Value = r.ReadInt32() },
             };

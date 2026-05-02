@@ -324,6 +324,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 cell.Refs = Array.Empty<RefEntry>();
                 cell.Doors = Array.Empty<DoorRefEntry>();
+                cell.CapturedSouls = Array.Empty<PlacedRefSoulEntry>();
                 cell.PlacementAudit = null;
                 if (clearStaticCollision && cell.StaticColliderBlob.IsCreated)
                 {

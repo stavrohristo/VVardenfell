@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Unity.Entities;
 using UnityEngine;
@@ -30,10 +30,10 @@ namespace VVardenfell.Runtime.Shell
                 ActiveEffects = BuildActiveEffectIcons(contentDb, playerStats),
             };
 
-            if (!playerStats.HasPlayer || contentDb == null || !EntityManager.Exists(playerStats.PlayerEntity) || !EntityManager.HasBuffer<PlayerKnownSpell>(playerStats.PlayerEntity))
+            if (!playerStats.HasPlayer || contentDb == null || !EntityManager.Exists(playerStats.PlayerEntity) || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
                 return model;
 
-            var knownSpells = EntityManager.GetBuffer<PlayerKnownSpell>(playerStats.PlayerEntity);
+            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity);
             var entries = new List<SpellWindowEntryViewModel>(knownSpells.Length);
             int selectedIndex = knownSpells.Length == 0 ? -1 : Math.Clamp(state.SelectedSpellIndex, 0, knownSpells.Length - 1);
             string filter = state.FilterText.ToString();
