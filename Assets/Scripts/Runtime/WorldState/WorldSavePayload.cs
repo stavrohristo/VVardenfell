@@ -23,6 +23,7 @@ namespace VVardenfell.Runtime.WorldState
         public WorldJournalEntry[] JournalEntries;
         public MorrowindQuestJournalSavePayload QuestJournal;
         public MorrowindDialogueSavePayload Dialogue;
+        public int[] ActorDeathCounts;
         public MorrowindTimeSavePayload Time;
         public MorrowindWeatherSavePayload Weather;
     }
@@ -59,6 +60,7 @@ namespace VVardenfell.Runtime.WorldState
         public uint NextTopicEntrySequence;
         public int[] KnownTopicDialogueIndices;
         public MorrowindTopicJournalEntrySavePayload[] TopicEntries;
+        public MorrowindFactionReactionSavePayload[] FactionReactions;
     }
 
     public struct MorrowindTopicJournalEntrySavePayload
@@ -71,6 +73,13 @@ namespace VVardenfell.Runtime.WorldState
         public int Day;
         public int Month;
         public int DayOfMonth;
+    }
+
+    public struct MorrowindFactionReactionSavePayload
+    {
+        public int SourceFactionIndex;
+        public int TargetFactionIndex;
+        public int Reaction;
     }
 
     public struct MorrowindTimeSavePayload

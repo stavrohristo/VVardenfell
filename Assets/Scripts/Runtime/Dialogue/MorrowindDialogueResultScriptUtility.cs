@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using UnityEngine;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
@@ -27,6 +30,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             MorrowindTimeState time,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
             DynamicBuffer<MorrowindTopicJournalEntry> topicEntries,
+            DynamicBuffer<MorrowindFactionReactionOverride> factionReactionOverrides,
+            DynamicBuffer<MorrowindScriptStartRequest> scriptStartRequests,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
             DynamicBuffer<MorrowindDialogueChoice> choices,
@@ -81,10 +86,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyShowMapResult(line))
                     continue;
 
+                if (TryApplyClearInfoActorResult(contentDb, topicEntries, ref session, line))
+                    continue;
+
                 if (TryApplyInventoryResult(contentDb, entityManager, ref session, line))
                     continue;
 
-                if (TryApplyDispositionResult(entityManager, ref session, line))
+                if (TryApplyDispositionResult(contentDb, entityManager, ref session, line))
                     continue;
 
                 if (TryApplyPlayerFactionResult(contentDb, entityManager, ref session, line))
@@ -93,10 +101,31 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyPlayerReputationResult(entityManager, line))
                     continue;
 
+                if (TryApplyFactionReactionResult(contentDb, factionReactionOverrides, line))
+                    continue;
+
+                if (TryApplyStartScriptResult(contentDb, scriptStartRequests, ref session, line))
+                    continue;
+
                 if (TryApplySetResult(contentDb, entityManager, ref session, line))
                     continue;
 
-                if (TryApplyActorAiSettingResult(entityManager, ref session, line))
+                if (TryApplyActorAiSettingResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyCombatTargetResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyAiWanderResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyAiTravelResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyAiFollowResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyAiFollowCellResult(contentDb, entityManager, ref session, line))
                     continue;
 
                 if (StartsWithCommand(line, "goodbye"))
@@ -111,6 +140,101 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, entityManager, session.SpeakerEntity, session.SpeakerActor);
             return goodbye;
+        }
+
+        static bool TryApplyStartScriptResult(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindScriptStartRequest> scriptStartRequests,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "startscript", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+                return false;
+
+            string scriptId = tokens[1].Trim('"');
+            if (contentDb == null
+                || !contentDb.TryGetMorrowindScriptProgramHandle(scriptId, out var programHandle)
+                || !programHandle.IsValid)
+            {
+                return false;
+            }
+
+            ref readonly var program = ref contentDb.Get(programHandle);
+            if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled)
+                return false;
+
+            scriptStartRequests.Add(new MorrowindScriptStartRequest
+            {
+                Program = programHandle,
+                ProgramIndex = programHandle.Index,
+                TargetEntity = session.SpeakerEntity,
+                TargetPlacedRefId = session.SpeakerPlacedRefId,
+            });
+            return true;
+        }
+
+        static bool TryApplyFactionReactionResult(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindFactionReactionOverride> factionReactionOverrides,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 4 || !int.TryParse(tokens[3], out int value))
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.IsNullOrWhiteSpace(target))
+                return false;
+
+            bool mod = string.Equals(command, "modfactionreaction", StringComparison.OrdinalIgnoreCase);
+            bool set = string.Equals(command, "setfactionreaction", StringComparison.OrdinalIgnoreCase);
+            if (!mod && !set)
+                return false;
+
+            if (contentDb == null
+                || !contentDb.TryGetFactionHandle(tokens[1], out var source)
+                || !source.IsValid
+                || !contentDb.TryGetFactionHandle(tokens[2], out var targetFaction)
+                || !targetFaction.IsValid)
+            {
+                return false;
+            }
+
+            return mod
+                ? MorrowindDialogueUtility.TryModFactionReaction(contentDb, factionReactionOverrides, source.Index, targetFaction.Index, value)
+                : MorrowindDialogueUtility.TrySetFactionReaction(contentDb, factionReactionOverrides, source.Index, targetFaction.Index, value);
+        }
+
+        static bool TryApplyClearInfoActorResult(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindTopicJournalEntry> topicEntries,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 1)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "clearinfoactor", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+                return false;
+
+            return MorrowindDialogueUtility.TryRemoveLastAddedTopicResponse(
+                contentDb,
+                topicEntries,
+                session.SelectedTopicDialogueIndex,
+                session.SpeakerId);
         }
 
         static bool TryApplySetResult(
@@ -140,6 +264,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryApplyActorAiSettingResult(
+            RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
             string line)
@@ -149,20 +274,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!string.IsNullOrWhiteSpace(target)
-                || !TryResolveActorAiSettingCommand(command, out ActorAiSettingKind kind, out bool isMod))
+            if (!TryResolveActorAiSettingCommand(command, out ActorAiSettingKind kind, out bool isMod)
+                || !TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out _))
             {
                 return false;
             }
 
-            if (session.SpeakerEntity == Entity.Null
-                || !entityManager.Exists(session.SpeakerEntity)
-                || !entityManager.HasComponent<ActorAiSettingsState>(session.SpeakerEntity))
+            if (!entityManager.HasComponent<ActorAiSettingsState>(targetEntity))
             {
                 return true;
             }
 
-            var settings = entityManager.GetComponentData<ActorAiSettingsState>(session.SpeakerEntity);
+            var settings = entityManager.GetComponentData<ActorAiSettingsState>(targetEntity);
             switch (kind)
             {
                 case ActorAiSettingKind.Hello:
@@ -181,7 +304,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
             }
 
-            entityManager.SetComponentData(session.SpeakerEntity, settings);
+            entityManager.SetComponentData(targetEntity, settings);
             return true;
         }
 
@@ -242,6 +365,319 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             return false;
+        }
+
+        static bool TryApplyCombatTargetResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string commandTarget, out string command);
+            bool startCombat = string.Equals(command, "startcombat", StringComparison.OrdinalIgnoreCase);
+            bool stopCombat = string.Equals(command, "stopcombat", StringComparison.OrdinalIgnoreCase);
+            if (!startCombat && !stopCombat)
+                return false;
+
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, commandTarget, out Entity actorEntity, out uint actorPlacedRefId))
+                return false;
+
+            if (startCombat)
+            {
+                if (tokens.Length != 2
+                    || !TryResolveCombatTarget(contentDb, entityManager, ref session, tokens[1], out Entity combatTargetEntity, out uint combatTargetPlacedRefId))
+                {
+                    return false;
+                }
+
+                return MorrowindCombatTargetUtility.TryStartCombat(
+                    contentDb,
+                    entityManager,
+                    actorEntity,
+                    actorPlacedRefId,
+                    combatTargetEntity,
+                    combatTargetPlacedRefId);
+            }
+
+            if (tokens.Length != 1)
+                return false;
+
+            return MorrowindCombatTargetUtility.TryStopCombat(entityManager, actorEntity);
+        }
+
+        static bool TryApplyAiWanderResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length < 4)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aiwander", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId))
+                return false;
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float range))
+                return false;
+
+            for (int i = 2; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                    return false;
+            }
+
+            return MorrowindScriptAiPackageUtility.TryApplyRequest(
+                contentDb,
+                entityManager,
+                targetEntity,
+                new MorrowindScriptAiPackageRequest
+                {
+                    TargetEntity = targetEntity,
+                    TargetPlacedRefId = targetPlacedRefId,
+                    PackageType = (byte)MorrowindScriptAiPackageRequestType.Wander,
+                    ShouldRepeat = ResolveAiWanderRepeat(tokens),
+                    WanderRadius = math.max(0f, range) * WorldScale.MwUnitsToMeters,
+                    IdleSeconds = 1.5f,
+                });
+        }
+
+        static bool TryApplyAiTravelResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length < 4)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aitravel", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId))
+                return false;
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(NormalizeToken(tokens[3]), NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
+            {
+                return false;
+            }
+
+            for (int i = 4; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                    return false;
+            }
+
+            return MorrowindScriptAiPackageUtility.TryApplyRequest(
+                contentDb,
+                entityManager,
+                targetEntity,
+                new MorrowindScriptAiPackageRequest
+                {
+                    TargetEntity = targetEntity,
+                    TargetPlacedRefId = targetPlacedRefId,
+                    PackageType = (byte)MorrowindScriptAiPackageRequestType.Travel,
+                    ShouldRepeat = tokens.Length > 4 ? (byte)1 : (byte)0,
+                    TargetPosition = new float3(x, z, y) * WorldScale.MwUnitsToMeters,
+                    IdleSeconds = 0.5f,
+                });
+        }
+
+        static bool TryApplyAiFollowResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length < 6)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aifollow", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId)
+                || !IsPlayerTarget(tokens[1]))
+                return false;
+
+            if (!TryParseAiFollowNumbers(tokens, 2, out _, out float x, out float y, out float z))
+                return false;
+
+            for (int i = 6; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                    return false;
+            }
+
+            return TryApplyFollowPackage(contentDb, entityManager, targetEntity, targetPlacedRefId, new float3(x, z, y) * WorldScale.MwUnitsToMeters, 0UL, tokens.Length > 6);
+        }
+
+        static bool TryApplyAiFollowCellResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length < 7)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aifollowcell", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId)
+                || !IsPlayerTarget(tokens[1]))
+                return false;
+
+            string cellId = NormalizeToken(tokens[2]).Trim('"');
+            if (string.IsNullOrWhiteSpace(cellId)
+                || !TryParseAiFollowNumbers(tokens, 3, out _, out float x, out float y, out float z))
+            {
+                return false;
+            }
+
+            for (int i = 7; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                    return false;
+            }
+
+            return TryApplyFollowPackage(contentDb, entityManager, targetEntity, targetPlacedRefId, new float3(x, z, y) * WorldScale.MwUnitsToMeters, HashInteriorCellId(cellId), tokens.Length > 7);
+        }
+
+        static bool TryApplyFollowPackage(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity targetEntity,
+            uint targetPlacedRefId,
+            float3 destination,
+            ulong destinationInteriorCellHash,
+            bool repeat)
+        {
+            Entity player = ResolvePlayerEntity(entityManager);
+            if (player == Entity.Null)
+                return false;
+
+            return MorrowindScriptAiPackageUtility.TryApplyRequest(
+                contentDb,
+                entityManager,
+                targetEntity,
+                new MorrowindScriptAiPackageRequest
+                {
+                    TargetEntity = targetEntity,
+                    TargetPlacedRefId = targetPlacedRefId,
+                    FollowTargetEntity = player,
+                    PackageType = (byte)MorrowindScriptAiPackageRequestType.Follow,
+                    ShouldRepeat = repeat ? (byte)1 : (byte)0,
+                    AllowPartial = 1,
+                    TargetPosition = destination,
+                    DestinationInteriorCellHash = destinationInteriorCellHash,
+                    FollowDistance = 256f * WorldScale.MwUnitsToMeters,
+                    IdleSeconds = 0.5f,
+                });
+        }
+
+        static bool TryResolveAiCommandTarget(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string target,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                targetEntity = session.SpeakerEntity;
+                targetPlacedRefId = session.SpeakerPlacedRefId;
+                return targetEntity != Entity.Null
+                       && entityManager.Exists(targetEntity)
+                       && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
+            }
+
+            if (contentDb == null)
+                return false;
+
+            string normalizedTarget = ContentId.NormalizeId(target);
+            if (string.IsNullOrEmpty(normalizedTarget))
+                return false;
+
+            Entity matchEntity = Entity.Null;
+            uint matchPlacedRefId = 0u;
+            int matchCount = 0;
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ActorSpawnSource>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
+            using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                ActorDefHandle actorHandle = sources[i].Definition;
+                if (!actorHandle.IsValid)
+                    continue;
+
+                ref readonly var actor = ref contentDb.Get(actorHandle);
+                if (!ActorIdMatches(actor, normalizedTarget))
+                    continue;
+
+                matchCount++;
+                matchEntity = entities[i];
+                matchPlacedRefId = placedRefs[i].Value;
+                if (matchCount > 1)
+                    return false;
+            }
+
+            if (matchCount != 1)
+                return false;
+
+            targetEntity = matchEntity;
+            targetPlacedRefId = matchPlacedRefId;
+            return true;
+        }
+
+        static bool ActorIdMatches(in ActorDef actor, string normalizedTarget)
+            => string.Equals(ContentId.NormalizeId(actor.Id), normalizedTarget, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(ContentId.NormalizeId(actor.OriginalId), normalizedTarget, StringComparison.OrdinalIgnoreCase);
+
+        static bool TryResolveCombatTarget(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string target,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (IsPlayerTarget(target))
+            {
+                targetEntity = ResolvePlayerEntity(entityManager);
+                if (targetEntity == Entity.Null)
+                    return false;
+
+                targetPlacedRefId = entityManager.HasComponent<PlacedRefIdentity>(targetEntity)
+                    ? entityManager.GetComponentData<PlacedRefIdentity>(targetEntity).Value
+                    : 0u;
+                return true;
+            }
+
+            return TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out targetEntity, out targetPlacedRefId);
         }
 
         static bool TryApplyLocalSet(
@@ -443,7 +879,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             bool modRep = string.Equals(command, "modpcfacrep", StringComparison.OrdinalIgnoreCase);
             bool raiseRank = string.Equals(command, "pcraiserank", StringComparison.OrdinalIgnoreCase);
             bool joinFaction = string.Equals(command, "pcjoinfaction", StringComparison.OrdinalIgnoreCase);
-            if (!modRep && !raiseRank && !joinFaction)
+            bool expell = string.Equals(command, "pcexpell", StringComparison.OrdinalIgnoreCase);
+            bool clearExpelled = string.Equals(command, "pcclearexpelled", StringComparison.OrdinalIgnoreCase);
+            if (!modRep && !raiseRank && !joinFaction && !expell && !clearExpelled)
                 return false;
 
             if (!TryResolveFactionArgument(contentDb, session.SpeakerActor, tokens, modRep, out int factionIndex, out int value))
@@ -455,6 +893,39 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var factions = entityManager.GetBuffer<PlayerFactionMembership>(query.GetSingletonEntity());
             int index = FindPlayerFactionIndex(factions, factionIndex);
+            if (expell)
+            {
+                if (index < 0)
+                {
+                    factions.Add(new PlayerFactionMembership
+                    {
+                        FactionIndex = factionIndex,
+                        Rank = -1,
+                        Expelled = 1,
+                    });
+                }
+                else
+                {
+                    var membership = factions[index];
+                    membership.Expelled = 1;
+                    factions[index] = membership;
+                }
+
+                return true;
+            }
+
+            if (clearExpelled)
+            {
+                if (index >= 0)
+                {
+                    var membership = factions[index];
+                    membership.Expelled = 0;
+                    factions[index] = membership;
+                }
+
+                return true;
+            }
+
             if (modRep)
             {
                 if (index < 0)
@@ -562,6 +1033,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryApplyDispositionResult(
+            RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
             string line)
@@ -571,24 +1043,22 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!string.IsNullOrWhiteSpace(target))
-                return false;
-
             bool mod = string.Equals(command, "moddisposition", StringComparison.OrdinalIgnoreCase);
             bool set = string.Equals(command, "setdisposition", StringComparison.OrdinalIgnoreCase);
             if (!mod && !set)
                 return false;
 
-            if (session.SpeakerEntity == Entity.Null
-                || !entityManager.Exists(session.SpeakerEntity)
-                || !entityManager.HasComponent<ActorDispositionState>(session.SpeakerEntity))
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out _))
+                return false;
+
+            if (!entityManager.HasComponent<ActorDispositionState>(targetEntity))
             {
                 return true;
             }
 
-            var disposition = entityManager.GetComponentData<ActorDispositionState>(session.SpeakerEntity);
+            var disposition = entityManager.GetComponentData<ActorDispositionState>(targetEntity);
             disposition.BaseDisposition = mod ? disposition.BaseDisposition + value : value;
-            entityManager.SetComponentData(session.SpeakerEntity, disposition);
+            entityManager.SetComponentData(targetEntity, disposition);
             return true;
         }
 
@@ -832,6 +1302,67 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (current.Length > 0)
                 tokens.Add(current.ToString());
             return tokens.ToArray();
+        }
+
+        static byte ResolveAiWanderRepeat(string[] tokens)
+        {
+            int optionalArgCount = tokens.Length - 4;
+            if (optionalArgCount <= 0)
+                return 0;
+            if (optionalArgCount <= 8)
+                return 1;
+
+            return int.TryParse(NormalizeToken(tokens[12]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int repeat) && repeat != 0
+                ? (byte)1
+                : (byte)0;
+        }
+
+        static string NormalizeToken(string token)
+            => (token ?? string.Empty).Trim().Trim(',');
+
+        static bool TryParseAiFollowNumbers(
+            string[] tokens,
+            int start,
+            out float duration,
+            out float x,
+            out float y,
+            out float z)
+        {
+            duration = 0f;
+            x = 0f;
+            y = 0f;
+            z = 0f;
+            return float.TryParse(NormalizeToken(tokens[start]), NumberStyles.Float, CultureInfo.InvariantCulture, out duration)
+                   && float.TryParse(NormalizeToken(tokens[start + 1]), NumberStyles.Float, CultureInfo.InvariantCulture, out x)
+                   && float.TryParse(NormalizeToken(tokens[start + 2]), NumberStyles.Float, CultureInfo.InvariantCulture, out y)
+                   && float.TryParse(NormalizeToken(tokens[start + 3]), NumberStyles.Float, CultureInfo.InvariantCulture, out z);
+        }
+
+        static bool IsPlayerTarget(string target)
+            => string.Equals(NormalizeToken(target).Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
+
+        static Entity ResolvePlayerEntity(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            return query.IsEmptyIgnoreFilter ? Entity.Null : query.GetSingletonEntity();
+        }
+
+        static ulong HashInteriorCellId(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0UL;
+
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c >= 'A' && c <= 'Z')
+                    c = (char)(c + 32);
+                hash ^= c;
+                hash *= 1099511628211UL;
+            }
+
+            return hash == 0UL ? 1UL : hash;
         }
 
         enum ActorAiSettingKind : byte

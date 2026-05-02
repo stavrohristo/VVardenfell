@@ -44,6 +44,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
             }
 
+            var deathCounts = EntityManager.AddBuffer<MorrowindActorDeathCount>(runtime);
+            deathCounts.ResizeUninitialized(contentDb.ActorCount);
+            for (int i = 0; i < deathCounts.Length; i++)
+                deathCounts[i] = default;
+
             EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
             {
                 QuestCount = contentDb.DialogueCount,
@@ -67,12 +72,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int i = 0; i < topics.Length; i++)
                 topics[i] = default;
             EntityManager.AddBuffer<MorrowindTopicJournalEntry>(runtime);
+            EntityManager.AddBuffer<MorrowindFactionReactionOverride>(runtime);
             EntityManager.AddBuffer<MorrowindDialogueRequest>(runtime);
 
             EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
             EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptAiPackageRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
         }
 
         static byte ResolveGlobalKind(in GenericRecordDef global)

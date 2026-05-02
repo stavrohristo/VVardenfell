@@ -375,6 +375,13 @@ namespace VVardenfell.Core.Cache
         SetJournalIndex = 38,
         AddTopic = 39,
         FillJournal = 40,
+        GetPCCell = 41,
+        GetDeadCount = 42,
+        PositionCell = 43,
+        AiWander = 44,
+        AiTravel = 45,
+        AiFollow = 46,
+        AiFollowCell = 47,
     }
 
     public enum MorrowindScriptRefTargetMode : byte
@@ -416,6 +423,8 @@ namespace VVardenfell.Core.Cache
         public int Int2;
         public float Float0;
         public float Float1;
+        public float Float2;
+        public float Float3;
     }
 
     public struct MorrowindScriptLocalDef

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using Unity.Mathematics;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Importer.Bake
@@ -26,6 +28,7 @@ namespace VVardenfell.Importer.Bake
         public static void Build(
             GenericRecordDef[] scripts,
             SoundDef[] sounds,
+            ActorDef[] actors,
             GenericRecordDef[] globals,
             DialogueDef[] dialogues,
             DialogueInfoDef[] dialogueInfos,
@@ -37,6 +40,7 @@ namespace VVardenfell.Importer.Bake
         {
             scripts ??= Array.Empty<GenericRecordDef>();
             var soundLookup = BuildSoundLookup(sounds);
+            var actorLookup = BuildActorLookup(actors);
             var globalLookup = BuildGlobalLookup(globals);
             var dialogueLookup = BuildDialogueLookup(dialogues);
             var programList = new List<MorrowindScriptProgramDef>(scripts.Length);
@@ -49,6 +53,7 @@ namespace VVardenfell.Importer.Bake
                     scripts[i],
                     i,
                     soundLookup,
+                    actorLookup,
                     globalLookup,
                     dialogueLookup,
                     dialogueInfos,
@@ -69,6 +74,7 @@ namespace VVardenfell.Importer.Bake
             in GenericRecordDef script,
             int scriptIndex,
             Dictionary<string, SoundDefHandle> sounds,
+            Dictionary<string, int> actors,
             Dictionary<string, (int Index, byte Kind)> globals,
             Dictionary<string, DialogueCompileInfo> dialogues,
             DialogueInfoDef[] dialogueInfos,
@@ -109,6 +115,7 @@ namespace VVardenfell.Importer.Bake
                         localLookup,
                         globals,
                         sounds,
+                        actors,
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
@@ -132,6 +139,7 @@ namespace VVardenfell.Importer.Bake
                         localLookup,
                         globals,
                         sounds,
+                        actors,
                         dialogues,
                         explicitRefTargets,
                         ambiguousExplicitRefTargets,
@@ -174,7 +182,7 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                if (TryCompileSet(line, localLookup, globals, sounds, dialogues, instructions, ref stackDepth, ref maxStack, out string setFailure))
+                if (TryCompileSet(line, localLookup, globals, sounds, actors, dialogues, instructions, ref stackDepth, ref maxStack, out string setFailure))
                 {
                     stackDepth = Math.Max(0, stackDepth - 1);
                     continue;
@@ -271,6 +279,61 @@ namespace VVardenfell.Importer.Bake
                 if (setAngleFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setAngleFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompilePositionCell(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string positionCellFailure))
+                {
+                    continue;
+                }
+
+                if (positionCellFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, positionCellFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileAiWander(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiWanderFailure))
+                {
+                    continue;
+                }
+
+                if (aiWanderFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, aiWanderFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileAiTravel(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiTravelFailure))
+                {
+                    continue;
+                }
+
+                if (aiTravelFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, aiTravelFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiFollowFailure))
+                {
+                    continue;
+                }
+
+                if (aiFollowFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, aiFollowFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileAiFollowCell(line, explicitRefTargets, ambiguousExplicitRefTargets, instructions, out string aiFollowCellFailure))
+                {
+                    continue;
+                }
+
+                if (aiFollowCellFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, aiFollowCellFailure, lineIndex);
                     return;
                 }
 
@@ -513,6 +576,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
@@ -538,6 +602,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
@@ -566,6 +631,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
@@ -613,6 +679,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     explicitRefTargets,
                     ambiguousExplicitRefTargets,
@@ -718,6 +785,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
@@ -743,6 +811,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     MorrowindScriptRefTargetMode.PlacedRef,
                     targetPlacedRefId,
@@ -757,6 +826,7 @@ namespace VVardenfell.Importer.Bake
                 localLookup,
                 globalLookup,
                 soundLookup,
+                actorLookup,
                 dialogueLookup,
                 MorrowindScriptRefTargetMode.Self,
                 0u,
@@ -771,6 +841,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             MorrowindScriptRefTargetMode refTargetMode,
             uint refTargetPlacedRefId,
@@ -789,7 +860,7 @@ namespace VVardenfell.Importer.Bake
 
             int comparisonIndex = FindComparisonToken(tokens);
             if (comparisonIndex < 0)
-                return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure);
+                return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure);
 
             if (FindComparisonToken(tokens, comparisonIndex + 1) >= 0)
             {
@@ -797,7 +868,7 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!TryCompileExpression(tokens, 0, comparisonIndex, localLookup, globalLookup, soundLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileExpression(tokens, 0, comparisonIndex, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure))
                 return false;
 
             if (!TryCompileExpression(
@@ -807,6 +878,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     MorrowindScriptRefTargetMode.Self,
                     0u,
@@ -834,6 +906,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             MorrowindScriptRefTargetMode refTargetMode,
             uint refTargetPlacedRefId,
@@ -926,6 +999,55 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
+            if (count >= 2
+                && tokens[start].Equals("getpccell", StringComparison.OrdinalIgnoreCase))
+            {
+                string cellName = string.Join(" ", tokens, start + 1, count - 1).Trim();
+                if (string.IsNullOrWhiteSpace(cellName))
+                {
+                    failure = "GetPCCell requires one cell name prefix.";
+                    return false;
+                }
+
+                ulong hash = HashStringPrefix(cellName);
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetPCCell,
+                    Int0 = cellName.Length,
+                    Int1 = unchecked((int)(hash & 0xFFFFFFFFu)),
+                    Int2 = unchecked((int)(hash >> 32)),
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (count >= 2
+                && tokens[start].Equals("getdeadcount", StringComparison.OrdinalIgnoreCase))
+            {
+                string actorId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+                if (string.IsNullOrWhiteSpace(actorId))
+                {
+                    failure = "GetDeadCount requires one actor id.";
+                    return false;
+                }
+
+                if (!actorLookup.TryGetValue(ContentId.NormalizeId(actorId), out int actorIndex))
+                {
+                    failure = $"GetDeadCount references unknown actor '{actorId}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetDeadCount,
+                    Int0 = actorIndex,
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
             if (count != 1)
             {
                 failure = $"Unsupported expression '{string.Join(" ", tokens, start, count)}'.";
@@ -1005,6 +1127,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
@@ -1032,6 +1155,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     instructions,
                     ref stackDepth,
@@ -1073,6 +1197,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
@@ -1100,7 +1225,7 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            return TryCompileArithmeticTokens(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure);
+            return TryCompileArithmeticTokens(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure);
         }
 
         static bool TryCompileArithmeticTokens(
@@ -1110,6 +1235,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, (int Index, byte Kind)> localLookup,
             Dictionary<string, (int Index, byte Kind)> globalLookup,
             Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
             Dictionary<string, DialogueCompileInfo> dialogueLookup,
             List<MorrowindScriptInstructionDef> instructions,
             ref int stackDepth,
@@ -1125,7 +1251,7 @@ namespace VVardenfell.Importer.Bake
 
             if (tokens[start] == "+" || tokens[start] == "-")
             {
-                if (!TryCompileArithmeticTokens(tokens, start + 1, count - 1, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                if (!TryCompileArithmeticTokens(tokens, start + 1, count - 1, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
                     return false;
 
                 if (tokens[start] == "-")
@@ -1145,6 +1271,7 @@ namespace VVardenfell.Importer.Bake
                     localLookup,
                     globalLookup,
                     soundLookup,
+                    actorLookup,
                     dialogueLookup,
                     MorrowindScriptRefTargetMode.Self,
                     0u,
@@ -1153,10 +1280,10 @@ namespace VVardenfell.Importer.Bake
                     ref maxStack,
                     out failure);
 
-            if (!TryCompileArithmeticTokens(tokens, start, operatorIndex - start, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileArithmeticTokens(tokens, start, operatorIndex - start, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
                 return false;
 
-            if (!TryCompileArithmeticTokens(tokens, operatorIndex + 1, start + count - operatorIndex - 1, localLookup, globalLookup, soundLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            if (!TryCompileArithmeticTokens(tokens, operatorIndex + 1, start + count - operatorIndex - 1, localLookup, globalLookup, soundLookup, actorLookup, dialogueLookup, instructions, ref stackDepth, ref maxStack, out failure))
                 return false;
 
             if (!TryMapArithmeticOpcode(tokens[operatorIndex], out MorrowindScriptOpcode opcode))
@@ -1676,6 +1803,359 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompilePositionCell(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit PositionCell command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, "positioncell"))
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                    return false;
+
+                targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 6)
+            {
+                failure = $"PositionCell command requires x, y, z, z-rotation, and cell id in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(NormalizeToken(tokens[3]), NumberStyles.Float, CultureInfo.InvariantCulture, out float z)
+                || !float.TryParse(NormalizeToken(tokens[4]), NumberStyles.Float, CultureInfo.InvariantCulture, out float zRotMinutes))
+            {
+                failure = $"PositionCell command has invalid coordinates or rotation: '{line}'.";
+                return false;
+            }
+
+            string cellId = NormalizeToken(tokens[5]).Trim('"');
+            if (string.IsNullOrWhiteSpace(cellId))
+            {
+                failure = $"PositionCell command has empty cell id: '{line}'.";
+                return false;
+            }
+
+            ulong cellHash = HashInteriorCellId(cellId);
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.PositionCell,
+                Operand0 = (byte)targetMode,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = unchecked((int)(cellHash & 0xFFFFFFFFu)),
+                Int2 = unchecked((int)(cellHash >> 32)),
+                Float0 = x * WorldScale.MwUnitsToMeters,
+                Float1 = z * WorldScale.MwUnitsToMeters,
+                Float2 = y * WorldScale.MwUnitsToMeters,
+                Float3 = math.radians(zRotMinutes / 60f),
+            });
+            return true;
+        }
+
+        static bool TryCompileAiWander(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aiwander", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length < 4)
+            {
+                failure = $"AiWander command requires distance, duration, and time-of-day in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float range))
+            {
+                failure = $"AiWander command has invalid wander distance: '{line}'.";
+                return false;
+            }
+
+            for (int i = 2; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"AiWander command has invalid numeric argument: '{line}'.";
+                    return false;
+                }
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.AiWander,
+                Operand0 = (byte)targetMode,
+                Operand1 = ResolveAiWanderRepeat(tokens),
+                Int0 = unchecked((int)targetPlacedRefId),
+                Float0 = math.max(0f, range) * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryCompileAiTravel(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aitravel", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length < 4)
+            {
+                failure = $"AiTravel command requires x, y, and z in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(NormalizeToken(tokens[3]), NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
+            {
+                failure = $"AiTravel command has invalid coordinates: '{line}'.";
+                return false;
+            }
+
+            for (int i = 4; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"AiTravel command has invalid reset argument: '{line}'.";
+                    return false;
+                }
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.AiTravel,
+                Operand0 = (byte)targetMode,
+                Operand1 = tokens.Length > 4 ? (short)1 : (short)0,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Float0 = x * WorldScale.MwUnitsToMeters,
+                Float1 = z * WorldScale.MwUnitsToMeters,
+                Float2 = y * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryCompileAiFollow(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aifollow", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length < 6)
+            {
+                failure = $"AiFollow command requires target actor, duration, x, y, and z in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!IsPlayerTarget(tokens[1]))
+            {
+                failure = $"AiFollow command supports only Player follow target in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!TryParseAiFollowNumbers(tokens, 2, line, out float duration, out float x, out float y, out float z, out failure))
+                return false;
+
+            for (int i = 6; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"AiFollow command has invalid reset argument: '{line}'.";
+                    return false;
+                }
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.AiFollow,
+                Operand0 = (byte)targetMode,
+                Operand1 = tokens.Length > 6 ? (short)1 : (short)0,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Float0 = duration,
+                Float1 = x * WorldScale.MwUnitsToMeters,
+                Float2 = z * WorldScale.MwUnitsToMeters,
+                Float3 = y * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryCompileAiFollowCell(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aifollowcell", explicitRefTargets, ambiguousExplicitRefTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length < 7)
+            {
+                failure = $"AiFollowCell command requires target actor, cell id, duration, x, y, and z in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            if (!IsPlayerTarget(tokens[1]))
+            {
+                failure = $"AiFollowCell command supports only Player follow target in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string cellId = NormalizeToken(tokens[2]).Trim('"');
+            if (string.IsNullOrWhiteSpace(cellId))
+            {
+                failure = $"AiFollowCell command has empty cell id: '{line}'.";
+                return false;
+            }
+
+            if (!TryParseAiFollowNumbers(tokens, 3, line, out float duration, out float x, out float y, out float z, out failure))
+                return false;
+
+            for (int i = 7; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"AiFollowCell command has invalid reset argument: '{line}'.";
+                    return false;
+                }
+            }
+
+            ulong cellHash = HashInteriorCellId(cellId);
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.AiFollowCell,
+                Operand0 = (byte)targetMode,
+                Operand1 = tokens.Length > 7 ? (short)1 : (short)0,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = unchecked((int)(cellHash & 0xFFFFFFFFu)),
+                Int2 = unchecked((int)(cellHash >> 32)),
+                Float0 = duration,
+                Float1 = x * WorldScale.MwUnitsToMeters,
+                Float2 = z * WorldScale.MwUnitsToMeters,
+                Float3 = y * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryParseAiFollowNumbers(
+            string[] tokens,
+            int start,
+            string line,
+            out float duration,
+            out float x,
+            out float y,
+            out float z,
+            out string failure)
+        {
+            duration = 0f;
+            x = 0f;
+            y = 0f;
+            z = 0f;
+            failure = null;
+            if (!float.TryParse(NormalizeToken(tokens[start]), NumberStyles.Float, CultureInfo.InvariantCulture, out duration)
+                || !float.TryParse(NormalizeToken(tokens[start + 1]), NumberStyles.Float, CultureInfo.InvariantCulture, out x)
+                || !float.TryParse(NormalizeToken(tokens[start + 2]), NumberStyles.Float, CultureInfo.InvariantCulture, out y)
+                || !float.TryParse(NormalizeToken(tokens[start + 3]), NumberStyles.Float, CultureInfo.InvariantCulture, out z))
+            {
+                failure = $"AiFollow command has invalid duration or coordinates: '{line}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool IsPlayerTarget(string target)
+            => string.Equals(NormalizeToken(target).Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
+
+        static bool TrySplitOptionalExplicitCommand(
+            string line,
+            string command,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            out MorrowindScriptRefTargetMode targetMode,
+            out uint targetPlacedRefId,
+            out string commandLine,
+            out string failure)
+        {
+            failure = null;
+            targetMode = MorrowindScriptRefTargetMode.Self;
+            targetPlacedRefId = 0u;
+            commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit {command} command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, command))
+                return false;
+
+            if (explicitTargetId == null)
+                return true;
+
+            if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, out targetPlacedRefId, out failure))
+                return false;
+
+            targetMode = MorrowindScriptRefTargetMode.PlacedRef;
+            return true;
+        }
+
+        static short ResolveAiWanderRepeat(string[] tokens)
+        {
+            int optionalArgCount = tokens.Length - 4;
+            if (optionalArgCount <= 0)
+                return 0;
+            if (optionalArgCount <= 8)
+                return 1;
+
+            return int.TryParse(NormalizeToken(tokens[12]), NumberStyles.Integer, CultureInfo.InvariantCulture, out int repeat) && repeat != 0
+                ? (short)1
+                : (short)0;
+        }
+
         static bool TryCompileAudio(
             string line,
             Dictionary<string, SoundDefHandle> sounds,
@@ -1856,6 +2336,26 @@ namespace VVardenfell.Importer.Bake
             return lookup;
         }
 
+        static Dictionary<string, int> BuildActorLookup(ActorDef[] actors)
+        {
+            var lookup = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (actors == null)
+                return lookup;
+
+            for (int i = 0; i < actors.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(actors[i].Id);
+                if (!string.IsNullOrEmpty(normalizedId))
+                    lookup[normalizedId] = i;
+
+                string normalizedOriginalId = ContentId.NormalizeId(actors[i].OriginalId);
+                if (!string.IsNullOrEmpty(normalizedOriginalId) && !lookup.ContainsKey(normalizedOriginalId))
+                    lookup[normalizedOriginalId] = i;
+            }
+
+            return lookup;
+        }
+
         static Dictionary<string, (int Index, byte Kind)> BuildGlobalLookup(GenericRecordDef[] globals)
         {
             var lookup = new Dictionary<string, (int Index, byte Kind)>(StringComparer.OrdinalIgnoreCase);
@@ -1911,7 +2411,7 @@ namespace VVardenfell.Importer.Bake
         {
             if (!line.StartsWith(command, StringComparison.OrdinalIgnoreCase))
                 return false;
-            return line.Length == command.Length || char.IsWhiteSpace(line[command.Length]);
+            return line.Length == command.Length || char.IsWhiteSpace(line[command.Length]) || line[command.Length] == ',';
         }
 
         static int IndexOfWord(string text, string word)
@@ -2227,6 +2727,42 @@ namespace VVardenfell.Importer.Bake
         static string NormalizeToken(string token)
         {
             return (token ?? string.Empty).Trim().Trim(',');
+        }
+
+        static ulong HashStringPrefix(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0UL;
+
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c >= 'A' && c <= 'Z')
+                    c = (char)(c + 32);
+                hash ^= c;
+                hash *= 1099511628211UL;
+            }
+
+            return hash == 0UL ? 1UL : hash;
+        }
+
+        static ulong HashInteriorCellId(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0UL;
+
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c >= 'A' && c <= 'Z')
+                    c = (char)(c + 32);
+                hash ^= c;
+                hash *= 1099511628211UL;
+            }
+
+            return hash == 0UL ? 1UL : hash;
         }
     }
 }

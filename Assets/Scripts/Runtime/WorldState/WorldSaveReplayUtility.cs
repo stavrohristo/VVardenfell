@@ -269,9 +269,11 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
             }
 
-            if (payload.Dialogue.KnownTopicDialogueIndices == null || payload.Dialogue.TopicEntries == null)
+            if (payload.Dialogue.KnownTopicDialogueIndices == null
+                || payload.Dialogue.TopicEntries == null
+                || payload.Dialogue.FactionReactions == null)
             {
-                error = "Save payload is missing dialogue topic data.";
+                error = "Save payload is missing dialogue data.";
                 return false;
             }
 
@@ -284,6 +286,12 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.ActiveMagicEffects == null)
             {
                 error = "Save payload is missing active magic effect data.";
+                return false;
+            }
+
+            if (payload.ActorDeathCounts == null)
+            {
+                error = "Save payload is missing actor death count data.";
                 return false;
             }
 
@@ -604,6 +612,7 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
             ClearQuestJournal(entityManager, questJournalEntity);
             ClearDialogue(entityManager, questJournalEntity);
+            ClearActorDeathCounts(entityManager, questJournalEntity);
             entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity).Clear();
@@ -653,6 +662,8 @@ namespace VVardenfell.Runtime.WorldState
             if (!ApplyQuestJournalPayload(entityManager, questJournalEntity, payload.QuestJournal, out error))
                 return false;
             if (!ApplyDialoguePayload(entityManager, questJournalEntity, payload.Dialogue, out error))
+                return false;
+            if (!ApplyActorDeathCounts(entityManager, questJournalEntity, payload.ActorDeathCounts, out error))
                 return false;
 
             var inventory = entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity);
@@ -705,7 +716,58 @@ namespace VVardenfell.Runtime.WorldState
                 knownTopics[i] = default;
 
             entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity).Clear();
+            entityManager.GetBuffer<MorrowindFactionReactionOverride>(dialogueEntity).Clear();
             entityManager.GetBuffer<MorrowindDialogueRequest>(dialogueEntity).Clear();
+        }
+
+        static void ClearActorDeathCounts(EntityManager entityManager, Entity scriptRuntimeEntity)
+        {
+            if (!entityManager.HasBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity))
+                return;
+
+            var deathCounts = entityManager.GetBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity);
+            for (int i = 0; i < deathCounts.Length; i++)
+                deathCounts[i] = default;
+        }
+
+        static bool ApplyActorDeathCounts(EntityManager entityManager, Entity scriptRuntimeEntity, int[] payload, out string error)
+        {
+            error = null;
+            if (payload == null || payload.Length == 0)
+                return true;
+
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null)
+            {
+                error = "Runtime content database is not ready for actor death count replay.";
+                return false;
+            }
+
+            if (!entityManager.HasBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity))
+            {
+                error = "Morrowind script runtime is missing actor death count state.";
+                return false;
+            }
+
+            var deathCounts = entityManager.GetBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity);
+            if (payload.Length != contentDb.ActorCount || deathCounts.Length != contentDb.ActorCount)
+            {
+                error = $"Actor death count replay count mismatch: save={payload.Length} buffer={deathCounts.Length} content={contentDb.ActorCount}.";
+                return false;
+            }
+
+            for (int i = 0; i < payload.Length; i++)
+            {
+                if (payload[i] < 0)
+                {
+                    error = $"Actor death count save has negative count at actor index {i}.";
+                    return false;
+                }
+
+                deathCounts[i] = new MorrowindActorDeathCount { Count = payload[i] };
+            }
+
+            return true;
         }
 
         static bool ApplyQuestJournalPayload(
@@ -808,6 +870,7 @@ namespace VVardenfell.Runtime.WorldState
             var state = entityManager.GetComponentData<MorrowindDialogueState>(dialogueEntity);
             var knownTopics = entityManager.GetBuffer<MorrowindKnownDialogueTopic>(dialogueEntity);
             var entries = entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity);
+            var factionReactions = entityManager.GetBuffer<MorrowindFactionReactionOverride>(dialogueEntity);
             if (state.DialogueCount != knownTopics.Length || knownTopics.Length != contentDb.DialogueCount)
             {
                 error = $"Dialogue replay count mismatch: state={state.DialogueCount} buffer={knownTopics.Length} content={contentDb.DialogueCount}.";
@@ -868,6 +931,30 @@ namespace VVardenfell.Runtime.WorldState
                 });
                 if (saved.Sequence > maxSequence)
                     maxSequence = saved.Sequence;
+            }
+
+            int factionCount = contentDb.Data.Factions?.Length ?? 0;
+            for (int i = 0; i < payload.FactionReactions.Length; i++)
+            {
+                var saved = payload.FactionReactions[i];
+                if ((uint)saved.SourceFactionIndex >= (uint)factionCount)
+                {
+                    error = $"Dialogue faction reaction references invalid source faction index {saved.SourceFactionIndex}.";
+                    return false;
+                }
+
+                if ((uint)saved.TargetFactionIndex >= (uint)factionCount)
+                {
+                    error = $"Dialogue faction reaction references invalid target faction index {saved.TargetFactionIndex}.";
+                    return false;
+                }
+
+                factionReactions.Add(new MorrowindFactionReactionOverride
+                {
+                    SourceFactionIndex = saved.SourceFactionIndex,
+                    TargetFactionIndex = saved.TargetFactionIndex,
+                    Reaction = saved.Reaction,
+                });
             }
 
             state.NextTopicEntrySequence = math.max(math.max(1u, payload.NextTopicEntrySequence), maxSequence + 1u);

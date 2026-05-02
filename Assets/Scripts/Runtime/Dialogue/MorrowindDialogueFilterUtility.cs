@@ -381,6 +381,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                         return false;
                     matched = Compare(ResolvePlayerVital(function, vitals), rule);
                     return true;
+
+                case DialogueConditionFunction.FacReactionLowest:
+                case DialogueConditionFunction.FacReactionHighest:
+                    matched = TryResolvePlayerFactionReaction(
+                        contentDb,
+                        entityManager,
+                        actor.FactionId,
+                        function == DialogueConditionFunction.FacReactionLowest,
+                        out int reaction)
+                        && Compare(reaction, rule);
+                    return true;
             }
 
             if (TryResolvePlayerAttributeOrSkill(entityManager, function, out float stat))
@@ -475,6 +486,49 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (query.IsEmptyIgnoreFilter)
                 return false;
             vitals = entityManager.GetComponentData<ActorVitalSet>(query.GetSingletonEntity());
+            return true;
+        }
+
+        static bool TryResolvePlayerFactionReaction(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            string speakerFactionId,
+            bool lowest,
+            out int value)
+        {
+            value = 0;
+            if (contentDb == null
+                || string.IsNullOrWhiteSpace(speakerFactionId)
+                || !contentDb.TryGetFactionHandle(speakerFactionId, out var speakerFaction)
+                || !speakerFaction.IsValid)
+            {
+                return true;
+            }
+
+            using var playerQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>());
+            if (playerQuery.IsEmptyIgnoreFilter)
+                return true;
+
+            using var dialogueQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindDialogueState>(), ComponentType.ReadOnly<MorrowindFactionReactionOverride>());
+            if (dialogueQuery.IsEmptyIgnoreFilter)
+                return true;
+
+            var playerFactions = entityManager.GetBuffer<PlayerFactionMembership>(playerQuery.GetSingletonEntity(), true);
+            var overrides = entityManager.GetBuffer<MorrowindFactionReactionOverride>(dialogueQuery.GetSingletonEntity(), true);
+            for (int i = 0; i < playerFactions.Length; i++)
+            {
+                if (playerFactions[i].Joined == 0)
+                    continue;
+
+                int reaction = MorrowindDialogueUtility.GetFactionReaction(
+                    contentDb,
+                    overrides,
+                    speakerFaction.Index,
+                    playerFactions[i].FactionIndex);
+                if (lowest ? reaction < value : reaction > value)
+                    value = reaction;
+            }
+
             return true;
         }
 

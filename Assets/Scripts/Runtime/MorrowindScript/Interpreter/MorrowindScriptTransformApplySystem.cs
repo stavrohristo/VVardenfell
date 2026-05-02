@@ -1,6 +1,12 @@
+using System;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Rendering;
+using Unity.Transforms;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -20,6 +26,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             RequireForUpdate(_runtimeQuery);
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<LoadedCellsMap>();
         }
 
         protected override void OnUpdate()
@@ -30,12 +37,27 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
+            byte interiorActive = 0;
+            ulong activeInteriorCellHash = 0UL;
+            if (SystemAPI.TryGetSingleton<InteriorTransitionState>(out var interiorTransition) && interiorTransition.InteriorActive != 0)
+            {
+                interiorActive = 1;
+                activeInteriorCellHash = interiorTransition.ActiveInteriorCellHash;
+            }
+
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
                 Entity target = ResolveLiveTarget(request, logicalRefLookup);
                 if (target == Entity.Null || !EntityManager.Exists(target))
                     continue;
+
+                if (request.Operation == 2)
+                {
+                    ApplyPositionCell(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    continue;
+                }
 
                 if (request.Operation == 1)
                 {
@@ -50,6 +72,154 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             requests.Clear();
+        }
+
+        void ApplyPositionCell(
+            Entity target,
+            in MorrowindScriptTransformRequest request,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
+        {
+            if (!WorldResources.TryGetInteriorCell(request.InteriorCellHash, out var cell))
+                throw new InvalidOperationException($"PositionCell target interior cell hash 0x{request.InteriorCellHash:X16} is not loaded in world resources.");
+
+            FixedString128Bytes cellId = RuntimeFixedStringUtility.ToFixed128OrDefault(cell.CellId);
+            if (cellId.IsEmpty)
+                throw new InvalidOperationException($"PositionCell target interior cell 0x{request.InteriorCellHash:X16} has no cell id.");
+
+            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
+                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+                : request.Position;
+            quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
+            MoveEntity(target, request.Position, rotation);
+            UpdateInteriorMembership(target, cellId, request.InteriorCellHash);
+
+            if (EntityManager.HasBuffer<LogicalRefChild>(target))
+            {
+                float3 delta = request.Position - previousPosition;
+                var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+                for (int i = 0; i < children.Length; i++)
+                {
+                    Entity child = children[i].Value;
+                    if (child == Entity.Null || child == target || !EntityManager.Exists(child))
+                        continue;
+
+                    if (!EntityManager.HasComponent<Parent>(child) && EntityManager.HasComponent<LocalTransform>(child))
+                    {
+                        var childTransform = EntityManager.GetComponentData<LocalTransform>(child);
+                        childTransform.Position += delta;
+                        EntityManager.SetComponentData(child, childTransform);
+                        if (EntityManager.HasComponent<LocalToWorld>(child))
+                        {
+                            EntityManager.SetComponentData(child, new LocalToWorld
+                            {
+                                Value = float4x4.TRS(childTransform.Position, childTransform.Rotation, new float3(childTransform.Scale)),
+                            });
+                        }
+                    }
+
+                    UpdateInteriorMembership(child, cellId, request.InteriorCellHash);
+                }
+            }
+
+            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(target, active);
+        }
+
+        void MoveEntity(Entity entity, float3 position, quaternion rotation)
+        {
+            if (!EntityManager.HasComponent<LocalTransform>(entity))
+                return;
+
+            if (EntityManager.HasComponent<Static>(entity))
+                EntityManager.RemoveComponent<Static>(entity);
+
+            var transform = EntityManager.GetComponentData<LocalTransform>(entity);
+            transform.Position = position;
+            transform.Rotation = rotation;
+            EntityManager.SetComponentData(entity, transform);
+
+            if (EntityManager.HasComponent<LocalToWorld>(entity))
+            {
+                EntityManager.SetComponentData(entity, new LocalToWorld
+                {
+                    Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
+                });
+            }
+        }
+
+        void UpdateInteriorMembership(Entity entity, FixedString128Bytes cellId, ulong cellHash)
+        {
+            if (EntityManager.HasComponent<LogicalRefLocation>(entity))
+            {
+                EntityManager.SetComponentData(entity, new LogicalRefLocation
+                {
+                    InteriorCellId = cellId,
+                    InteriorCellHash = cellHash,
+                    IsInterior = 1,
+                });
+            }
+
+            if (!EntityManager.HasComponent<InteriorCellMember>(entity))
+                EntityManager.AddComponent<InteriorCellMember>(entity);
+            if (EntityManager.HasComponent<CellLink>(entity))
+                EntityManager.RemoveComponent<CellLink>(entity);
+        }
+
+        bool IsPositionCellTargetActive(Entity target, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)
+        {
+            if (EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+                return false;
+
+            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+                return false;
+
+            var location = EntityManager.GetComponentData<LogicalRefLocation>(target);
+            if (location.IsInterior != 0)
+                return interiorActive != 0 && location.InteriorCellHash == activeInteriorCellHash;
+
+            return loadedCells.Active.IsCreated && loadedCells.Active.Contains(location.ExteriorCell);
+        }
+
+        void ProjectPositionCellTarget(Entity target, bool active)
+        {
+            ProjectEntity(target, active, isActorRoot: EntityManager.HasComponent<ActorSpawnSource>(target));
+
+            if (!EntityManager.HasBuffer<LogicalRefChild>(target))
+                return;
+
+            bool isActor = EntityManager.HasComponent<ActorSpawnSource>(target);
+            var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+            for (int i = 0; i < children.Length; i++)
+            {
+                Entity child = children[i].Value;
+                if (child == Entity.Null || !EntityManager.Exists(child))
+                    continue;
+
+                ProjectEntity(child, active, isActor);
+            }
+        }
+
+        void ProjectEntity(Entity entity, bool active, bool isActorRoot)
+        {
+            if (EntityManager.HasComponent<ActorRenderVisible>(entity))
+                EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, active);
+
+            if (EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
+                EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(entity, active);
+
+            if (EntityManager.HasComponent<MaterialMeshInfo>(entity) && (!isActorRoot || !active))
+                EntityManager.SetComponentEnabled<MaterialMeshInfo>(entity, active);
+
+            if (!EntityManager.HasComponent<RuntimeColliderSource>(entity))
+                return;
+
+            if (active)
+                RuntimeColliderAttachmentUtility.EnablePhysics(EntityManager, entity);
+            else
+                RuntimeColliderAttachmentUtility.DisablePhysics(EntityManager, entity);
         }
 
         Entity ResolveLiveTarget(in MorrowindScriptTransformRequest request, in LogicalRefLookup lookup)

@@ -173,6 +173,8 @@ namespace VVardenfell.Core.Cache
             w.Write(value.Int2);
             w.Write(value.Float0);
             w.Write(value.Float1);
+            w.Write(value.Float2);
+            w.Write(value.Float3);
         }
 
 
@@ -188,6 +190,8 @@ namespace VVardenfell.Core.Cache
                 Int2 = r.ReadInt32(),
                 Float0 = r.ReadSingle(),
                 Float1 = r.ReadSingle(),
+                Float2 = r.ReadSingle(),
+                Float3 = r.ReadSingle(),
             };
         }
 

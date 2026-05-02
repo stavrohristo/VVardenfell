@@ -57,5 +57,47 @@ namespace VVardenfell.Runtime.MorrowindScript
             ecb.AddBuffer<MorrowindScriptStackValue>(logicalEntity);
             return true;
         }
+
+        public static void AddRuntimeScriptBuffers(
+            EntityManager entityManager,
+            Entity entity,
+            RuntimeContentDatabase contentDb,
+            MorrowindScriptProgramDefHandle programHandle)
+        {
+            var localBuffer = entityManager.AddBuffer<MorrowindScriptLocalValue>(entity);
+            var locals = contentDb.GetMorrowindScriptLocals(programHandle);
+            for (int i = 0; i < locals.Length; i++)
+            {
+                localBuffer.Add(new MorrowindScriptLocalValue
+                {
+                    ValueKind = locals[i].ValueKind,
+                });
+            }
+
+            entityManager.AddBuffer<MorrowindScriptStackValue>(entity);
+        }
+
+        public static void EnsureRuntimeScriptBuffers(
+            EntityManager entityManager,
+            Entity entity,
+            RuntimeContentDatabase contentDb,
+            MorrowindScriptProgramDefHandle programHandle)
+        {
+            if (!entityManager.HasBuffer<MorrowindScriptLocalValue>(entity))
+            {
+                var localBuffer = entityManager.AddBuffer<MorrowindScriptLocalValue>(entity);
+                var locals = contentDb.GetMorrowindScriptLocals(programHandle);
+                for (int i = 0; i < locals.Length; i++)
+                {
+                    localBuffer.Add(new MorrowindScriptLocalValue
+                    {
+                        ValueKind = locals[i].ValueKind,
+                    });
+                }
+            }
+
+            if (!entityManager.HasBuffer<MorrowindScriptStackValue>(entity))
+                entityManager.AddBuffer<MorrowindScriptStackValue>(entity);
+        }
     }
 }

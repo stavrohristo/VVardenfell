@@ -28,6 +28,20 @@ namespace VVardenfell.Runtime.Components
         public FixedString128Bytes DisabledReason;
     }
 
+    public struct MorrowindGlobalScriptInstance : IComponentData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+    }
+
+    public struct MorrowindScriptStartRequest : IBufferElementData
+    {
+        public MorrowindScriptProgramDefHandle Program;
+        public int ProgramIndex;
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+    }
+
     public struct MorrowindScriptLocalValue : IBufferElementData
     {
         public int IntValue;
@@ -47,6 +61,15 @@ namespace VVardenfell.Runtime.Components
         public int IntValue;
         public float FloatValue;
         public byte ValueKind;
+    }
+
+    public struct MorrowindActorDeathCount : IBufferElementData
+    {
+        public int Count;
+    }
+
+    public struct MorrowindActorDeathCounted : IComponentData
+    {
     }
 
     public struct MorrowindQuestJournalState : IComponentData
@@ -111,8 +134,33 @@ namespace VVardenfell.Runtime.Components
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
         public float Radians;
+        public float3 Position;
+        public ulong InteriorCellHash;
         public byte Axis;
         public byte Operation;
+    }
+
+    public enum MorrowindScriptAiPackageRequestType : byte
+    {
+        Wander = 1,
+        Travel = 2,
+        Follow = 3,
+    }
+
+    public struct MorrowindScriptAiPackageRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public Entity FollowTargetEntity;
+        public uint FollowTargetPlacedRefId;
+        public float3 TargetPosition;
+        public float WanderRadius;
+        public float IdleSeconds;
+        public float FollowDistance;
+        public ulong DestinationInteriorCellHash;
+        public byte PackageType;
+        public byte ShouldRepeat;
+        public byte AllowPartial;
     }
 
     public struct MorrowindScriptAudioRequest : IComponentData

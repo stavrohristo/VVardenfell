@@ -25,6 +25,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int Int2;
         public float Float0;
         public float Float1;
+        public float Float2;
+        public float Float3;
     }
 
     public struct MorrowindScriptLocalRuntime
@@ -79,6 +81,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Int2 = source.Int2,
                     Float0 = source.Float0,
                     Float1 = source.Float1,
+                    Float2 = source.Float2,
+                    Float3 = source.Float3,
                 };
             }
 

@@ -53,6 +53,7 @@ namespace VVardenfell.Runtime.WorldState
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
             var questJournalPayload = CaptureQuestJournalPayload(entityManager, questJournalEntity);
             var dialoguePayload = CaptureDialoguePayload(entityManager, dialogueEntity);
+            var actorDeathCounts = CaptureActorDeathCounts(entityManager, questJournalEntity);
             var transition = entityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
             var timePayload = CaptureTimePayload(entityManager);
@@ -102,6 +103,7 @@ namespace VVardenfell.Runtime.WorldState
                 JournalEntries = journalEntries,
                 QuestJournal = questJournalPayload,
                 Dialogue = dialoguePayload,
+                ActorDeathCounts = actorDeathCounts,
                 Inventory = inventoryEntries,
                 KnownSpells = knownSpells,
                 ActiveMagicEffects = activeMagicEffects,
@@ -111,6 +113,18 @@ namespace VVardenfell.Runtime.WorldState
                 Weather = weatherPayload,
             };
             return true;
+        }
+
+        static int[] CaptureActorDeathCounts(EntityManager entityManager, Entity scriptRuntimeEntity)
+        {
+            if (!entityManager.HasBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity))
+                return Array.Empty<int>();
+
+            var counts = entityManager.GetBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity);
+            var result = new int[counts.Length];
+            for (int i = 0; i < counts.Length; i++)
+                result[i] = counts[i].Count;
+            return result;
         }
 
         static PlayerFactionMembership[] CapturePlayerFactions(EntityManager entityManager, Entity playerEntity)
@@ -153,11 +167,24 @@ namespace VVardenfell.Runtime.WorldState
                 };
             }
 
+            var factionReactions = entityManager.GetBuffer<MorrowindFactionReactionOverride>(dialogueEntity);
+            var factionReactionPayloads = new MorrowindFactionReactionSavePayload[factionReactions.Length];
+            for (int i = 0; i < factionReactions.Length; i++)
+            {
+                factionReactionPayloads[i] = new MorrowindFactionReactionSavePayload
+                {
+                    SourceFactionIndex = factionReactions[i].SourceFactionIndex,
+                    TargetFactionIndex = factionReactions[i].TargetFactionIndex,
+                    Reaction = factionReactions[i].Reaction,
+                };
+            }
+
             return new MorrowindDialogueSavePayload
             {
                 NextTopicEntrySequence = state.NextTopicEntrySequence,
                 KnownTopicDialogueIndices = known.ToArray(),
                 TopicEntries = entryPayloads,
+                FactionReactions = factionReactionPayloads,
             };
         }
 

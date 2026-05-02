@@ -14,8 +14,11 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 16;
-        const int PreviousPayloadVersion = 15;
+        const int PayloadVersion = 18;
+        const int PreviousPayloadVersion = 17;
+        const int PreviousPlayerFactionPayloadVersion = 16;
+        const int ActorDeathCountPayloadVersion = 18;
+        const int DialogueFactionReactionPayloadVersion = 17;
         const int PlayerFactionJoinedPayloadVersion = 16;
         const int PlayerFactionPayloadVersion = 15;
         const int DialoguePayloadVersion = 14;
@@ -33,6 +36,7 @@ namespace VVardenfell.Runtime.WorldState
             int version = r.ReadInt32();
             if (version != PayloadVersion
                 && version != PreviousPayloadVersion
+                && version != PreviousPlayerFactionPayloadVersion
                 && version != DialoguePayloadVersion
                 && version != QuestJournalDatePayloadVersion
                 && version != QuestJournalPayloadVersion
@@ -123,6 +127,7 @@ namespace VVardenfell.Runtime.WorldState
 
             WriteQuestJournalPayload(w, payload.QuestJournal);
             WriteDialoguePayload(w, payload.Dialogue);
+            WriteActorDeathCounts(w, payload.ActorDeathCounts);
             WriteTimePayload(w, payload.Time);
             WriteWeatherPayload(w, payload.Weather);
         }
@@ -136,6 +141,7 @@ namespace VVardenfell.Runtime.WorldState
             int version = r.ReadInt32();
             if (version != PayloadVersion
                 && version != PreviousPayloadVersion
+                && version != PreviousPlayerFactionPayloadVersion
                 && version != DialoguePayloadVersion
                 && version != QuestJournalDatePayloadVersion
                 && version != QuestJournalPayloadVersion
@@ -207,13 +213,18 @@ namespace VVardenfell.Runtime.WorldState
                 };
 
             payload.Dialogue = version >= DialoguePayloadVersion
-                ? ReadDialoguePayload(r)
+                ? ReadDialoguePayload(r, version)
                 : new MorrowindDialogueSavePayload
                 {
                     NextTopicEntrySequence = 1u,
                     KnownTopicDialogueIndices = Array.Empty<int>(),
                     TopicEntries = Array.Empty<MorrowindTopicJournalEntrySavePayload>(),
+                    FactionReactions = Array.Empty<MorrowindFactionReactionSavePayload>(),
                 };
+
+            payload.ActorDeathCounts = version >= ActorDeathCountPayloadVersion
+                ? ReadActorDeathCounts(r)
+                : Array.Empty<int>();
 
             if (version >= WeatherPayloadVersion)
             {
@@ -227,6 +238,25 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             return payload;
+        }
+
+        static void WriteActorDeathCounts(BinaryWriter w, int[] counts)
+        {
+            w.Write(counts?.Length ?? 0);
+            if (counts == null)
+                return;
+
+            for (int i = 0; i < counts.Length; i++)
+                w.Write(counts[i]);
+        }
+
+        static int[] ReadActorDeathCounts(BinaryReader r)
+        {
+            int count = ReadCount(r, "actor death count");
+            var result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = r.ReadInt32();
+            return result;
         }
 
         static void WriteTimePayload(BinaryWriter w, in MorrowindTimeSavePayload value)
@@ -477,6 +507,17 @@ namespace VVardenfell.Runtime.WorldState
                     w.Write(value.TopicEntries[i].DayOfMonth);
                 }
             }
+
+            w.Write(value.FactionReactions?.Length ?? 0);
+            if (value.FactionReactions != null)
+            {
+                for (int i = 0; i < value.FactionReactions.Length; i++)
+                {
+                    w.Write(value.FactionReactions[i].SourceFactionIndex);
+                    w.Write(value.FactionReactions[i].TargetFactionIndex);
+                    w.Write(value.FactionReactions[i].Reaction);
+                }
+            }
         }
 
         static MorrowindQuestJournalSavePayload ReadQuestJournalPayload(BinaryReader r, int version)
@@ -519,7 +560,7 @@ namespace VVardenfell.Runtime.WorldState
             return payload;
         }
 
-        static MorrowindDialogueSavePayload ReadDialoguePayload(BinaryReader r)
+        static MorrowindDialogueSavePayload ReadDialoguePayload(BinaryReader r, int version)
         {
             var payload = new MorrowindDialogueSavePayload
             {
@@ -546,6 +587,25 @@ namespace VVardenfell.Runtime.WorldState
                     Month = r.ReadInt32(),
                     DayOfMonth = r.ReadInt32(),
                 };
+            }
+
+            if (version >= DialogueFactionReactionPayloadVersion)
+            {
+                int factionReactionCount = ReadCount(r, "dialogue faction reaction");
+                payload.FactionReactions = new MorrowindFactionReactionSavePayload[factionReactionCount];
+                for (int i = 0; i < factionReactionCount; i++)
+                {
+                    payload.FactionReactions[i] = new MorrowindFactionReactionSavePayload
+                    {
+                        SourceFactionIndex = r.ReadInt32(),
+                        TargetFactionIndex = r.ReadInt32(),
+                        Reaction = r.ReadInt32(),
+                    };
+                }
+            }
+            else
+            {
+                payload.FactionReactions = Array.Empty<MorrowindFactionReactionSavePayload>();
             }
 
             return payload;

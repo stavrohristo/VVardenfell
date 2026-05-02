@@ -64,6 +64,34 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
+        public static bool TryRemoveLastAddedTopicResponse(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindTopicJournalEntry> entries,
+            int dialogueIndex,
+            FixedString128Bytes actorName)
+        {
+            if (contentDb == null
+                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+                return false;
+
+            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            if (dialogue.Type != DialogueDefType.Topic)
+                return true;
+
+            string actor = actorName.ToString();
+            for (int i = entries.Length - 1; i >= 0; i--)
+            {
+                if (entries[i].DialogueIndex == dialogueIndex
+                    && string.Equals(entries[i].ActorId.ToString(), actor, StringComparison.Ordinal))
+                {
+                    entries.RemoveAt(i);
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
         public static bool TryFillJournal(
             RuntimeContentDatabase contentDb,
             ref MorrowindDialogueState dialogueState,
@@ -218,5 +246,99 @@ namespace VVardenfell.Runtime.MorrowindScript
                || ch == '"'
                || ch == '('
                || ch == '[';
+
+        public static bool TryModFactionReaction(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindFactionReactionOverride> overrides,
+            int sourceFactionIndex,
+            int targetFactionIndex,
+            int diff)
+        {
+            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
+                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+                return false;
+
+            int value = GetFactionReaction(contentDb, overrides, sourceFactionIndex, targetFactionIndex) + diff;
+            SetFactionReactionOverride(overrides, sourceFactionIndex, targetFactionIndex, value);
+            return true;
+        }
+
+        public static bool TrySetFactionReaction(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindFactionReactionOverride> overrides,
+            int sourceFactionIndex,
+            int targetFactionIndex,
+            int value)
+        {
+            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
+                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+                return false;
+
+            SetFactionReactionOverride(overrides, sourceFactionIndex, targetFactionIndex, value);
+            return true;
+        }
+
+        public static int GetFactionReaction(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindFactionReactionOverride> overrides,
+            int sourceFactionIndex,
+            int targetFactionIndex)
+        {
+            for (int i = 0; i < overrides.Length; i++)
+            {
+                if (overrides[i].SourceFactionIndex == sourceFactionIndex
+                    && overrides[i].TargetFactionIndex == targetFactionIndex)
+                    return overrides[i].Reaction;
+            }
+
+            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
+                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+                return 0;
+
+            ref readonly var source = ref contentDb.Data.Factions[sourceFactionIndex];
+            string targetId = contentDb.Data.Factions[targetFactionIndex].Id;
+            if (source.Reactions == null || string.IsNullOrWhiteSpace(targetId))
+                return 0;
+
+            for (int i = 0; i < source.Reactions.Length; i++)
+            {
+                if (string.Equals(ContentId.NormalizeId(source.Reactions[i].FactionId), ContentId.NormalizeId(targetId), StringComparison.Ordinal))
+                    return source.Reactions[i].Reaction;
+            }
+
+            return 0;
+        }
+
+        static void SetFactionReactionOverride(
+            DynamicBuffer<MorrowindFactionReactionOverride> overrides,
+            int sourceFactionIndex,
+            int targetFactionIndex,
+            int value)
+        {
+            for (int i = 0; i < overrides.Length; i++)
+            {
+                if (overrides[i].SourceFactionIndex == sourceFactionIndex
+                    && overrides[i].TargetFactionIndex == targetFactionIndex)
+                {
+                    overrides[i] = new MorrowindFactionReactionOverride
+                    {
+                        SourceFactionIndex = sourceFactionIndex,
+                        TargetFactionIndex = targetFactionIndex,
+                        Reaction = value,
+                    };
+                    return;
+                }
+            }
+
+            overrides.Add(new MorrowindFactionReactionOverride
+            {
+                SourceFactionIndex = sourceFactionIndex,
+                TargetFactionIndex = targetFactionIndex,
+                Reaction = value,
+            });
+        }
+
+        static bool IsValidFactionIndex(RuntimeContentDatabase contentDb, int index)
+            => contentDb?.Data.Factions != null && (uint)index < (uint)contentDb.Data.Factions.Length;
     }
 }

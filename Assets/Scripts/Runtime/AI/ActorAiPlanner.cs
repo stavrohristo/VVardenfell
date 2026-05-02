@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.AI
     {
         Wander = 1,
         Travel = 2,
+        Follow = 3,
     }
 
     public enum ActorAiPlannerStatus : byte
@@ -51,6 +52,7 @@ namespace VVardenfell.Runtime.AI
 
     public struct ActorAiPackageRuntime : IBufferElementData
     {
+        public Entity FollowTargetEntity;
         public byte Type;
         public byte ShouldRepeat;
         public byte AllowPartial;
@@ -59,6 +61,9 @@ namespace VVardenfell.Runtime.AI
         public float3 TargetPosition;
         public float WanderRadius;
         public float IdleSeconds;
+        public float FollowDistance;
+        public ulong DestinationInteriorCellHash;
+        public uint FollowTargetPlacedRefId;
     }
 
     public static class ActorAiRuntimeAuthoringUtility
@@ -224,6 +229,7 @@ namespace VVardenfell.Runtime.AI
         ComponentTypeHandle<PathGridTraversalPendingRequest> _traversalPendingRequestHandle;
         ComponentTypeHandle<PathGridTraversalAwaitingResult> _traversalAwaitingResultHandle;
         BufferTypeHandle<ActorAiPackageRuntime> _packageHandle;
+        ComponentLookup<LocalTransform> _targetTransformLookup;
 
         public void OnCreate(ref SystemState state)
         {
@@ -248,6 +254,7 @@ namespace VVardenfell.Runtime.AI
             _traversalPendingRequestHandle = state.GetComponentTypeHandle<PathGridTraversalPendingRequest>(isReadOnly: false);
             _traversalAwaitingResultHandle = state.GetComponentTypeHandle<PathGridTraversalAwaitingResult>(isReadOnly: false);
             _packageHandle = state.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: true);
+            _targetTransformLookup = state.GetComponentLookup<LocalTransform>(isReadOnly: true);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -263,11 +270,13 @@ namespace VVardenfell.Runtime.AI
             _traversalPendingRequestHandle.Update(ref state);
             _traversalAwaitingResultHandle.Update(ref state);
             _packageHandle.Update(ref state);
+            _targetTransformLookup.Update(ref state);
 
             state.Dependency = new ActorAiPlannerJob
             {
                 Navigation = navigation,
                 ElapsedTime = (float)SystemAPI.Time.ElapsedTime,
+                TargetTransforms = _targetTransformLookup,
                 TransformHandle = _transformHandle,
                 AiStateHandle = _aiStateHandle,
                 AnchorHandle = _anchorHandle,
@@ -283,6 +292,7 @@ namespace VVardenfell.Runtime.AI
     public struct ActorAiPlannerJob : IJobChunk
     {
         [ReadOnly] public PathGridNavigationWorld Navigation;
+        [ReadOnly] public ComponentLookup<LocalTransform> TargetTransforms;
         public float ElapsedTime;
         [ReadOnly] public ComponentTypeHandle<LocalTransform> TransformHandle;
         public ComponentTypeHandle<ActorAiState> AiStateHandle;
@@ -383,15 +393,31 @@ namespace VVardenfell.Runtime.AI
                 return;
             }
 
-            bool scheduled = package.Type == (byte)ActorAiRuntimePackageType.Travel
-                ? TryScheduleTravel(package, startNode, ref aiState, ref traversalRequest)
-                : TryScheduleWander(package, anchor.PathGridIndex, startNode, actorPosition, ref aiState, ref traversalRequest);
+            bool waiting = false;
+            bool scheduled;
+            if (package.Type == (byte)ActorAiRuntimePackageType.Travel)
+            {
+                scheduled = TryScheduleTravel(package, startNode, ref aiState, ref traversalRequest);
+            }
+            else if (package.Type == (byte)ActorAiRuntimePackageType.Follow)
+            {
+                scheduled = TryScheduleFollow(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
+            }
+            else
+            {
+                scheduled = TryScheduleWander(package, anchor.PathGridIndex, startNode, actorPosition, ref aiState, ref traversalRequest);
+            }
 
             if (scheduled)
             {
                 aiState.CurrentNodeIndex = startNode;
                 aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
                 hasPendingRequest = true;
+            }
+            else if (waiting)
+            {
+                aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+                traversalState.Status = (byte)PathGridTraversalStatus.Idle;
             }
             else
             {
@@ -410,6 +436,49 @@ namespace VVardenfell.Runtime.AI
                 return false;
 
             WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest);
+            aiState.GoalNodeIndex = goalNode;
+            return true;
+        }
+
+        bool TryScheduleFollow(
+            in ActorAiPackageRuntime package,
+            int startNode,
+            float3 actorPosition,
+            ref ActorAiState aiState,
+            ref PathGridTraversalPendingRequest traversalRequest,
+            out bool waiting)
+        {
+            waiting = false;
+            float followDistance = math.max(0.5f, package.FollowDistance);
+            if (package.DestinationInteriorCellHash == 0UL
+                && math.lengthsq(FlatDelta(package.TargetPosition, float3.zero)) > 0.01f
+                && math.lengthsq(FlatDelta(package.TargetPosition, actorPosition)) <= followDistance * followDistance)
+            {
+                return false;
+            }
+
+            if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
+            {
+                waiting = true;
+                return false;
+            }
+
+            float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            float distanceSq = math.lengthsq(FlatDelta(targetPosition, actorPosition));
+            if (distanceSq <= followDistance * followDistance)
+            {
+                waiting = true;
+                return false;
+            }
+
+            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
+            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
+            {
+                waiting = true;
+                return false;
+            }
+
+            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, distanceSq > FollowRunDistanceSq());
             aiState.GoalNodeIndex = goalNode;
             return true;
         }
@@ -453,7 +522,7 @@ namespace VVardenfell.Runtime.AI
                 aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
         }
 
-        void WriteTraversalRequest(int startNode, int goalNode, byte allowPartial, ref PathGridTraversalPendingRequest traversalRequest)
+        void WriteTraversalRequest(int startNode, int goalNode, byte allowPartial, ref PathGridTraversalPendingRequest traversalRequest, bool run = false)
         {
             traversalRequest = new PathGridTraversalPendingRequest
             {
@@ -462,7 +531,14 @@ namespace VVardenfell.Runtime.AI
                 AllowPartial = allowPartial,
                 MaxFineIterations = 4096,
                 MaxAbstractIterations = 4096,
+                Run = run ? (byte)1 : (byte)0,
             };
+        }
+
+        static float FollowRunDistanceSq()
+        {
+            float runDistance = 450f * WorldScale.MwUnitsToMeters;
+            return runDistance * runDistance;
         }
 
         bool TryChooseWanderNode(

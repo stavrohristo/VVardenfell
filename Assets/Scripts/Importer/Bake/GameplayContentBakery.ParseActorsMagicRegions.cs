@@ -979,6 +979,7 @@ namespace VVardenfell.Importer.Bake
             MorrowindScriptCompiler.Build(
                 data.Scripts,
                 data.Sounds,
+                data.Actors,
                 data.Globals,
                 data.Dialogues,
                 data.DialogueInfos,

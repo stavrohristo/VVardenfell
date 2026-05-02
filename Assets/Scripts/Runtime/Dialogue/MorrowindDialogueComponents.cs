@@ -34,6 +34,13 @@ namespace VVardenfell.Runtime.Components
         public int DayOfMonth;
     }
 
+    public struct MorrowindFactionReactionOverride : IBufferElementData
+    {
+        public int SourceFactionIndex;
+        public int TargetFactionIndex;
+        public int Reaction;
+    }
+
     public struct MorrowindDialogueRequest : IBufferElementData
     {
         public int DialogueIndex;

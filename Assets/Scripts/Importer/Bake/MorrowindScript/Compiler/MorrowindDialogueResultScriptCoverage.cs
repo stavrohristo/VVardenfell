@@ -20,6 +20,8 @@ namespace VVardenfell.Importer.Bake
             var factionLookup = BuildFactionLookup(data);
             var globalLookup = BuildGlobalLookup(data);
             var localLookup = BuildScriptLocalLookup(data);
+            var scriptLookup = BuildScriptProgramLookup(data);
+            var actorLookup = BuildActorLookup(data);
             var infoOwners = BuildInfoOwners(dialogues, infos.Length);
             int scriptsWithResults = 0;
             int supportedScripts = 0;
@@ -44,7 +46,7 @@ namespace VVardenfell.Importer.Bake
                     if (line.Length == 0)
                         continue;
 
-                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, line, out string reason))
+                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, scriptLookup, actorLookup, line, out string reason))
                     {
                         supportedLines++;
                         continue;
@@ -97,6 +99,8 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, FactionCompileInfo> factions,
             Dictionary<string, GlobalCompileInfo> globals,
             HashSet<string> scriptLocals,
+            Dictionary<string, ScriptProgramCompileInfo> scripts,
+            Dictionary<string, ActorCompileInfo> actors,
             string line,
             out string reason)
         {
@@ -240,12 +244,17 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
+            if (TryValidateClearInfoActorCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
             if (TryValidateInventoryCommand(carryables, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateDispositionCommand(line, out reason))
+            if (TryValidateDispositionCommand(actors, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -260,12 +269,47 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
+            if (TryValidateFactionReactionCommand(factions, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateStartScriptCommand(scripts, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
             if (TryValidateSetCommand(globals, scriptLocals, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateActorAiSettingCommand(line, out reason))
+            if (TryValidateActorAiSettingCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateCombatTargetCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateAiWanderCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateAiTravelCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateAiFollowCommand(actors, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateAiFollowCellCommand(actors, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -274,7 +318,127 @@ namespace VVardenfell.Importer.Bake
             return false;
         }
 
-        static bool TryValidateActorAiSettingCommand(string line, out string reason)
+        static bool TryValidateStartScriptCommand(
+            Dictionary<string, ScriptProgramCompileInfo> scripts,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "startscript", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                reason = $"Explicit StartScript target '{target}' is not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 2)
+            {
+                reason = $"StartScript result requires one literal script id: '{line}'.";
+                return false;
+            }
+
+            string scriptId = tokens[1].Trim('"');
+            if (!scripts.TryGetValue(ContentId.NormalizeId(scriptId), out var script))
+            {
+                reason = $"StartScript result references unknown script '{scriptId}'.";
+                return false;
+            }
+
+            if (script.Status != MorrowindScriptProgramStatus.Compiled)
+            {
+                reason = string.IsNullOrWhiteSpace(script.DisabledReason)
+                    ? $"StartScript result references non-compiled script '{scriptId}'."
+                    : $"StartScript result references non-compiled script '{scriptId}': {script.DisabledReason}";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidateClearInfoActorCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "clearinfoactor", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                reason = $"Explicit ClearInfoActor target '{target}' is not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length == 1)
+                return true;
+
+            reason = $"ClearInfoActor result takes no arguments in dialogue result V1: '{line}'.";
+            return false;
+        }
+
+        static bool TryValidateFactionReactionCommand(
+            Dictionary<string, FactionCompileInfo> factions,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            bool mod = string.Equals(command, "modfactionreaction", StringComparison.OrdinalIgnoreCase);
+            bool set = string.Equals(command, "setfactionreaction", StringComparison.OrdinalIgnoreCase);
+            if (!mod && !set)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                reason = $"Explicit faction reaction target '{target}' is not supported in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 4)
+            {
+                reason = $"{command} result requires source faction, target faction, and integer value: '{line}'.";
+                return false;
+            }
+
+            if (!KnownFaction(factions, tokens[1]))
+            {
+                reason = $"{command} result references unknown source faction '{tokens[1]}'.";
+                return false;
+            }
+
+            if (!KnownFaction(factions, tokens[2]))
+            {
+                reason = $"{command} result references unknown target faction '{tokens[2]}'.";
+                return false;
+            }
+
+            if (!int.TryParse(tokens[3], out _))
+            {
+                reason = $"{command} result requires an integer value: '{line}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidateActorAiSettingCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
         {
             reason = string.Empty;
             string[] tokens = SplitCommandTokens(line);
@@ -287,8 +451,11 @@ namespace VVardenfell.Importer.Bake
 
             if (!string.IsNullOrWhiteSpace(target))
             {
-                reason = $"Explicit AI setting target '{target}' is not supported in dialogue result V1: '{line}'.";
-                return false;
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit AI setting target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
             }
 
             if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
@@ -307,6 +474,234 @@ namespace VVardenfell.Importer.Bake
                || string.Equals(command, "modflee", StringComparison.OrdinalIgnoreCase)
                || string.Equals(command, "setalarm", StringComparison.OrdinalIgnoreCase)
                || string.Equals(command, "modalarm", StringComparison.OrdinalIgnoreCase);
+
+        static bool TryValidateCombatTargetCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string commandTarget, out string command);
+            bool startCombat = string.Equals(command, "startcombat", StringComparison.OrdinalIgnoreCase);
+            bool stopCombat = string.Equals(command, "stopcombat", StringComparison.OrdinalIgnoreCase);
+            if (!startCombat && !stopCombat)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(commandTarget) && !KnownActor(actors, commandTarget))
+            {
+                reason = $"Explicit {command} target '{commandTarget}' is not a known actor in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (startCombat)
+            {
+                if (tokens.Length != 2)
+                {
+                    reason = $"StartCombat result requires one target actor id: '{line}'.";
+                    return false;
+                }
+
+                if (!IsPlayerTarget(tokens[1]) && !KnownActor(actors, tokens[1]))
+                {
+                    reason = $"StartCombat result target '{tokens[1]}' is not Player or a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (tokens.Length == 1)
+                return true;
+
+            reason = $"StopCombat result takes no arguments in dialogue result V1: '{line}'.";
+            return false;
+        }
+
+        static bool TryValidateAiWanderCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aiwander", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit AiWander target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
+            }
+
+            if (tokens.Length < 4)
+            {
+                reason = $"AiWander result requires distance, duration, and time-of-day: '{line}'.";
+                return false;
+            }
+
+            for (int i = 1; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    reason = $"AiWander result requires numeric arguments: '{line}'.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool TryValidateAiTravelCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aitravel", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit AiTravel target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
+            }
+
+            if (tokens.Length < 4)
+            {
+                reason = $"AiTravel result requires x, y, and z: '{line}'.";
+                return false;
+            }
+
+            for (int i = 1; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    reason = $"AiTravel result requires numeric arguments: '{line}'.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool TryValidateAiFollowCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aifollow", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit AiFollow target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
+            }
+
+            if (tokens.Length < 6)
+            {
+                reason = $"AiFollow result requires target actor, duration, x, y, and z: '{line}'.";
+                return false;
+            }
+
+            if (!IsPlayerTarget(tokens[1]))
+            {
+                reason = $"AiFollow result supports only Player follow target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            for (int i = 2; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    reason = $"AiFollow result requires numeric duration, coordinates, and reset arguments: '{line}'.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool TryValidateAiFollowCellCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "aifollowcell", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit AiFollowCell target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
+            }
+
+            if (tokens.Length < 7)
+            {
+                reason = $"AiFollowCell result requires target actor, cell id, duration, x, y, and z: '{line}'.";
+                return false;
+            }
+
+            if (!IsPlayerTarget(tokens[1]))
+            {
+                reason = $"AiFollowCell result supports only Player follow target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(tokens[2]))
+            {
+                reason = $"AiFollowCell result requires a non-empty cell id: '{line}'.";
+                return false;
+            }
+
+            for (int i = 3; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    reason = $"AiFollowCell result requires numeric duration, coordinates, and reset arguments: '{line}'.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         static bool TryValidateSetCommand(
             Dictionary<string, GlobalCompileInfo> globals,
@@ -367,7 +762,10 @@ namespace VVardenfell.Importer.Bake
             return false;
         }
 
-        static bool TryValidateDispositionCommand(string line, out string reason)
+        static bool TryValidateDispositionCommand(
+            Dictionary<string, ActorCompileInfo> actors,
+            string line,
+            out string reason)
         {
             reason = string.Empty;
             string[] tokens = SplitCommandTokens(line);
@@ -382,8 +780,11 @@ namespace VVardenfell.Importer.Bake
 
             if (!string.IsNullOrWhiteSpace(target))
             {
-                reason = $"Explicit disposition target '{target}' is not supported in dialogue result V1: '{line}'.";
-                return false;
+                if (!KnownActor(actors, target))
+                {
+                    reason = $"Explicit disposition target '{target}' is not a known actor in dialogue result V1: '{line}'.";
+                    return false;
+                }
             }
 
             if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
@@ -410,7 +811,9 @@ namespace VVardenfell.Importer.Bake
             bool modRep = string.Equals(command, "modpcfacrep", StringComparison.OrdinalIgnoreCase);
             bool raiseRank = string.Equals(command, "pcraiserank", StringComparison.OrdinalIgnoreCase);
             bool joinFaction = string.Equals(command, "pcjoinfaction", StringComparison.OrdinalIgnoreCase);
-            if (!modRep && !raiseRank && !joinFaction)
+            bool expell = string.Equals(command, "pcexpell", StringComparison.OrdinalIgnoreCase);
+            bool clearExpelled = string.Equals(command, "pcclearexpelled", StringComparison.OrdinalIgnoreCase);
+            if (!modRep && !raiseRank && !joinFaction && !expell && !clearExpelled)
                 return false;
 
             if (modRep)
@@ -540,6 +943,28 @@ namespace VVardenfell.Importer.Bake
             return lookup;
         }
 
+        static Dictionary<string, ActorCompileInfo> BuildActorLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, ActorCompileInfo>(StringComparer.OrdinalIgnoreCase);
+            if (data?.Actors == null)
+                return lookup;
+
+            for (int i = 0; i < data.Actors.Length; i++)
+            {
+                AddActorId(lookup, data.Actors[i].Id);
+                AddActorId(lookup, data.Actors[i].OriginalId);
+            }
+
+            return lookup;
+        }
+
+        static void AddActorId(Dictionary<string, ActorCompileInfo> lookup, string actorId)
+        {
+            string normalizedId = ContentId.NormalizeId(actorId);
+            if (!string.IsNullOrEmpty(normalizedId))
+                lookup[normalizedId] = new ActorCompileInfo();
+        }
+
         static Dictionary<string, GlobalCompileInfo> BuildGlobalLookup(GameplayContentData data)
         {
             var lookup = new Dictionary<string, GlobalCompileInfo>(StringComparer.OrdinalIgnoreCase);
@@ -567,6 +992,28 @@ namespace VVardenfell.Importer.Bake
                 string normalizedId = ContentId.NormalizeId(data.MorrowindScriptLocals[i].Name);
                 if (!string.IsNullOrEmpty(normalizedId))
                     lookup.Add(normalizedId);
+            }
+
+            return lookup;
+        }
+
+        static Dictionary<string, ScriptProgramCompileInfo> BuildScriptProgramLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, ScriptProgramCompileInfo>(StringComparer.OrdinalIgnoreCase);
+            if (data?.MorrowindScriptPrograms == null)
+                return lookup;
+
+            for (int i = 0; i < data.MorrowindScriptPrograms.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(data.MorrowindScriptPrograms[i].Id);
+                if (string.IsNullOrEmpty(normalizedId))
+                    continue;
+
+                lookup[normalizedId] = new ScriptProgramCompileInfo
+                {
+                    Status = (MorrowindScriptProgramStatus)data.MorrowindScriptPrograms[i].Status,
+                    DisabledReason = data.MorrowindScriptPrograms[i].DisabledReason,
+                };
             }
 
             return lookup;
@@ -694,6 +1141,12 @@ namespace VVardenfell.Importer.Bake
         static bool KnownFaction(Dictionary<string, FactionCompileInfo> factions, string factionId)
             => factions != null && factions.ContainsKey(ContentId.NormalizeId(factionId));
 
+        static bool KnownActor(Dictionary<string, ActorCompileInfo> actors, string actorId)
+            => actors != null && actors.ContainsKey(ContentId.NormalizeId(actorId));
+
+        static bool IsPlayerTarget(string target)
+            => string.Equals((target ?? string.Empty).Trim().Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
+
         static string[] SplitCommandTokens(string line)
         {
             var tokens = new List<string>();
@@ -763,8 +1216,18 @@ namespace VVardenfell.Importer.Bake
         {
         }
 
+        struct ActorCompileInfo
+        {
+        }
+
         struct GlobalCompileInfo
         {
+        }
+
+        struct ScriptProgramCompileInfo
+        {
+            public MorrowindScriptProgramStatus Status;
+            public string DisabledReason;
         }
     }
 }
