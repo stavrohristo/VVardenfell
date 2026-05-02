@@ -39,6 +39,7 @@ namespace VVardenfell.Runtime.Player
         public PlayerCharacterComponent PlayerSettings;
         public ActorRuntimeStatSeed PlayerActorStats;
         public ActorIdentitySet PlayerIdentity;
+        public PlayerCrimeState PlayerCrime;
         public float3 PlayerPosition;
         public quaternion PlayerRotation;
         public float PlayerPitchDegrees;
@@ -114,6 +115,7 @@ namespace VVardenfell.Runtime.Player
                 init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
                 init.PlayerActorStats = payload.ActorStats;
                 init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+                init.PlayerCrime = payload.PlayerCrime;
                 if (payload.PlayerFactions != null)
                     PopulateInitializationFactions(em, initEntity, payload.PlayerFactions);
                 PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
@@ -172,6 +174,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, effectModifiers);
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            em.AddComponentData(player, init.PlayerCrime);
             PopulatePlayerFactions(em, initEntity, player);
             var playerSpells = em.AddBuffer<PlayerKnownSpell>(player);
             if (em.HasBuffer<PlayerKnownSpell>(initEntity))

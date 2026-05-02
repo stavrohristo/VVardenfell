@@ -14,8 +14,9 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 18;
-        const int PreviousPayloadVersion = 17;
+        const int PayloadVersion = 19;
+        const int PreviousPayloadVersion = 18;
+        const int PreviousCrimePayloadVersion = 18;
         const int PreviousPlayerFactionPayloadVersion = 16;
         const int ActorDeathCountPayloadVersion = 18;
         const int DialogueFactionReactionPayloadVersion = 17;
@@ -80,6 +81,7 @@ namespace VVardenfell.Runtime.WorldState
 
             WriteActorStats(w, payload.ActorStats);
             WriteActorIdentity(w, payload.PlayerIdentity);
+            WritePlayerCrime(w, payload.PlayerCrime);
             w.Write(payload.PlayerFactions?.Length ?? 0);
             if (payload.PlayerFactions != null)
             {
@@ -158,6 +160,7 @@ namespace VVardenfell.Runtime.WorldState
             };
 
             payload.PlayerIdentity = ReadActorIdentity(r);
+            payload.PlayerCrime = version >= PayloadVersion ? ReadPlayerCrime(r) : default;
 
             if (version >= PlayerFactionPayloadVersion)
             {
@@ -804,6 +807,17 @@ namespace VVardenfell.Runtime.WorldState
                 ClassName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 BirthSignName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 Reputation = r.ReadInt32(),
+            };
+        }
+
+        static void WritePlayerCrime(BinaryWriter w, in PlayerCrimeState value)
+            => w.Write(value.Bounty);
+
+        static PlayerCrimeState ReadPlayerCrime(BinaryReader r)
+        {
+            return new PlayerCrimeState
+            {
+                Bounty = Math.Max(0, r.ReadInt32()),
             };
         }
 

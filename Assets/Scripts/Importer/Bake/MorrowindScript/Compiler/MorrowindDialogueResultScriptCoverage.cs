@@ -20,8 +20,11 @@ namespace VVardenfell.Importer.Bake
             var factionLookup = BuildFactionLookup(data);
             var globalLookup = BuildGlobalLookup(data);
             var localLookup = BuildScriptLocalLookup(data);
+            var actorLocalLookup = BuildActorLocalLookup(data);
             var scriptLookup = BuildScriptProgramLookup(data);
             var actorLookup = BuildActorLookup(data);
+            var explicitRefLookup = BuildExplicitRefLookup(data);
+            var spellLookup = BuildSpellLookup(data);
             var infoOwners = BuildInfoOwners(dialogues, infos.Length);
             int scriptsWithResults = 0;
             int supportedScripts = 0;
@@ -46,7 +49,7 @@ namespace VVardenfell.Importer.Bake
                     if (line.Length == 0)
                         continue;
 
-                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, scriptLookup, actorLookup, line, out string reason))
+                    if (TryValidateSupportedCommand(dialogueLookup, carryableLookup, factionLookup, globalLookup, localLookup, actorLocalLookup, scriptLookup, actorLookup, explicitRefLookup, spellLookup, line, out string reason))
                     {
                         supportedLines++;
                         continue;
@@ -99,43 +102,20 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, FactionCompileInfo> factions,
             Dictionary<string, GlobalCompileInfo> globals,
             HashSet<string> scriptLocals,
+            Dictionary<string, HashSet<string>> actorLocals,
             Dictionary<string, ScriptProgramCompileInfo> scripts,
             Dictionary<string, ActorCompileInfo> actors,
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            Dictionary<string, SpellCompileInfo> spells,
             string line,
             out string reason)
         {
             reason = string.Empty;
 
-            if (StartsWithCommand(line, "journal"))
-            {
-                string[] tokens = SplitCommandTokens(line);
-                if (tokens.Length != 3)
-                {
-                    reason = $"Journal result requires literal quest id and integer stage: '{line}'.";
-                    return false;
-                }
-
-                if (!int.TryParse(tokens[2], out _))
-                {
-                    reason = $"Journal result requires an integer stage: '{line}'.";
-                    return false;
-                }
-
-                string id = tokens[1].Trim('"');
-                if (!dialogues.TryGetValue(ContentId.NormalizeId(id), out var dialogue))
-                {
-                    reason = $"Journal result references unknown quest '{id}'.";
-                    return false;
-                }
-
-                if (dialogue.Type != DialogueDefType.Journal)
-                {
-                    reason = $"Journal result references non-journal dialogue '{id}'.";
-                    return false;
-                }
-
+            if (TryValidateJournalCommand(dialogues, line, out reason))
                 return true;
-            }
+            if (!string.IsNullOrEmpty(reason))
+                return false;
 
             if (StartsWithCommand(line, "setjournalindex"))
             {
@@ -167,6 +147,11 @@ namespace VVardenfell.Importer.Bake
 
                 return true;
             }
+
+            if (TryValidateTargetedAddTopicCommand(dialogues, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
 
             if (StartsWithCommand(line, "addtopic"))
             {
@@ -213,22 +198,22 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (StartsWithCommand(line, "choice"))
+            if (StartsWithCommand(line, "forcegreeting"))
             {
                 string[] tokens = SplitCommandTokens(line);
-                if (tokens.Length < 3 || tokens.Length % 2 == 0)
+                if (tokens.Length == 1)
+                    return true;
+
+                reason = $"ForceGreeting result takes no arguments in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (StartsWithCommand(line, "choice"))
+            {
+                if (!TryParseChoicePairs(line, out _))
                 {
                     reason = $"Choice result requires text/value pairs: '{line}'.";
                     return false;
-                }
-
-                for (int i = 2; i < tokens.Length; i += 2)
-                {
-                    if (!int.TryParse(tokens[i], out _))
-                    {
-                        reason = $"Choice result requires integer choice values: '{line}'.";
-                        return false;
-                    }
                 }
 
                 return true;
@@ -236,20 +221,40 @@ namespace VVardenfell.Importer.Bake
 
             if (StartsWithCommand(line, "showmap"))
             {
-                string[] tokens = SplitCommandTokens(line);
-                if (tokens.Length == 2 && !string.IsNullOrWhiteSpace(tokens[1]))
+                string cellNamePrefix = ExtractCommandArgumentText(line, "showmap").Trim().Trim('"');
+                if (!string.IsNullOrWhiteSpace(cellNamePrefix))
                     return true;
 
                 reason = $"ShowMap result requires one non-empty cell-name prefix: '{line}'.";
                 return false;
             }
 
+            if (TryValidateMessageBoxCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
             if (TryValidateClearInfoActorCommand(line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateInventoryCommand(carryables, line, out reason))
+            if (TryValidateRefStateCommand(explicitRefs, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidatePositionCellCommand(explicitRefs, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidateInventoryCommand(carryables, actors, explicitRefs, line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidatePlayerSpellCommand(spells, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -269,6 +274,21 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
+            if (TryValidatePlayerCrimeCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidatePlayerSkillCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
+            if (TryValidatePlayerAttributeCommand(line, out reason))
+                return true;
+            if (!string.IsNullOrEmpty(reason))
+                return false;
+
             if (TryValidateFactionReactionCommand(factions, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
@@ -279,7 +299,7 @@ namespace VVardenfell.Importer.Bake
             if (!string.IsNullOrEmpty(reason))
                 return false;
 
-            if (TryValidateSetCommand(globals, scriptLocals, line, out reason))
+            if (TryValidateSetCommand(globals, scriptLocals, actorLocals, line, out reason))
                 return true;
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -384,6 +404,81 @@ namespace VVardenfell.Importer.Bake
 
             reason = $"ClearInfoActor result takes no arguments in dialogue result V1: '{line}'.";
             return false;
+        }
+
+        static bool TryValidateRefStateCommand(
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            bool enable = string.Equals(command, "enable", StringComparison.OrdinalIgnoreCase);
+            bool disable = string.Equals(command, "disable", StringComparison.OrdinalIgnoreCase);
+            if (!enable && !disable)
+                return false;
+
+            if (tokens.Length != 1)
+            {
+                reason = $"{command} result takes no arguments in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRef(explicitRefs, target))
+            {
+                reason = $"Explicit {command} target '{target}' is not a unique baked placed ref in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidatePositionCellCommand(
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "positioncell", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target) && !KnownExplicitRef(explicitRefs, target))
+            {
+                reason = $"Explicit PositionCell target '{target}' is not a unique baked placed ref in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 6)
+            {
+                reason = $"PositionCell result requires x, y, z, z-rotation, and cell id in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (!float.TryParse(tokens[1], NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+                || !float.TryParse(tokens[2], NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+                || !float.TryParse(tokens[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+                || !float.TryParse(tokens[4], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                reason = $"PositionCell result has invalid coordinates or rotation in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(tokens[5]))
+            {
+                reason = $"PositionCell result requires a non-empty cell id in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            return true;
         }
 
         static bool TryValidateFactionReactionCommand(
@@ -514,7 +609,7 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
-            if (tokens.Length == 1)
+            if (tokens.Length == 1 || (tokens.Length == 2 && IsPlayerTarget(tokens[1])))
                 return true;
 
             reason = $"StopCombat result takes no arguments in dialogue result V1: '{line}'.";
@@ -632,9 +727,9 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!IsPlayerTarget(tokens[1]))
+            if (!IsPlayerTarget(tokens[1]) && !KnownActor(actors, tokens[1]))
             {
-                reason = $"AiFollow result supports only Player follow target in dialogue result V1: '{line}'.";
+                reason = $"AiFollow result requires Player or a known actor follow target in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -679,9 +774,9 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!IsPlayerTarget(tokens[1]))
+            if (!IsPlayerTarget(tokens[1]) && !KnownActor(actors, tokens[1]))
             {
-                reason = $"AiFollowCell result supports only Player follow target in dialogue result V1: '{line}'.";
+                reason = $"AiFollowCell result requires Player or a known actor follow target in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -706,6 +801,7 @@ namespace VVardenfell.Importer.Bake
         static bool TryValidateSetCommand(
             Dictionary<string, GlobalCompileInfo> globals,
             HashSet<string> scriptLocals,
+            Dictionary<string, HashSet<string>> actorLocals,
             string line,
             out string reason)
         {
@@ -714,9 +810,9 @@ namespace VVardenfell.Importer.Bake
             if (tokens.Length == 0 || !string.Equals(tokens[0], "set", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            if (tokens.Length != 4 || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase))
+            if (tokens.Length < 4)
             {
-                reason = $"Set result supports only 'set <local-or-global> to <literal-number>' in dialogue result V1: '{line}'.";
+                reason = $"Set result supports only 'set <local-or-global> to <literal-number>' or self +/- literal in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -727,9 +823,20 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!float.TryParse(tokens[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            bool validExpression = tokens.Length == 4
+                && string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase)
+                && float.TryParse(tokens[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _);
+            if (!validExpression)
             {
-                reason = $"Set result requires a literal numeric value in dialogue result V1: '{line}'.";
+                validExpression = TryValidateSetArithmeticExpression(tokens, out reason);
+                if (!validExpression && string.IsNullOrEmpty(reason))
+                    reason = $"Set result supports only 'set <local-or-global> to <literal-number>' or self +/- literal in dialogue result V1: '{line}'.";
+            }
+
+            if (!validExpression)
+            {
+                if (string.IsNullOrEmpty(reason))
+                    reason = $"Set result requires a literal numeric value in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -737,8 +844,139 @@ namespace VVardenfell.Importer.Bake
             if (globals.ContainsKey(normalizedTarget) || scriptLocals.Contains(normalizedTarget))
                 return true;
 
+            if (TrySplitActorLocalTarget(target, out string actorId, out string localName)
+                && actorLocals != null
+                && actorLocals.TryGetValue(ContentId.NormalizeId(actorId), out var locals)
+                && locals.Contains(ContentId.NormalizeId(localName)))
+            {
+                return true;
+            }
+
             reason = $"Set result target '{target}' is not a baked global or known script local.";
             return false;
+        }
+
+        static bool TryValidateSetArithmeticExpression(string[] tokens, out string reason)
+        {
+            reason = string.Empty;
+            if (tokens.Length != 6
+                || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase)
+                || tokens[1].IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                return false;
+            }
+
+            string target = tokens[1];
+            if (!string.Equals(tokens[3], target, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = $"Set result expression must use the same target value in dialogue result V1: '{string.Join(" ", tokens)}'.";
+                return false;
+            }
+
+            if (!string.Equals(tokens[4], "+", StringComparison.Ordinal)
+                && !string.Equals(tokens[4], "-", StringComparison.Ordinal))
+            {
+                reason = $"Set result expression supports only + or - in dialogue result V1: '{string.Join(" ", tokens)}'.";
+                return false;
+            }
+
+            if (!float.TryParse(tokens[5], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                reason = $"Set result expression requires a literal numeric operand in dialogue result V1: '{string.Join(" ", tokens)}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidateJournalCommand(
+            Dictionary<string, DialogueCompileInfo> dialogues,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "journal", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target) && !IsPlayerTarget(target))
+            {
+                reason = $"Journal result supports only Player explicit target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 3)
+            {
+                reason = $"Journal result requires literal quest id and integer stage: '{line}'.";
+                return false;
+            }
+
+            if (!int.TryParse(tokens[2], out _))
+            {
+                reason = $"Journal result requires an integer stage: '{line}'.";
+                return false;
+            }
+
+            string id = tokens[1].Trim('"');
+            if (!dialogues.TryGetValue(ContentId.NormalizeId(id), out var dialogue))
+            {
+                reason = $"Journal result references unknown quest '{id}'.";
+                return false;
+            }
+
+            if (dialogue.Type != DialogueDefType.Journal)
+            {
+                reason = $"Journal result references non-journal dialogue '{id}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidateTargetedAddTopicCommand(
+            Dictionary<string, DialogueCompileInfo> dialogues,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "addtopic", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(target))
+                return false;
+
+            if (!IsPlayerTarget(target))
+            {
+                reason = $"AddTopic result supports only Player explicit target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 2)
+            {
+                reason = $"AddTopic result requires one literal topic id: '{line}'.";
+                return false;
+            }
+
+            string id = tokens[1].Trim('"');
+            if (!dialogues.TryGetValue(ContentId.NormalizeId(id), out var dialogue))
+            {
+                reason = $"AddTopic result references unknown topic '{id}'.";
+                return false;
+            }
+
+            if (dialogue.Type != DialogueDefType.Topic)
+            {
+                reason = $"AddTopic result references non-topic dialogue '{id}'.";
+                return false;
+            }
+
+            return true;
         }
 
         static bool TryValidatePlayerReputationCommand(string line, out string reason)
@@ -749,8 +987,8 @@ namespace VVardenfell.Importer.Bake
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(command, "modreputation", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(command, "modreputation", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !IsPlayerTarget(target)))
             {
                 return false;
             }
@@ -758,7 +996,102 @@ namespace VVardenfell.Importer.Bake
             if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
                 return true;
 
-            reason = $"Player->ModReputation result requires one integer value: '{line}'.";
+            reason = "ModReputation result requires one integer value.";
+            return false;
+        }
+
+        static bool TryValidatePlayerSkillCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!IsPlayerSkillModCommand(command)
+                || (!string.IsNullOrWhiteSpace(target) && !IsPlayerTarget(target)))
+            {
+                return false;
+            }
+
+            if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
+                return true;
+
+            reason = $"{command} result requires one integer value.";
+            return false;
+        }
+
+        static bool IsPlayerSkillModCommand(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command)
+                || command.Length <= 3
+                || !command.StartsWith("mod", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string skill = command.Substring(3);
+            return string.Equals(skill, "block", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "armorer", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "mediumarmor", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "heavyarmor", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "bluntweapon", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "longblade", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "axe", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "spear", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "athletics", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "enchant", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "destruction", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "alteration", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "illusion", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "conjuration", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "mysticism", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "restoration", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "alchemy", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "unarmored", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "security", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "sneak", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "acrobatics", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "lightarmor", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "shortblade", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "marksman", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "mercantile", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "speechcraft", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(skill, "handtohand", StringComparison.OrdinalIgnoreCase);
+        }
+
+        static bool TryValidatePlayerAttributeCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "modstrength", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !IsPlayerTarget(target)))
+            {
+                return false;
+            }
+
+            if (tokens.Length == 2 && int.TryParse(tokens[1], out _))
+                return true;
+
+            reason = "ModStrength result requires one integer value.";
+            return false;
+        }
+
+        static bool TryValidateMessageBoxCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0 || !string.Equals(tokens[0], "messagebox", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (tokens.Length == 2 && !string.IsNullOrWhiteSpace(tokens[1]))
+                return true;
+
+            reason = $"MessageBox result supports one literal message string in dialogue result V1: '{line}'.";
             return false;
         }
 
@@ -856,6 +1189,8 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryValidateInventoryCommand(
             Dictionary<string, CarryableCompileInfo> carryables,
+            Dictionary<string, ActorCompileInfo> actors,
+            Dictionary<string, ExplicitRefCompileInfo> explicitRefs,
             string line,
             out string reason)
         {
@@ -872,9 +1207,11 @@ namespace VVardenfell.Importer.Bake
                 return false;
 
             if (!string.IsNullOrWhiteSpace(target)
-                && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
+                && !IsPlayerTarget(target)
+                && !KnownActor(actors, target)
+                && !KnownExplicitRef(explicitRefs, target))
             {
-                reason = $"Explicit inventory target '{target}' is not supported in dialogue result V1: '{line}'.";
+                reason = $"Explicit inventory target '{target}' is not a known actor or unique baked placed ref in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -900,6 +1237,63 @@ namespace VVardenfell.Importer.Bake
             if (remove && carryable.Kind == ContentReferenceKind.LeveledItem)
             {
                 reason = "RemoveItem result does not support item leveled-list ids in dialogue result V1.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidatePlayerSpellCommand(
+            Dictionary<string, SpellCompileInfo> spells,
+            string line,
+            out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            bool add = string.Equals(command, "addspell", StringComparison.OrdinalIgnoreCase);
+            bool remove = string.Equals(command, "removespell", StringComparison.OrdinalIgnoreCase);
+            if (!add && !remove)
+                return false;
+
+            if (!string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
+            {
+                reason = $"{command} result supports only explicit Player target in dialogue result V1: '{line}'.";
+                return false;
+            }
+
+            if (tokens.Length != 2)
+            {
+                reason = $"{command} result requires one spell id: '{line}'.";
+                return false;
+            }
+
+            string spellId = tokens[1].Trim('"');
+            if (!KnownSpell(spells, spellId))
+            {
+                reason = $"{command} result references unknown spell '{spellId}'.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool TryValidatePlayerCrimeCommand(string line, out string reason)
+        {
+            reason = string.Empty;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            if (!string.Equals(tokens[0], "setpccrimelevel", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (tokens.Length != 2 || !int.TryParse(tokens[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            {
+                reason = $"SetPCCrimeLevel result requires one integer bounty value in dialogue result V1: '{line}'.";
                 return false;
             }
 
@@ -965,6 +1359,38 @@ namespace VVardenfell.Importer.Bake
                 lookup[normalizedId] = new ActorCompileInfo();
         }
 
+        static Dictionary<string, ExplicitRefCompileInfo> BuildExplicitRefLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, ExplicitRefCompileInfo>(StringComparer.OrdinalIgnoreCase);
+            if (data?.ExplicitRefTargets == null)
+                return lookup;
+
+            for (int i = 0; i < data.ExplicitRefTargets.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(data.ExplicitRefTargets[i].Id);
+                if (!string.IsNullOrEmpty(normalizedId) && data.ExplicitRefTargets[i].PlacedRefId != 0u)
+                    lookup[normalizedId] = new ExplicitRefCompileInfo();
+            }
+
+            return lookup;
+        }
+
+        static Dictionary<string, SpellCompileInfo> BuildSpellLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, SpellCompileInfo>(StringComparer.OrdinalIgnoreCase);
+            if (data?.Spells == null)
+                return lookup;
+
+            for (int i = 0; i < data.Spells.Length; i++)
+            {
+                string normalizedId = ContentId.NormalizeId(data.Spells[i].Id);
+                if (!string.IsNullOrEmpty(normalizedId))
+                    lookup[normalizedId] = new SpellCompileInfo();
+            }
+
+            return lookup;
+        }
+
         static Dictionary<string, GlobalCompileInfo> BuildGlobalLookup(GameplayContentData data)
         {
             var lookup = new Dictionary<string, GlobalCompileInfo>(StringComparer.OrdinalIgnoreCase);
@@ -995,6 +1421,54 @@ namespace VVardenfell.Importer.Bake
             }
 
             return lookup;
+        }
+
+        static Dictionary<string, HashSet<string>> BuildActorLocalLookup(GameplayContentData data)
+        {
+            var lookup = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            if (data?.Actors == null || data.MorrowindScriptPrograms == null || data.MorrowindScriptLocals == null)
+                return lookup;
+
+            var scriptLocalsById = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < data.MorrowindScriptPrograms.Length; i++)
+            {
+                ref readonly var program = ref data.MorrowindScriptPrograms[i];
+                string scriptId = ContentId.NormalizeId(program.Id);
+                if (string.IsNullOrEmpty(scriptId) || program.LocalCount <= 0 || program.FirstLocalIndex < 0)
+                    continue;
+
+                var locals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int end = Math.Min(data.MorrowindScriptLocals.Length, program.FirstLocalIndex + program.LocalCount);
+                for (int local = program.FirstLocalIndex; local < end; local++)
+                {
+                    string localId = ContentId.NormalizeId(data.MorrowindScriptLocals[local].Name);
+                    if (!string.IsNullOrEmpty(localId))
+                        locals.Add(localId);
+                }
+
+                if (locals.Count > 0)
+                    scriptLocalsById[scriptId] = locals;
+            }
+
+            for (int i = 0; i < data.Actors.Length; i++)
+            {
+                ref readonly var actor = ref data.Actors[i];
+                string scriptId = ContentId.NormalizeId(actor.ScriptId);
+                if (string.IsNullOrEmpty(scriptId) || !scriptLocalsById.TryGetValue(scriptId, out var locals))
+                    continue;
+
+                AddActorLocalId(lookup, actor.Id, locals);
+                AddActorLocalId(lookup, actor.OriginalId, locals);
+            }
+
+            return lookup;
+        }
+
+        static void AddActorLocalId(Dictionary<string, HashSet<string>> lookup, string actorId, HashSet<string> locals)
+        {
+            string normalizedActorId = ContentId.NormalizeId(actorId);
+            if (!string.IsNullOrEmpty(normalizedActorId))
+                lookup[normalizedActorId] = locals;
         }
 
         static Dictionary<string, ScriptProgramCompileInfo> BuildScriptProgramLookup(GameplayContentData data)
@@ -1099,6 +1573,14 @@ namespace VVardenfell.Importer.Bake
                && string.Compare(line, 0, command, 0, command.Length, StringComparison.OrdinalIgnoreCase) == 0
                && (line.Length == command.Length || char.IsWhiteSpace(line[command.Length]) || line[command.Length] == ',');
 
+        static string ExtractCommandArgumentText(string line, string command)
+        {
+            if (line == null || line.Length <= command.Length)
+                return string.Empty;
+
+            return line.Substring(command.Length).Trim().TrimStart(',');
+        }
+
         static void ParseTargetCommand(string token, out string target, out string command)
         {
             int arrow = token.IndexOf("->", StringComparison.Ordinal);
@@ -1144,8 +1626,97 @@ namespace VVardenfell.Importer.Bake
         static bool KnownActor(Dictionary<string, ActorCompileInfo> actors, string actorId)
             => actors != null && actors.ContainsKey(ContentId.NormalizeId(actorId));
 
+        static bool KnownExplicitRef(Dictionary<string, ExplicitRefCompileInfo> explicitRefs, string id)
+            => explicitRefs != null && explicitRefs.ContainsKey(ContentId.NormalizeId(id));
+
+        static bool KnownSpell(Dictionary<string, SpellCompileInfo> spells, string spellId)
+            => spells != null && spells.ContainsKey(ContentId.NormalizeId(spellId));
+
         static bool IsPlayerTarget(string target)
             => string.Equals((target ?? string.Empty).Trim().Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
+
+        static bool TrySplitActorLocalTarget(string target, out string actorId, out string localName)
+        {
+            actorId = string.Empty;
+            localName = string.Empty;
+            if (string.IsNullOrWhiteSpace(target))
+                return false;
+
+            int dot = target.LastIndexOf('.');
+            if (dot <= 0 || dot >= target.Length - 1)
+                return false;
+
+            actorId = target.Substring(0, dot).Trim().Trim('"');
+            localName = target.Substring(dot + 1).Trim().Trim('"');
+            return actorId.Length > 0 && localName.Length > 0;
+        }
+
+        static bool TryParseChoicePairs(string line, out List<ChoicePair> choices)
+        {
+            choices = new List<ChoicePair>();
+            string text = ExtractCommandArgumentText(line, "choice");
+            int index = 0;
+            while (true)
+            {
+                SkipChoiceSeparators(text, ref index);
+                if (index >= text.Length)
+                    break;
+
+                string choiceText;
+                if (text[index] == '"')
+                {
+                    index++;
+                    int textStart = index;
+                    while (index < text.Length && text[index] != '"')
+                        index++;
+
+                    if (index >= text.Length)
+                        return false;
+
+                    choiceText = text.Substring(textStart, index - textStart);
+                    index++;
+                }
+                else
+                {
+                    int textStart = index;
+                    while (index < text.Length && !char.IsWhiteSpace(text[index]) && text[index] != ',')
+                        index++;
+
+                    if (textStart == index)
+                        return false;
+
+                    choiceText = text.Substring(textStart, index - textStart);
+                }
+
+                SkipChoiceSeparators(text, ref index);
+
+                int valueStart = index;
+                if (index < text.Length && (text[index] == '+' || text[index] == '-'))
+                    index++;
+                while (index < text.Length && char.IsDigit(text[index]))
+                    index++;
+
+                if (valueStart == index
+                    || !int.TryParse(text.Substring(valueStart, index - valueStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+                {
+                    return false;
+                }
+
+                choices.Add(new ChoicePair
+                {
+                    Text = choiceText,
+                    Value = value,
+                });
+            }
+
+            return choices.Count > 0;
+        }
+
+        static void SkipChoiceSeparators(string text, ref int index)
+        {
+            while (index < text.Length && (char.IsWhiteSpace(text[index]) || text[index] == ','))
+                index++;
+        }
 
         static string[] SplitCommandTokens(string line)
         {
@@ -1220,6 +1791,14 @@ namespace VVardenfell.Importer.Bake
         {
         }
 
+        struct ExplicitRefCompileInfo
+        {
+        }
+
+        struct SpellCompileInfo
+        {
+        }
+
         struct GlobalCompileInfo
         {
         }
@@ -1228,6 +1807,12 @@ namespace VVardenfell.Importer.Bake
         {
             public MorrowindScriptProgramStatus Status;
             public string DisabledReason;
+        }
+
+        struct ChoicePair
+        {
+            public string Text;
+            public int Value;
         }
     }
 }

@@ -36,6 +36,23 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (contentDb == null || target == Entity.Null || !entityManager.Exists(target))
                 return false;
 
+            if (request.PackageType == (byte)MorrowindScriptAiPackageRequestType.StopCombat)
+                return MorrowindCombatTargetUtility.TryStopCombat(entityManager, target);
+
+            if (request.PackageType == (byte)MorrowindScriptAiPackageRequestType.StartCombat)
+            {
+                if (request.FollowTargetEntity == Entity.Null || !entityManager.Exists(request.FollowTargetEntity))
+                    return false;
+
+                return MorrowindCombatTargetUtility.TryStartCombat(
+                    contentDb,
+                    entityManager,
+                    target,
+                    request.TargetPlacedRefId,
+                    request.FollowTargetEntity,
+                    request.FollowTargetPlacedRefId);
+            }
+
             if (!entityManager.HasComponent<ActorSpawnSource>(target))
                 return true;
 
@@ -104,7 +121,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return (byte)ActorAiRuntimePackageType.Wander;
         }
 
-        static Entity ResolveLiveTarget(
+        public static Entity ResolveLiveTarget(
             EntityManager entityManager,
             Entity targetEntity,
             uint targetPlacedRefId,

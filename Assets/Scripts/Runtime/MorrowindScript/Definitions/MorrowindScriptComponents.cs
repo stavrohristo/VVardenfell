@@ -72,6 +72,10 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
+    public struct MorrowindActorOnDeathConsumed : IComponentData
+    {
+    }
+
     public struct MorrowindQuestJournalState : IComponentData
     {
         public int QuestCount;
@@ -145,6 +149,94 @@ namespace VVardenfell.Runtime.Components
         Wander = 1,
         Travel = 2,
         Follow = 3,
+        StopCombat = 4,
+        StartCombat = 5,
+    }
+
+    public struct MorrowindScriptActorAiSettingRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public int Value;
+        public byte Kind;
+        public byte IsMod;
+    }
+
+    public struct MorrowindScriptDispositionRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public int Value;
+        public byte IsMod;
+    }
+
+    public struct MorrowindScriptActorVitalRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public float Health;
+    }
+
+    public struct MorrowindScriptInventoryMutationRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public ContentReference Content;
+        public int Count;
+        public byte TargetMode;
+        public byte Operation;
+    }
+
+    public struct MorrowindScriptActorLocalSetRequest : IBufferElementData
+    {
+        public int ActorHandleValue;
+        public int LocalIndex;
+        public MorrowindScriptLocalValue Value;
+    }
+
+    public struct MorrowindScriptExternalActorLocalSnapshot
+    {
+        public int ActorHandleValue;
+        public int LocalIndex;
+        public MorrowindScriptLocalValue Value;
+    }
+
+    public struct MorrowindScriptActorAiStatusSnapshot
+    {
+        public uint PlacedRefId;
+        public byte Status;
+    }
+
+    public struct MorrowindScriptRefTransformSnapshot
+    {
+        public uint PlacedRefId;
+        public quaternion Rotation;
+    }
+
+    public struct MorrowindScriptInventoryCountSnapshot
+    {
+        public uint PlacedRefId;
+        public ContentReference Content;
+        public int Count;
+    }
+
+    public struct MorrowindScriptActorDeathSnapshot
+    {
+        public Entity Entity;
+        public uint PlacedRefId;
+        public byte Died;
+        public byte Consumed;
+    }
+
+    public struct MorrowindScriptOnDeathConsumeRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+    }
+
+    public struct MorrowindScriptMessageBoxRequest : IBufferElementData
+    {
+        public FixedString512Bytes Body;
     }
 
     public struct MorrowindScriptAiPackageRequest : IBufferElementData

@@ -5,12 +5,14 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -57,8 +59,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.RequireForUpdate<ScriptDefaultActivationRequest>();
             state.RequireForUpdate<MorrowindScriptRefStateRequest>();
             state.RequireForUpdate<MorrowindScriptTransformRequest>();
+            state.RequireForUpdate<MorrowindScriptActorVitalRequest>();
             state.RequireForUpdate<MorrowindQuestJournalRequest>();
             state.RequireForUpdate<MorrowindDialogueRequest>();
+            state.RequireForUpdate<MorrowindScriptMessageBoxRequest>();
+            state.RequireForUpdate<MorrowindScriptOnDeathConsumeRequest>();
             state.RequireForUpdate<InteractionActivationRequest>();
             state.RequireForUpdate<LoadedCellsMap>();
             state.RequireForUpdate<PlacedRefRuntimeStateLookup>();
@@ -94,6 +99,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             questJournalRequests.Clear();
             var dialogueRequests = state.EntityManager.GetBuffer<MorrowindDialogueRequest>(runtimeEntity);
             dialogueRequests.Clear();
+            var inventoryMutationRequests = state.EntityManager.GetBuffer<MorrowindScriptInventoryMutationRequest>(runtimeEntity);
+            inventoryMutationRequests.Clear();
+            var actorVitalRequests = state.EntityManager.GetBuffer<MorrowindScriptActorVitalRequest>(runtimeEntity);
+            actorVitalRequests.Clear();
+            var messageBoxRequests = state.EntityManager.GetBuffer<MorrowindScriptMessageBoxRequest>(runtimeEntity);
+            messageBoxRequests.Clear();
+            var onDeathConsumeRequests = state.EntityManager.GetBuffer<MorrowindScriptOnDeathConsumeRequest>(runtimeEntity);
+            onDeathConsumeRequests.Clear();
 
             var playingBuffer = state.EntityManager.GetBuffer<MorrowindScriptPlayingSound>(runtimeEntity);
             var playingSoundKeys = new NativeArray<ulong>(playingBuffer.Length, Allocator.TempJob);
@@ -128,6 +141,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 playerPosition = SystemAPI.GetComponent<LocalTransform>(playerEntity).Position;
                 hasPlayerPosition = 1;
             }
+
+            var playerInventoryItems = CopySingletonBuffer<PlayerInventoryItem>(state.EntityManager);
+            var playerKnownSpells = CopyEntityBuffer<PlayerKnownSpell>(state.EntityManager, playerEntity);
+            var playerFactions = CopyEntityBuffer<PlayerFactionMembership>(state.EntityManager, playerEntity);
+            int playerCrimeLevel = 0;
+            if (playerEntity != Entity.Null && state.EntityManager.HasComponent<PlayerCrimeState>(playerEntity))
+                playerCrimeLevel = state.EntityManager.GetComponentData<PlayerCrimeState>(playerEntity).Bounty;
+            var externalActorLocals = CopyExternalActorLocals(state.EntityManager);
+            var actorAiStatuses = CopyActorAiStatusSnapshots(state.EntityManager);
+            var refTransforms = CopyRefTransformSnapshots(state.EntityManager);
+            var inventoryCounts = CopyInventoryCountSnapshots(state.EntityManager);
+            var actorDeaths = CopyActorDeathSnapshots(state.EntityManager);
 
             byte hasMenuMode = 0;
             byte menuMode = 0;
@@ -175,6 +200,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 Programs = catalog.Programs,
                 Instructions = catalog.Instructions,
+                Messages = catalog.Messages,
                 OpcodeHandlers = catalog.OpcodeHandlers,
                 Globals = _globalsLookup,
                 DeathCounts = _deathCountsLookup,
@@ -188,6 +214,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 AudioSequenceBase = sequenceBase,
                 PlayerPosition = playerPosition,
                 PlayerEntity = playerEntity,
+                PlayerInventoryItems = playerInventoryItems,
+                PlayerKnownSpells = playerKnownSpells,
+                PlayerFactions = playerFactions,
+                PlayerCrimeLevel = playerCrimeLevel,
+                ExternalActorLocals = externalActorLocals,
+                ActorAiStatuses = actorAiStatuses,
+                RefTransforms = refTransforms,
+                InventoryCounts = inventoryCounts,
+                ActorDeaths = actorDeaths,
                 HasPlayerPosition = hasPlayerPosition,
                 PlayingScriptSoundKeys = playingSoundKeys,
                 HasCellChanged = hasCellChanged,
@@ -230,6 +265,22 @@ namespace VVardenfell.Runtime.MorrowindScript
             ecb.Dispose();
             playingSoundKeys.Dispose();
             activationEvents.Dispose();
+            if (playerInventoryItems.IsCreated)
+                playerInventoryItems.Dispose();
+            if (playerKnownSpells.IsCreated)
+                playerKnownSpells.Dispose();
+            if (playerFactions.IsCreated)
+                playerFactions.Dispose();
+            if (externalActorLocals.IsCreated)
+                externalActorLocals.Dispose();
+            if (actorAiStatuses.IsCreated)
+                actorAiStatuses.Dispose();
+            if (refTransforms.IsCreated)
+                refTransforms.Dispose();
+            if (inventoryCounts.IsCreated)
+                inventoryCounts.Dispose();
+            if (actorDeaths.IsCreated)
+                actorDeaths.Dispose();
 
             if (hasCellChanged != 0)
             {
@@ -239,6 +290,263 @@ namespace VVardenfell.Runtime.MorrowindScript
                 _lastInteriorCellHash = activeInteriorCellHash;
             }
         }
+
+        static NativeArray<T> CopySingletonBuffer<T>(EntityManager entityManager)
+            where T : unmanaged, IBufferElementData
+        {
+            Entity owner = WorldStateEntityQueryUtility.GetSingletonBufferOwner<T>(entityManager);
+            if (owner == Entity.Null || !entityManager.HasBuffer<T>(owner))
+                return CreateEmptyTempJobArray<T>();
+
+            var buffer = entityManager.GetBuffer<T>(owner, true);
+            if (buffer.Length == 0)
+                return CreateEmptyTempJobArray<T>();
+
+            var copy = new NativeArray<T>(buffer.Length, Allocator.TempJob);
+            for (int i = 0; i < buffer.Length; i++)
+                copy[i] = buffer[i];
+            return copy;
+        }
+
+        static NativeArray<T> CopyEntityBuffer<T>(EntityManager entityManager, Entity entity)
+            where T : unmanaged, IBufferElementData
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity) || !entityManager.HasBuffer<T>(entity))
+                return CreateEmptyTempJobArray<T>();
+
+            var buffer = entityManager.GetBuffer<T>(entity, true);
+            if (buffer.Length == 0)
+                return CreateEmptyTempJobArray<T>();
+
+            var copy = new NativeArray<T>(buffer.Length, Allocator.TempJob);
+            for (int i = 0; i < buffer.Length; i++)
+                copy[i] = buffer[i];
+            return copy;
+        }
+
+        static NativeArray<MorrowindScriptExternalActorLocalSnapshot> CopyExternalActorLocals(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ActorSpawnSource>(),
+                ComponentType.ReadOnly<MorrowindScriptLocalValue>());
+            if (query.IsEmptyIgnoreFilter)
+                return CreateEmptyTempJobArray<MorrowindScriptExternalActorLocalSnapshot>();
+
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
+            var snapshots = new NativeList<MorrowindScriptExternalActorLocalSnapshot>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (!sources[i].Definition.IsValid || !entityManager.HasBuffer<MorrowindScriptLocalValue>(entities[i]))
+                    continue;
+
+                var locals = entityManager.GetBuffer<MorrowindScriptLocalValue>(entities[i], true);
+                for (int local = 0; local < locals.Length; local++)
+                {
+                    snapshots.Add(new MorrowindScriptExternalActorLocalSnapshot
+                    {
+                        ActorHandleValue = sources[i].Definition.Value,
+                        LocalIndex = local,
+                        Value = locals[local],
+                    });
+                }
+            }
+
+            if (snapshots.Count == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<MorrowindScriptExternalActorLocalSnapshot>();
+            }
+
+            var result = new NativeArray<MorrowindScriptExternalActorLocalSnapshot>(snapshots.Count, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Count; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
+
+        static NativeArray<MorrowindScriptActorAiStatusSnapshot> CopyActorAiStatusSnapshots(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PlacedRefIdentity>(),
+                ComponentType.ReadOnly<ActorAiState>());
+            if (query.IsEmptyIgnoreFilter)
+                return CreateEmptyTempJobArray<MorrowindScriptActorAiStatusSnapshot>();
+
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            using var aiStates = query.ToComponentDataArray<ActorAiState>(Allocator.Temp);
+            var snapshots = new NativeList<MorrowindScriptActorAiStatusSnapshot>(Allocator.Temp);
+            for (int i = 0; i < identities.Length; i++)
+            {
+                if (identities[i].Value == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptActorAiStatusSnapshot
+                {
+                    PlacedRefId = identities[i].Value,
+                    Status = aiStates[i].Status,
+                });
+            }
+
+            if (snapshots.Count == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<MorrowindScriptActorAiStatusSnapshot>();
+            }
+
+            var result = new NativeArray<MorrowindScriptActorAiStatusSnapshot>(snapshots.Count, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Count; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
+
+        static NativeArray<MorrowindScriptRefTransformSnapshot> CopyRefTransformSnapshots(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PlacedRefIdentity>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            if (query.IsEmptyIgnoreFilter)
+                return CreateEmptyTempJobArray<MorrowindScriptRefTransformSnapshot>();
+
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            using var transforms = query.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var snapshots = new NativeList<MorrowindScriptRefTransformSnapshot>(Allocator.Temp);
+            for (int i = 0; i < identities.Length; i++)
+            {
+                if (identities[i].Value == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptRefTransformSnapshot
+                {
+                    PlacedRefId = identities[i].Value,
+                    Rotation = transforms[i].Rotation,
+                });
+            }
+
+            if (snapshots.Count == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<MorrowindScriptRefTransformSnapshot>();
+            }
+
+            var result = new NativeArray<MorrowindScriptRefTransformSnapshot>(snapshots.Count, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Count; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
+
+        static NativeArray<MorrowindScriptInventoryCountSnapshot> CopyInventoryCountSnapshots(EntityManager entityManager)
+        {
+            var snapshots = new NativeList<MorrowindScriptInventoryCountSnapshot>(Allocator.Temp);
+            using (var actorQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PlacedRefIdentity>(),
+                ComponentType.ReadOnly<ActorInventoryItem>()))
+            {
+                if (!actorQuery.IsEmptyIgnoreFilter)
+                {
+                    using var entities = actorQuery.ToEntityArray(Allocator.Temp);
+                    using var identities = actorQuery.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+                    for (int i = 0; i < entities.Length; i++)
+                    {
+                        uint placedRefId = identities[i].Value;
+                        if (placedRefId == 0u || !entityManager.HasBuffer<ActorInventoryItem>(entities[i]))
+                            continue;
+
+                        var inventory = entityManager.GetBuffer<ActorInventoryItem>(entities[i], true);
+                        for (int item = 0; item < inventory.Length; item++)
+                        {
+                            var entry = inventory[item];
+                            if (!entry.Content.IsValid || entry.Count <= 0)
+                                continue;
+
+                            snapshots.Add(new MorrowindScriptInventoryCountSnapshot
+                            {
+                                PlacedRefId = placedRefId,
+                                Content = entry.Content,
+                                Count = entry.Count,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Entity containerOwner = WorldStateEntityQueryUtility.GetSingletonBufferOwner<ContainerSessionItem>(entityManager);
+            if (containerOwner != Entity.Null && entityManager.HasBuffer<ContainerSessionItem>(containerOwner))
+            {
+                var containerItems = entityManager.GetBuffer<ContainerSessionItem>(containerOwner, true);
+                for (int i = 0; i < containerItems.Length; i++)
+                {
+                    var entry = containerItems[i];
+                    if (entry.PlacedRefId == 0u || !entry.Content.IsValid || entry.Count <= 0)
+                        continue;
+
+                    snapshots.Add(new MorrowindScriptInventoryCountSnapshot
+                    {
+                        PlacedRefId = entry.PlacedRefId,
+                        Content = entry.Content,
+                        Count = entry.Count,
+                    });
+                }
+            }
+
+            if (snapshots.Count == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<MorrowindScriptInventoryCountSnapshot>();
+            }
+
+            var result = new NativeArray<MorrowindScriptInventoryCountSnapshot>(snapshots.Count, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Count; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
+
+        static NativeArray<MorrowindScriptActorDeathSnapshot> CopyActorDeathSnapshots(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PlacedRefIdentity>(),
+                ComponentType.ReadOnly<ActorVitalSet>());
+            if (query.IsEmptyIgnoreFilter)
+                return CreateEmptyTempJobArray<MorrowindScriptActorDeathSnapshot>();
+
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            using var vitals = query.ToComponentDataArray<ActorVitalSet>(Allocator.Temp);
+            var snapshots = new NativeList<MorrowindScriptActorDeathSnapshot>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                uint placedRefId = identities[i].Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptActorDeathSnapshot
+                {
+                    Entity = entities[i],
+                    PlacedRefId = placedRefId,
+                    Died = vitals[i].CurrentHealth <= 0f || entityManager.HasComponent<MorrowindActorDeathCounted>(entities[i]) ? (byte)1 : (byte)0,
+                    Consumed = entityManager.HasComponent<MorrowindActorOnDeathConsumed>(entities[i]) ? (byte)1 : (byte)0,
+                });
+            }
+
+            if (snapshots.Count == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<MorrowindScriptActorDeathSnapshot>();
+            }
+
+            var result = new NativeArray<MorrowindScriptActorDeathSnapshot>(snapshots.Count, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Count; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
+
+        static NativeArray<T> CreateEmptyTempJobArray<T>()
+            where T : unmanaged
+            => new(0, Allocator.TempJob);
 
         static bool TryResolveExteriorCellName(int2 exteriorCell, out FixedString128Bytes cellName)
         {
@@ -277,6 +585,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             [ReadOnly] public NativeArray<MorrowindScriptProgramRuntime> Programs;
             [ReadOnly] public NativeArray<MorrowindScriptInstructionRuntime> Instructions;
+            [ReadOnly] public NativeArray<FixedString512Bytes> Messages;
             [ReadOnly] public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindScriptGlobalValue> Globals;
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindActorDeathCount> DeathCounts;
@@ -290,6 +599,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             public uint AudioSequenceBase;
             public float3 PlayerPosition;
             public Entity PlayerEntity;
+            [ReadOnly] public NativeArray<PlayerInventoryItem> PlayerInventoryItems;
+            [ReadOnly] public NativeArray<PlayerKnownSpell> PlayerKnownSpells;
+            [ReadOnly] public NativeArray<PlayerFactionMembership> PlayerFactions;
+            public int PlayerCrimeLevel;
+            public NativeArray<MorrowindScriptExternalActorLocalSnapshot> ExternalActorLocals;
+            [ReadOnly] public NativeArray<MorrowindScriptActorAiStatusSnapshot> ActorAiStatuses;
+            [ReadOnly] public NativeArray<MorrowindScriptRefTransformSnapshot> RefTransforms;
+            [ReadOnly] public NativeArray<MorrowindScriptInventoryCountSnapshot> InventoryCounts;
+            [ReadOnly] public NativeArray<MorrowindScriptActorDeathSnapshot> ActorDeaths;
             [ReadOnly] public NativeArray<ulong> PlayingScriptSoundKeys;
             public byte HasPlayerPosition;
             public byte HasCellChanged;
@@ -309,6 +627,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 uint placedRefId,
                 byte selfDisabled,
                 float3 position,
+                quaternion rotation,
                 ref MorrowindScriptInstance instance,
                 DynamicBuffer<MorrowindScriptLocalValue> locals,
                 DynamicBuffer<MorrowindScriptStackValue> stack)
@@ -363,8 +682,28 @@ namespace VVardenfell.Runtime.MorrowindScript
                     QuestJournalCount = questJournal.Length,
                     RefDisabledStates = RefDisabledStates,
                     Position = position,
+                    Rotation = rotation,
                     PlayerPosition = PlayerPosition,
                     PlayerEntity = PlayerEntity,
+                    PlayerInventory = PlayerInventoryItems.Length == 0 ? null : (PlayerInventoryItem*)PlayerInventoryItems.GetUnsafeReadOnlyPtr(),
+                    PlayerInventoryCount = PlayerInventoryItems.Length,
+                    PlayerKnownSpells = PlayerKnownSpells.Length == 0 ? null : (PlayerKnownSpell*)PlayerKnownSpells.GetUnsafeReadOnlyPtr(),
+                    PlayerKnownSpellCount = PlayerKnownSpells.Length,
+                    PlayerFactions = PlayerFactions.Length == 0 ? null : (PlayerFactionMembership*)PlayerFactions.GetUnsafeReadOnlyPtr(),
+                    PlayerFactionCount = PlayerFactions.Length,
+                    PlayerCrimeLevel = PlayerCrimeLevel,
+                    ExternalActorLocals = ExternalActorLocals.Length == 0 ? null : (MorrowindScriptExternalActorLocalSnapshot*)ExternalActorLocals.GetUnsafePtr(),
+                    ExternalActorLocalCount = ExternalActorLocals.Length,
+                    ActorAiStatuses = ActorAiStatuses.Length == 0 ? null : (MorrowindScriptActorAiStatusSnapshot*)ActorAiStatuses.GetUnsafeReadOnlyPtr(),
+                    ActorAiStatusCount = ActorAiStatuses.Length,
+                    RefTransforms = RefTransforms.Length == 0 ? null : (MorrowindScriptRefTransformSnapshot*)RefTransforms.GetUnsafeReadOnlyPtr(),
+                    RefTransformCount = RefTransforms.Length,
+                    InventoryCounts = InventoryCounts.Length == 0 ? null : (MorrowindScriptInventoryCountSnapshot*)InventoryCounts.GetUnsafeReadOnlyPtr(),
+                    InventoryCountCount = InventoryCounts.Length,
+                    ActorDeaths = ActorDeaths.Length == 0 ? null : (MorrowindScriptActorDeathSnapshot*)ActorDeaths.GetUnsafeReadOnlyPtr(),
+                    ActorDeathCount = ActorDeaths.Length,
+                    Messages = Messages.Length == 0 ? null : (FixedString512Bytes*)Messages.GetUnsafeReadOnlyPtr(),
+                    MessageCount = Messages.Length,
                     PlayingScriptSoundKeys = PlayingScriptSoundKeys.Length == 0 ? null : (ulong*)PlayingScriptSoundKeys.GetUnsafeReadOnlyPtr(),
                     PlayingScriptSoundKeyCount = PlayingScriptSoundKeys.Length,
                     PlacedRefId = placedRefId,
@@ -380,6 +719,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                     InteractionRuntimeEntity = InteractionRuntimeEntity,
                     QuestJournalRuntimeEntity = RuntimeEntity,
                     DialogueRuntimeEntity = RuntimeEntity,
+                    MessageBoxRuntimeEntity = RuntimeEntity,
+                    ActorVitalRuntimeEntity = RuntimeEntity,
+                    OnDeathRuntimeEntity = RuntimeEntity,
                     RefStateRuntimeEntity = RefStateRuntimeEntity,
                     TransformRuntimeEntity = TransformRuntimeEntity,
                     AiRuntimeEntity = AiRuntimeEntity,
@@ -469,7 +811,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (!IsScriptLocationActive(location))
                     return;
 
-                Common.TryInterpret(sortKey, entity, entity, placedRef.Value, refState.Disabled, transform.Position, ref instance, locals, stack);
+                Common.TryInterpret(sortKey, entity, entity, placedRef.Value, refState.Disabled, transform.Position, transform.Rotation, ref instance, locals, stack);
             }
 
             bool IsScriptLocationActive(in LogicalRefLocation location)
@@ -508,6 +850,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 uint placedRefId = global.TargetPlacedRefId;
                 byte selfDisabled = 0;
                 float3 position = default;
+                quaternion rotation = quaternion.identity;
 
                 if (global.TargetEntity != Entity.Null && TargetRuntimeStates.HasComponent(global.TargetEntity))
                 {
@@ -516,10 +859,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                     if (placedRefId == 0u && TargetIdentities.HasComponent(global.TargetEntity))
                         placedRefId = TargetIdentities[global.TargetEntity].Value;
                     if (TargetTransforms.HasComponent(global.TargetEntity))
-                        position = TargetTransforms[global.TargetEntity].Position;
+                    {
+                        var transform = TargetTransforms[global.TargetEntity];
+                        position = transform.Position;
+                        rotation = transform.Rotation;
+                    }
                 }
 
-                Common.TryInterpret(sortKey, entity, contextEntity, placedRefId, selfDisabled, position, ref instance, locals, stack);
+                Common.TryInterpret(sortKey, entity, contextEntity, placedRefId, selfDisabled, position, rotation, ref instance, locals, stack);
             }
         }
     }

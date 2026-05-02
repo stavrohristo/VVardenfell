@@ -909,6 +909,14 @@ namespace VVardenfell.Core.Cache
             => ReadArray<MorrowindScriptLocalDef>(r, ReadMorrowindScriptLocal);
 
 
+        static void WriteMorrowindScriptMessageArray(BinaryWriter w, MorrowindScriptMessageDef[] values)
+            => WriteArray<MorrowindScriptMessageDef>(w, values, WriteMorrowindScriptMessage);
+
+
+        static MorrowindScriptMessageDef[] ReadMorrowindScriptMessageArray(BinaryReader r)
+            => ReadArray<MorrowindScriptMessageDef>(r, ReadMorrowindScriptMessage);
+
+
         static void WritePathGridConnectionArray(BinaryWriter w, PathGridConnectionDef[] values)
             => WriteArray<PathGridConnectionDef>(w, values, WritePathGridConnection);
 

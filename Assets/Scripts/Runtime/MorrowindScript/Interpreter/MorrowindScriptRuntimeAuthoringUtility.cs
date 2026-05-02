@@ -1,6 +1,7 @@
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 
@@ -32,7 +33,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     : (byte)MorrowindScriptInstanceStatus.Disabled,
                 DisabledReason = status == MorrowindScriptProgramStatus.Compiled
                     ? default
-                    : new FixedString128Bytes(program.DisabledReason ?? string.Empty),
+                    : RuntimeFixedStringUtility.ToFixed128OrDefault(program.DisabledReason),
             };
 
             ecb.AddComponent(logicalEntity, instance);

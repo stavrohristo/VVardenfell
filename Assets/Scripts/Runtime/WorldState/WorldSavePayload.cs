@@ -10,6 +10,7 @@ namespace VVardenfell.Runtime.WorldState
         public float PlayerPitchDegrees;
         public ActorRuntimeStatSeed ActorStats;
         public ActorIdentitySet PlayerIdentity;
+        public PlayerCrimeState PlayerCrime;
         public PlayerFactionMembership[] PlayerFactions;
         public bool InteriorActive;
         public string ActiveInteriorCellId;

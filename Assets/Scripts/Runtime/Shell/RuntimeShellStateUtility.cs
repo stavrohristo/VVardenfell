@@ -109,6 +109,21 @@ namespace VVardenfell.Runtime.Shell
             state.ModalBody = ToFixedBody(body);
         }
 
+        public static void ShowMessageBox(ref RuntimeShellState state, string body)
+            => ShowMessageBox(ref state, ToFixedBody(body));
+
+        public static void ShowMessageBox(ref RuntimeShellState state, FixedString512Bytes body)
+        {
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 1;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.ModalOpen = 1;
+            state.ModalTitle = default;
+            state.ModalBody = body;
+        }
+
         public static void OpenSaveLoadBrowser(ref RuntimeShellState state, ref SaveLoadBrowserState browser, SaveLoadBrowserMode mode, string saveName)
         {
             state.InventoryOpen = 0;

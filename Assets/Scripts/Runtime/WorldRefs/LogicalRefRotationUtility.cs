@@ -60,6 +60,17 @@ namespace VVardenfell.Runtime.WorldRefs
             ApplyDelta(entityManager, logicalEntity, delta);
         }
 
+        public static float GetAngle(quaternion rotation, byte axis)
+        {
+            float3 sourceAngles = ExtractSourceAngles(SafeNormalize(rotation));
+            return axis switch
+            {
+                1 => sourceAngles.y,
+                2 => sourceAngles.z,
+                _ => sourceAngles.x,
+            };
+        }
+
         public static float3 ResolveAxis(byte axis)
         {
             return axis switch

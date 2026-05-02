@@ -43,6 +43,7 @@ namespace VVardenfell.Runtime.Content
         readonly Dictionary<string, GenericRecordDefHandle> _pathGridsById;
         readonly Dictionary<ulong, GenericRecordDefHandle> _interiorPathGridsByHash;
         readonly Dictionary<long, GenericRecordDefHandle> _pathGridsByExteriorCoord;
+        readonly Dictionary<string, uint> _explicitRefTargetsById;
         readonly Dictionary<string, ContentReference> _placeablesById;
         readonly int[] _itemEquipmentByItemIndex;
 
@@ -130,6 +131,7 @@ namespace VVardenfell.Runtime.Content
             _pathGridsById = BuildIndex(data.PathGrids, def => def.Id, GenericRecordDefHandle.FromIndex);
             _interiorPathGridsByHash = BuildInteriorPathGridHashIndex(data.PathGrids);
             _pathGridsByExteriorCoord = BuildPathGridExteriorIndex(data.PathGrids);
+            _explicitRefTargetsById = BuildExplicitRefTargetIndex(data.ExplicitRefTargets);
             _placeablesById = GameplayContentReferenceIndex.BuildPlaceableIndex(data);
             _itemEquipmentByItemIndex = BuildItemEquipmentIndex(data);
         }
@@ -192,6 +194,8 @@ namespace VVardenfell.Runtime.Content
             => _pathGridsByExteriorCoord.TryGetValue(PackExteriorPathGridKey(gridX, gridY), out handle);
         public bool TryGetGlobalHandle(string id, out GenericRecordDefHandle handle) => _globalsById.TryGetValue(id ?? string.Empty, out handle);
         public bool TryResolvePlaceable(string id, out ContentReference contentRef) => _placeablesById.TryGetValue(id ?? string.Empty, out contentRef);
+        public bool TryGetExplicitRefTarget(string id, out uint placedRefId)
+            => _explicitRefTargetsById.TryGetValue(ContentId.NormalizeId(id ?? string.Empty), out placedRefId);
         public bool TryGetGameSettingFloat(string id, out float value)
         {
             if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
@@ -609,6 +613,22 @@ namespace VVardenfell.Runtime.Content
 
             for (int i = 0; i < defs.Length; i++)
                 map[defs[i].Index] = MagicEffectDefHandle.FromIndex(i);
+            return map;
+        }
+
+        static Dictionary<string, uint> BuildExplicitRefTargetIndex(ExplicitRefTargetDef[] refs)
+        {
+            var map = new Dictionary<string, uint>(refs?.Length ?? 0, StringComparer.OrdinalIgnoreCase);
+            if (refs == null)
+                return map;
+
+            for (int i = 0; i < refs.Length; i++)
+            {
+                string id = ContentId.NormalizeId(refs[i].Id);
+                if (!string.IsNullOrWhiteSpace(id) && refs[i].PlacedRefId != 0u)
+                    map[id] = refs[i].PlacedRefId;
+            }
+
             return map;
         }
 

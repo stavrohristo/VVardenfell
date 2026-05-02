@@ -373,6 +373,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                     }
                     return false;
 
+                case DialogueConditionFunction.PcCrimeLevel:
+                    if (TryReadPlayerCrime(entityManager, out var crime))
+                    {
+                        matched = Compare(crime.Bounty, rule);
+                        return true;
+                    }
+                    return false;
+
                 case DialogueConditionFunction.PcHealth:
                 case DialogueConditionFunction.PcMagicka:
                 case DialogueConditionFunction.PcFatigue:
@@ -476,6 +484,16 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (query.IsEmptyIgnoreFilter)
                 return false;
             identity = entityManager.GetComponentData<ActorIdentitySet>(query.GetSingletonEntity());
+            return true;
+        }
+
+        static bool TryReadPlayerCrime(EntityManager entityManager, out PlayerCrimeState crime)
+        {
+            crime = default;
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerCrimeState>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+            crime = entityManager.GetComponentData<PlayerCrimeState>(query.GetSingletonEntity());
             return true;
         }
 

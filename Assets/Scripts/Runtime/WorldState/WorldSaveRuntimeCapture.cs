@@ -49,6 +49,9 @@ namespace VVardenfell.Runtime.WorldState
             var identity = entityManager.HasComponent<ActorIdentitySet>(playerEntity)
                 ? entityManager.GetComponentData<ActorIdentitySet>(playerEntity)
                 : ActorIdentitySet.DefaultPlayer();
+            var playerCrime = entityManager.HasComponent<PlayerCrimeState>(playerEntity)
+                ? entityManager.GetComponentData<PlayerCrimeState>(playerEntity)
+                : default;
             var playerFactions = CapturePlayerFactions(entityManager, playerEntity);
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
             var questJournalPayload = CaptureQuestJournalPayload(entityManager, questJournalEntity);
@@ -95,6 +98,7 @@ namespace VVardenfell.Runtime.WorldState
                 PlayerPitchDegrees = view.LocalPitchDegrees,
                 ActorStats = actorStats,
                 PlayerIdentity = identity,
+                PlayerCrime = playerCrime,
                 PlayerFactions = playerFactions,
                 InteriorActive = transition.InteriorActive != 0 && transition.ActiveInteriorCellId.Length > 0,
                 ActiveInteriorCellId = transition.ActiveInteriorCellId.ToString(),

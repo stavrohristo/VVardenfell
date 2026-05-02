@@ -42,6 +42,7 @@ namespace VVardenfell.Runtime.WorldState
             init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
             init.PlayerActorStats = payload.ActorStats;
             init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+            init.PlayerCrime = payload.PlayerCrime;
             if (payload.PlayerFactions != null)
                 PopulateInitializationFactions(entityManager, payload.PlayerFactions);
             PopulateInitializationSpellbook(entityManager, payload.KnownSpells);
@@ -184,6 +185,8 @@ namespace VVardenfell.Runtime.WorldState
                     payload.ActorStats.EffectModifiers,
                     derived));
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            if (entityManager.HasComponent<PlayerCrimeState>(playerEntity))
+                entityManager.SetComponentData(playerEntity, payload.PlayerCrime);
             ApplyPlayerFactionPayload(entityManager, playerEntity, payload.PlayerFactions);
             entityManager.SetComponentData(playerEntity, new PlayerCharacterControl());
             entityManager.SetComponentData(playerEntity, new PlayerCharacterState());

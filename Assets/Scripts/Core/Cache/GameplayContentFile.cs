@@ -382,12 +382,41 @@ namespace VVardenfell.Core.Cache
         AiTravel = 45,
         AiFollow = 46,
         AiFollowCell = 47,
+        StopCombat = 48,
+        StartCombat = 49,
+        SetActorAiSetting = 50,
+        SetDisposition = 51,
+        GetPlayerItemCount = 52,
+        GetPlayerSpell = 53,
+        GetPCRank = 54,
+        RequestInventoryMutation = 55,
+        GetActorLocal = 56,
+        SetActorLocalInt = 57,
+        SetActorLocalFloat = 58,
+        GetAiPackageDone = 59,
+        GetAngle = 60,
+        RequestMessageBox = 61,
+        GetItemCount = 62,
+        SetHealth = 63,
+        GetOnDeath = 64,
+        Position = 65,
+        GetPCCrimeLevel = 66,
+        SetPCCrimeLevel = 67,
     }
 
     public enum MorrowindScriptRefTargetMode : byte
     {
         Self = 0,
         PlacedRef = 1,
+        Player = 2,
+    }
+
+    public enum MorrowindScriptActorAiSettingKind : byte
+    {
+        Hello = 1,
+        Fight = 2,
+        Flee = 3,
+        Alarm = 4,
     }
 
     public enum MorrowindScriptAudioKind : byte
@@ -431,6 +460,17 @@ namespace VVardenfell.Core.Cache
     {
         public string Name;
         public byte ValueKind;
+    }
+
+    public struct MorrowindScriptMessageDef
+    {
+        public string Text;
+    }
+
+    public struct ExplicitRefTargetDef
+    {
+        public string Id;
+        public uint PlacedRefId;
     }
 
     public struct ClassDef
@@ -1133,6 +1173,8 @@ namespace VVardenfell.Core.Cache
         public MorrowindScriptProgramDef[] MorrowindScriptPrograms = Array.Empty<MorrowindScriptProgramDef>();
         public MorrowindScriptInstructionDef[] MorrowindScriptInstructions = Array.Empty<MorrowindScriptInstructionDef>();
         public MorrowindScriptLocalDef[] MorrowindScriptLocals = Array.Empty<MorrowindScriptLocalDef>();
+        public MorrowindScriptMessageDef[] MorrowindScriptMessages = Array.Empty<MorrowindScriptMessageDef>();
+        public ExplicitRefTargetDef[] ExplicitRefTargets = Array.Empty<ExplicitRefTargetDef>();
         public GenericRecordDef[] SoundGenerators = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] LandTextures = Array.Empty<GenericRecordDef>();
         public GenericRecordDef[] Statics = Array.Empty<GenericRecordDef>();
@@ -1208,6 +1250,8 @@ namespace VVardenfell.Core.Cache
             WriteMorrowindScriptProgramArray(w, data?.MorrowindScriptPrograms);
             WriteMorrowindScriptInstructionArray(w, data?.MorrowindScriptInstructions);
             WriteMorrowindScriptLocalArray(w, data?.MorrowindScriptLocals);
+            WriteMorrowindScriptMessageArray(w, data?.MorrowindScriptMessages);
+            WriteExplicitRefTargetArray(w, data?.ExplicitRefTargets);
             WriteGenericRecordArray(w, data?.SoundGenerators);
             WriteGenericRecordArray(w, data?.LandTextures);
             WriteGenericRecordArray(w, data?.Statics);
@@ -1288,6 +1332,8 @@ namespace VVardenfell.Core.Cache
                 MorrowindScriptPrograms = ReadMorrowindScriptProgramArray(r),
                 MorrowindScriptInstructions = ReadMorrowindScriptInstructionArray(r),
                 MorrowindScriptLocals = ReadMorrowindScriptLocalArray(r),
+                MorrowindScriptMessages = ReadMorrowindScriptMessageArray(r),
+                ExplicitRefTargets = ReadExplicitRefTargetArray(r),
                 SoundGenerators = ReadGenericRecordArray(r),
                 LandTextures = ReadGenericRecordArray(r),
                 Statics = ReadGenericRecordArray(r),
@@ -1327,6 +1373,21 @@ namespace VVardenfell.Core.Cache
             w.Write(value.Float0);
             w.Write(value.Int0);
             w.Write(value.Int1);
+        }
+
+        static void WriteExplicitRefTarget(BinaryWriter w, ExplicitRefTargetDef value)
+        {
+            WriteString(w, value.Id);
+            w.Write(value.PlacedRefId);
+        }
+
+        static ExplicitRefTargetDef ReadExplicitRefTarget(BinaryReader r)
+        {
+            return new ExplicitRefTargetDef
+            {
+                Id = ReadString(r),
+                PlacedRefId = r.ReadUInt32(),
+            };
         }
 
 

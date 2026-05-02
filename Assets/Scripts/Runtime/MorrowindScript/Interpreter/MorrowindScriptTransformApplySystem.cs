@@ -59,6 +59,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
+                if (request.Operation == 3)
+                {
+                    ApplyPosition(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    continue;
+                }
+
                 if (request.Operation == 1)
                 {
                     LogicalRefRotationUtility.SetAngle(EntityManager, target, request.Axis, request.Radians);
@@ -125,6 +131,55 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
             ProjectPositionCellTarget(target, active);
+        }
+
+        void ApplyPosition(
+            Entity target,
+            in MorrowindScriptTransformRequest request,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
+        {
+            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+                throw new InvalidOperationException($"Position target ref={request.TargetPlacedRefId} has no logical location.");
+
+            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
+                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+                : request.Position;
+            quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
+            MoveEntity(target, request.Position, rotation);
+            MoveUnparentedChildrenByDelta(target, request.Position - previousPosition);
+
+            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(target, active);
+        }
+
+        void MoveUnparentedChildrenByDelta(Entity target, float3 delta)
+        {
+            if (!EntityManager.HasBuffer<LogicalRefChild>(target))
+                return;
+
+            var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+            for (int i = 0; i < children.Length; i++)
+            {
+                Entity child = children[i].Value;
+                if (child == Entity.Null || child == target || !EntityManager.Exists(child))
+                    continue;
+
+                if (EntityManager.HasComponent<Parent>(child) || !EntityManager.HasComponent<LocalTransform>(child))
+                    continue;
+
+                var childTransform = EntityManager.GetComponentData<LocalTransform>(child);
+                childTransform.Position += delta;
+                EntityManager.SetComponentData(child, childTransform);
+                if (EntityManager.HasComponent<LocalToWorld>(child))
+                {
+                    EntityManager.SetComponentData(child, new LocalToWorld
+                    {
+                        Value = float4x4.TRS(childTransform.Position, childTransform.Rotation, new float3(childTransform.Scale)),
+                    });
+                }
+            }
         }
 
         void MoveEntity(Entity entity, float3 position, quaternion rotation)

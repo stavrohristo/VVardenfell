@@ -89,6 +89,14 @@ namespace VVardenfell.Core.Cache
             => ReadArray<ActorTravelDestinationDef>(r, ReadActorTravelDestination);
 
 
+        static void WriteExplicitRefTargetArray(BinaryWriter w, ExplicitRefTargetDef[] values)
+            => WriteArray<ExplicitRefTargetDef>(w, values, WriteExplicitRefTarget);
+
+
+        static ExplicitRefTargetDef[] ReadExplicitRefTargetArray(BinaryReader r)
+            => ReadArray<ExplicitRefTargetDef>(r, ReadExplicitRefTarget);
+
+
         static void WriteLightArray(BinaryWriter w, LightDef[] values)
             => WriteArray<LightDef>(w, values, WriteLight);
 

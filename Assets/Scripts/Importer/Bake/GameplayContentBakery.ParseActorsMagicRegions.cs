@@ -976,10 +976,16 @@ namespace VVardenfell.Importer.Bake
             BuildEnchantmentArrays(state.Enchantments, s_EnchantmentEffects, out data.Enchantments, ref data.MagicEffectInstances);
             BuildRegionArrays(state.Regions, out data.Regions, out data.RegionSoundRefs);
             BuildExplicitRefTargetMap(recordSourcePaths, out var explicitRefTargets, out var ambiguousExplicitRefTargets);
+            data.ExplicitRefTargets = BuildExplicitRefTargetArray(explicitRefTargets);
             MorrowindScriptCompiler.Build(
                 data.Scripts,
                 data.Sounds,
                 data.Actors,
+                data.Items,
+                data.Lights,
+                data.ItemLeveledLists,
+                data.Spells,
+                data.Factions,
                 data.Globals,
                 data.Dialogues,
                 data.DialogueInfos,
@@ -987,7 +993,8 @@ namespace VVardenfell.Importer.Bake
                 ambiguousExplicitRefTargets,
                 out data.MorrowindScriptPrograms,
                 out data.MorrowindScriptInstructions,
-                out data.MorrowindScriptLocals);
+                out data.MorrowindScriptLocals,
+                out data.MorrowindScriptMessages);
             MorrowindDialogueResultScriptCoverage.Log(data);
 
             s_SpellEffects.Clear();
@@ -1040,6 +1047,28 @@ namespace VVardenfell.Importer.Bake
                     }
                 }
             }
+        }
+
+        static ExplicitRefTargetDef[] BuildExplicitRefTargetArray(Dictionary<string, uint> explicitRefTargets)
+        {
+            if (explicitRefTargets == null || explicitRefTargets.Count == 0)
+                return Array.Empty<ExplicitRefTargetDef>();
+
+            var entries = explicitRefTargets
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value != 0u)
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var result = new ExplicitRefTargetDef[entries.Length];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                result[i] = new ExplicitRefTargetDef
+                {
+                    Id = entries[i].Key,
+                    PlacedRefId = entries[i].Value,
+                };
+            }
+
+            return result;
         }
 
 

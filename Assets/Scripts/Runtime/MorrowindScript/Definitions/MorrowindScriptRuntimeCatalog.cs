@@ -2,6 +2,7 @@ using System;
 using Unity.Burst;
 using Unity.Collections;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -39,9 +40,10 @@ namespace VVardenfell.Runtime.MorrowindScript
         public NativeArray<MorrowindScriptProgramRuntime> Programs;
         public NativeArray<MorrowindScriptInstructionRuntime> Instructions;
         public NativeArray<MorrowindScriptLocalRuntime> Locals;
+        public NativeArray<FixedString512Bytes> Messages;
         public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
 
-        public bool IsCreated => Programs.IsCreated && Instructions.IsCreated && Locals.IsCreated && OpcodeHandlers.IsCreated;
+        public bool IsCreated => Programs.IsCreated && Instructions.IsCreated && Locals.IsCreated && Messages.IsCreated && OpcodeHandlers.IsCreated;
 
         public static MorrowindScriptRuntimeCatalog Create(GameplayContentData data)
         {
@@ -51,6 +53,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Programs = new NativeArray<MorrowindScriptProgramRuntime>(data.MorrowindScriptPrograms?.Length ?? 0, Allocator.Persistent),
                 Instructions = new NativeArray<MorrowindScriptInstructionRuntime>(data.MorrowindScriptInstructions?.Length ?? 0, Allocator.Persistent),
                 Locals = new NativeArray<MorrowindScriptLocalRuntime>(data.MorrowindScriptLocals?.Length ?? 0, Allocator.Persistent),
+                Messages = new NativeArray<FixedString512Bytes>(data.MorrowindScriptMessages?.Length ?? 0, Allocator.Persistent),
                 OpcodeHandlers = MorrowindScriptOpcodeTable.CreateHandlers(Allocator.Persistent),
             };
 
@@ -94,6 +97,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
             }
 
+            for (int i = 0; i < catalog.Messages.Length; i++)
+                catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(data.MorrowindScriptMessages[i].Text);
+
             return catalog;
         }
 
@@ -105,6 +111,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Instructions.Dispose();
             if (Locals.IsCreated)
                 Locals.Dispose();
+            if (Messages.IsCreated)
+                Messages.Dispose();
             if (OpcodeHandlers.IsCreated)
                 OpcodeHandlers.Dispose();
         }

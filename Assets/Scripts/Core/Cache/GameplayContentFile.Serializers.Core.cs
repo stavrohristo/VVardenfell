@@ -213,6 +213,21 @@ namespace VVardenfell.Core.Cache
         }
 
 
+        static void WriteMorrowindScriptMessage(BinaryWriter w, MorrowindScriptMessageDef value)
+        {
+            WriteString(w, value.Text);
+        }
+
+
+        static MorrowindScriptMessageDef ReadMorrowindScriptMessage(BinaryReader r)
+        {
+            return new MorrowindScriptMessageDef
+            {
+                Text = ReadString(r),
+            };
+        }
+
+
         static void WriteActorBodyPart(BinaryWriter w, ActorBodyPartDef value)
         {
             WriteContentId(w, value.ContentId);

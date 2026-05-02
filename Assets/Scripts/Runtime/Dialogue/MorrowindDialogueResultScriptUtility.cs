@@ -32,11 +32,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<MorrowindTopicJournalEntry> topicEntries,
             DynamicBuffer<MorrowindFactionReactionOverride> factionReactionOverrides,
             DynamicBuffer<MorrowindScriptStartRequest> scriptStartRequests,
+            DynamicBuffer<MorrowindScriptRefStateRequest> refStateRequests,
+            DynamicBuffer<MorrowindScriptTransformRequest> transformRequests,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
             DynamicBuffer<MorrowindDialogueChoice> choices,
             string response,
             string script,
+            ref RuntimeShellState shell,
             ref MorrowindDialogueSession session)
         {
             if (string.IsNullOrWhiteSpace(script))
@@ -86,10 +89,22 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyShowMapResult(line))
                     continue;
 
+                if (TryApplyMessageBoxResult(ref shell, line))
+                    continue;
+
                 if (TryApplyClearInfoActorResult(contentDb, topicEntries, ref session, line))
                     continue;
 
+                if (TryApplyRefStateResult(contentDb, refStateRequests, ref session, line))
+                    continue;
+
+                if (TryApplyPositionCellResult(contentDb, transformRequests, ref session, line))
+                    continue;
+
                 if (TryApplyInventoryResult(contentDb, entityManager, ref session, line))
+                    continue;
+
+                if (TryApplyPlayerSpellResult(contentDb, entityManager, line))
                     continue;
 
                 if (TryApplyDispositionResult(contentDb, entityManager, ref session, line))
@@ -99,6 +114,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
 
                 if (TryApplyPlayerReputationResult(entityManager, line))
+                    continue;
+
+                if (TryApplyPlayerCrimeResult(entityManager, line))
+                    continue;
+
+                if (TryApplyPlayerSkillResult(entityManager, line))
+                    continue;
+
+                if (TryApplyPlayerAttributeResult(entityManager, line))
                     continue;
 
                 if (TryApplyFactionReactionResult(contentDb, factionReactionOverrides, line))
@@ -128,6 +152,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyAiFollowCellResult(contentDb, entityManager, ref session, line))
                     continue;
 
+                if (TryApplyForceGreetingResult(entityManager, ref shell, ref session, line))
+                    continue;
+
                 if (StartsWithCommand(line, "goodbye"))
                 {
                     goodbye = true;
@@ -140,6 +167,43 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, entityManager, session.SpeakerEntity, session.SpeakerActor);
             return goodbye;
+        }
+
+        static bool TryApplyForceGreetingResult(
+            EntityManager entityManager,
+            ref RuntimeShellState shell,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 1)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "forcegreeting", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+                return false;
+
+            Entity speaker = session.SpeakerEntity;
+            if (speaker == Entity.Null
+                || !entityManager.Exists(speaker)
+                || !entityManager.HasComponent<ActorSpawnSource>(speaker))
+            {
+                return false;
+            }
+
+            if (entityManager.HasComponent<PlacedRefRuntimeState>(speaker)
+                && entityManager.GetComponentData<PlacedRefRuntimeState>(speaker).Disabled != 0)
+            {
+                return false;
+            }
+
+            RuntimeShellStateUtility.OpenDialogue(ref shell);
+            session.Active = 1;
+            session.NeedsGreeting = 1;
+            return true;
         }
 
         static bool TryApplyStartScriptResult(
@@ -237,6 +301,113 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.SpeakerId);
         }
 
+        static bool TryApplyRefStateResult(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindScriptRefStateRequest> refStateRequests,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 1)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            byte disabled;
+            if (string.Equals(command, "enable", StringComparison.OrdinalIgnoreCase))
+                disabled = 0;
+            else if (string.Equals(command, "disable", StringComparison.OrdinalIgnoreCase))
+                disabled = 1;
+            else
+                return false;
+
+            Entity targetEntity = Entity.Null;
+            uint targetPlacedRefId;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                targetEntity = session.SpeakerEntity;
+                targetPlacedRefId = session.SpeakerPlacedRefId;
+            }
+            else
+            {
+                if (contentDb == null
+                    || !contentDb.TryGetExplicitRefTarget(target, out targetPlacedRefId)
+                    || targetPlacedRefId == 0u)
+                {
+                    return false;
+                }
+            }
+
+            if (targetPlacedRefId == 0u)
+                return false;
+
+            refStateRequests.Add(new MorrowindScriptRefStateRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                Disabled = disabled,
+            });
+            return true;
+        }
+
+        static bool TryApplyPositionCellResult(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<MorrowindScriptTransformRequest> transformRequests,
+            ref MorrowindDialogueSession session,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 6)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "positioncell", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(NormalizeToken(tokens[3]), NumberStyles.Float, CultureInfo.InvariantCulture, out float z)
+                || !float.TryParse(NormalizeToken(tokens[4]), NumberStyles.Float, CultureInfo.InvariantCulture, out float zRotMinutes))
+            {
+                return false;
+            }
+
+            string cellId = NormalizeToken(tokens[5]).Trim('"');
+            ulong cellHash = HashInteriorCellId(cellId);
+            if (cellHash == 0UL)
+                return false;
+
+            Entity targetEntity = Entity.Null;
+            uint targetPlacedRefId;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                targetEntity = session.SpeakerEntity;
+                targetPlacedRefId = session.SpeakerPlacedRefId;
+            }
+            else
+            {
+                if (contentDb == null
+                    || !contentDb.TryGetExplicitRefTarget(target, out targetPlacedRefId)
+                    || targetPlacedRefId == 0u)
+                {
+                    return false;
+                }
+            }
+
+            if (targetPlacedRefId == 0u)
+                return false;
+
+            transformRequests.Add(new MorrowindScriptTransformRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                Position = new float3(x, z, y) * WorldScale.MwUnitsToMeters,
+                Radians = math.radians(zRotMinutes / 60f),
+                InteriorCellHash = cellHash,
+                Operation = 2,
+            });
+            return true;
+        }
+
         static bool TryApplySetResult(
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
@@ -244,23 +415,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
-            if (tokens.Length != 4
-                || !string.Equals(tokens[0], "set", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase)
-                || tokens[1].IndexOf("->", StringComparison.Ordinal) >= 0
-                || !TryParseNumericLiteral(tokens[3], out float value))
+            if (!TryParseSetResult(tokens, out string target, out SetExpression expression))
             {
                 return false;
             }
 
-            string target = tokens[1];
-            if (TryApplyLocalSet(contentDb, entityManager, ref session, target, value, out bool localResolved))
+            if (TryApplyLocalSet(contentDb, entityManager, ref session, target, expression, out bool localResolved))
                 return true;
 
             if (localResolved)
                 return true;
 
-            return TryApplyGlobalSet(contentDb, entityManager, target, value);
+            return TryApplyGlobalSet(contentDb, entityManager, target, expression);
         }
 
         static bool TryApplyActorAiSettingResult(
@@ -403,7 +569,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     combatTargetPlacedRefId);
             }
 
-            if (tokens.Length != 1)
+            if (tokens.Length != 1 && (tokens.Length != 2 || !IsPlayerTarget(tokens[1])))
                 return false;
 
             return MorrowindCombatTargetUtility.TryStopCombat(entityManager, actorEntity);
@@ -510,7 +676,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId)
-                || !IsPlayerTarget(tokens[1]))
+                || !TryResolveAiFollowTarget(contentDb, entityManager, ref session, tokens[1], out Entity followTargetEntity, out uint followTargetPlacedRefId))
                 return false;
 
             if (!TryParseAiFollowNumbers(tokens, 2, out _, out float x, out float y, out float z))
@@ -522,7 +688,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
             }
 
-            return TryApplyFollowPackage(contentDb, entityManager, targetEntity, targetPlacedRefId, new float3(x, z, y) * WorldScale.MwUnitsToMeters, 0UL, tokens.Length > 6);
+            return TryApplyFollowPackage(
+                contentDb,
+                entityManager,
+                targetEntity,
+                targetPlacedRefId,
+                followTargetEntity,
+                followTargetPlacedRefId,
+                new float3(x, z, y) * WorldScale.MwUnitsToMeters,
+                0UL,
+                tokens.Length > 6);
         }
 
         static bool TryApplyAiFollowCellResult(
@@ -540,7 +715,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity targetEntity, out uint targetPlacedRefId)
-                || !IsPlayerTarget(tokens[1]))
+                || !TryResolveAiFollowTarget(contentDb, entityManager, ref session, tokens[1], out Entity followTargetEntity, out uint followTargetPlacedRefId))
                 return false;
 
             string cellId = NormalizeToken(tokens[2]).Trim('"');
@@ -556,7 +731,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
             }
 
-            return TryApplyFollowPackage(contentDb, entityManager, targetEntity, targetPlacedRefId, new float3(x, z, y) * WorldScale.MwUnitsToMeters, HashInteriorCellId(cellId), tokens.Length > 7);
+            return TryApplyFollowPackage(
+                contentDb,
+                entityManager,
+                targetEntity,
+                targetPlacedRefId,
+                followTargetEntity,
+                followTargetPlacedRefId,
+                new float3(x, z, y) * WorldScale.MwUnitsToMeters,
+                HashInteriorCellId(cellId),
+                tokens.Length > 7);
         }
 
         static bool TryApplyFollowPackage(
@@ -564,12 +748,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager entityManager,
             Entity targetEntity,
             uint targetPlacedRefId,
+            Entity followTargetEntity,
+            uint followTargetPlacedRefId,
             float3 destination,
             ulong destinationInteriorCellHash,
             bool repeat)
         {
-            Entity player = ResolvePlayerEntity(entityManager);
-            if (player == Entity.Null)
+            if (followTargetEntity == Entity.Null)
                 return false;
 
             return MorrowindScriptAiPackageUtility.TryApplyRequest(
@@ -580,7 +765,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     TargetEntity = targetEntity,
                     TargetPlacedRefId = targetPlacedRefId,
-                    FollowTargetEntity = player,
+                    FollowTargetEntity = followTargetEntity,
+                    FollowTargetPlacedRefId = followTargetPlacedRefId,
                     PackageType = (byte)MorrowindScriptAiPackageRequestType.Follow,
                     ShouldRepeat = repeat ? (byte)1 : (byte)0,
                     AllowPartial = 1,
@@ -589,6 +775,25 @@ namespace VVardenfell.Runtime.MorrowindScript
                     FollowDistance = 256f * WorldScale.MwUnitsToMeters,
                     IdleSeconds = 0.5f,
                 });
+        }
+
+        static bool TryResolveAiFollowTarget(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string target,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (IsPlayerTarget(target))
+            {
+                targetEntity = ResolvePlayerEntity(entityManager);
+                return targetEntity != Entity.Null;
+            }
+
+            return TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out targetEntity, out targetPlacedRefId);
         }
 
         static bool TryResolveAiCommandTarget(
@@ -685,7 +890,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
             string target,
-            float value,
+            SetExpression expression,
             out bool localResolved)
         {
             localResolved = false;
@@ -696,6 +901,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 return false;
             }
+
+            if (TryApplyActorLocalSet(contentDb, entityManager, ref session, target, expression, out localResolved))
+                return true;
+
+            if (localResolved)
+                return true;
 
             ref readonly var actor = ref contentDb.Get(session.SpeakerActor);
             if (string.IsNullOrWhiteSpace(actor.ScriptId)
@@ -729,11 +940,115 @@ namespace VVardenfell.Runtime.MorrowindScript
             if ((uint)localIndex >= (uint)locals.Length)
                 throw new InvalidOperationException($"[VVardenfell][Dialogue] speaker '{actor.Id}' local buffer is too small for script '{actor.ScriptId}' local '{target}'.");
 
+            float value = EvaluateSetExpression(expression, locals[localIndex].FloatValue);
             locals[localIndex] = BuildScriptValue(value, valueKind);
             return true;
         }
 
-        static bool TryApplyGlobalSet(RuntimeContentDatabase contentDb, EntityManager entityManager, string target, float value)
+        static bool TryApplyActorLocalSet(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ref MorrowindDialogueSession session,
+            string target,
+            SetExpression expression,
+            out bool localResolved)
+        {
+            localResolved = false;
+            if (!TrySplitActorLocalTarget(target, out string actorId, out string localName))
+                return false;
+
+            if (!TryFindActorLocal(contentDb, actorId, localName, out var expectedActorHandle, out int localIndex, out byte valueKind, out string scriptId))
+                return false;
+
+            localResolved = true;
+            if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, actorId, out Entity targetEntity, out _))
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] actor-local Set target '{actorId}.{localName}' resolved in content, but no unique loaded actor instance was found.");
+
+            if (!entityManager.HasComponent<ActorSpawnSource>(targetEntity))
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] actor-local Set target '{actorId}.{localName}' resolved to a non-actor entity.");
+
+            var source = entityManager.GetComponentData<ActorSpawnSource>(targetEntity);
+            if (!source.Definition.IsValid || source.Definition.Value != expectedActorHandle.Value)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] actor-local Set target '{actorId}.{localName}' resolved to the wrong actor definition.");
+
+            if (!entityManager.HasBuffer<MorrowindScriptLocalValue>(targetEntity))
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] actor '{actorId}' has script '{scriptId}' local '{localName}', but no runtime local buffer.");
+
+            var locals = entityManager.GetBuffer<MorrowindScriptLocalValue>(targetEntity);
+            if ((uint)localIndex >= (uint)locals.Length)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] actor '{actorId}' local buffer is too small for script '{scriptId}' local '{localName}'.");
+
+            float value = EvaluateSetExpression(expression, locals[localIndex].FloatValue);
+            locals[localIndex] = BuildScriptValue(value, valueKind);
+            return true;
+        }
+
+        static bool TryFindActorLocal(
+            RuntimeContentDatabase contentDb,
+            string actorId,
+            string localName,
+            out ActorDefHandle actorHandle,
+            out int localIndex,
+            out byte valueKind,
+            out string scriptId)
+        {
+            actorHandle = default;
+            localIndex = -1;
+            valueKind = 0;
+            scriptId = string.Empty;
+            string normalizedActorId = ContentId.NormalizeId(actorId);
+            if (string.IsNullOrEmpty(normalizedActorId) || string.IsNullOrWhiteSpace(localName))
+                return false;
+
+            for (int i = 0; i < contentDb.Data.Actors.Length; i++)
+            {
+                ref readonly var actor = ref contentDb.Data.Actors[i];
+                if (!ActorIdMatches(actor, normalizedActorId))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(actor.ScriptId)
+                    || !contentDb.TryGetMorrowindScriptProgramHandle(actor.ScriptId, out var programHandle)
+                    || !programHandle.IsValid)
+                {
+                    return false;
+                }
+
+                var localsDef = contentDb.GetMorrowindScriptLocals(programHandle);
+                for (int local = 0; local < localsDef.Length; local++)
+                {
+                    if (!string.Equals(localsDef[local].Name, localName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    actorHandle = ActorDefHandle.FromIndex(i);
+                    localIndex = local;
+                    valueKind = localsDef[local].ValueKind;
+                    scriptId = actor.ScriptId;
+                    return true;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        static bool TrySplitActorLocalTarget(string target, out string actorId, out string localName)
+        {
+            actorId = string.Empty;
+            localName = string.Empty;
+            if (string.IsNullOrWhiteSpace(target))
+                return false;
+
+            int dot = target.LastIndexOf('.');
+            if (dot <= 0 || dot >= target.Length - 1)
+                return false;
+
+            actorId = target.Substring(0, dot).Trim().Trim('"');
+            localName = target.Substring(dot + 1).Trim().Trim('"');
+            return actorId.Length > 0 && localName.Length > 0;
+        }
+
+        static bool TryApplyGlobalSet(RuntimeContentDatabase contentDb, EntityManager entityManager, string target, SetExpression expression)
         {
             if (contentDb == null
                 || !contentDb.TryGetGlobalHandle(target, out var globalHandle)
@@ -751,8 +1066,74 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException($"[VVardenfell][Dialogue] global buffer is too small for '{target}'.");
 
             ref readonly var global = ref contentDb.GetGlobal(globalHandle);
+            float value = EvaluateSetExpression(expression, globals[globalHandle.Index].FloatValue);
             globals[globalHandle.Index] = BuildGlobalValue(value, ResolveGlobalKind(global));
             return true;
+        }
+
+        static bool TryParseSetResult(string[] tokens, out string target, out SetExpression expression)
+        {
+            target = string.Empty;
+            expression = default;
+            if (tokens.Length < 4
+                || !string.Equals(tokens[0], "set", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(tokens[2], "to", StringComparison.OrdinalIgnoreCase)
+                || tokens[1].IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                return false;
+            }
+
+            target = tokens[1];
+            if (tokens.Length == 4 && TryParseNumericLiteral(tokens[3], out float literalValue))
+            {
+                expression = new SetExpression
+                {
+                    LiteralValue = literalValue,
+                };
+                return true;
+            }
+
+            if (tokens.Length == 6
+                && string.Equals(tokens[3], target, StringComparison.OrdinalIgnoreCase)
+                && TryResolveSetOperator(tokens[4], out int operatorSign)
+                && TryParseNumericLiteral(tokens[5], out float operand))
+            {
+                expression = new SetExpression
+                {
+                    UsesCurrentValue = true,
+                    OperatorSign = operatorSign,
+                    LiteralValue = operand,
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool TryResolveSetOperator(string token, out int operatorSign)
+        {
+            if (string.Equals(token, "+", StringComparison.Ordinal))
+            {
+                operatorSign = 1;
+                return true;
+            }
+
+            if (string.Equals(token, "-", StringComparison.Ordinal))
+            {
+                operatorSign = -1;
+                return true;
+            }
+
+            operatorSign = 0;
+            return false;
+        }
+
+        static float EvaluateSetExpression(SetExpression expression, float currentValue)
+        {
+            if (expression.UsesCurrentValue)
+                return currentValue + expression.OperatorSign * expression.LiteralValue;
+
+            return expression.LiteralValue;
         }
 
         static MorrowindScriptLocalValue BuildScriptValue(float value, byte valueKind)
@@ -813,8 +1194,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!StartsWithCommand(line, "choice"))
                 return false;
 
-            string[] tokens = SplitCommandTokens(line);
-            if (tokens.Length < 3 || tokens.Length % 2 == 0)
+            if (!TryParseChoicePairs(line, out var parsedChoices))
                 return false;
 
             if (!choicesReset)
@@ -823,19 +1203,83 @@ namespace VVardenfell.Runtime.MorrowindScript
                 choicesReset = true;
             }
 
-            for (int i = 1; i < tokens.Length; i += 2)
+            for (int i = 0; i < parsedChoices.Count; i++)
             {
-                if (!int.TryParse(tokens[i + 1], out int value))
-                    return false;
-
                 choices.Add(new MorrowindDialogueChoice
                 {
-                    Value = value,
-                    Text = RuntimeFixedStringUtility.ToFixed512OrDefault(tokens[i]),
+                    Value = parsedChoices[i].Value,
+                    Text = RuntimeFixedStringUtility.ToFixed512OrDefault(parsedChoices[i].Text),
                 });
             }
 
             return true;
+        }
+
+        static bool TryParseChoicePairs(string line, out List<ChoicePair> choices)
+        {
+            choices = new List<ChoicePair>();
+            string text = ExtractCommandArgumentText(line, "choice");
+            int index = 0;
+            while (true)
+            {
+                SkipChoiceSeparators(text, ref index);
+                if (index >= text.Length)
+                    break;
+
+                string choiceText;
+                if (text[index] == '"')
+                {
+                    index++;
+                    int textStart = index;
+                    while (index < text.Length && text[index] != '"')
+                        index++;
+
+                    if (index >= text.Length)
+                        return false;
+
+                    choiceText = text.Substring(textStart, index - textStart);
+                    index++;
+                }
+                else
+                {
+                    int textStart = index;
+                    while (index < text.Length && !char.IsWhiteSpace(text[index]) && text[index] != ',')
+                        index++;
+
+                    if (textStart == index)
+                        return false;
+
+                    choiceText = text.Substring(textStart, index - textStart);
+                }
+
+                SkipChoiceSeparators(text, ref index);
+
+                int valueStart = index;
+                if (index < text.Length && (text[index] == '+' || text[index] == '-'))
+                    index++;
+                while (index < text.Length && char.IsDigit(text[index]))
+                    index++;
+
+                if (valueStart == index
+                    || !int.TryParse(text.Substring(valueStart, index - valueStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+                {
+                    return false;
+                }
+
+                choices.Add(new ChoicePair
+                {
+                    Text = choiceText,
+                    Value = value,
+                });
+            }
+
+            return choices.Count > 0;
+        }
+
+        static void SkipChoiceSeparators(string text, ref int index)
+        {
+            while (index < text.Length && (char.IsWhiteSpace(text[index]) || text[index] == ','))
+                index++;
         }
 
         static bool TryApplyPlayerReputationResult(EntityManager entityManager, string line)
@@ -845,8 +1289,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(command, "modreputation", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(command, "modreputation", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
             {
                 return false;
             }
@@ -859,6 +1303,162 @@ namespace VVardenfell.Runtime.MorrowindScript
             var identity = entityManager.GetComponentData<ActorIdentitySet>(entity);
             identity.Reputation += value;
             entityManager.SetComponentData(entity, identity);
+            return true;
+        }
+
+        static bool TryApplyPlayerCrimeResult(EntityManager entityManager, string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !int.TryParse(tokens[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int bounty))
+                return false;
+
+            if (!string.Equals(tokens[0], "setpccrimelevel", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<PlayerCrimeState>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+
+            entityManager.SetComponentData(query.GetSingletonEntity(), new PlayerCrimeState
+            {
+                Bounty = math.max(0, bounty),
+            });
+            return true;
+        }
+
+        static bool TryApplyPlayerSkillResult(EntityManager entityManager, string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!TryApplyPlayerSkillCommand(ref command, ref value, entityManager, target))
+                return false;
+
+            return true;
+        }
+
+        static bool TryApplyPlayerSkillCommand(
+            ref string command,
+            ref int value,
+            EntityManager entityManager,
+            string target)
+        {
+            if (!TryResolvePlayerSkillCommand(command, out PlayerSkillKind skillKind)
+                || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<ActorSkillSet>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+
+            var entity = query.GetSingletonEntity();
+            var skills = entityManager.GetComponentData<ActorSkillSet>(entity);
+            ApplyPlayerSkillDelta(ref skills, skillKind, value);
+            entityManager.SetComponentData(entity, skills);
+            return true;
+        }
+
+        static bool TryResolvePlayerSkillCommand(string command, out PlayerSkillKind skillKind)
+        {
+            skillKind = PlayerSkillKind.None;
+            if (string.IsNullOrWhiteSpace(command)
+                || command.Length <= 3
+                || !command.StartsWith("mod", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string skill = command.Substring(3);
+            if (string.Equals(skill, "block", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Block;
+            else if (string.Equals(skill, "armorer", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Armorer;
+            else if (string.Equals(skill, "mediumarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.MediumArmor;
+            else if (string.Equals(skill, "heavyarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.HeavyArmor;
+            else if (string.Equals(skill, "bluntweapon", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.BluntWeapon;
+            else if (string.Equals(skill, "longblade", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.LongBlade;
+            else if (string.Equals(skill, "axe", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Axe;
+            else if (string.Equals(skill, "spear", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Spear;
+            else if (string.Equals(skill, "athletics", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Athletics;
+            else if (string.Equals(skill, "enchant", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Enchant;
+            else if (string.Equals(skill, "destruction", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Destruction;
+            else if (string.Equals(skill, "alteration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Alteration;
+            else if (string.Equals(skill, "illusion", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Illusion;
+            else if (string.Equals(skill, "conjuration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Conjuration;
+            else if (string.Equals(skill, "mysticism", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Mysticism;
+            else if (string.Equals(skill, "restoration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Restoration;
+            else if (string.Equals(skill, "alchemy", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Alchemy;
+            else if (string.Equals(skill, "unarmored", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Unarmored;
+            else if (string.Equals(skill, "security", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Security;
+            else if (string.Equals(skill, "sneak", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Sneak;
+            else if (string.Equals(skill, "acrobatics", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Acrobatics;
+            else if (string.Equals(skill, "lightarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.LightArmor;
+            else if (string.Equals(skill, "shortblade", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.ShortBlade;
+            else if (string.Equals(skill, "marksman", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Marksman;
+            else if (string.Equals(skill, "mercantile", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Mercantile;
+            else if (string.Equals(skill, "speechcraft", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Speechcraft;
+            else if (string.Equals(skill, "handtohand", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.HandToHand;
+
+            return skillKind != PlayerSkillKind.None;
+        }
+
+        static void ApplyPlayerSkillDelta(ref ActorSkillSet skills, PlayerSkillKind skillKind, int value)
+        {
+            switch (skillKind)
+            {
+                case PlayerSkillKind.Block: skills.Block += value; break;
+                case PlayerSkillKind.Armorer: skills.Armorer += value; break;
+                case PlayerSkillKind.MediumArmor: skills.MediumArmor += value; break;
+                case PlayerSkillKind.HeavyArmor: skills.HeavyArmor += value; break;
+                case PlayerSkillKind.BluntWeapon: skills.BluntWeapon += value; break;
+                case PlayerSkillKind.LongBlade: skills.LongBlade += value; break;
+                case PlayerSkillKind.Axe: skills.Axe += value; break;
+                case PlayerSkillKind.Spear: skills.Spear += value; break;
+                case PlayerSkillKind.Athletics: skills.Athletics += value; break;
+                case PlayerSkillKind.Enchant: skills.Enchant += value; break;
+                case PlayerSkillKind.Destruction: skills.Destruction += value; break;
+                case PlayerSkillKind.Alteration: skills.Alteration += value; break;
+                case PlayerSkillKind.Illusion: skills.Illusion += value; break;
+                case PlayerSkillKind.Conjuration: skills.Conjuration += value; break;
+                case PlayerSkillKind.Mysticism: skills.Mysticism += value; break;
+                case PlayerSkillKind.Restoration: skills.Restoration += value; break;
+                case PlayerSkillKind.Alchemy: skills.Alchemy += value; break;
+                case PlayerSkillKind.Unarmored: skills.Unarmored += value; break;
+                case PlayerSkillKind.Security: skills.Security += value; break;
+                case PlayerSkillKind.Sneak: skills.Sneak += value; break;
+                case PlayerSkillKind.Acrobatics: skills.Acrobatics += value; break;
+                case PlayerSkillKind.LightArmor: skills.LightArmor += value; break;
+                case PlayerSkillKind.ShortBlade: skills.ShortBlade += value; break;
+                case PlayerSkillKind.Marksman: skills.Marksman += value; break;
+                case PlayerSkillKind.Mercantile: skills.Mercantile += value; break;
+                case PlayerSkillKind.Speechcraft: skills.Speechcraft += value; break;
+                case PlayerSkillKind.HandToHand: skills.HandToHand += value; break;
+            }
+        }
+
+        static bool TryApplyPlayerAttributeResult(EntityManager entityManager, string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "modstrength", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<ActorAttributeSet>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+
+            var entity = query.GetSingletonEntity();
+            var attributes = entityManager.GetComponentData<ActorAttributeSet>(entity);
+            attributes.Strength += value;
+            entityManager.SetComponentData(entity, attributes);
             return true;
         }
 
@@ -1092,23 +1692,238 @@ namespace VVardenfell.Runtime.MorrowindScript
                     : InventoryMutationUtility.TryRemovePlayerItem(contentDb, inventory, itemId, count);
             }
 
-            if (!string.IsNullOrWhiteSpace(target))
-                return false;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return TryApplyActorInventoryResult(
+                    contentDb,
+                    entityManager,
+                    session.SpeakerEntity,
+                    session.SpeakerPlacedRefId,
+                    itemId,
+                    count,
+                    add);
+            }
 
-            if (session.SpeakerEntity == Entity.Null
-                || !entityManager.Exists(session.SpeakerEntity)
-                || !entityManager.HasBuffer<ActorInventoryItem>(session.SpeakerEntity))
+            if (TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out Entity actorEntity, out uint actorPlacedRefId)
+                && TryApplyActorInventoryResult(contentDb, entityManager, actorEntity, actorPlacedRefId, itemId, count, add))
+            {
+                return true;
+            }
+
+            if (contentDb == null
+                || !contentDb.TryGetExplicitRefTarget(target, out uint placedRefId)
+                || placedRefId == 0u
+                || !TryFindEntityByPlacedRef(entityManager, placedRefId, out Entity explicitEntity))
             {
                 return false;
             }
 
-            var actorInventory = entityManager.GetBuffer<ActorInventoryItem>(session.SpeakerEntity);
-            uint resolutionSeed = session.SpeakerPlacedRefId != 0u
-                ? session.SpeakerPlacedRefId
-                : unchecked((uint)session.SpeakerEntity.Index + 1u);
+            if (TryApplyActorInventoryResult(contentDb, entityManager, explicitEntity, placedRefId, itemId, count, add))
+                return true;
+
+            return TryApplyContainerInventoryResult(contentDb, entityManager, explicitEntity, placedRefId, itemId, count, add);
+        }
+
+        static bool TryApplyActorInventoryResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity actorEntity,
+            uint placedRefId,
+            string itemId,
+            int count,
+            bool add)
+        {
+            if (actorEntity == Entity.Null
+                || !entityManager.Exists(actorEntity)
+                || !entityManager.HasBuffer<ActorInventoryItem>(actorEntity))
+            {
+                return false;
+            }
+
+            var actorInventory = entityManager.GetBuffer<ActorInventoryItem>(actorEntity);
+            uint resolutionSeed = placedRefId != 0u
+                ? placedRefId
+                : unchecked((uint)actorEntity.Index + 1u);
             return add
                 ? InventoryMutationUtility.TryAddActorItem(contentDb, actorInventory, itemId, count, resolutionSeed)
                 : InventoryMutationUtility.TryRemoveActorItem(contentDb, actorInventory, itemId, count);
+        }
+
+        static bool TryApplyContainerInventoryResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity containerEntity,
+            uint placedRefId,
+            string itemId,
+            int count,
+            bool add)
+        {
+            if (contentDb == null
+                || containerEntity == Entity.Null
+                || placedRefId == 0u
+                || !entityManager.Exists(containerEntity)
+                || !entityManager.HasComponent<ContainerAuthoring>(containerEntity))
+            {
+                return false;
+            }
+
+            count = NormalizeScriptCount(count);
+            if (count == 0)
+                return true;
+
+            if (add)
+            {
+                if (!TryResolveContainerAddContent(contentDb, itemId, placedRefId, out ContentReference content))
+                    return false;
+
+                return TryApplyContainerDelta(contentDb, entityManager, containerEntity, placedRefId, content, count);
+            }
+
+            if (!ContainerLootUtility.TryResolveDirectCarryable(contentDb, NormalizeGoldId(itemId), out ContentReference removeContent, out _))
+                return false;
+
+            return TryApplyContainerDelta(contentDb, entityManager, containerEntity, placedRefId, removeContent, -count);
+        }
+
+        static bool TryResolveContainerAddContent(RuntimeContentDatabase contentDb, string itemId, uint placedRefId, out ContentReference content)
+        {
+            if (ContainerLootUtility.TryResolveDirectCarryable(contentDb, NormalizeGoldId(itemId), out content, out _))
+                return true;
+
+            if (contentDb.TryGetItemLeveledListHandle(itemId, out ItemLeveledListDefHandle listHandle)
+                && ContainerLootUtility.TryResolveLooseLeveledCarryable(contentDb, listHandle, placedRefId, out content, out _))
+            {
+                return content.IsValid;
+            }
+
+            content = default;
+            return false;
+        }
+
+        static bool TryApplyContainerDelta(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity containerEntity,
+            uint placedRefId,
+            ContentReference content,
+            int deltaCount)
+        {
+            Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<ContainerSessionItem>(entityManager);
+            if (runtimeEntity == Entity.Null
+                || !entityManager.HasBuffer<ContainerSessionHeader>(runtimeEntity)
+                || !WorldJournalUtility.TryGetJournalEntity(entityManager, out Entity journalEntity))
+            {
+                return false;
+            }
+
+            var headers = entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity);
+            var items = entityManager.GetBuffer<ContainerSessionItem>(runtimeEntity);
+            var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
+            var authoring = entityManager.GetComponentData<ContainerAuthoring>(containerEntity);
+            EnsureContainerSessionInitialized(contentDb, journal, headers, items, placedRefId, authoring.Definition);
+            ContainerLootUtility.ApplyContainerDelta(items, placedRefId, content, deltaCount);
+            WorldJournalUtility.AppendContainerDelta(entityManager, placedRefId, content, deltaCount);
+            return true;
+        }
+
+        static void EnsureContainerSessionInitialized(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<WorldJournalEntry> journal,
+            DynamicBuffer<ContainerSessionHeader> headers,
+            DynamicBuffer<ContainerSessionItem> items,
+            uint placedRefId,
+            ContainerDefHandle definition)
+        {
+            if (ContainerLootUtility.FindHeaderIndex(headers, placedRefId) >= 0)
+                return;
+
+            headers.Add(new ContainerSessionHeader
+            {
+                PlacedRefId = placedRefId,
+                Definition = definition,
+            });
+
+            var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ContainerLootUtility.MaterializeContainerContents(contentDb, items, placedRefId, definition, diagnostics);
+            WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
+        }
+
+        static bool TryFindEntityByPlacedRef(EntityManager entityManager, uint placedRefId, out Entity entity)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var refs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (refs[i].Value == placedRefId)
+                {
+                    entity = entities[i];
+                    return true;
+                }
+            }
+
+            entity = Entity.Null;
+            return false;
+        }
+
+        static bool TryApplyPlayerSpellResult(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2)
+                return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            bool add = string.Equals(command, "addspell", StringComparison.OrdinalIgnoreCase);
+            bool remove = string.Equals(command, "removespell", StringComparison.OrdinalIgnoreCase);
+            if (!add && !remove)
+                return false;
+
+            if (contentDb == null
+                || !contentDb.TryGetSpellHandle(tokens[1], out var spellHandle)
+                || !spellHandle.IsValid)
+            {
+                return false;
+            }
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<PlayerKnownSpell>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+
+            var spells = entityManager.GetBuffer<PlayerKnownSpell>(query.GetSingletonEntity());
+            int index = FindKnownSpellIndex(spells, spellHandle);
+            if (add)
+            {
+                if (index < 0)
+                {
+                    spells.Add(new PlayerKnownSpell
+                    {
+                        Spell = spellHandle,
+                    });
+                }
+
+                return true;
+            }
+
+            if (index >= 0)
+                spells.RemoveAt(index);
+            return true;
+        }
+
+        static int FindKnownSpellIndex(DynamicBuffer<PlayerKnownSpell> spells, SpellDefHandle spellHandle)
+        {
+            for (int i = 0; i < spells.Length; i++)
+            {
+                if (spells[i].Spell.Value == spellHandle.Value)
+                    return i;
+            }
+
+            return -1;
         }
 
         static bool TryApplyShowMapResult(string line)
@@ -1116,11 +1931,24 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!StartsWithCommand(line, "showmap"))
                 return false;
 
-            string[] tokens = SplitCommandTokens(line);
-            if (tokens.Length != 2 || string.IsNullOrWhiteSpace(tokens[1]))
+            string cellNamePrefix = ExtractCommandArgumentText(line, "showmap").Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(cellNamePrefix))
                 return false;
 
-            GlobalMapPresentationCache.AddVisitedLocationsByCellNamePrefix(tokens[1]);
+            GlobalMapPresentationCache.AddVisitedLocationsByCellNamePrefix(cellNamePrefix);
+            return true;
+        }
+
+        static bool TryApplyMessageBoxResult(ref RuntimeShellState shell, string line)
+        {
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !string.Equals(tokens[0], "messagebox", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (string.IsNullOrWhiteSpace(tokens[1]))
+                return false;
+
+            RuntimeShellStateUtility.ShowMessageBox(ref shell, tokens[1]);
             return true;
         }
 
@@ -1132,12 +1960,16 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
             string line)
         {
-            if (!StartsWithCommand(line, "journal"))
-                return false;
-
             string[] tokens = SplitCommandTokens(line);
             if (tokens.Length != 3)
                 return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "journal", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
 
             string id = tokens[1].Trim('"');
             if (!int.TryParse(tokens[2], out int stage)
@@ -1204,12 +2036,16 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool TryApplyAddTopicResult(RuntimeContentDatabase contentDb, DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics, string line)
         {
-            if (!StartsWithCommand(line, "addtopic"))
-                return false;
-
             string[] tokens = SplitCommandTokens(line);
             if (tokens.Length != 2)
                 return false;
+
+            ParseTargetCommand(tokens[0], out string target, out string command);
+            if (!string.Equals(command, "addtopic", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
 
             string id = tokens[1].Trim('"');
             return contentDb.TryGetDialogueHandle(id, out var handle)
@@ -1245,6 +2081,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             => line.Length >= command.Length
                && string.Compare(line, 0, command, 0, command.Length, StringComparison.OrdinalIgnoreCase) == 0
                && (line.Length == command.Length || char.IsWhiteSpace(line[command.Length]) || line[command.Length] == ',');
+
+        static string ExtractCommandArgumentText(string line, string command)
+        {
+            if (line == null || line.Length <= command.Length)
+                return string.Empty;
+
+            return line.Substring(command.Length).Trim().TrimStart(',');
+        }
 
         static void ParseTargetCommand(string token, out string target, out string command)
         {
@@ -1320,6 +2164,22 @@ namespace VVardenfell.Runtime.MorrowindScript
         static string NormalizeToken(string token)
             => (token ?? string.Empty).Trim().Trim(',');
 
+        static string NormalizeGoldId(string itemId)
+        {
+            if (string.Equals(itemId, "gold_005", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(itemId, "gold_010", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(itemId, "gold_025", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(itemId, "gold_100", StringComparison.OrdinalIgnoreCase))
+            {
+                return "gold_001";
+            }
+
+            return itemId;
+        }
+
+        static int NormalizeScriptCount(int count)
+            => count < 0 ? (ushort)count : count;
+
         static bool TryParseAiFollowNumbers(
             string[] tokens,
             int start,
@@ -1372,6 +2232,51 @@ namespace VVardenfell.Runtime.MorrowindScript
             Fight = 2,
             Flee = 3,
             Alarm = 4,
+        }
+
+        enum PlayerSkillKind : byte
+        {
+            None = 0,
+            Block = 1,
+            Armorer = 2,
+            MediumArmor = 3,
+            HeavyArmor = 4,
+            BluntWeapon = 5,
+            LongBlade = 6,
+            Axe = 7,
+            Spear = 8,
+            Athletics = 9,
+            Enchant = 10,
+            Destruction = 11,
+            Alteration = 12,
+            Illusion = 13,
+            Conjuration = 14,
+            Mysticism = 15,
+            Restoration = 16,
+            Alchemy = 17,
+            Unarmored = 18,
+            Security = 19,
+            Sneak = 20,
+            Acrobatics = 21,
+            LightArmor = 22,
+            ShortBlade = 23,
+            Marksman = 24,
+            Mercantile = 25,
+            Speechcraft = 26,
+            HandToHand = 27,
+        }
+
+        struct SetExpression
+        {
+            public bool UsesCurrentValue;
+            public int OperatorSign;
+            public float LiteralValue;
+        }
+
+        struct ChoicePair
+        {
+            public string Text;
+            public int Value;
         }
     }
 }
