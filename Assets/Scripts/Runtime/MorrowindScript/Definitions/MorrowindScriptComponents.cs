@@ -190,6 +190,14 @@ namespace VVardenfell.Runtime.Components
         public byte IsMod;
     }
 
+    public enum MorrowindScriptActorVitalRequestKind : byte
+    {
+        Health = 1,
+        Magicka = 2,
+        Fatigue = 3,
+        Resurrect = 4,
+    }
+
     public struct MorrowindScriptActorVitalRequest : IBufferElementData
     {
         public Entity TargetEntity;

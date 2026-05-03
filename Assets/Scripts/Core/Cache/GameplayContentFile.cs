@@ -467,6 +467,7 @@ namespace VVardenfell.Core.Cache
         ModRegion = 130,
         PlayBink = 131,
         ModFactionReaction = 132,
+        Resurrect = 133,
     }
 
     public enum MorrowindScriptRefTargetMode : byte

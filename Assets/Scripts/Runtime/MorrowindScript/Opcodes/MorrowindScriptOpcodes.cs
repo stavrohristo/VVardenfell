@@ -149,7 +149,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        const int OpcodeCount = 133;
+        const int OpcodeCount = 134;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {
@@ -291,6 +291,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             handlers[(int)MorrowindScriptOpcode.ModRegion] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(ModRegion);
             handlers[(int)MorrowindScriptOpcode.PlayBink] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(PlayBink);
             handlers[(int)MorrowindScriptOpcode.ModFactionReaction] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(ModFactionReaction);
+            handlers[(int)MorrowindScriptOpcode.Resurrect] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Resurrect);
             return handlers;
         }
 
@@ -1736,6 +1737,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetEntity = targetEntity,
                 TargetPlacedRefId = targetPlacedRefId,
                 HealthPerSecond = ToFloat(value),
+            });
+        }
+
+        [BurstCompile]
+        static void Resurrect(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveActorTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if (context->ActorVitalRuntimeEntity == Entity.Null)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->ActorVitalRuntimeEntity, new MorrowindScriptActorVitalRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                Kind = (byte)MorrowindScriptActorVitalRequestKind.Resurrect,
             });
         }
 

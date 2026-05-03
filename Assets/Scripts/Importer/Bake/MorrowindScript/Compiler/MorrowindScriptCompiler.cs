@@ -855,6 +855,17 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
+                if (TryCompileResurrect(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string resurrectFailure))
+                {
+                    continue;
+                }
+
+                if (resurrectFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, resurrectFailure, lineIndex);
+                    return;
+                }
+
                 if (TryCompileHurtStandingActor(
                         line,
                         localLookup,
@@ -892,6 +903,17 @@ namespace VVardenfell.Importer.Bake
                 if (animationGroupFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, animationGroupFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileFallCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string fallFailure))
+                {
+                    continue;
+                }
+
+                if (fallFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, fallFailure, lineIndex);
                     return;
                 }
 
@@ -1304,20 +1326,10 @@ namespace VVardenfell.Importer.Bake
             List<MorrowindScriptLocalDef> locals,
             Dictionary<string, (int Index, byte Kind)> lookup)
         {
-            string[] tokens = SplitWhitespace(line);
-            if (tokens.Length != 2)
+            if (!TryReadLocalDeclaration(line, out string name, out byte valueKind))
                 return false;
 
-            byte valueKind = tokens[0].Equals("float", StringComparison.OrdinalIgnoreCase)
-                ? (byte)MorrowindScriptValueKind.Float
-                : (tokens[0].Equals("short", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("long", StringComparison.OrdinalIgnoreCase))
-                    ? (byte)MorrowindScriptValueKind.Integer
-                    : (byte)0;
-            if (valueKind == 0)
-                return false;
-
-            string name = tokens[1].Trim();
-            if (string.IsNullOrWhiteSpace(name) || lookup.ContainsKey(name))
+            if (lookup.ContainsKey(name))
                 return true;
 
             lookup[name] = (locals.Count - firstLocal, valueKind);
@@ -1741,6 +1753,65 @@ namespace VVardenfell.Importer.Bake
             instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)opcode });
             stackDepth = Math.Max(0, stackDepth - 1);
             return true;
+        }
+
+        static bool TryReadLocalDeclaration(string line, out string name, out byte valueKind)
+        {
+            name = null;
+            valueKind = 0;
+
+            int index = 0;
+            SkipWhitespaceAndDeclarationSeparators(line, ref index);
+            string type = ReadDeclarationNameToken(line, ref index);
+            if (string.IsNullOrEmpty(type))
+                return false;
+
+            valueKind = type.Equals("float", StringComparison.OrdinalIgnoreCase)
+                ? (byte)MorrowindScriptValueKind.Float
+                : (type.Equals("short", StringComparison.OrdinalIgnoreCase) || type.Equals("long", StringComparison.OrdinalIgnoreCase))
+                    ? (byte)MorrowindScriptValueKind.Integer
+                    : (byte)0;
+            if (valueKind == 0)
+                return false;
+
+            SkipWhitespaceAndDeclarationSeparators(line, ref index);
+            name = ReadDeclarationNameToken(line, ref index);
+            return !string.IsNullOrWhiteSpace(name);
+        }
+
+        static void SkipWhitespaceAndDeclarationSeparators(string line, ref int index)
+        {
+            while (index < line.Length && (char.IsWhiteSpace(line[index]) || line[index] == ':'))
+                index++;
+        }
+
+        static string ReadDeclarationNameToken(string line, ref int index)
+        {
+            if (index >= line.Length)
+                return null;
+
+            if (line[index] == '"')
+            {
+                int start = ++index;
+                while (index < line.Length && line[index] != '"')
+                    index++;
+
+                string quoted = line.Substring(start, index - start);
+                if (index < line.Length)
+                    index++;
+                return quoted;
+            }
+
+            int tokenStart = index;
+            while (index < line.Length && IsMorrowindScriptNameCharacter(line[index]))
+                index++;
+
+            return index == tokenStart ? null : line.Substring(tokenStart, index - tokenStart);
+        }
+
+        static bool IsMorrowindScriptNameCharacter(char c)
+        {
+            return char.IsLetterOrDigit(c) || c == '_' || c == '`' || c == '\'';
         }
 
         static bool TryCompileConditionOperand(
@@ -4910,6 +4981,29 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompileFallCommand(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "fall", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out _, out _, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 1)
+            {
+                failure = $"Fall takes no arguments in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.Nop });
+            return true;
+        }
+
         static bool TryCompilePositionCell(
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
@@ -5907,6 +6001,45 @@ namespace VVardenfell.Importer.Bake
                 Int0 = unchecked((int)targetPlacedRefId),
                 Int1 = 1,
                 Int2 = isMod ? 1 : 0,
+            });
+            return true;
+        }
+
+        static bool TryCompileResurrect(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(
+                    line,
+                    "resurrect",
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    out var targetMode,
+                    out uint targetPlacedRefId,
+                    out string commandLine,
+                    out failure))
+            {
+                return false;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 1)
+            {
+                failure = $"Resurrect takes no arguments in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.Resurrect,
+                Operand0 = (byte)targetMode,
+                Int0 = unchecked((int)targetPlacedRefId),
             });
             return true;
         }
@@ -8256,19 +8389,13 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < lines.Length; i++)
             {
                 string line = StripComment(lines[i]).Trim();
-                string[] tokens = SplitWhitespace(line);
-                if (tokens.Length != 2)
+                if (!TryReadLocalDeclaration(line, out string name, out byte valueKind))
                     continue;
 
-                byte valueKind = tokens[0].Equals("float", StringComparison.OrdinalIgnoreCase)
-                    ? (byte)MorrowindScriptValueKind.Float
-                    : (tokens[0].Equals("short", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("long", StringComparison.OrdinalIgnoreCase))
-                        ? (byte)MorrowindScriptValueKind.Integer
-                        : (byte)0;
-                if (valueKind == 0 || locals.ContainsKey(tokens[1]))
+                if (locals.ContainsKey(name))
                     continue;
 
-                locals[tokens[1]] = (locals.Count, valueKind);
+                locals[name] = (locals.Count, valueKind);
             }
 
             return locals;
