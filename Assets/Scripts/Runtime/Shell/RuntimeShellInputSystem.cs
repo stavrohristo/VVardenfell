@@ -48,6 +48,7 @@ namespace VVardenfell.Runtime.Shell
                 || (keyboard?.iKey.wasPressedThisFrame ?? false)
                 || (gamepad?.buttonWest.wasPressedThisFrame ?? false);
             bool toggleJournalPressed = keyboard?.jKey.wasPressedThisFrame ?? false;
+            bool openWaitPressed = keyboard?.tKey.wasPressedThisFrame ?? false;
 
             if (state.ModalOpen != 0)
             {
@@ -105,6 +106,11 @@ namespace VVardenfell.Runtime.Shell
                     }
                 }
             }
+            else if (state.RestMenuOpen != 0 || state.RestMenuAdvancing != 0)
+            {
+                if (togglePausePressed || backPressed)
+                    RuntimeShellStateUtility.CloseRestMenu(ref state);
+            }
             else if (toggleInventoryPressed)
             {
                 RuntimeShellStateUtility.OpenInventory(ref state);
@@ -112,6 +118,10 @@ namespace VVardenfell.Runtime.Shell
             else if (toggleJournalPressed)
             {
                 RuntimeShellStateUtility.OpenJournal(ref state);
+            }
+            else if (openWaitPressed)
+            {
+                RuntimeShellStateUtility.OpenRestMenu(ref state, Entity.Null, 0u, canSleep: false);
             }
             else if (togglePausePressed)
             {

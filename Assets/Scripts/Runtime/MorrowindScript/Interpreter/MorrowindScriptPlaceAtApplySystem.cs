@@ -141,18 +141,14 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (request.Content.Kind == ContentReferenceKind.Actor)
             {
-                ref readonly var actor = ref contentDb.Get(new ActorDefHandle { Value = request.Content.HandleValue });
-                if (actor.Kind != ActorDefKind.Creature)
-                    throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC currently supports creature actor spawns only.");
-
                 actorSpawn = true;
             }
             else if (request.Content.Kind != ContentReferenceKind.Item && request.Content.Kind != ContentReferenceKind.Light)
             {
-                throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC currently supports creatures, items, and lights only.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC currently supports actors, items, and lights only.");
             }
 
-            if (!WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
+            if (request.Content.Kind != ContentReferenceKind.Actor && !WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC content has no runtime spawn prefab.");
         }
 

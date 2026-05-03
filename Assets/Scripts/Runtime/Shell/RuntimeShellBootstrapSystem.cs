@@ -34,9 +34,9 @@ namespace VVardenfell.Runtime.Shell
                 Rect = new RuntimeWindowRect
                 {
                     X = 0.015f,
-                    Y = 0.54f,
-                    Width = 0.45f,
-                    Height = 0.38f,
+                    Y = 0.6422f,
+                    Width = 0.3125f,
+                    Height = 0.2778f,
                 },
                 SelectedInventoryIndex = -1,
                 ActiveCategory = (byte)InventoryWindowCategory.All,

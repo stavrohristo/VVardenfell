@@ -15,6 +15,15 @@ namespace VVardenfell.Runtime.Components
         ExitGame = 7,
     }
 
+    public enum RuntimeShellRestMenuActionId : byte
+    {
+        None = 0,
+        SetHours = 1,
+        Start = 2,
+        UntilHealed = 3,
+        Cancel = 4,
+    }
+
     public struct RuntimeShellState : IComponentData
     {
         public byte HudVisible;
@@ -46,12 +55,25 @@ namespace VVardenfell.Runtime.Components
         public byte RaceMenuDisabled;
         public byte ClassMenuDisabled;
         public byte BirthMenuDisabled;
+        public byte StatReviewMenuDisabled;
+        public byte RestMenuOpen;
+        public byte RestMenuCanSleep;
+        public byte RestMenuAdvancing;
+        public byte RestMenuSleeping;
+        public byte MovieOpen;
+        public byte MovieAllowSkipping;
         public float ScreenFadeAlpha;
         public float ScreenFadeStartAlpha;
         public float ScreenFadeTargetAlpha;
         public float ScreenFadeDuration;
         public float ScreenFadeElapsed;
         public int ModalButtonPressed;
+        public int RestMenuSelectedHours;
+        public int RestMenuProgressHours;
+        public int RestMenuTargetHours;
+        public Entity RestMenuBedEntity;
+        public uint RestMenuBedPlacedRefId;
+        public FixedString128Bytes MovieName;
         public FixedString128Bytes ModalTitle;
         public FixedString512Bytes ModalBody;
         public FixedString128Bytes ModalButton0;
@@ -74,9 +96,12 @@ namespace VVardenfell.Runtime.Components
         public byte CloseOptions;
         public byte CloseJournal;
         public byte CloseDialogue;
+        public byte CloseMovie;
         public byte Action;
         public byte PendingPinToggle;
         public byte PinWindow;
+        public byte RestMenuAction;
+        public int RestMenuHours;
     }
 
     public struct ShellMessageBoxRequest : IBufferElementData

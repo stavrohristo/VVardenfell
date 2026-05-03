@@ -9,6 +9,12 @@ namespace VVardenfell.Runtime.Animation
         public int ClipIndex;
         public float PreviousTime;
         public float CurrentTime;
+        public float StartTime;
+        public float LoopStartTime;
+        public float LoopStopTime;
+        public float StopTime;
+        public uint LoopCount;
+        public byte Scripted;
         public byte Active;
     }
 

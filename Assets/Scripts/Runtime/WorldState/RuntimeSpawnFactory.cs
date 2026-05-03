@@ -14,6 +14,45 @@ namespace VVardenfell.Runtime.WorldState
 {
     static class RuntimeSpawnFactory
     {
+        public static bool QueueActorSpawn(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            RuntimeContentDatabase contentDb,
+            ContentReference contentReference,
+            uint runtimeRefId,
+            float3 position,
+            quaternion rotation,
+            float scale,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            byte persistencePolicy)
+        {
+            if (contentReference.Kind != ContentReferenceKind.Actor)
+                return false;
+
+            Entity logicalEntity = LogicalRefEntityFactory.QueueCreate(
+                entityManager,
+                ref ecb,
+                contentDb,
+                new LogicalRefEntityDescriptor
+                {
+                    ContentReference = contentReference,
+                    PlacedRefId = runtimeRefId,
+                    Position = position,
+                    Rotation = rotation,
+                    Scale = scale,
+                    IsInterior = isInterior,
+                    ExteriorCell = exteriorCell,
+                    InteriorCellId = interiorCellId,
+                    AddRuntimeSpawnIdentity = true,
+                    RuntimeSpawnPersistencePolicy = persistencePolicy,
+                });
+
+            LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(entityManager, ref ecb, logicalEntity, assumeNewEntity: true);
+            return true;
+        }
+
         public static bool QueueSpawn(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,

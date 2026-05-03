@@ -27,6 +27,8 @@ namespace VVardenfell.Runtime.Streaming
             DynamicBuffer<MorrowindWeatherChangeRequest> changeRequests = SystemAPI.GetBuffer<MorrowindWeatherChangeRequest>(weatherEntity);
             DynamicBuffer<MorrowindWeatherForceRequest> forceRequests = SystemAPI.GetBuffer<MorrowindWeatherForceRequest>(weatherEntity);
             DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather = SystemAPI.GetBuffer<MorrowindRegionWeatherCacheEntry>(weatherEntity);
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides = SystemAPI.GetBuffer<MorrowindRegionWeatherOverrideEntry>(weatherEntity);
+            DynamicBuffer<MorrowindRegionWeatherOverrideRequest> regionOverrideRequests = SystemAPI.GetBuffer<MorrowindRegionWeatherOverrideRequest>(weatherEntity);
 
             bool interiorActive = SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0;
             int regionHandleValue = ResolveCurrentRegionHandle(contentDb);
@@ -66,6 +68,7 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
+            ProcessRegionOverrideRequests(ref weather, regionOverrideRequests, regionOverrides, regionWeather, contentDb, regionHandleValue, ref random);
             ProcessChangeRequests(ref weather, changeRequests, regionWeather, contentDb, regionHandleValue);
 
             if (interiorActive)
@@ -87,7 +90,7 @@ namespace VVardenfell.Runtime.Streaming
             if (!regionChanged && !expiredWeather)
                 return;
 
-            int next = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, ref random), contentDb);
+            int next = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, regionOverrides, ref random), contentDb);
             weather.RandomState = random.state;
             AddWeatherTransition(ref weather, contentDb, next);
         }
@@ -110,7 +113,11 @@ namespace VVardenfell.Runtime.Streaming
             return 0;
         }
 
-        static int SampleWeather(RuntimeContentDatabase contentDb, int regionHandleValue, ref Unity.Mathematics.Random random)
+        static int SampleWeather(
+            RuntimeContentDatabase contentDb,
+            int regionHandleValue,
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
+            ref Unity.Mathematics.Random random)
         {
             if (contentDb == null)
                 return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
@@ -118,11 +125,32 @@ namespace VVardenfell.Runtime.Streaming
             if (regionHandleValue <= 0)
                 return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
 
+            if (TryGetRegionOverride(regionOverrides, regionHandleValue, out var weatherOverride))
+            {
+                return MorrowindWeatherSelectionUtility.SampleWeather(
+                    weatherOverride.ClearChance,
+                    weatherOverride.CloudyChance,
+                    weatherOverride.FoggyChance,
+                    weatherOverride.OvercastChance,
+                    weatherOverride.RainChance,
+                    weatherOverride.ThunderChance,
+                    weatherOverride.AshChance,
+                    weatherOverride.BlightChance,
+                    weatherOverride.SnowChance,
+                    weatherOverride.BlizzardChance,
+                    ref random);
+            }
+
             ref readonly var region = ref contentDb.Get(new RegionDefHandle { Value = regionHandleValue });
             return MorrowindWeatherSelectionUtility.SampleRegionWeather(region, ref random);
         }
 
-        static int GetRegionWeather(RuntimeContentDatabase contentDb, int regionHandleValue, DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather, ref Unity.Mathematics.Random random)
+        static int GetRegionWeather(
+            RuntimeContentDatabase contentDb,
+            int regionHandleValue,
+            DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
+            ref Unity.Mathematics.Random random)
         {
             int region = math.max(0, regionHandleValue);
             for (int i = 0; i < regionWeather.Length; i++)
@@ -131,7 +159,7 @@ namespace VVardenfell.Runtime.Streaming
                     return regionWeather[i].Weather;
             }
 
-            int weather = SampleWeather(contentDb, region, ref random);
+            int weather = SampleWeather(contentDb, region, regionOverrides, ref random);
             regionWeather.Add(new MorrowindRegionWeatherCacheEntry
             {
                 RegionHandleValue = region,
@@ -161,6 +189,113 @@ namespace VVardenfell.Runtime.Streaming
                 RegionHandleValue = region,
                 Weather = weather,
             });
+        }
+
+        static void ProcessRegionOverrideRequests(
+            ref MorrowindWeatherState weather,
+            DynamicBuffer<MorrowindRegionWeatherOverrideRequest> requests,
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
+            DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
+            RuntimeContentDatabase contentDb,
+            int activeRegion,
+            ref Unity.Mathematics.Random random)
+        {
+            for (int i = 0; i < requests.Length; i++)
+            {
+                var request = requests[i];
+                SetRegionOverride(regionOverrides, request);
+                ClearRegionWeather(regionWeather, request.RegionHandleValue);
+                if (request.RegionHandleValue != activeRegion || IsWeatherSupported(request, weather.CurrentWeather))
+                    continue;
+
+                int next = ClampWeatherIndex(SampleWeather(contentDb, request.RegionHandleValue, regionOverrides, ref random), contentDb);
+                SetRegionWeather(regionWeather, request.RegionHandleValue, next);
+                AddWeatherTransition(ref weather, contentDb, next);
+            }
+
+            requests.Clear();
+        }
+
+        static void SetRegionOverride(
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
+            in MorrowindRegionWeatherOverrideRequest request)
+        {
+            int region = math.max(0, request.RegionHandleValue);
+            for (int i = 0; i < regionOverrides.Length; i++)
+            {
+                if (regionOverrides[i].RegionHandleValue != region)
+                    continue;
+
+                regionOverrides[i] = ToOverrideEntry(region, request);
+                return;
+            }
+
+            regionOverrides.Add(ToOverrideEntry(region, request));
+        }
+
+        static MorrowindRegionWeatherOverrideEntry ToOverrideEntry(int regionHandleValue, in MorrowindRegionWeatherOverrideRequest request)
+        {
+            return new MorrowindRegionWeatherOverrideEntry
+            {
+                RegionHandleValue = regionHandleValue,
+                ClearChance = request.ClearChance,
+                CloudyChance = request.CloudyChance,
+                FoggyChance = request.FoggyChance,
+                OvercastChance = request.OvercastChance,
+                RainChance = request.RainChance,
+                ThunderChance = request.ThunderChance,
+                AshChance = request.AshChance,
+                BlightChance = request.BlightChance,
+                SnowChance = request.SnowChance,
+                BlizzardChance = request.BlizzardChance,
+            };
+        }
+
+        static void ClearRegionWeather(DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather, int regionHandleValue)
+        {
+            int region = math.max(0, regionHandleValue);
+            for (int i = regionWeather.Length - 1; i >= 0; i--)
+            {
+                if (regionWeather[i].RegionHandleValue == region)
+                    regionWeather.RemoveAt(i);
+            }
+        }
+
+        static bool TryGetRegionOverride(
+            DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
+            int regionHandleValue,
+            out MorrowindRegionWeatherOverrideEntry weatherOverride)
+        {
+            int region = math.max(0, regionHandleValue);
+            for (int i = 0; i < regionOverrides.Length; i++)
+            {
+                if (regionOverrides[i].RegionHandleValue == region)
+                {
+                    weatherOverride = regionOverrides[i];
+                    return true;
+                }
+            }
+
+            weatherOverride = default;
+            return false;
+        }
+
+        static bool IsWeatherSupported(in MorrowindRegionWeatherOverrideRequest request, int weather)
+        {
+            return weather switch
+            {
+                (int)WeatherKind.Clear => request.ClearChance > 0,
+                (int)WeatherKind.Cloudy => request.CloudyChance > 0,
+                (int)WeatherKind.Foggy => request.FoggyChance > 0,
+                (int)WeatherKind.Overcast => request.OvercastChance > 0,
+                (int)WeatherKind.Rain => request.RainChance > 0,
+                (int)WeatherKind.Thunderstorm => request.ThunderChance > 0,
+                (int)WeatherKind.Ashstorm => request.AshChance > 0,
+                (int)WeatherKind.Blight => request.BlightChance > 0,
+                (int)WeatherKind.Snow => request.SnowChance > 0,
+                (int)WeatherKind.Blizzard => request.BlizzardChance > 0,
+                _ => false,
+            };
         }
 
         static void ProcessForceRequests(ref MorrowindWeatherState weather, DynamicBuffer<MorrowindWeatherForceRequest> requests, RuntimeContentDatabase contentDb)

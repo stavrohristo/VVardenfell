@@ -14,7 +14,8 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 22;
+        const int PayloadVersion = 23;
+        const int RegionWeatherOverridePayloadVersion = 23;
         const int PlayerEquipmentPayloadVersion = 22;
         const int CapturedSoulInventoryPayloadVersion = 21;
         const int PlayerCrimePayloadVersion = 19;
@@ -38,6 +39,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != PlayerEquipmentPayloadVersion
                 && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
@@ -340,6 +342,25 @@ namespace VVardenfell.Runtime.WorldState
                     w.Write(value.RegionWeather[i].Weather);
                 }
             }
+
+            w.Write(value.RegionWeatherOverrides?.Length ?? 0);
+            if (value.RegionWeatherOverrides != null)
+            {
+                for (int i = 0; i < value.RegionWeatherOverrides.Length; i++)
+                {
+                    w.Write(value.RegionWeatherOverrides[i].RegionHandleValue);
+                    w.Write(value.RegionWeatherOverrides[i].ClearChance);
+                    w.Write(value.RegionWeatherOverrides[i].CloudyChance);
+                    w.Write(value.RegionWeatherOverrides[i].FoggyChance);
+                    w.Write(value.RegionWeatherOverrides[i].OvercastChance);
+                    w.Write(value.RegionWeatherOverrides[i].RainChance);
+                    w.Write(value.RegionWeatherOverrides[i].ThunderChance);
+                    w.Write(value.RegionWeatherOverrides[i].AshChance);
+                    w.Write(value.RegionWeatherOverrides[i].BlightChance);
+                    w.Write(value.RegionWeatherOverrides[i].SnowChance);
+                    w.Write(value.RegionWeatherOverrides[i].BlizzardChance);
+                }
+            }
         }
 
         static MorrowindWeatherSavePayload ReadWeatherPayload(BinaryReader r, int version)
@@ -367,6 +388,7 @@ namespace VVardenfell.Runtime.WorldState
                 legacy.TransitionFactor = legacy.Transitioning != 0 ? 1f - legacy.Transition : 0f;
                 legacy.WeatherUpdateHoursRemaining = legacy.HoursUntilNextChange;
                 legacy.RegionWeather = System.Array.Empty<MorrowindRegionWeatherCacheSavePayload>();
+                legacy.RegionWeatherOverrides = System.Array.Empty<MorrowindRegionWeatherOverrideSavePayload>();
                 return legacy;
             }
 
@@ -399,6 +421,32 @@ namespace VVardenfell.Runtime.WorldState
                     RegionHandleValue = r.ReadInt32(),
                     Weather = r.ReadInt32(),
                 };
+            }
+            if (version >= RegionWeatherOverridePayloadVersion)
+            {
+                int overrideCount = ReadCount(r, "region weather overrides");
+                payload.RegionWeatherOverrides = new MorrowindRegionWeatherOverrideSavePayload[overrideCount];
+                for (int i = 0; i < overrideCount; i++)
+                {
+                    payload.RegionWeatherOverrides[i] = new MorrowindRegionWeatherOverrideSavePayload
+                    {
+                        RegionHandleValue = r.ReadInt32(),
+                        ClearChance = r.ReadByte(),
+                        CloudyChance = r.ReadByte(),
+                        FoggyChance = r.ReadByte(),
+                        OvercastChance = r.ReadByte(),
+                        RainChance = r.ReadByte(),
+                        ThunderChance = r.ReadByte(),
+                        AshChance = r.ReadByte(),
+                        BlightChance = r.ReadByte(),
+                        SnowChance = r.ReadByte(),
+                        BlizzardChance = r.ReadByte(),
+                    };
+                }
+            }
+            else
+            {
+                payload.RegionWeatherOverrides = System.Array.Empty<MorrowindRegionWeatherOverrideSavePayload>();
             }
             return payload;
         }
@@ -439,6 +487,7 @@ namespace VVardenfell.Runtime.WorldState
                 Initialized = weather.Initialized,
                 Transitioning = weather.Transitioning,
                 RegionWeather = System.Array.Empty<MorrowindRegionWeatherCacheSavePayload>(),
+                RegionWeatherOverrides = System.Array.Empty<MorrowindRegionWeatherOverrideSavePayload>(),
             };
         }
 

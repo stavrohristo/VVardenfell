@@ -169,6 +169,8 @@ namespace VVardenfell.Runtime.UI.Shell
             (_confirmRoot, _confirmText, _confirmButton, _cancelConfirmButton) = BuildConfirmOverlay();
         }
 
+        public RectTransform Root => _root;
+
         public void Sync(SaveLoadBrowserViewModel model)
         {
             bool visible = model != null;

@@ -74,6 +74,65 @@ namespace VVardenfell.Runtime.UI.Shell
                 out error);
         }
 
+        public static bool TryCloseMovie(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.CloseMovie = 1;
+                },
+                out error);
+        }
+
+        public static bool TrySetRestMenuHours(int hours, out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                (ref RuntimeShellActionRequest request) =>
+                {
+                    request.RestMenuAction = (byte)RuntimeShellRestMenuActionId.SetHours;
+                    request.RestMenuHours = hours;
+                },
+                out error);
+        }
+
+        public static bool TryStartRestMenu(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.RestMenuAction = (byte)RuntimeShellRestMenuActionId.Start;
+                    request.RestMenuHours = 0;
+                },
+                out error);
+        }
+
+        public static bool TryStartRestUntilHealed(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.RestMenuAction = (byte)RuntimeShellRestMenuActionId.UntilHealed;
+                    request.RestMenuHours = 0;
+                },
+                out error);
+        }
+
+        public static bool TryCancelRestMenu(out string error)
+        {
+            return TryMutateRequest<RuntimeShellActionRequest>(
+                "Runtime shell request state",
+                static (ref RuntimeShellActionRequest request) =>
+                {
+                    request.RestMenuAction = (byte)RuntimeShellRestMenuActionId.Cancel;
+                    request.RestMenuHours = 0;
+                },
+                out error);
+        }
+
         public static bool TrySelectDialogueTopic(int dialogueIndex, out string error)
         {
             return TryMutateRequest<MorrowindDialogueResponseRequest>(
@@ -249,6 +308,19 @@ namespace VVardenfell.Runtime.UI.Shell
                 0u,
                 targetPlacedRefId,
                 count,
+                out error);
+        }
+
+        public static bool TryUnequipInventoryItem(int inventoryIndex, out string error)
+        {
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.UnequipInventoryItem,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.None,
+                inventoryIndex,
+                0u,
+                0u,
+                0,
                 out error);
         }
 

@@ -167,6 +167,36 @@ namespace VVardenfell.Runtime.Components
         public int Weather;
     }
 
+    public struct MorrowindRegionWeatherOverrideEntry : IBufferElementData
+    {
+        public int RegionHandleValue;
+        public byte ClearChance;
+        public byte CloudyChance;
+        public byte FoggyChance;
+        public byte OvercastChance;
+        public byte RainChance;
+        public byte ThunderChance;
+        public byte AshChance;
+        public byte BlightChance;
+        public byte SnowChance;
+        public byte BlizzardChance;
+    }
+
+    public struct MorrowindRegionWeatherOverrideRequest : IBufferElementData
+    {
+        public int RegionHandleValue;
+        public byte ClearChance;
+        public byte CloudyChance;
+        public byte FoggyChance;
+        public byte OvercastChance;
+        public byte RainChance;
+        public byte ThunderChance;
+        public byte AshChance;
+        public byte BlightChance;
+        public byte SnowChance;
+        public byte BlizzardChance;
+    }
+
     public struct ActiveSkyWeatherState : IComponentData
     {
         public float3 SkyColorRgb;

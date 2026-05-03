@@ -106,6 +106,12 @@ namespace VVardenfell.Runtime.Shell
                     };
             }
 
+            if (request.CloseMovie != 0)
+            {
+                request.CloseMovie = 0;
+                RuntimeShellStateUtility.CloseMovie(ref state);
+            }
+
             if (request.Pending == 0)
             {
                 RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);

@@ -407,13 +407,13 @@ namespace VVardenfell.Runtime.UI.Framework
 
             var labelText = CreateBitmapText(
                 "Label",
-                root,
+                frame.Client,
                 theme?.DefaultFont,
                 scale,
                 textColor,
                 BitmapTextAlignment.Center);
             labelText.Text = label ?? string.Empty;
-            CenterSingleLineText(labelText.rectTransform, labelText, 8f, 1.6f, -4f);
+            CenterSingleLineText(labelText.rectTransform, labelText, 4f, 1.2f);
 
             return new MorrowindButtonView
             {

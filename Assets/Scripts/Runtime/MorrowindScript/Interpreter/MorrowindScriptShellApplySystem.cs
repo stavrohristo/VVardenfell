@@ -3,6 +3,7 @@ using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -25,18 +26,63 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
+            bool hasLogicalRefLookup = SystemAPI.TryGetSingleton(out LogicalRefLookup logicalRefLookup);
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref shell, requests[i]);
+                ApplyRequest(EntityManager, hasLogicalRefLookup, logicalRefLookup, ref shell, requests[i]);
 
             RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
             requests.Clear();
         }
 
-        static void ApplyRequest(ref RuntimeShellState shell, in MorrowindScriptShellRequest request)
+        static void ApplyRequest(
+            EntityManager entityManager,
+            bool hasLogicalRefLookup,
+            in LogicalRefLookup logicalRefLookup,
+            ref RuntimeShellState shell,
+            in MorrowindScriptShellRequest request)
         {
             if (request.Operation == (byte)MorrowindScriptShellRequestOperation.WakeUpPlayer)
             {
+                RuntimeShellStateUtility.CloseRestMenu(ref shell);
                 shell.PlayerSleeping = 0;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.ShowRestMenu)
+            {
+                Entity bedEntity = request.TargetEntity;
+                if (bedEntity == Entity.Null || !entityManager.Exists(bedEntity))
+                {
+                    if (!hasLogicalRefLookup)
+                        throw new InvalidOperationException($"ShowRestMenu target ref={request.TargetPlacedRefId} cannot resolve without logical ref lookup.");
+
+                    bedEntity = MorrowindRuntimeTargetResolver.ResolveLiveTarget(
+                        entityManager,
+                        request.TargetEntity,
+                        request.TargetPlacedRefId,
+                        logicalRefLookup);
+                }
+
+                if (bedEntity == Entity.Null || !entityManager.Exists(bedEntity))
+                    throw new InvalidOperationException($"ShowRestMenu target ref={request.TargetPlacedRefId} is not loaded.");
+
+                if (!entityManager.HasComponent<PlacedRefIdentity>(bedEntity))
+                    throw new InvalidOperationException($"ShowRestMenu target ref={request.TargetPlacedRefId} has no placed ref identity.");
+
+                uint bedPlacedRefId = entityManager.GetComponentData<PlacedRefIdentity>(bedEntity).Value;
+                if (request.TargetPlacedRefId != 0u && bedPlacedRefId != request.TargetPlacedRefId)
+                    throw new InvalidOperationException($"ShowRestMenu target mismatch requested={request.TargetPlacedRefId} actual={bedPlacedRefId}.");
+
+                RuntimeShellStateUtility.OpenRestMenu(ref shell, bedEntity, bedPlacedRefId, canSleep: true);
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayBink)
+            {
+                if (request.MovieName.IsEmpty)
+                    throw new InvalidOperationException("[VVardenfell][MWScript] PlayBink requires a non-empty movie name.");
+
+                RuntimeShellStateUtility.OpenMovie(ref shell, request.MovieName, request.AllowSkipping != 0);
                 return;
             }
 
@@ -132,6 +178,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                         return;
                     case 8:
                         shell.BirthMenuDisabled = disabled;
+                        return;
+                    case 9:
+                        shell.StatReviewMenuDisabled = disabled;
                         return;
                     default:
                         throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell menu kind {request.MenuKind}.");

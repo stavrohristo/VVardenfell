@@ -22,10 +22,10 @@ namespace VVardenfell.Runtime.Inventory
             {
                 Rect = new RuntimeWindowRect
                 {
-                    X = 0.49f,
-                    Y = 0.54f,
-                    Width = 0.39f,
-                    Height = 0.38f,
+                    X = 0.3425f,
+                    Y = 0.6422f,
+                    Width = 0.3125f,
+                    Height = 0.2778f,
                 },
                 SelectedItemIndex = -1,
             });

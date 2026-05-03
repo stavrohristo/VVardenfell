@@ -27,7 +27,7 @@ namespace VVardenfell.Runtime.Audio
 
         const float DefaultFadeSpeed = 2.4f;
         const int RegionEventSourceCount = 4;
-        const int InteractionEventSourceCount = 32;
+        const int InteractionEventSourceCount = 256;
         const string RegionEventChannelName = "region-event";
         const string InteractionEventChannelName = "interaction-event";
         const string ScriptEventChannelName = "script-event";
@@ -127,6 +127,9 @@ namespace VVardenfell.Runtime.Audio
         readonly ChannelState _nearWater;
         readonly AudioSource[] _regionEventSources;
         readonly AudioSource[] _interactionEventSources;
+        readonly string[] _interactionEventActivePaths;
+        readonly Entity[] _interactionEventActiveSourceEntities;
+        readonly uint[] _interactionEventActiveSourcePlacedRefIds;
 
         int _nextRegionEventSource;
         int _nextInteractionEventSource;
@@ -273,6 +276,9 @@ namespace VVardenfell.Runtime.Audio
             }
 
             _interactionEventSources = new AudioSource[InteractionEventSourceCount];
+            _interactionEventActivePaths = new string[InteractionEventSourceCount];
+            _interactionEventActiveSourceEntities = new Entity[InteractionEventSourceCount];
+            _interactionEventActiveSourcePlacedRefIds = new uint[InteractionEventSourceCount];
             for (int i = 0; i < _interactionEventSources.Length; i++)
             {
                 var eventSource = CreateChildAudioSource($"{InteractionEventChannelName}-{i:00}");
@@ -540,6 +546,9 @@ namespace VVardenfell.Runtime.Audio
                 return;
 
             float pitch = Mathf.Max(0.01f, request.Pitch <= 0f ? 1f : request.Pitch);
+            if (directPath)
+                StopSayPlaybacksForSource(request.SourceEntity, request.SourcePlacedRefId);
+
             if (request.Looping != 0)
             {
                 ulong key = BuildScriptLoopKey(request);
@@ -554,12 +563,14 @@ namespace VVardenfell.Runtime.Audio
                 return;
             }
 
+            CancelPendingMatchingOneShots(path, request.SourceEntity, request.SourcePlacedRefId, request.Spatial != 0, directPath);
+
             if (_clipCache.TryGetValue(path, out var cachedClip) && cachedClip != null)
             {
                 using var cacheHit = k_ClipCacheHit.Auto();
                 AudioSource source = request.Spatial != 0
-                    ? PlayInteractionEvent(cachedClip, volume, pitch, position, minDistance, maxDistance)
-                    : PlayNonSpatialEffectEvent(cachedClip, volume, pitch);
+                    ? PlayInteractionEvent(cachedClip, path, request.SourceEntity, request.SourcePlacedRefId, volume, pitch, position, minDistance, maxDistance)
+                    : PlayNonSpatialEffectEvent(cachedClip, path, request.SourceEntity, request.SourcePlacedRefId, volume, pitch);
                 if (directPath)
                     TrackSayPlayback(request.SourceEntity, request.SourcePlacedRefId, request.Sequence, source, loading: false);
                 return;
@@ -1040,10 +1051,12 @@ namespace VVardenfell.Runtime.Audio
             if (IsBeyondSpatialMaxDistance(position, maxDistance))
                 return;
 
+            CancelPendingMatchingOneShots(path, Entity.Null, request.SourcePlacedRefId, spatial: true, matchAnySayForSource: false);
+
             if (_clipCache.TryGetValue(path, out var cachedClip) && cachedClip != null)
             {
                 using var cacheHit = k_ClipCacheHit.Auto();
-                PlayInteractionEvent(cachedClip, volume, 1f, position, minDistance, maxDistance);
+                PlayInteractionEvent(cachedClip, path, Entity.Null, request.SourcePlacedRefId, volume, 1f, position, minDistance, maxDistance);
                 return;
             }
 
@@ -1054,6 +1067,7 @@ namespace VVardenfell.Runtime.Audio
                 Volume = volume,
                 Pitch = 1f,
                 EventSequence = request.Sequence,
+                SourcePlacedRefId = request.SourcePlacedRefId,
                 Position = position,
                 MinDistance = minDistance,
                 MaxDistance = maxDistance,
@@ -1077,13 +1091,13 @@ namespace VVardenfell.Runtime.Audio
 
             if (request.Spatial)
             {
-                return PlayInteractionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch, request.Position, request.MinDistance, request.MaxDistance);
+                return PlayInteractionEvent(clip, request.Path, request.SourceEntity, request.SourcePlacedRefId, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch, request.Position, request.MinDistance, request.MaxDistance);
             }
 
-            return PlayNonSpatialEffectEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
+            return PlayNonSpatialEffectEvent(clip, request.Path, request.SourceEntity, request.SourcePlacedRefId, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
         }
 
-        AudioSource PlayInteractionEvent(AudioClip clip, float volume, float pitch, Vector3 position, float minDistance, float maxDistance)
+        AudioSource PlayInteractionEvent(AudioClip clip, string path, Entity sourceEntity, uint sourcePlacedRefId, float volume, float pitch, Vector3 position, float minDistance, float maxDistance)
         {
             using var _ = k_PlayInteractionEvent.Auto();
 
@@ -1092,7 +1106,9 @@ namespace VVardenfell.Runtime.Audio
             if (IsBeyondSpatialMaxDistance(position, maxDistance))
                 return null;
 
-            if (!TryGetIdleInteractionEventSource(out var source))
+            StopMatchingInteractionEventSource(path, sourceEntity, sourcePlacedRefId, spatial: true);
+
+            if (!TryGetIdleInteractionEventSource(out var source, out int sourceIndex))
             {
                 if (!_interactionEventPoolExhaustedWarningLogged)
                 {
@@ -1105,6 +1121,7 @@ namespace VVardenfell.Runtime.Audio
             }
 
             _interactionEventPoolExhaustedWarningLogged = false;
+            SetInteractionEventSourceTag(sourceIndex, path, sourceEntity, sourcePlacedRefId);
             source.spatialBlend = 1f;
             source.transform.position = position;
             source.minDistance = Mathf.Max(0f, minDistance);
@@ -1117,14 +1134,16 @@ namespace VVardenfell.Runtime.Audio
             return source;
         }
 
-        AudioSource PlayNonSpatialEffectEvent(AudioClip clip, float volume, float pitch)
+        AudioSource PlayNonSpatialEffectEvent(AudioClip clip, string path, Entity sourceEntity, uint sourcePlacedRefId, float volume, float pitch)
         {
             using var _ = k_PlayInteractionEvent.Auto();
 
             if (clip == null || _interactionEventSources.Length == 0)
                 return null;
 
-            if (!TryGetIdleInteractionEventSource(out var source))
+            StopMatchingInteractionEventSource(path, sourceEntity, sourcePlacedRefId, spatial: false);
+
+            if (!TryGetIdleInteractionEventSource(out var source, out int sourceIndex))
             {
                 if (!_interactionEventPoolExhaustedWarningLogged)
                 {
@@ -1137,6 +1156,7 @@ namespace VVardenfell.Runtime.Audio
             }
 
             _interactionEventPoolExhaustedWarningLogged = false;
+            SetInteractionEventSourceTag(sourceIndex, path, sourceEntity, sourcePlacedRefId);
             source.spatialBlend = 0f;
             source.volume = Mathf.Clamp01(volume * ComputeBusMultiplier(ChannelBus.Effects));
             source.pitch = Mathf.Max(0.01f, pitch);
@@ -1153,22 +1173,80 @@ namespace VVardenfell.Runtime.Audio
             return (position - listenerPosition).sqrMagnitude > maxDistance * maxDistance;
         }
 
-        bool TryGetIdleInteractionEventSource(out AudioSource source)
+        bool TryGetIdleInteractionEventSource(out AudioSource source, out int sourceIndex)
         {
             for (int i = 0; i < _interactionEventSources.Length; i++)
             {
-                int sourceIndex = (_nextInteractionEventSource + i) % _interactionEventSources.Length;
-                var candidate = _interactionEventSources[sourceIndex];
+                int candidateIndex = (_nextInteractionEventSource + i) % _interactionEventSources.Length;
+                var candidate = _interactionEventSources[candidateIndex];
                 if (candidate == null || candidate.isPlaying)
                     continue;
 
-                _nextInteractionEventSource = (sourceIndex + 1) % _interactionEventSources.Length;
+                _nextInteractionEventSource = (candidateIndex + 1) % _interactionEventSources.Length;
+                sourceIndex = candidateIndex;
                 source = candidate;
                 return true;
             }
 
+            sourceIndex = -1;
             source = null;
             return false;
+        }
+
+        void StopMatchingInteractionEventSource(string path, Entity sourceEntity, uint sourcePlacedRefId, bool spatial)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            for (int i = 0; i < _interactionEventSources.Length; i++)
+            {
+                var source = _interactionEventSources[i];
+                if (source == null || !source.isPlaying)
+                    continue;
+
+                if (!string.Equals(_interactionEventActivePaths[i], path, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (spatial && !SameOneShotSource(_interactionEventActiveSourceEntities[i], _interactionEventActiveSourcePlacedRefIds[i], sourceEntity, sourcePlacedRefId))
+                    continue;
+
+                StopInteractionEventSource(i);
+            }
+        }
+
+        void StopInteractionEventSource(int sourceIndex)
+        {
+            if (sourceIndex < 0 || sourceIndex >= _interactionEventSources.Length)
+                return;
+
+            var source = _interactionEventSources[sourceIndex];
+            if (source != null)
+            {
+                source.Stop();
+                source.clip = null;
+            }
+
+            ClearInteractionEventSourceTag(sourceIndex);
+        }
+
+        void SetInteractionEventSourceTag(int sourceIndex, string path, Entity sourceEntity, uint sourcePlacedRefId)
+        {
+            if (sourceIndex < 0 || sourceIndex >= _interactionEventSources.Length)
+                return;
+
+            _interactionEventActivePaths[sourceIndex] = path;
+            _interactionEventActiveSourceEntities[sourceIndex] = sourceEntity;
+            _interactionEventActiveSourcePlacedRefIds[sourceIndex] = sourcePlacedRefId;
+        }
+
+        void ClearInteractionEventSourceTag(int sourceIndex)
+        {
+            if (sourceIndex < 0 || sourceIndex >= _interactionEventSources.Length)
+                return;
+
+            _interactionEventActivePaths[sourceIndex] = null;
+            _interactionEventActiveSourceEntities[sourceIndex] = Entity.Null;
+            _interactionEventActiveSourcePlacedRefIds[sourceIndex] = 0u;
         }
 
         ChannelState GetOrCreateScriptLoopChannel(ulong key)
@@ -1209,6 +1287,14 @@ namespace VVardenfell.Runtime.Audio
             return false;
         }
 
+        static bool SameOneShotSource(Entity activeEntity, uint activePlacedRefId, Entity sourceEntity, uint sourcePlacedRefId)
+        {
+            if (activePlacedRefId != 0u || sourcePlacedRefId != 0u)
+                return activePlacedRefId == sourcePlacedRefId;
+
+            return activeEntity != Entity.Null && activeEntity == sourceEntity;
+        }
+
         static bool IsScriptLoopAudibleOrLoading(ChannelState channel)
         {
             if (channel == null)
@@ -1218,6 +1304,78 @@ namespace VVardenfell.Runtime.Audio
                 return true;
 
             return channel.Source != null && (channel.Source.isPlaying || channel.Source.volume > 0.0001f);
+        }
+
+        void CancelPendingMatchingOneShots(string path, Entity sourceEntity, uint sourcePlacedRefId, bool spatial, bool matchAnySayForSource)
+        {
+            if (string.IsNullOrWhiteSpace(path) && !matchAnySayForSource)
+                return;
+
+            for (int i = _pendingEventRequests.Count - 1; i >= 0; i--)
+            {
+                var pending = _pendingEventRequests[i];
+                if (pending == null)
+                    continue;
+
+                bool matches;
+                if (matchAnySayForSource)
+                {
+                    matches = pending.TrackSay
+                        && SameOneShotSource(pending.SourceEntity, pending.SourcePlacedRefId, sourceEntity, sourcePlacedRefId);
+                }
+                else if (spatial)
+                {
+                    matches = pending.Spatial
+                        && string.Equals(pending.Path, path, StringComparison.OrdinalIgnoreCase)
+                        && SameOneShotSource(pending.SourceEntity, pending.SourcePlacedRefId, sourceEntity, sourcePlacedRefId);
+                }
+                else
+                {
+                    matches = !pending.Spatial
+                        && string.Equals(pending.Path, path, StringComparison.OrdinalIgnoreCase);
+                }
+
+                if (!matches)
+                    continue;
+
+                if (pending.TrackSay)
+                    StopTrackingSayPlayback(pending.EventSequence);
+                DisposeOneShotRequest(pending);
+                _pendingEventRequests.RemoveAt(i);
+            }
+        }
+
+        void StopSayPlaybacksForSource(Entity sourceEntity, uint sourcePlacedRefId)
+        {
+            CancelPendingMatchingOneShots(null, sourceEntity, sourcePlacedRefId, spatial: false, matchAnySayForSource: true);
+
+            for (int i = _activeSayPlaybacks.Count - 1; i >= 0; i--)
+            {
+                var active = _activeSayPlaybacks[i];
+                if (!SameOneShotSource(active.SourceEntity, active.SourcePlacedRefId, sourceEntity, sourcePlacedRefId))
+                    continue;
+
+                StopInteractionEventSource(active.Source);
+                _activeSayPlaybacks.RemoveAt(i);
+            }
+        }
+
+        void StopInteractionEventSource(AudioSource source)
+        {
+            if (source == null)
+                return;
+
+            for (int i = 0; i < _interactionEventSources.Length; i++)
+            {
+                if (_interactionEventSources[i] != source)
+                    continue;
+
+                StopInteractionEventSource(i);
+                return;
+            }
+
+            source.Stop();
+            source.clip = null;
         }
 
         void TrackSayPlayback(Entity sourceEntity, uint sourcePlacedRefId, uint eventSequence, AudioSource source, bool loading)
@@ -1244,6 +1402,18 @@ namespace VVardenfell.Runtime.Audio
 
             if (!loading && source == null)
                 return;
+
+            for (int i = _activeSayPlaybacks.Count - 1; i >= 0; i--)
+            {
+                var active = _activeSayPlaybacks[i];
+                if (active.EventSequence == eventSequence)
+                    continue;
+                if (!SameOneShotSource(active.SourceEntity, active.SourcePlacedRefId, sourceEntity, sourcePlacedRefId))
+                    continue;
+
+                StopInteractionEventSource(active.Source);
+                _activeSayPlaybacks.RemoveAt(i);
+            }
 
             _activeSayPlaybacks.Add(new ActiveSayPlayback
             {

@@ -448,6 +448,25 @@ namespace VVardenfell.Core.Cache
         SayDone = 111,
         GetActorAiSetting = 112,
         GetButtonPressed = 113,
+        GetActorAttribute = 114,
+        GetEffect = 115,
+        GetSpellEffects = 116,
+        PayFine = 117,
+        OnActivateStatement = 118,
+        HurtStandingActor = 119,
+        ShowRestMenu = 120,
+        GetStandingPC = 121,
+        PlayAnimationGroup = 122,
+        GetLOS = 123,
+        GetDetected = 124,
+        GetAttacked = 125,
+        OnMurder = 126,
+        OnKnockout = 127,
+        HitOnMe = 128,
+        GetDisposition = 129,
+        ModRegion = 130,
+        PlayBink = 131,
+        ModFactionReaction = 132,
     }
 
     public enum MorrowindScriptRefTargetMode : byte
@@ -456,6 +475,12 @@ namespace VVardenfell.Core.Cache
         PlacedRef = 1,
         Player = 2,
         ActiveContentRef = 3,
+    }
+
+    public enum MorrowindScriptAnimationGroupOperation : byte
+    {
+        Play = 1,
+        Loop = 2,
     }
 
     public enum MorrowindScriptMovementFlagKind : byte
@@ -480,6 +505,7 @@ namespace VVardenfell.Core.Cache
         PlayLoopSound3DVP = 4,
         PlaySound3DVP = 5,
         StopSound = 6,
+        PlaySoundVP = 7,
     }
 
     public struct MorrowindScriptProgramDef

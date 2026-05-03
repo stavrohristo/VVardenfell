@@ -82,6 +82,14 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
+    public struct ActorScriptEventState : IComponentData
+    {
+        public byte Murdered;
+        public byte Attacked;
+        public byte KnockedDownOneFrame;
+        public ContentReference LastHitObject;
+    }
+
     public struct MorrowindQuestJournalState : IComponentData
     {
         public int QuestCount;
@@ -191,6 +199,23 @@ namespace VVardenfell.Runtime.Components
         public byte IsMod;
     }
 
+    public struct MorrowindScriptHurtStandingActorRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public float HealthPerSecond;
+    }
+
+    public struct MorrowindScriptAnimationGroupRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public int GroupMessageIndex;
+        public uint LoopCount;
+        public byte Mode;
+        public byte Operation;
+    }
+
     public struct MorrowindScriptInventoryMutationRequest : IBufferElementData
     {
         public Entity TargetEntity;
@@ -215,6 +240,14 @@ namespace VVardenfell.Runtime.Components
         public int ActorHandleValue;
         public int LocalIndex;
         public MorrowindScriptLocalValue Value;
+    }
+
+    public struct MorrowindScriptFactionReactionRequest : IBufferElementData
+    {
+        public int SourceFactionIndex;
+        public int TargetFactionIndex;
+        public int Value;
+        public byte IsMod;
     }
 
     public struct MorrowindScriptExternalActorLocalSnapshot
@@ -277,12 +310,36 @@ namespace VVardenfell.Runtime.Components
         public byte Consumed;
     }
 
+    public struct MorrowindScriptActorEventSnapshot
+    {
+        public Entity Entity;
+        public uint PlacedRefId;
+        public byte Murdered;
+        public byte Attacked;
+        public byte KnockedDownOneFrame;
+        public ContentReference LastHitObject;
+    }
+
     public struct MorrowindScriptActorVitalSnapshot
     {
         public uint PlacedRefId;
         public float Health;
         public float Magicka;
         public float Fatigue;
+    }
+
+    public struct MorrowindScriptActorAttributeSnapshot
+    {
+        public uint PlacedRefId;
+        public ActorAttributeSet Attributes;
+    }
+
+    public struct MorrowindScriptActorActiveEffectSnapshot
+    {
+        public Entity ActorEntity;
+        public uint PlacedRefId;
+        public SpellDefHandle SourceSpell;
+        public short EffectId;
     }
 
     public struct MorrowindScriptActorDiseaseSnapshot
@@ -307,6 +364,20 @@ namespace VVardenfell.Runtime.Components
         public int Fight;
         public int Flee;
         public int Alarm;
+    }
+
+    public struct MorrowindScriptActorDispositionSnapshot
+    {
+        public Entity ActorEntity;
+        public uint PlacedRefId;
+        public int BaseDisposition;
+    }
+
+    public struct MorrowindScriptActorLineOfSightSnapshot
+    {
+        public uint SourcePlacedRefId;
+        public uint TargetPlacedRefId;
+        public byte HasLineOfSight;
     }
 
     public struct MorrowindScriptActiveSaySnapshot
@@ -334,6 +405,19 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
     }
 
+    public enum MorrowindScriptActorEventConsumeKind : byte
+    {
+        Murdered = 1,
+        LastHitObject = 2,
+    }
+
+    public struct MorrowindScriptActorEventConsumeRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public byte Kind;
+    }
+
     public enum MorrowindScriptShellRequestOperation : byte
     {
         WakeUpPlayer = 1,
@@ -347,15 +431,21 @@ namespace VVardenfell.Runtime.Components
         PlayerViewSwitch = 9,
         Rest = 10,
         VanityMode = 11,
+        ShowRestMenu = 12,
+        PlayBink = 13,
     }
 
     public struct MorrowindScriptShellRequest : IBufferElementData
     {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
         public byte Operation;
         public byte FadeOut;
         public byte Enabled;
         public byte MenuKind;
+        public byte AllowSkipping;
         public float Duration;
+        public FixedString128Bytes MovieName;
     }
 
     public struct MorrowindScriptJailRequest : IBufferElementData

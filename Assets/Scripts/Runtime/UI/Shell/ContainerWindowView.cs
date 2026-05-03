@@ -56,6 +56,7 @@ namespace VVardenfell.Runtime.UI.Shell
             public BorderFrameView Frame;
             public Button Button;
             public Image Icon;
+            public Image IconShadow;
             public BitmapTextGraphic Count;
             public RuntimeInventoryItemDragSource DragSource;
         }
@@ -64,7 +65,9 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeInventoryIconService _iconService;
         readonly RectTransform _viewport;
         readonly Action _onRectChanged;
-        readonly Action<int, InventoryItemClickContext> _onItemClicked;
+        readonly Action<int> _onItemSelected;
+        readonly Action<int, InventoryItemClickContext> _onItemDragged;
+        readonly Func<int, bool> _isItemSelected;
         readonly Action _onBackgroundClicked;
         readonly Func<bool> _hasHeldItem;
         readonly Action<Vector2> _onDragPositionChanged;
@@ -88,7 +91,9 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiTheme theme,
             RuntimeInventoryIconService iconService,
             Action onRectChanged,
-            Action<int, InventoryItemClickContext> onItemClicked,
+            Action<int> onItemSelected,
+            Action<int, InventoryItemClickContext> onItemDragged,
+            Func<int, bool> isItemSelected,
             Action onBackgroundClicked,
             Func<bool> hasHeldItem,
             Action<Vector2> onDragPositionChanged,
@@ -99,7 +104,9 @@ namespace VVardenfell.Runtime.UI.Shell
             _iconService = iconService;
             _viewport = viewport;
             _onRectChanged = onRectChanged;
-            _onItemClicked = onItemClicked;
+            _onItemSelected = onItemSelected;
+            _onItemDragged = onItemDragged;
+            _isItemSelected = isItemSelected;
             _onBackgroundClicked = onBackgroundClicked;
             _hasHeldItem = hasHeldItem;
             _onDragPositionChanged = onDragPositionChanged;
@@ -305,8 +312,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 cell.InventoryIndex = entry.InventoryIndex;
                 cell.DragSource.SetItemIndex(entry.InventoryIndex);
                 RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, BuildItemTooltip(entry));
-                cell.Icon.sprite = _iconService.GetSprite(entry.IconPath);
-                cell.Icon.preserveAspect = true;
+                RuntimeInventoryItemIconLayoutUtility.SyncSprite(cell.Icon, cell.IconShadow, _iconService.GetSprite(entry.IconPath));
                 bool hasStack = !string.IsNullOrWhiteSpace(entry.CountText) && entry.CountText != "1";
                 cell.Count.gameObject.SetActive(hasStack);
                 if (hasStack)
@@ -373,16 +379,9 @@ namespace VVardenfell.Runtime.UI.Shell
             button.transition = Selectable.Transition.None;
             button.navigation = new Navigation { mode = Navigation.Mode.None };
 
-            // Icon fills most of the cell, inset 2 px from each frame edge so the gold
-            // thin border is unobscured.
-            var icon = RuntimeUiFactory.CreateImage("Icon", frame.Client, Color.white);
-            RuntimeUiFactory.SetInset(
-                icon.rectTransform,
-                RuntimeClassicUiMetrics.Layout(2f),
-                RuntimeClassicUiMetrics.Layout(2f),
-                -RuntimeClassicUiMetrics.Layout(2f),
-                -RuntimeClassicUiMetrics.Layout(2f));
-            icon.raycastTarget = false;
+            var iconShadow = RuntimeInventoryItemIconLayoutUtility.CreateItemImage("ItemShadow", frame.Root, new Color(0f, 0f, 0f, 0.5f), shadow: true, flipVertical: true);
+            var icon = RuntimeInventoryItemIconLayoutUtility.CreateItemImage("Item", frame.Root, Color.white, shadow: false, flipVertical: true);
+            RuntimeInventoryItemIconLayoutUtility.BringBorderToFront(frame);
 
             // Stack count overlay at bottom-right. Hidden when the item isn't stacked.
             var count = RuntimeUiFactory.CreateBitmapText(
@@ -397,8 +396,7 @@ namespace VVardenfell.Runtime.UI.Shell
             count.rectTransform.anchorMin = new Vector2(1f, 0f);
             count.rectTransform.anchorMax = new Vector2(1f, 0f);
             count.rectTransform.pivot = new Vector2(1f, 0f);
-            count.rectTransform.anchoredPosition = new Vector2(-RuntimeClassicUiMetrics.Layout(3f), RuntimeClassicUiMetrics.Layout(2f));
-            count.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Layout(new Vector2(34f, 13f));
+            RuntimeInventoryItemIconLayoutUtility.ApplyCountRect(count.rectTransform);
             count.raycastTarget = false;
 
             var cell = new CellView
@@ -408,11 +406,19 @@ namespace VVardenfell.Runtime.UI.Shell
                 Frame = frame,
                 Button = button,
                 Icon = icon,
+                IconShadow = iconShadow,
                 Count = count,
             };
 
             cell.DragSource = root.gameObject.AddComponent<RuntimeInventoryItemDragSource>();
-            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem, _onDragPositionChanged);
+            cell.DragSource.Initialize(
+                cell.InventoryIndex,
+                _onItemSelected,
+                _onItemDragged,
+                null,
+                _isItemSelected,
+                _hasHeldItem,
+                _onDragPositionChanged);
             return cell;
         }
 

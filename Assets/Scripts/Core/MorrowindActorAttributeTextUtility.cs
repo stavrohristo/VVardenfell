@@ -33,6 +33,18 @@ namespace VVardenfell.Core
             return TryResolveAttributeName(command.Substring(prefix.Length), out attribute);
         }
 
+        public static bool TryResolveGetAttributeExpression(string command, out byte attribute)
+        {
+            attribute = 0;
+            if (string.IsNullOrWhiteSpace(command)
+                || !command.StartsWith("get", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return TryResolveAttributeName(command.Substring("get".Length), out attribute);
+        }
+
         public static bool TryResolveAttributeName(string attributeName, out byte attribute)
         {
             attribute = NormalizeAttributeName(attributeName) switch

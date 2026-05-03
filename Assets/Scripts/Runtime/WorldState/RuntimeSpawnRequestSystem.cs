@@ -110,23 +110,15 @@ namespace VVardenfell.Runtime.WorldState
                 return;
             }
 
-            if (request.Content.Kind == ContentReferenceKind.Actor)
+            bool actorSpawn = request.Content.Kind == ContentReferenceKind.Actor;
+            if (!actorSpawn && request.Content.Kind != ContentReferenceKind.Item && request.Content.Kind != ContentReferenceKind.Light)
             {
-                var actorHandle = new ActorDefHandle { Value = request.Content.HandleValue };
-                ref readonly var actor = ref contentDb.Get(actorHandle);
-                if (actor.Kind != ActorDefKind.Creature)
-                {
-                    CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "NPC runtime spawning is deferred until the actor body-composition milestone.");
-                    return;
-                }
-            }
-            else if (request.Content.Kind != ContentReferenceKind.Item && request.Content.Kind != ContentReferenceKind.Light)
-            {
-                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "This runtime spawn surface currently supports creatures, items, and lights only.");
+                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.Unsupported, "This runtime spawn surface currently supports actors, items, and lights only.");
                 return;
             }
 
-            if (!WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out var descriptor))
+            WorldResources.RuntimeSpawnPrefabDescriptor descriptor = default;
+            if (!actorSpawn && !WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out descriptor))
             {
                 CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.MissingPrefab, "No spawnable model prefab is available for that content definition.");
                 return;
@@ -153,23 +145,37 @@ namespace VVardenfell.Runtime.WorldState
                 loaded.Active.Add(request.ExteriorCell);
 
             var createEcb = new EntityCommandBuffer(Allocator.Temp);
-            bool queued = RuntimeSpawnFactory.QueueSpawn(
-                EntityManager,
-                ref createEcb,
-                contentDb,
-                descriptor,
-                request.Content,
-                runtimeRefId,
-                request.Position,
-                request.Rotation,
-                math.max(0.0001f, request.Scale),
-                request.IsInterior != 0,
-                request.ExteriorCell,
-                request.InteriorCellId,
-                exteriorActive,
-                ref logicalLookup,
-                transitionEntity,
-                request.PersistencePolicy);
+            bool queued = actorSpawn
+                ? RuntimeSpawnFactory.QueueActorSpawn(
+                    EntityManager,
+                    ref createEcb,
+                    contentDb,
+                    request.Content,
+                    runtimeRefId,
+                    request.Position,
+                    request.Rotation,
+                    math.max(0.0001f, request.Scale),
+                    request.IsInterior != 0,
+                    request.ExteriorCell,
+                    request.InteriorCellId,
+                    request.PersistencePolicy)
+                : RuntimeSpawnFactory.QueueSpawn(
+                    EntityManager,
+                    ref createEcb,
+                    contentDb,
+                    descriptor,
+                    request.Content,
+                    runtimeRefId,
+                    request.Position,
+                    request.Rotation,
+                    math.max(0.0001f, request.Scale),
+                    request.IsInterior != 0,
+                    request.ExteriorCell,
+                    request.InteriorCellId,
+                    exteriorActive,
+                    ref logicalLookup,
+                    transitionEntity,
+                    request.PersistencePolicy);
             createEcb.Playback(EntityManager);
             createEcb.Dispose();
 

@@ -87,6 +87,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptActorAiSettingRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptDispositionRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorVitalRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptHurtStandingActorRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptAnimationGroupRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptInventoryMutationRequest>(runtime);
             EntityManager.AddBuffer<ActorInventoryDropRequest>(runtime);
             EntityManager.AddBuffer<ScriptedCastRequest>(runtime);
@@ -99,6 +101,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
             EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);
             EntityManager.AddBuffer<GlobalMapRevealRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptShellRequest>(runtime);
@@ -106,6 +109,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptMovementFlagRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlaceAtRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptOnDeathConsumeRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptActorEventConsumeRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
             Debug.LogWarning($"Script runtime initialized");

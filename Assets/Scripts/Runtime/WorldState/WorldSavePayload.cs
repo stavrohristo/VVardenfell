@@ -115,12 +115,28 @@ namespace VVardenfell.Runtime.WorldState
         public byte Initialized;
         public byte Transitioning;
         public MorrowindRegionWeatherCacheSavePayload[] RegionWeather;
+        public MorrowindRegionWeatherOverrideSavePayload[] RegionWeatherOverrides;
     }
 
     public struct MorrowindRegionWeatherCacheSavePayload
     {
         public int RegionHandleValue;
         public int Weather;
+    }
+
+    public struct MorrowindRegionWeatherOverrideSavePayload
+    {
+        public int RegionHandleValue;
+        public byte ClearChance;
+        public byte CloudyChance;
+        public byte FoggyChance;
+        public byte OvercastChance;
+        public byte RainChance;
+        public byte ThunderChance;
+        public byte AshChance;
+        public byte BlightChance;
+        public byte SnowChance;
+        public byte BlizzardChance;
     }
 
     public struct LocalMapDiscoveryTilePayload

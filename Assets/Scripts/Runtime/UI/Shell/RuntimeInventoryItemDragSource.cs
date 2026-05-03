@@ -9,6 +9,9 @@ namespace VVardenfell.Runtime.UI.Shell
     sealed class RuntimeInventoryItemDragSource : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
     {
         Action<int, InventoryItemClickContext> _beginItemDrag;
+        Action<int> _selectItem;
+        Action<int> _rightClickItem;
+        Func<int, bool> _isSelected;
         Action<Vector2> _dragPositionChanged;
         Func<bool> _hasHeldItem;
         int _itemIndex;
@@ -16,12 +19,18 @@ namespace VVardenfell.Runtime.UI.Shell
 
         public void Initialize(
             int itemIndex,
+            Action<int> selectItem,
             Action<int, InventoryItemClickContext> beginItemDrag,
+            Action<int> rightClickItem,
+            Func<int, bool> isSelected,
             Func<bool> hasHeldItem,
             Action<Vector2> dragPositionChanged)
         {
             _itemIndex = itemIndex;
+            _selectItem = selectItem;
             _beginItemDrag = beginItemDrag;
+            _rightClickItem = rightClickItem;
+            _isSelected = isSelected;
             _hasHeldItem = hasHeldItem;
             _dragPositionChanged = dragPositionChanged;
         }
@@ -34,16 +43,27 @@ namespace VVardenfell.Runtime.UI.Shell
         public void OnBeginDrag(PointerEventData eventData)
         {
             _dragStarted = true;
+            if (eventData.button != PointerEventData.InputButton.Left)
+                return;
+
             if (_hasHeldItem != null && _hasHeldItem())
                 return;
 
+            if (_isSelected == null || !_isSelected(_itemIndex))
+            {
+                _selectItem?.Invoke(_itemIndex);
+                return;
+            }
+
             _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext(eventData));
-            _dragPositionChanged?.Invoke(eventData.position);
+            if (_hasHeldItem != null && _hasHeldItem())
+                _dragPositionChanged?.Invoke(eventData.position);
         }
 
         public void OnDrag(PointerEventData eventData)
         {
-            _dragPositionChanged?.Invoke(eventData.position);
+            if (_hasHeldItem != null && _hasHeldItem())
+                _dragPositionChanged?.Invoke(eventData.position);
         }
 
         public void OnEndDrag(PointerEventData eventData)
@@ -53,10 +73,17 @@ namespace VVardenfell.Runtime.UI.Shell
 
         public void OnPointerClick(PointerEventData eventData)
         {
-            if (_dragStarted || eventData.button != PointerEventData.InputButton.Left)
+            if (_dragStarted)
                 return;
 
-            _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext(eventData));
+            if (eventData.button == PointerEventData.InputButton.Right)
+            {
+                _rightClickItem?.Invoke(_itemIndex);
+                return;
+            }
+
+            if (eventData.button == PointerEventData.InputButton.Left)
+                _selectItem?.Invoke(_itemIndex);
         }
 
         static InventoryItemClickContext CaptureClickContext(PointerEventData eventData)

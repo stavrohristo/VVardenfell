@@ -104,6 +104,9 @@ namespace VVardenfell.Runtime.Inventory
                 case InventoryItemActionKind.ClearHeld:
                     ClearHeld(ref held);
                     break;
+                case InventoryItemActionKind.UnequipInventoryItem:
+                    UnequipInventoryItem(request.SourceIndex, inventory, equipment, hasEquipment);
+                    break;
             }
         }
 
@@ -139,7 +142,6 @@ namespace VVardenfell.Runtime.Inventory
                     return;
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
-                UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 held = new InventoryHeldItemState
                 {
                     Active = 1,
@@ -281,6 +283,18 @@ namespace VVardenfell.Runtime.Inventory
 
             ToggleEquipment(equipment, inventoryIndex, entry.Content, itemEquipment);
             ClearHeld(ref held);
+        }
+
+        static void UnequipInventoryItem(
+            int inventoryIndex,
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            bool hasEquipment)
+        {
+            if (!hasEquipment || !TryGetPlayerEntry(inventory, inventoryIndex, out var entry))
+                return;
+
+            UnequipInventoryIndex(equipment, inventoryIndex, entry.Content);
         }
 
         void QueueBookRead(int inventoryIndex)

@@ -136,6 +136,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _window.Root.gameObject.SetActive(false);
         }
 
+        public RectTransform Root => _window.Root;
+
         public bool OwnsSelection(GameObject selected)
             => selected != null && selected.transform.IsChildOf(_window.Root);
 

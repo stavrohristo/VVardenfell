@@ -212,6 +212,8 @@ namespace VVardenfell.Runtime.UI.Shell
             SetActiveTab(TabId.Preferences);
         }
 
+        public RectTransform Root => _root;
+
         public bool IsVisible => _root.gameObject.activeSelf;
 
         public void SetVisible(bool visible)

@@ -20,6 +20,7 @@ namespace VVardenfell.Runtime.Components
         DropHeldToContainer = 4,
         UseHeld = 5,
         ClearHeld = 6,
+        UnequipInventoryItem = 7,
     }
 
     public struct InventoryItemActionRequest : IComponentData

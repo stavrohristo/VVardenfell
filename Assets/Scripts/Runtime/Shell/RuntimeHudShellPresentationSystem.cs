@@ -11,6 +11,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.UI.Shell;
 
@@ -68,6 +69,7 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<JournalWindowState>();
             RequireForUpdate<MorrowindQuestJournalState>();
             RequireForUpdate<MorrowindDialogueState>();
+            RequireForUpdate<MorrowindTimeState>();
             RequireForUpdate<PlayerInventoryItem>();
             RequireForUpdate<ContainerSessionItem>();
         }
@@ -182,6 +184,16 @@ namespace VVardenfell.Runtime.Shell
                     SystemAPI.GetSingletonBuffer<MorrowindTopicJournalEntry>(true),
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueChoice>(true))
                 : null;
+            RestMenuViewModel restMenuModel = shell.RestMenuOpen != 0 || shell.RestMenuAdvancing != 0
+                ? BuildRestMenuModel(RuntimeContentDatabase.Active, shell, SystemAPI.GetSingleton<MorrowindTimeState>(), playerStats)
+                : null;
+            MoviePlaybackViewModel movieModel = shell.MovieOpen != 0
+                ? new MoviePlaybackViewModel
+                {
+                    MovieName = shell.MovieName.ToString(),
+                    AllowSkipping = shell.MovieAllowSkipping != 0,
+                }
+                : null;
 
             _view.Sync(
                 visible,
@@ -194,6 +206,8 @@ namespace VVardenfell.Runtime.Shell
                 saveLoadModel,
                 journalModel,
                 dialogueModel,
+                restMenuModel,
+                movieModel,
                 (RuntimeShellMenuActionId)shell.SelectedAction,
                 shell.PauseMenuOpen != 0,
                 shell.ModalOpen != 0,
@@ -250,6 +264,71 @@ namespace VVardenfell.Runtime.Shell
                 return 0f;
 
             return Math.Clamp(current / max, 0f, 1f);
+        }
+
+        RestMenuViewModel BuildRestMenuModel(
+            RuntimeContentDatabase contentDb,
+            in RuntimeShellState shell,
+            in MorrowindTimeState time,
+            in PlayerPresentationStats playerStats)
+        {
+            bool stuntedMagicka = false;
+            if (playerStats.HasPlayer
+                && EntityManager.Exists(playerStats.PlayerEntity)
+                && EntityManager.HasBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity))
+            {
+                stuntedMagicka = RuntimeRestUtility.HasStuntedMagicka(
+                    EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true));
+            }
+
+            bool canUntilHealed = shell.RestMenuCanSleep != 0
+                && playerStats.HasPlayer
+                && RuntimeRestUtility.NeedsHealing(playerStats.Vitals);
+
+            int selectedHours = RuntimeRestUtility.ClampHours(shell.RestMenuSelectedHours <= 0 ? 1 : shell.RestMenuSelectedHours);
+            int targetHours = RuntimeRestUtility.ClampHours(shell.RestMenuTargetHours <= 0 ? selectedHours : shell.RestMenuTargetHours);
+            int progressHours = Math.Clamp(shell.RestMenuProgressHours, 0, targetHours);
+            return new RestMenuViewModel
+            {
+                CanSleep = shell.RestMenuCanSleep != 0,
+                CanUntilHealed = canUntilHealed,
+                Advancing = shell.RestMenuAdvancing != 0,
+                SelectedHours = selectedHours,
+                ProgressHours = progressHours,
+                TargetHours = targetHours,
+                DateText = FormatRestDate(contentDb, time),
+                TimeText = FormatRestTime(time),
+                HoursText = selectedHours == 1 ? "1 hour" : $"{selectedHours} hours",
+                ProgressText = BuildRestProgressText(shell.RestMenuSleeping != 0, progressHours, targetHours, stuntedMagicka),
+            };
+        }
+
+        static string FormatRestDate(RuntimeContentDatabase contentDb, in MorrowindTimeState time)
+        {
+            int month = Math.Clamp(time.Month, 0, k_DefaultMonthNames.Length - 1);
+            string monthName = ResolveMonthName(contentDb, month);
+            return $"{time.Day} {monthName}, {time.Year}";
+        }
+
+        static string FormatRestTime(in MorrowindTimeState time)
+        {
+            float normalizedHour = MorrowindDayCycleUtility.NormalizeGameHour(time.GameHour);
+            int hour = (int)Math.Floor(normalizedHour);
+            int minute = (int)Math.Floor((normalizedHour - hour) * 60f);
+            if (minute >= 60)
+            {
+                minute = 0;
+                hour = (hour + 1) % 24;
+            }
+
+            return $"{hour:00}:{minute:00}";
+        }
+
+        static string BuildRestProgressText(bool sleeping, int progressHours, int targetHours, bool stuntedMagicka)
+        {
+            string mode = sleeping ? "Resting" : "Waiting";
+            string suffix = stuntedMagicka && sleeping ? " (stunted magicka)" : string.Empty;
+            return $"{mode}: {progressHours}/{targetHours} hours{suffix}";
         }
 
         string ResolveFocusText(in InteractionPresentationState interaction)

@@ -34,6 +34,8 @@ namespace VVardenfell.Runtime.Streaming
                 EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
                 EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
                 EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
             }
             else
             {
@@ -44,6 +46,10 @@ namespace VVardenfell.Runtime.Streaming
                     EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
                 if (!EntityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
                     EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                if (!EntityManager.HasBuffer<MorrowindRegionWeatherOverrideEntry>(entity))
+                    EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                if (!EntityManager.HasBuffer<MorrowindRegionWeatherOverrideRequest>(entity))
+                    EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
             }
         }
 

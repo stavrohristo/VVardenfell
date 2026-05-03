@@ -1086,15 +1086,19 @@ namespace VVardenfell.Runtime.WorldState
                 ecb.AddBuffer<MorrowindWeatherChangeRequest>(entity);
                 ecb.AddBuffer<MorrowindWeatherForceRequest>(entity);
                 ecb.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                ecb.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                ecb.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
                 WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
                 entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindWeatherState>(entityManager);
                 RestoreRegionWeatherCache(entityManager, entity, payload.RegionWeather);
+                RestoreRegionWeatherOverrides(entityManager, entity, payload.RegionWeatherOverrides);
                 return;
             }
 
             entityManager.SetComponentData(entity, weather);
             EnsureWeatherBuffers(entityManager, entity);
             RestoreRegionWeatherCache(entityManager, entity, payload.RegionWeather);
+            RestoreRegionWeatherOverrides(entityManager, entity, payload.RegionWeatherOverrides);
         }
 
         static void EnsureWeatherBuffers(EntityManager entityManager, Entity entity)
@@ -1105,9 +1109,14 @@ namespace VVardenfell.Runtime.WorldState
                 entityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
             if (!entityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
                 entityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+            if (!entityManager.HasBuffer<MorrowindRegionWeatherOverrideEntry>(entity))
+                entityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+            if (!entityManager.HasBuffer<MorrowindRegionWeatherOverrideRequest>(entity))
+                entityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
 
             entityManager.GetBuffer<MorrowindWeatherChangeRequest>(entity).Clear();
             entityManager.GetBuffer<MorrowindWeatherForceRequest>(entity).Clear();
+            entityManager.GetBuffer<MorrowindRegionWeatherOverrideRequest>(entity).Clear();
         }
 
         static void RestoreRegionWeatherCache(EntityManager entityManager, Entity entity, MorrowindRegionWeatherCacheSavePayload[] payload)
@@ -1126,6 +1135,35 @@ namespace VVardenfell.Runtime.WorldState
                 {
                     RegionHandleValue = payload[i].RegionHandleValue,
                     Weather = payload[i].Weather,
+                });
+            }
+        }
+
+        static void RestoreRegionWeatherOverrides(EntityManager entityManager, Entity entity, MorrowindRegionWeatherOverrideSavePayload[] payload)
+        {
+            var buffer = entityManager.GetBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+            buffer.Clear();
+            if (payload == null)
+                return;
+
+            for (int i = 0; i < payload.Length; i++)
+            {
+                if (payload[i].RegionHandleValue <= 0)
+                    continue;
+
+                buffer.Add(new MorrowindRegionWeatherOverrideEntry
+                {
+                    RegionHandleValue = payload[i].RegionHandleValue,
+                    ClearChance = payload[i].ClearChance,
+                    CloudyChance = payload[i].CloudyChance,
+                    FoggyChance = payload[i].FoggyChance,
+                    OvercastChance = payload[i].OvercastChance,
+                    RainChance = payload[i].RainChance,
+                    ThunderChance = payload[i].ThunderChance,
+                    AshChance = payload[i].AshChance,
+                    BlightChance = payload[i].BlightChance,
+                    SnowChance = payload[i].SnowChance,
+                    BlizzardChance = payload[i].BlizzardChance,
                 });
             }
         }

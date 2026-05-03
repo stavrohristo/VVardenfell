@@ -279,6 +279,28 @@ namespace VVardenfell.Runtime.WorldState
                     };
                 }
             }
+            if (entityManager.HasBuffer<MorrowindRegionWeatherOverrideEntry>(entity))
+            {
+                var overrides = entityManager.GetBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                payload.RegionWeatherOverrides = new MorrowindRegionWeatherOverrideSavePayload[overrides.Length];
+                for (int i = 0; i < overrides.Length; i++)
+                {
+                    payload.RegionWeatherOverrides[i] = new MorrowindRegionWeatherOverrideSavePayload
+                    {
+                        RegionHandleValue = overrides[i].RegionHandleValue,
+                        ClearChance = overrides[i].ClearChance,
+                        CloudyChance = overrides[i].CloudyChance,
+                        FoggyChance = overrides[i].FoggyChance,
+                        OvercastChance = overrides[i].OvercastChance,
+                        RainChance = overrides[i].RainChance,
+                        ThunderChance = overrides[i].ThunderChance,
+                        AshChance = overrides[i].AshChance,
+                        BlightChance = overrides[i].BlightChance,
+                        SnowChance = overrides[i].SnowChance,
+                        BlizzardChance = overrides[i].BlizzardChance,
+                    };
+                }
+            }
             return payload;
         }
 

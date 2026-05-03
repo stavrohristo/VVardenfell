@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Physics;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
 using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Physics
@@ -18,6 +19,7 @@ namespace VVardenfell.Runtime.Physics
             if (entity == Entity.Null || !entityManager.Exists(entity) || !collider.IsCreated)
                 return false;
 
+            collider = PrepareColliderForKind(collider, kind, ref temporary);
             QueueReplacedTemporarySourceForDisposal(entityManager, entity, collider);
 
             var source = new RuntimeColliderSource
@@ -53,6 +55,7 @@ namespace VVardenfell.Runtime.Physics
             if (entity == Entity.Null || !entityManager.Exists(entity) || !collider.IsCreated)
                 return false;
 
+            collider = PrepareColliderForKind(collider, kind, ref temporary);
             QueueReplacedTemporarySourceForDisposal(entityManager, entity, collider);
 
             var source = new RuntimeColliderSource
@@ -87,6 +90,7 @@ namespace VVardenfell.Runtime.Physics
             if (entity == Entity.Null || !collider.IsCreated)
                 return;
 
+            collider = PrepareColliderForKind(collider, kind, ref temporary);
             ecb.AddComponent(entity, new RuntimeColliderSource
             {
                 Value = collider,
@@ -122,6 +126,7 @@ namespace VVardenfell.Runtime.Physics
             if (instance == Entity.Null || !collider.IsCreated)
                 return;
 
+            collider = PrepareColliderForKind(collider, kind, ref temporary);
             if (entityManager.Exists(instance))
                 QueueReplacedTemporarySourceForDisposal(entityManager, instance, collider);
 
@@ -296,5 +301,59 @@ namespace VVardenfell.Runtime.Physics
             else
                 ecb.AddComponent(entity, cleanup);
         }
+
+        static BlobAssetReference<Collider> PrepareColliderForKind(
+            BlobAssetReference<Collider> collider,
+            RuntimeColliderKind kind,
+            ref bool temporary)
+        {
+            if (!TryGetFilterForKind(kind, out var filter))
+                return collider;
+
+            var current = collider.Value.GetCollisionFilter();
+            if (current.BelongsTo == filter.BelongsTo
+                && current.CollidesWith == filter.CollidesWith
+                && current.GroupIndex == filter.GroupIndex)
+            {
+                return collider;
+            }
+
+            if (RequiresKindSpecificColliderBlob(kind) && !temporary)
+            {
+                collider = collider.Value.Clone();
+                temporary = true;
+            }
+
+            collider.Value.SetCollisionFilter(filter);
+            return collider;
+        }
+
+        static bool TryGetFilterForKind(RuntimeColliderKind kind, out CollisionFilter filter)
+        {
+            switch (kind)
+            {
+                case RuntimeColliderKind.TerrainCell:
+                case RuntimeColliderKind.StaticCell:
+                case RuntimeColliderKind.PlacedRef:
+                    filter = InteractionCollisionLayers.GeometryFilter;
+                    return true;
+                case RuntimeColliderKind.RuntimeSpawn:
+                    filter = InteractionCollisionLayers.DynamicRefFilter;
+                    return true;
+                case RuntimeColliderKind.ActivationProxy:
+                    filter = InteractionCollisionLayers.ActivationProxyFilter;
+                    return true;
+                case RuntimeColliderKind.Player:
+                case RuntimeColliderKind.Actor:
+                    filter = InteractionCollisionLayers.PlayerBodyFilter;
+                    return true;
+                default:
+                    filter = default;
+                    return false;
+            }
+        }
+
+        static bool RequiresKindSpecificColliderBlob(RuntimeColliderKind kind)
+            => kind == RuntimeColliderKind.RuntimeSpawn;
     }
 }

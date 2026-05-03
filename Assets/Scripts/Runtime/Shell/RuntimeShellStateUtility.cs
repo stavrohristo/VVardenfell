@@ -1,4 +1,5 @@
 using Unity.Collections;
+using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
@@ -77,6 +78,73 @@ namespace VVardenfell.Runtime.Shell
         {
             state.DialogueOpen = 0;
             ClearModal(ref state);
+        }
+
+        public static void OpenRestMenu(ref RuntimeShellState state, Entity bedEntity, uint bedPlacedRefId, bool canSleep)
+        {
+            if (state.RestDisabled != 0)
+            {
+                ShowMessageBox(ref state, "You cannot rest now.");
+                return;
+            }
+
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 0;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
+            ClearModal(ref state);
+
+            state.RestMenuOpen = 1;
+            state.RestMenuCanSleep = canSleep ? (byte)1 : (byte)0;
+            state.RestMenuAdvancing = 0;
+            state.RestMenuSleeping = 0;
+            state.RestMenuSelectedHours = 1;
+            state.RestMenuProgressHours = 0;
+            state.RestMenuTargetHours = 0;
+            state.RestMenuBedEntity = bedEntity;
+            state.RestMenuBedPlacedRefId = bedPlacedRefId;
+            state.PlayerSleeping = 0;
+        }
+
+        public static void CloseRestMenu(ref RuntimeShellState state)
+        {
+            state.RestMenuOpen = 0;
+            state.RestMenuCanSleep = 0;
+            state.RestMenuAdvancing = 0;
+            state.RestMenuSleeping = 0;
+            state.RestMenuSelectedHours = 1;
+            state.RestMenuProgressHours = 0;
+            state.RestMenuTargetHours = 0;
+            state.RestMenuBedEntity = Entity.Null;
+            state.RestMenuBedPlacedRefId = 0u;
+            state.PlayerSleeping = 0;
+        }
+
+        public static void OpenMovie(ref RuntimeShellState state, FixedString128Bytes movieName, bool allowSkipping)
+        {
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 0;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
+            CloseRestMenu(ref state);
+            ClearModal(ref state);
+
+            state.MovieOpen = 1;
+            state.MovieAllowSkipping = allowSkipping ? (byte)1 : (byte)0;
+            state.MovieName = movieName;
+        }
+
+        public static void CloseMovie(ref RuntimeShellState state)
+        {
+            state.MovieOpen = 0;
+            state.MovieAllowSkipping = 0;
+            state.MovieName = default;
         }
 
         public static void CloseSaveLoadBrowser(ref RuntimeShellState shell, ref SaveLoadBrowserState browser)
@@ -195,6 +263,9 @@ namespace VVardenfell.Runtime.Shell
                 || state.OptionsOpen != 0
                 || state.JournalOpen != 0
                 || state.DialogueOpen != 0
+                || state.RestMenuOpen != 0
+                || state.RestMenuAdvancing != 0
+                || state.MovieOpen != 0
                 || state.PlayerControlsDisabled != 0;
 
             RuntimeShellPresentationGate.BlocksGameplayInput = !BootstrapPresentationGate.BlocksGameplayInput && shellBlocksGameplay;

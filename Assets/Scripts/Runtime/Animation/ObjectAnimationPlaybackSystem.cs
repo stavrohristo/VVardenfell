@@ -144,10 +144,12 @@ namespace VVardenfell.Runtime.Animation
                     return;
 
                 float previousTime = animation.CurrentTime;
-                float currentTime = previousTime + math.max(0f, DeltaTime);
-                bool wrapped = currentTime > duration;
-                if (wrapped)
-                    currentTime -= math.floor(currentTime / duration) * duration;
+                float currentTime;
+                bool wrapped;
+                if (animation.Scripted != 0)
+                    AdvanceScripted(ref animation, duration, out currentTime, out wrapped);
+                else
+                    AdvanceLooping(ref animation, duration, out currentTime, out wrapped);
 
                 animation.ClipIndex = clipIndex;
                 animation.PreviousTime = previousTime;
@@ -155,6 +157,38 @@ namespace VVardenfell.Runtime.Animation
 
                 if (EmitAudio != 0)
                     EmitSoundMarkers(ref catalog, clip, previousTime, currentTime, wrapped, sortKey, entity, placedRef.Value, transform.Position);
+            }
+
+            void AdvanceLooping(ref ObjectAnimationState animation, float duration, out float currentTime, out bool wrapped)
+            {
+                currentTime = animation.CurrentTime + math.max(0f, DeltaTime);
+                wrapped = currentTime > duration;
+                if (wrapped)
+                    currentTime -= math.floor(currentTime / duration) * duration;
+            }
+
+            void AdvanceScripted(ref ObjectAnimationState animation, float duration, out float currentTime, out bool wrapped)
+            {
+                float start = math.clamp(animation.StartTime, 0f, duration);
+                float loopStart = math.clamp(animation.LoopStartTime, 0f, duration);
+                float loopStop = math.clamp(animation.LoopStopTime, loopStart, duration);
+                float stop = animation.StopTime > 0f ? math.clamp(animation.StopTime, start, duration) : duration;
+                float nextTime = animation.CurrentTime + math.max(0f, DeltaTime);
+                wrapped = false;
+
+                bool canLoop = animation.LoopCount > 0u && loopStop > loopStart;
+                if (canLoop && nextTime >= loopStop)
+                {
+                    if (animation.LoopCount != uint.MaxValue)
+                        animation.LoopCount--;
+
+                    float loopDuration = loopStop - loopStart;
+                    currentTime = loopStart + math.fmod(nextTime - loopStart, loopDuration);
+                    wrapped = true;
+                    return;
+                }
+
+                currentTime = nextTime >= stop ? stop : nextTime;
             }
 
             bool IsLocationActive(in LogicalRefLocation location)

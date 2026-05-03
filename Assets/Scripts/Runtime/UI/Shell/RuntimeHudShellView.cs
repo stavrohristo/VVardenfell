@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.Video;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Rendering;
@@ -82,6 +83,7 @@ namespace VVardenfell.Runtime.UI.Shell
         DialogueWindowView _dialogueView;
         SaveLoadBrowserView _saveLoadBrowserView;
         OptionsWindowView _optionsView;
+        RestMenuWindowView _restMenuView;
         RuntimeUiPopupLayer _popupLayer;
         VVardenfell.Core.Config.MorrowindConfig _config;
 
@@ -97,9 +99,19 @@ namespace VVardenfell.Runtime.UI.Shell
         InputField _countInput;
         MorrowindButtonView _countOkButton;
         MorrowindButtonView _countCancelButton;
+        RectTransform _dragLayerRoot;
         RectTransform _dragIconRoot;
         Image _dragIcon;
+        Image _dragIconShadow;
         Image _screenFade;
+        RectTransform _movieRoot;
+        RawImage _movieImage;
+        VideoPlayer _moviePlayer;
+        RenderTexture _movieTexture;
+        string _activeMovieName;
+        string _activeMoviePath;
+        bool _activeMovieAllowSkipping;
+        bool _movieCloseRequested;
         BitmapTextGraphic _dragCount;
         BitmapTextGraphic _dragCountShadow;
         bool _inventoryVisible;
@@ -125,6 +137,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         readonly List<PauseMenuButtonView> _buttons = new();
         readonly List<MorrowindButtonView> _modalButtons = new();
+        readonly List<RaycastResult> _focusRaycastResults = new();
 
         public static RuntimeHudShellView Create()
         {
@@ -137,6 +150,8 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void Update()
         {
+            HandleMovieInput();
+            FocusWindowUnderPointer();
             SyncDragIconPosition();
         }
 
@@ -175,7 +190,10 @@ namespace VVardenfell.Runtime.UI.Shell
                 _iconService,
                 RequestInventoryWindowRectUpdate,
                 RequestInventoryCategory,
-                RequestInventoryItemClicked,
+                RequestInventorySelection,
+                RequestInventoryItemDragged,
+                RequestInventoryItemRightClicked,
+                IsInventoryItemSelected,
                 RequestDropHeldToInventory,
                 RequestUseHeldOnAvatar,
                 HasManagedDrag,
@@ -188,7 +206,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 _iconService,
                 RequestContainerWindowRectUpdate,
-                RequestContainerItemClicked,
+                RequestContainerSelection,
+                RequestContainerItemDragged,
+                IsContainerItemSelected,
                 RequestDropHeldToContainer,
                 HasManagedDrag,
                 SetDragIconScreenPosition,
@@ -254,6 +274,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 _config,
                 BuildOptionsCallbacks());
+            _restMenuView = new RestMenuWindowView(_rootRect, _theme);
 
             BuildPauseMenu();
             BuildModal();
@@ -261,6 +282,7 @@ namespace VVardenfell.Runtime.UI.Shell
             BuildDragIcon();
             _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme, _iconService);
             BuildScreenFade();
+            BuildMoviePlayer();
             gameObject.SetActive(false);
         }
 
@@ -275,6 +297,8 @@ namespace VVardenfell.Runtime.UI.Shell
             SaveLoadBrowserViewModel saveLoadModel,
             JournalWindowViewModel journalModel,
             DialogueWindowViewModel dialogueModel,
+            RestMenuViewModel restMenuModel,
+            MoviePlaybackViewModel movieModel,
             RuntimeShellMenuActionId selectedAction,
             bool pauseMenuOpen,
             bool modalOpen,
@@ -299,10 +323,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 _optionsOpen = false;
                 _journalVisible = false;
                 _dialogueVisible = false;
+                SyncMovie(null);
                 if (optionsWasOpen)
                     _optionsView?.SetVisible(false);
                 _journalView?.SetVisible(false);
                 _dialogueView?.SetVisible(false);
+                _restMenuView?.Sync(null);
                 return;
             }
 
@@ -321,6 +347,7 @@ namespace VVardenfell.Runtime.UI.Shell
             bool saveLoadVisible = saveLoadModel != null;
             bool journalVisible = journalModel != null;
             bool dialogueVisible = dialogueModel != null;
+            bool restMenuVisible = restMenuModel != null;
             bool inventoryOpened = !_inventoryVisible && inventoryVisible;
             bool containerOpened = !_containerVisible && containerVisible;
             bool pauseOpened = !_pauseMenuOpen && pauseMenuOpen;
@@ -349,6 +376,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _mapView.Sync(mapModel);
             _journalView.Sync(journalModel);
             _dialogueView.Sync(dialogueModel);
+            _restMenuView.Sync(restMenuModel);
+            SyncMovie(movieModel);
 
             // Options sits on top of the pause menu while open; while it's visible
             // the pause backdrop + any save/load overlay stay hidden so the user
@@ -363,8 +392,8 @@ namespace VVardenfell.Runtime.UI.Shell
                     SaveConfig();
             }
 
-            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen);
-            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen);
+            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen && !restMenuVisible);
+            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen && !restMenuVisible);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
             _popupLayer?.Sync();
             if (!inventoryVisible && !containerVisible)
@@ -736,19 +765,24 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void BuildDragIcon()
         {
+            var dragCanvas = RuntimeUiFactory.CreateSiblingCanvasRoot(
+                gameObject,
+                "VVardenfell.DragCanvas",
+                "DragRoot",
+                short.MaxValue - 1,
+                RuntimeUiScaleBinding.ScaleKind.Global);
+            _dragLayerRoot = dragCanvas.Root;
+
             _dragIconRoot = RuntimeUiFactory.CreateAnchoredRect(
                 "InventoryDragIcon",
-                _rootRect,
-                new Vector2(0f, 0f),
-                new Vector2(0f, 0f),
+                _dragLayerRoot,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
                 Vector2.zero,
                 RuntimeClassicUiMetrics.Ui(new Vector2(DragIconSize, DragIconSize)));
             _dragIconRoot.pivot = new Vector2(0f, 1f);
             _dragIconRoot.gameObject.SetActive(false);
             _dragIconRoot.SetAsLastSibling();
-            var dragCanvas = _dragIconRoot.gameObject.AddComponent<Canvas>();
-            dragCanvas.overrideSorting = true;
-            dragCanvas.sortingOrder = short.MaxValue - 1;
 
             var frame = RuntimeUiFactory.CreateBorderFrame(
                 "Frame",
@@ -757,14 +791,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 new Color(0f, 0f, 0f, 0.62f));
             RuntimeUiFactory.Stretch(frame.Root);
             SetFrameRaycastTarget(frame, false);
-            _dragIcon = RuntimeUiFactory.CreateImage("Icon", frame.Client, Color.white);
-            RuntimeUiFactory.SetInset(
-                _dragIcon.rectTransform,
-                RuntimeClassicUiMetrics.Ui(2f),
-                RuntimeClassicUiMetrics.Ui(2f),
-                -RuntimeClassicUiMetrics.Ui(2f),
-                -RuntimeClassicUiMetrics.Ui(2f));
-            _dragIcon.raycastTarget = false;
+            _dragIconShadow = RuntimeInventoryItemIconLayoutUtility.CreateItemImage("ItemShadow", frame.Root, new Color(0f, 0f, 0f, 0.5f), shadow: true, flipVertical: true);
+            _dragIcon = RuntimeInventoryItemIconLayoutUtility.CreateItemImage("Item", frame.Root, Color.white, shadow: false, flipVertical: true);
+            RuntimeInventoryItemIconLayoutUtility.BringBorderToFront(frame);
 
             _dragCountShadow = CreateDragCountText(frame.Client, "CountShadow", new Color(0f, 0f, 0f, 0.82f), new Vector2(-2f, 1f));
             _dragCount = CreateDragCountText(frame.Client, "Count", new Color(0.94f, 0.85f, 0.68f), new Vector2(-3f, 2f));
@@ -794,6 +823,172 @@ namespace VVardenfell.Runtime.UI.Shell
             _screenFade.rectTransform.SetAsLastSibling();
         }
 
+        void BuildMoviePlayer()
+        {
+            _movieRoot = RuntimeUiFactory.CreateStretchRect("MovieRoot", _rootRect);
+            _movieRoot.gameObject.SetActive(false);
+
+            var blocker = RuntimeUiFactory.CreateImage("MovieBackdrop", _movieRoot, Color.black);
+            blocker.raycastTarget = true;
+            RuntimeUiFactory.Stretch(blocker.rectTransform);
+
+            _movieImage = RuntimeUiFactory.CreateRawImage("MovieImage", _movieRoot, Color.white);
+            _movieImage.raycastTarget = false;
+            RuntimeUiFactory.Stretch(_movieImage.rectTransform);
+
+            _moviePlayer = gameObject.AddComponent<VideoPlayer>();
+            _moviePlayer.playOnAwake = false;
+            _moviePlayer.isLooping = false;
+            _moviePlayer.renderMode = VideoRenderMode.RenderTexture;
+            _moviePlayer.waitForFirstFrame = true;
+            _moviePlayer.skipOnDrop = false;
+            _moviePlayer.audioOutputMode = VideoAudioOutputMode.Direct;
+            _moviePlayer.prepareCompleted += OnMoviePrepared;
+            _moviePlayer.errorReceived += OnMovieError;
+            _moviePlayer.loopPointReached += OnMovieFinished;
+        }
+
+        void SyncMovie(MoviePlaybackViewModel model)
+        {
+            if (_movieRoot == null)
+                return;
+
+            if (model == null || string.IsNullOrWhiteSpace(model.MovieName))
+            {
+                StopMovie();
+                return;
+            }
+
+            string movieName = model.MovieName.Trim();
+            var movie = _theme.GetMovie(movieName);
+            if (movie == null || !movie.HasPlayableClip)
+                throw new InvalidOperationException($"[VVardenfell][UI] PlayBink movie '{movieName}' has no playable transcoded clip. Re-bake UI movies.");
+
+            if (_movieRoot.gameObject.activeSelf
+                && string.Equals(_activeMovieName, movieName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(_activeMoviePath, movie.CachedClipPath, StringComparison.OrdinalIgnoreCase)
+                && _activeMovieAllowSkipping == model.AllowSkipping)
+            {
+                _movieRoot.SetAsLastSibling();
+                return;
+            }
+
+            EnsureMovieTexture();
+            _activeMovieName = movieName;
+            _activeMoviePath = movie.CachedClipPath;
+            _activeMovieAllowSkipping = model.AllowSkipping;
+            _movieCloseRequested = false;
+            _movieImage.texture = _movieTexture;
+            _moviePlayer.Stop();
+            _moviePlayer.source = VideoSource.Url;
+            _moviePlayer.url = movie.CachedClipPath;
+            _moviePlayer.isLooping = false;
+            _moviePlayer.targetTexture = _movieTexture;
+            ConfigureMovieAudio(movie.HasAudio);
+            SetActiveIfChanged(_movieRoot.gameObject, true);
+            _movieRoot.SetAsLastSibling();
+            _moviePlayer.Prepare();
+        }
+
+        void StopMovie()
+        {
+            _activeMovieName = null;
+            _activeMoviePath = null;
+            _activeMovieAllowSkipping = false;
+            _movieCloseRequested = false;
+            if (_moviePlayer != null)
+            {
+                _moviePlayer.Stop();
+                _moviePlayer.targetTexture = null;
+                _moviePlayer.url = string.Empty;
+                _moviePlayer.audioOutputMode = VideoAudioOutputMode.None;
+            }
+
+            if (_movieImage != null)
+                _movieImage.texture = null;
+            if (_movieRoot != null)
+                SetActiveIfChanged(_movieRoot.gameObject, false);
+        }
+
+        void EnsureMovieTexture()
+        {
+            int width = Mathf.Max(2, Screen.width);
+            int height = Mathf.Max(2, Screen.height);
+            if (_movieTexture != null && _movieTexture.width == width && _movieTexture.height == height)
+                return;
+
+            if (_movieTexture != null)
+            {
+                _movieTexture.Release();
+                Destroy(_movieTexture);
+            }
+
+            _movieTexture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32)
+            {
+                name = "VV.ScriptMovie",
+            };
+        }
+
+        void ConfigureMovieAudio(bool hasAudio)
+        {
+            if (_moviePlayer == null)
+                return;
+
+            if (!hasAudio)
+            {
+                _moviePlayer.audioOutputMode = VideoAudioOutputMode.None;
+                return;
+            }
+
+            _moviePlayer.audioOutputMode = VideoAudioOutputMode.Direct;
+            _moviePlayer.EnableAudioTrack(0, true);
+            _moviePlayer.SetDirectAudioMute(0, false);
+            _moviePlayer.SetDirectAudioVolume(0, 1f);
+        }
+
+        void OnMoviePrepared(VideoPlayer source)
+        {
+            if (source == null || source != _moviePlayer || !_movieRoot.gameObject.activeSelf)
+                return;
+
+            source.Play();
+        }
+
+        void OnMovieError(VideoPlayer source, string message)
+        {
+            throw new InvalidOperationException($"[VVardenfell][UI] PlayBink movie '{_activeMovieName ?? "<none>"}' failed: {message}");
+        }
+
+        void OnMovieFinished(VideoPlayer source)
+        {
+            if (source == null || source != _moviePlayer)
+                return;
+
+            RequestCloseMovie();
+        }
+
+        void HandleMovieInput()
+        {
+            if (_movieRoot == null || !_movieRoot.gameObject.activeSelf || !_activeMovieAllowSkipping)
+                return;
+
+            bool skip = Keyboard.current?.anyKey.wasPressedThisFrame == true
+                        || Mouse.current?.leftButton.wasPressedThisFrame == true
+                        || Mouse.current?.rightButton.wasPressedThisFrame == true;
+            if (skip)
+                RequestCloseMovie();
+        }
+
+        void RequestCloseMovie()
+        {
+            if (_movieCloseRequested)
+                return;
+
+            _movieCloseRequested = true;
+            if (!RuntimeShellRequestBridge.TryCloseMovie(out string error))
+                throw new InvalidOperationException($"[VVardenfell][UI] failed to close PlayBink movie: {error}");
+        }
+
         static void SetFrameRaycastTarget(BorderFrameView frame, bool value)
         {
             if (frame?.Center != null) frame.Center.raycastTarget = value;
@@ -821,8 +1016,8 @@ namespace VVardenfell.Runtime.UI.Shell
             text.rectTransform.anchorMin = new Vector2(1f, 0f);
             text.rectTransform.anchorMax = new Vector2(1f, 0f);
             text.rectTransform.pivot = new Vector2(1f, 0f);
-            text.rectTransform.anchoredPosition = RuntimeClassicUiMetrics.Ui(offset);
-            text.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(34f, 13f));
+            RuntimeInventoryItemIconLayoutUtility.ApplyCountRect(text.rectTransform);
+            text.rectTransform.anchoredPosition += RuntimeClassicUiMetrics.Ui(offset);
             text.raycastTarget = false;
             return text;
         }
@@ -1012,7 +1207,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 Debug.LogWarning($"[VVardenfell][UI] failed setting inventory filter text: {error}");
         }
 
-        void RequestInventoryItemClicked(int inventoryIndex, InventoryItemClickContext context)
+        void RequestInventoryItemDragged(int inventoryIndex, InventoryItemClickContext context)
         {
             if (_dragActive)
             {
@@ -1034,7 +1229,20 @@ namespace VVardenfell.Runtime.UI.Shell
                 context);
         }
 
-        void RequestContainerItemClicked(int itemIndex, InventoryItemClickContext context)
+        void RequestInventoryItemRightClicked(int inventoryIndex)
+        {
+            var entry = FindEntry(_inventoryModel?.Entries, inventoryIndex);
+            if (entry == null || !entry.Equipped)
+                return;
+
+            if (!RuntimeShellRequestBridge.TryUnequipInventoryItem(inventoryIndex, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed unequipping inventory item {inventoryIndex}: {error}");
+        }
+
+        bool IsInventoryItemSelected(int inventoryIndex)
+            => FindEntry(_inventoryModel?.Entries, inventoryIndex)?.Selected == true;
+
+        void RequestContainerItemDragged(int itemIndex, InventoryItemClickContext context)
         {
             if (_dragActive)
             {
@@ -1055,6 +1263,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 entry,
                 context);
         }
+
+        bool IsContainerItemSelected(int itemIndex)
+            => FindEntry(_containerModel?.Entries, itemIndex)?.Selected == true;
 
         void BeginItemActionWithCount(
             InventoryItemOwnerKind owner,
@@ -1182,9 +1393,7 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             _dragActive = true;
             _dragEntry = entry;
-            _dragIcon.sprite = _iconService.GetSprite(entry?.IconPath);
-            _dragIcon.preserveAspect = true;
-            _dragIcon.enabled = _dragIcon.sprite != null;
+            RuntimeInventoryItemIconLayoutUtility.SyncSprite(_dragIcon, _dragIconShadow, _iconService.GetSprite(entry?.IconPath));
             string countText = count > 1 ? count.ToString() : string.Empty;
             bool hasCount = !string.IsNullOrEmpty(countText);
             _dragCount.gameObject.SetActive(hasCount);
@@ -1215,13 +1424,96 @@ namespace VVardenfell.Runtime.UI.Shell
             SetDragIconScreenPosition(Mouse.current.position.ReadValue());
         }
 
+        void FocusWindowUnderPointer()
+        {
+            if (_eventSystem == null || Mouse.current == null)
+                return;
+
+            if (!Mouse.current.leftButton.wasPressedThisFrame && !Mouse.current.rightButton.wasPressedThisFrame)
+                return;
+
+            _focusRaycastResults.Clear();
+            var pointer = new PointerEventData(_eventSystem)
+            {
+                position = Mouse.current.position.ReadValue(),
+            };
+            _eventSystem.RaycastAll(pointer, _focusRaycastResults);
+            for (int i = 0; i < _focusRaycastResults.Count; i++)
+            {
+                var hitObject = _focusRaycastResults[i].gameObject;
+                if (hitObject == null)
+                    continue;
+
+                RectTransform root = ResolveFocusableWindowRoot(hitObject.transform);
+                if (root == null || !root.gameObject.activeInHierarchy)
+                    continue;
+
+                BringWindowToFront(root);
+                return;
+            }
+        }
+
+        RectTransform ResolveFocusableWindowRoot(Transform hit)
+        {
+            if (hit == null)
+                return null;
+
+            if (IsHitInWindow(hit, _inventoryView?.Root, out var root)
+                || IsHitInWindow(hit, _statsView?.Root, out root)
+                || IsHitInWindow(hit, _spellView?.Root, out root)
+                || IsHitInWindow(hit, _mapView?.Root, out root)
+                || IsHitInWindow(hit, _containerView?.Root, out root)
+                || IsHitInWindow(hit, _dialogueView?.Root, out root)
+                || IsHitInWindow(hit, _journalView?.Root, out root)
+                || IsHitInWindow(hit, _optionsView?.Root, out root)
+                || IsHitInWindow(hit, _saveLoadBrowserView?.Root, out root)
+                || IsHitInWindow(hit, _restMenuView?.Root, out root))
+            {
+                return root;
+            }
+
+            return null;
+        }
+
+        static bool IsHitInWindow(Transform hit, RectTransform root, out RectTransform resolved)
+        {
+            resolved = null;
+            if (root == null || !root.gameObject.activeInHierarchy)
+                return false;
+
+            if (!hit.IsChildOf(root))
+                return false;
+
+            resolved = root;
+            return true;
+        }
+
+        void BringWindowToFront(RectTransform windowRoot)
+        {
+            if (windowRoot == null)
+                return;
+
+            if (_suiteRoot != null && windowRoot.IsChildOf(_suiteRoot))
+                _suiteRoot.SetAsLastSibling();
+
+            windowRoot.SetAsLastSibling();
+            if (_countRoot != null && _countRoot.gameObject.activeSelf)
+                _countRoot.SetAsLastSibling();
+            if (_modalRoot != null && _modalRoot.gameObject.activeSelf)
+                _modalRoot.SetAsLastSibling();
+            if (_screenFade != null && _screenFade.gameObject.activeSelf)
+                _screenFade.rectTransform.SetAsLastSibling();
+            if (_movieRoot != null && _movieRoot.gameObject.activeSelf)
+                _movieRoot.SetAsLastSibling();
+        }
+
         void SetDragIconScreenPosition(Vector2 screenPosition)
         {
-            if (!_dragActive || _dragIconRoot == null)
+            if (!_dragActive || _dragIconRoot == null || _dragLayerRoot == null)
                 return;
 
             _dragIconRoot.SetAsLastSibling();
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(_rootRect, screenPosition, null, out Vector2 local);
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(_dragLayerRoot, screenPosition, null, out Vector2 local);
             _dragIconRoot.anchoredPosition = local + RuntimeClassicUiMetrics.Ui(new Vector2(8f, -8f));
         }
 
@@ -1559,6 +1851,20 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void OnDestroy()
         {
+            if (_moviePlayer != null)
+            {
+                _moviePlayer.prepareCompleted -= OnMoviePrepared;
+                _moviePlayer.errorReceived -= OnMovieError;
+                _moviePlayer.loopPointReached -= OnMovieFinished;
+            }
+
+            if (_movieTexture != null)
+            {
+                _movieTexture.Release();
+                Destroy(_movieTexture);
+                _movieTexture = null;
+            }
+
             _inventoryView?.Dispose();
             _iconService?.Dispose();
             _iconService = null;

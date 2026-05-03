@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
@@ -236,30 +237,46 @@ namespace VVardenfell.Runtime.WorldState
                 if (entry.LogicalEntity != Entity.Null && entityManager.Exists(entry.LogicalEntity))
                     continue;
 
-                if (!WorldResources.TryGetRuntimeSpawnPrefab(entry.Content, out var descriptor))
+                bool actorSpawn = entry.Content.Kind == ContentReferenceKind.Actor;
+                WorldResources.RuntimeSpawnPrefabDescriptor descriptor = default;
+                if (!actorSpawn && !WorldResources.TryGetRuntimeSpawnPrefab(entry.Content, out descriptor))
                 {
                     Debug.LogWarning($"[VVardenfell][Save] skipped runtime ref 0x{entry.RuntimeRefId:X8}: no spawnable prefab descriptor for {entry.Content.Kind}:{entry.Content.HandleValue}.");
                     continue;
                 }
 
                 bool exteriorActive = entry.IsInterior != 0 || IsExteriorCellActive(config, entry.ExteriorCell);
-                bool queued = RuntimeSpawnFactory.QueueSpawn(
-                    entityManager,
-                    ref ecb,
-                    contentDb,
-                    descriptor,
-                    entry.Content,
-                    entry.RuntimeRefId,
-                    entry.Position,
-                    entry.Rotation,
-                    math.max(0.0001f, entry.Scale),
-                    entry.IsInterior != 0,
-                    entry.ExteriorCell,
-                    entry.InteriorCellId,
-                    exteriorActive,
-                    ref logicalLookup,
-                    transitionEntity,
-                    entry.PersistencePolicy);
+                bool queued = actorSpawn
+                    ? RuntimeSpawnFactory.QueueActorSpawn(
+                        entityManager,
+                        ref ecb,
+                        contentDb,
+                        entry.Content,
+                        entry.RuntimeRefId,
+                        entry.Position,
+                        entry.Rotation,
+                        math.max(0.0001f, entry.Scale),
+                        entry.IsInterior != 0,
+                        entry.ExteriorCell,
+                        entry.InteriorCellId,
+                        entry.PersistencePolicy)
+                    : RuntimeSpawnFactory.QueueSpawn(
+                        entityManager,
+                        ref ecb,
+                        contentDb,
+                        descriptor,
+                        entry.Content,
+                        entry.RuntimeRefId,
+                        entry.Position,
+                        entry.Rotation,
+                        math.max(0.0001f, entry.Scale),
+                        entry.IsInterior != 0,
+                        entry.ExteriorCell,
+                        entry.InteriorCellId,
+                        exteriorActive,
+                        ref logicalLookup,
+                        transitionEntity,
+                        entry.PersistencePolicy);
 
                 if (!queued)
                     continue;

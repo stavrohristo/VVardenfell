@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
-        static void UpdateWeaponAnimation(
+        internal static void UpdateWeaponAnimation(
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             in MorrowindMovementState movementState,

@@ -63,13 +63,14 @@ namespace VVardenfell.Runtime.Inventory
                 equipmentSnapshot.Add(equipment[i]);
 
             DestroyPreview();
-            CreatePreview(actorHandle, equipmentSnapshot.AsArray(), signature);
+            CreatePreview(contentDb, actorHandle, equipmentSnapshot.AsArray(), signature);
         }
 
-        void CreatePreview(ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
+        void CreatePreview(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
         {
             Entity preview = EntityManager.CreateEntity();
             EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
+            EntityManager.AddComponent<InventoryAvatarPreviewTag>(preview);
             EntityManager.AddComponentData(preview, new ActorSpawnSource
             {
                 Definition = actorHandle,
@@ -91,11 +92,6 @@ namespace VVardenfell.Runtime.Inventory
                 Grounded = true,
                 GroundNormal = math.up(),
             });
-            EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
-            {
-                WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
-                Phase = ActorWeaponAnimationPhase.Hidden,
-            });
             EntityManager.AddComponent<ActorRenderVisible>(preview);
             EntityManager.SetComponentEnabled<ActorRenderVisible>(preview, true);
             EntityManager.AddComponent<ActorShadowCasterVisible>(preview);
@@ -104,6 +100,15 @@ namespace VVardenfell.Runtime.Inventory
             var previewEquipment = EntityManager.AddBuffer<ActorEquipmentSlot>(preview);
             for (int i = 0; i < equipment.Length; i++)
                 previewEquipment.Add(equipment[i]);
+
+            int weaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(contentDb, previewEquipment, out var weaponContent);
+            EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
+            {
+                WeaponContent = weaponContent,
+                WeaponType = weaponType,
+                Drawn = 1,
+                Phase = ActorWeaponAnimationPhase.Equipped,
+            });
 
             _previewEntity = preview;
             _lastActor = actorHandle;

@@ -23,7 +23,9 @@ namespace VVardenfell.Runtime.Shell
                 || shell.SaveLoadBrowserOpen != 0
                 || shell.OptionsOpen != 0
                 || shell.JournalOpen != 0
-                || shell.DialogueOpen != 0;
+                || shell.DialogueOpen != 0
+                || shell.RestMenuOpen != 0
+                || shell.RestMenuAdvancing != 0;
 
             if (paused)
                 MorrowindRuntimeLifecycleUtility.EnsurePaused(EntityManager);

@@ -19,6 +19,12 @@ namespace VVardenfell.Importer.Bake
             "Options Menu",
         };
 
+        static readonly string[] ScriptMovieFiles =
+        {
+            "mw_cavern.bik",
+            "mw_end.bik",
+        };
+
         static readonly HashSet<string> SupportedSplashExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".tga", ".dds", ".png", ".bmp", ".jpeg", ".jpg",
@@ -331,6 +337,17 @@ namespace VVardenfell.Importer.Bake
             string menuMoviePath = menuMovie.ResolvedSourcePath;
             if (File.Exists(menuMoviePath))
                 sources.Add(CreateLooseSource(menuMoviePath));
+
+            for (int i = 0; i < ScriptMovieFiles.Length; i++)
+            {
+                string movieFile = ScriptMovieFiles[i];
+                var record = transcodeBridge.CreateRecord(movieFile, movieFile, string.Empty, dataFilesRoot);
+                movies.Add(record);
+
+                string fullSource = record.ResolvedSourcePath;
+                if (!string.IsNullOrEmpty(fullSource) && File.Exists(fullSource))
+                    sources.Add(CreateLooseSource(fullSource));
+            }
         }
 
         private static void AddImageRecord(BinaryWriter payloadWriter, List<UiImageRecord> images, string id, string sourcePath, byte[] bytes)
