@@ -20,6 +20,9 @@ namespace VVardenfell.Runtime.Shell
 
         public static void OpenInventory(ref RuntimeShellState state)
         {
+            if (state.InventoryMenuDisabled != 0)
+                return;
+
             state.InventoryOpen = 1;
             state.PauseMenuOpen = 0;
             state.JournalOpen = 0;
@@ -151,7 +154,8 @@ namespace VVardenfell.Runtime.Shell
                 || state.SaveLoadBrowserOpen != 0
                 || state.OptionsOpen != 0
                 || state.JournalOpen != 0
-                || state.DialogueOpen != 0;
+                || state.DialogueOpen != 0
+                || state.PlayerControlsDisabled != 0;
 
             RuntimeShellPresentationGate.BlocksGameplayInput = !BootstrapPresentationGate.BlocksGameplayInput && shellBlocksGameplay;
             ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);

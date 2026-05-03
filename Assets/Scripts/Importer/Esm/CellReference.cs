@@ -14,6 +14,9 @@ namespace VVardenfell.Importer.Esm
         public readonly bool Deleted;
         public readonly bool IsDoor;
         public readonly string SoulId;
+        public readonly int LockLevel;
+        public readonly string KeyId;
+        public readonly string TrapId;
         public readonly string DoorDestCell; // non-empty only for teleport doors
         public readonly float DoorDestX, DoorDestY, DoorDestZ;
         public readonly float DoorDestRotX, DoorDestRotY, DoorDestRotZ;
@@ -22,7 +25,7 @@ namespace VVardenfell.Importer.Esm
             uint formId, string baseId,
             float px, float py, float pz, float rx, float ry, float rz,
             float scale, bool deleted,
-            string soulId,
+            string soulId, int lockLevel, string keyId, string trapId,
             bool isDoor, string doorDestCell,
             float ddx, float ddy, float ddz, float ddrx, float ddry, float ddrz)
         {
@@ -33,6 +36,9 @@ namespace VVardenfell.Importer.Esm
             Scale = scale;
             Deleted = deleted;
             SoulId = soulId ?? string.Empty;
+            LockLevel = lockLevel;
+            KeyId = keyId ?? string.Empty;
+            TrapId = trapId ?? string.Empty;
             IsDoor = isDoor;
             DoorDestCell = doorDestCell;
             DoorDestX = ddx; DoorDestY = ddy; DoorDestZ = ddz;

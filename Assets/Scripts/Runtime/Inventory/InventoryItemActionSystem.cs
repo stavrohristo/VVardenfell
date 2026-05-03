@@ -12,7 +12,10 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateAfter(typeof(ContainerWindowStateSystem))]
+    [UpdateAfter(typeof(InventoryWindowStateSystem))]
+    [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class InventoryItemActionSystem : SystemBase
     {
         protected override void OnCreate()
@@ -24,42 +27,79 @@ namespace VVardenfell.Runtime.Inventory
 
         protected override void OnUpdate()
         {
+            bool hasQueuedRequests = SystemAPI.HasSingleton<InventoryItemActionRequestElement>();
             ref var request = ref SystemAPI.GetSingletonRW<InventoryItemActionRequest>().ValueRW;
-            if (request.Pending == 0)
+            if (request.Pending == 0 && !hasQueuedRequests)
                 return;
 
-            var action = (InventoryItemActionKind)request.Action;
-            var source = (InventoryItemOwnerKind)request.SourceOwner;
-            var target = (InventoryItemOwnerKind)request.TargetOwner;
-            int sourceIndex = request.SourceIndex;
-            uint sourcePlacedRefId = request.SourcePlacedRefId;
-            uint targetPlacedRefId = request.TargetPlacedRefId;
-            int requestedCount = request.Count;
+            DynamicBuffer<InventoryItemActionRequestElement> queue = default;
+            bool processQueue = hasQueuedRequests;
+            if (processQueue)
+                queue = SystemAPI.GetSingletonBuffer<InventoryItemActionRequestElement>();
+            if (request.Pending == 0 && (!processQueue || queue.Length == 0))
+                return;
 
-            request = default;
             CompleteDependency();
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
             DynamicBuffer<ActorEquipmentSlot> equipment = default;
             bool hasEquipment = TryGetPlayerEquipment(out equipment);
-
             ref var held = ref SystemAPI.GetSingletonRW<InventoryHeldItemState>().ValueRW;
+
+            if (processQueue)
+            {
+                for (int i = 0; i < queue.Length; i++)
+                    ProcessAction(queue[i], inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+                queue.Clear();
+            }
+
+            if (request.Pending == 0)
+                return;
+
+            var componentRequest = new InventoryItemActionRequestElement
+            {
+                Action = request.Action,
+                SourceOwner = request.SourceOwner,
+                TargetOwner = request.TargetOwner,
+                SourceIndex = request.SourceIndex,
+                SourcePlacedRefId = request.SourcePlacedRefId,
+                TargetPlacedRefId = request.TargetPlacedRefId,
+                Content = request.Content,
+                SoulId = request.SoulId,
+                SoulActorHandleValue = request.SoulActorHandleValue,
+                Count = request.Count,
+                Sequence = request.Sequence,
+            };
+            request = default;
+            ProcessAction(componentRequest, inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+        }
+
+        void ProcessAction(
+            in InventoryItemActionRequestElement request,
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            bool hasEquipment,
+            ref InventoryHeldItemState held)
+        {
+            var action = (InventoryItemActionKind)request.Action;
+            var source = (InventoryItemOwnerKind)request.SourceOwner;
+            var target = (InventoryItemOwnerKind)request.TargetOwner;
             switch (action)
             {
                 case InventoryItemActionKind.BeginDrag:
-                    BeginDrag(source, sourceIndex, sourcePlacedRefId, requestedCount, inventory, hasEquipment ? equipment : default, ref held);
+                    BeginDrag(source, request.SourceIndex, request.SourcePlacedRefId, request.Count, inventory, equipment, ref held);
                     break;
                 case InventoryItemActionKind.DirectTransfer:
-                    DirectTransfer(source, target, sourceIndex, sourcePlacedRefId, targetPlacedRefId, requestedCount, inventory, hasEquipment ? equipment : default);
+                    DirectTransfer(source, target, request.SourceIndex, request.SourcePlacedRefId, request.TargetPlacedRefId, request.Count, inventory, equipment);
                     break;
                 case InventoryItemActionKind.DropHeldToInventory:
                     ClearHeld(ref held);
                     break;
                 case InventoryItemActionKind.DropHeldToContainer:
-                    DropHeldToContainer(targetPlacedRefId, inventory, hasEquipment ? equipment : default, ref held);
+                    DropHeldToContainer(request.TargetPlacedRefId, inventory, equipment, ref held);
                     break;
                 case InventoryItemActionKind.UseHeld:
-                    UseHeld(inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+                    UseHeld(inventory, equipment, hasEquipment, ref held);
                     break;
                 case InventoryItemActionKind.ClearHeld:
                     ClearHeld(ref held);
@@ -99,6 +139,7 @@ namespace VVardenfell.Runtime.Inventory
                     return;
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
+                UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 held = new InventoryHeldItemState
                 {
                     Active = 1,
@@ -168,12 +209,10 @@ namespace VVardenfell.Runtime.Inventory
                     return;
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
-                bool removeEntireStack = count >= entry.Count;
+                UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
                 RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
-                if (removeEntireStack)
-                    UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             }
         }
 
@@ -194,12 +233,10 @@ namespace VVardenfell.Runtime.Inventory
             }
 
             int count = math.clamp(held.Count, 1, entry.Count);
-            bool removeEntireStack = count >= entry.Count;
+            UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
             WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
             RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
-            if (removeEntireStack)
-                UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ClearHeld(ref held);
         }
 

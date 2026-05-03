@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.UI.Assets;
@@ -142,6 +141,7 @@ namespace VVardenfell.Runtime.UI.Shell
             public Image Icon;
             public BitmapTextGraphic Count;
             public BitmapTextGraphic CountShadow;
+            public RuntimeInventoryItemDragSource DragSource;
         }
 
         readonly RuntimeUiTheme _theme;
@@ -153,6 +153,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Action<int, InventoryItemClickContext> _onItemClicked;
         readonly Action _onBackgroundClicked;
         readonly Action _onAvatarClicked;
+        readonly Func<bool> _hasHeldItem;
         readonly Action<string> _onFilterChanged;
 
         readonly MorrowindWindowView _window;
@@ -190,6 +191,7 @@ namespace VVardenfell.Runtime.UI.Shell
             Action<int, InventoryItemClickContext> onItemClicked,
             Action onBackgroundClicked,
             Action onAvatarClicked,
+            Func<bool> hasHeldItem,
             Action<string> onFilterChanged,
             Action onPinToggled = null)
         {
@@ -201,6 +203,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _onItemClicked = onItemClicked;
             _onBackgroundClicked = onBackgroundClicked;
             _onAvatarClicked = onAvatarClicked;
+            _hasHeldItem = hasHeldItem;
             _onFilterChanged = onFilterChanged;
 
             _window = RuntimeUiFactory.CreateMorrowindWindow(
@@ -405,6 +408,8 @@ namespace VVardenfell.Runtime.UI.Shell
             avatarButton.transition = Selectable.Transition.None;
             avatarButton.navigation = new Navigation { mode = Navigation.Mode.None };
             avatarButton.onClick.AddListener(() => _onAvatarClicked?.Invoke());
+            var avatarDropTarget = avatarFrame.Client.gameObject.AddComponent<RuntimeInventoryDropTarget>();
+            avatarDropTarget.Initialize(_onAvatarClicked, _hasHeldItem);
 
             // Portrait area: reserved but intentionally empty. The paper-doll preview
             // lands when character rendering is online; until then the MW_Box stays
@@ -531,6 +536,8 @@ namespace VVardenfell.Runtime.UI.Shell
             backgroundButton.transition = Selectable.Transition.None;
             backgroundButton.navigation = new Navigation { mode = Navigation.Mode.None };
             backgroundButton.onClick.AddListener(() => _onBackgroundClicked?.Invoke());
+            var dropTarget = viewportRect.gameObject.AddComponent<RuntimeInventoryDropTarget>();
+            dropTarget.Initialize(_onBackgroundClicked, _hasHeldItem);
 
             var gridContent = RuntimeUiFactory.CreateAnchoredRect(
                 "GridContent",
@@ -714,6 +721,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 var entry = entries[i];
                 cell.InventoryIndex = entry.InventoryIndex;
+                cell.DragSource.SetItemIndex(entry.InventoryIndex);
                 RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, BuildItemTooltip(entry));
                 cell.Icon.sprite = _iconService.GetSprite(entry.IconPath);
                 cell.Icon.preserveAspect = true;
@@ -841,23 +849,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 CountShadow = countShadow,
             };
 
-            // Click = select. Vanilla inventory: single click selects the item (details
-            // surface via tooltip), double-click equips/unequips. We fire the selection
-            // callback only; equip-on-double-click can land with the tooltip pipeline.
-            button.onClick.AddListener(() => _onItemClicked?.Invoke(cell.InventoryIndex, CaptureClickContext()));
+            cell.DragSource = root.gameObject.AddComponent<RuntimeInventoryItemDragSource>();
+            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem);
             return cell;
-        }
-
-        static InventoryItemClickContext CaptureClickContext()
-        {
-            var keyboard = Keyboard.current;
-            if (keyboard == null)
-                return default;
-
-            bool control = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
-            return new InventoryItemClickContext(control, shift, alt);
         }
 
         /// <summary>

@@ -15,7 +15,7 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 46;
+        public const uint FormatVersion = 47;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
@@ -139,6 +139,20 @@ namespace VVardenfell.Core.Cache
     {
         public uint PlacedRefId;
         public string SoulId;
+    }
+
+    /// <summary>
+    /// Per-cell metadata for lockable placed refs. Lock level follows TES3 semantics:
+    /// positive means locked, zero means never locked, negative preserves the previous
+    /// lock level after an unlock.
+    /// </summary>
+    public struct PlacedRefLockEntry
+    {
+        public uint PlacedRefId;
+        public int LockLevel;
+        public byte Locked;
+        public string KeyId;
+        public string TrapId;
     }
 
     public struct CellEnvironmentData

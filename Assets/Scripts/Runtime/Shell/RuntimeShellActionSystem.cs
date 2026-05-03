@@ -5,7 +5,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(SaveLoadBrowserActionSystem))]
     public partial class RuntimeShellActionSystem : SystemBase
     {
@@ -121,9 +121,7 @@ namespace VVardenfell.Runtime.Shell
                     break;
 
                 case RuntimeShellMenuActionId.Inventory:
-                    state.PauseMenuOpen = 0;
-                    state.InventoryOpen = 1;
-                    RuntimeShellStateUtility.ClearModal(ref state);
+                    RuntimeShellStateUtility.OpenInventory(ref state);
                     break;
 
                 case RuntimeShellMenuActionId.SaveGame:

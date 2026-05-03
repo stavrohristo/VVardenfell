@@ -462,6 +462,7 @@ namespace VVardenfell.Importer.Bake
                 PendingRefs = canReuse ? null : new List<StagedRefData>(refs.Count),
                 DoorEntries = canReuse ? null : new List<DoorRefEntry>(),
                 CapturedSouls = canReuse ? null : new List<PlacedRefSoulEntry>(),
+                LockStates = canReuse ? null : new List<PlacedRefLockEntry>(),
                 CollisionMissingPayloadSamples = canReuse ? null : new List<string>(4),
             };
 
@@ -493,6 +494,20 @@ namespace VVardenfell.Importer.Bake
                     {
                         PlacedRefId = reference.FormId,
                         SoulId = reference.SoulId.Trim(),
+                    });
+                }
+
+                if (reference.LockLevel != 0
+                    || !string.IsNullOrWhiteSpace(reference.KeyId)
+                    || !string.IsNullOrWhiteSpace(reference.TrapId))
+                {
+                    staged.LockStates.Add(new PlacedRefLockEntry
+                    {
+                        PlacedRefId = reference.FormId,
+                        LockLevel = reference.LockLevel,
+                        Locked = (byte)((reference.LockLevel > 0 || !string.IsNullOrWhiteSpace(reference.KeyId)) ? 1 : 0),
+                        KeyId = reference.KeyId?.Trim() ?? string.Empty,
+                        TrapId = reference.TrapId?.Trim() ?? string.Empty,
                     });
                 }
 

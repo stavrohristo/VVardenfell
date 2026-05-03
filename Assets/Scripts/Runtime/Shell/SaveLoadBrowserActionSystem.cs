@@ -7,7 +7,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellInputSystem))]
     [UpdateBefore(typeof(RuntimeShellActionSystem))]
     public partial class SaveLoadBrowserActionSystem : SystemBase

@@ -82,7 +82,7 @@ namespace VVardenfell.Runtime.Books
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(BookReadRequestSystem))]
     public partial class InventoryBookReadRequestSystem : SystemBase
     {

@@ -25,6 +25,9 @@ namespace VVardenfell.Importer.Esm
             float scale = 1f;
             bool deleted = false;
             string soulId = "";
+            int lockLevel = 0;
+            string keyId = "";
+            string trapId = "";
             bool isDoor = false;
             string doorDest = "";
             float ddx = 0, ddy = 0, ddz = 0, ddrx = 0, ddry = 0, ddrz = 0;
@@ -36,7 +39,7 @@ namespace VVardenfell.Importer.Esm
                     formId, baseId,
                     px, py, pz, rx, ry, rz,
                     scale, deleted,
-                    soulId,
+                    soulId, lockLevel, keyId, trapId,
                     isDoor, doorDest,
                     ddx, ddy, ddz, ddrx, ddry, ddrz));
             }
@@ -45,6 +48,7 @@ namespace VVardenfell.Importer.Esm
             {
                 inRef = true;
                 formId = 0; baseId = ""; scale = 1f; deleted = false; soulId = "";
+                lockLevel = 0; keyId = ""; trapId = "";
                 px = py = pz = rx = ry = rz = 0;
                 isDoor = false; doorDest = "";
                 ddx = ddy = ddz = ddrx = ddry = ddrz = 0;
@@ -84,6 +88,19 @@ namespace VVardenfell.Importer.Esm
                 else if (tag == EsmFourCC.XSOL)
                 {
                     soulId = esm.ReadSubrecordString();
+                }
+                else if (tag == EsmFourCC.FLTV && sub.Size >= 4)
+                {
+                    lockLevel = esm.ReadInt32();
+                    if (esm.SubrecordBytesLeft > 0) esm.SkipSubrecord();
+                }
+                else if (tag == EsmFourCC.KNAM)
+                {
+                    keyId = esm.ReadSubrecordString();
+                }
+                else if (tag == EsmFourCC.TNAM)
+                {
+                    trapId = esm.ReadSubrecordString();
                 }
                 else if (tag == EsmFourCC.DODT && sub.Size >= 24)
                 {

@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.SetComponentData(runtime, new MorrowindScriptRuntimeState
             {
                 NextAudioRequestSequence = 1u,
+                RandomState = 0x6E624EB7u,
             });
 
             var globals = EntityManager.AddBuffer<MorrowindScriptGlobalValue>(runtime);
@@ -78,16 +79,20 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
             EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
+            EntityManager.AddBuffer<PlacedRefLockRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptAiPackageRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorAiSettingRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptDispositionRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorVitalRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptInventoryMutationRequest>(runtime);
+            EntityManager.AddBuffer<ActorInventoryDropRequest>(runtime);
             EntityManager.AddBuffer<ScriptedCastRequest>(runtime);
             EntityManager.AddBuffer<ActorSpellMutationRequest>(runtime);
             EntityManager.AddBuffer<ActorForceGreetingRequest>(runtime);
             EntityManager.AddBuffer<PlayerReputationMutationRequest>(runtime);
+            EntityManager.AddBuffer<ActorAttributeMutationRequest>(runtime);
+            EntityManager.AddBuffer<PlayerSkillMutationRequest>(runtime);
             EntityManager.AddBuffer<PlayerFactionMutationRequest>(runtime);
             EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);

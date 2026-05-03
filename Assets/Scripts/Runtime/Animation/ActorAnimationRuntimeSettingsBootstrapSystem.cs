@@ -3,8 +3,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateBefore(typeof(ActorAnimationControllerSystem))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup), OrderFirst = true)]
     public partial struct ActorAnimationRuntimeSettingsBootstrapSystem : ISystem
     {
         public void OnCreate(ref SystemState state)

@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindQuestJournalApplySystem))]
     public partial class MorrowindDialogueApplySystem : SystemBase

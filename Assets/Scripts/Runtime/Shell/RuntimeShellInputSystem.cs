@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     public partial class RuntimeShellInputSystem : SystemBase
     {

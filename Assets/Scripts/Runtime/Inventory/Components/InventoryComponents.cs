@@ -29,6 +29,14 @@ namespace VVardenfell.Runtime.Components
         public byte VisualMode;
     }
 
+    public struct ActorInventoryDropRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public ContentReference Content;
+        public int Count;
+    }
+
     public struct ActorRigidEquipment : IBufferElementData
     {
         public ItemEquipmentSlot Slot;

@@ -724,6 +724,8 @@ namespace VVardenfell.Runtime.Streaming
                 capturedSoulActorHandleValue = actorHandle.Value;
             }
 
+            bool hasLockState = TryResolveLockState(placedRefId, exteriorCell, isInterior, interiorCellId, out var lockState);
+
             return new LogicalRefEntityDescriptor
             {
                 ContentReference = contentReference,
@@ -738,7 +740,48 @@ namespace VVardenfell.Runtime.Streaming
                 DoorInteractable = door,
                 CapturedSoulId = capturedSoulId,
                 CapturedSoulActorHandleValue = capturedSoulActorHandleValue,
+                HasLockState = hasLockState,
+                LockState = lockState,
             };
+        }
+
+        static bool TryResolveLockState(
+            uint placedRefId,
+            int2 exteriorCell,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            out PlacedRefLockState lockState)
+        {
+            lockState = default;
+            if (placedRefId == 0u)
+                return false;
+
+            CellData cell = null;
+            if (isInterior)
+                WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(interiorCellId), out cell);
+            else
+                WorldResources.Cells.TryGetValue(exteriorCell, out cell);
+
+            if (cell?.LockStates == null)
+                return false;
+
+            for (int i = 0; i < cell.LockStates.Length; i++)
+            {
+                var entry = cell.LockStates[i];
+                if (entry.PlacedRefId != placedRefId)
+                    continue;
+
+                lockState = new PlacedRefLockState
+                {
+                    LockLevel = entry.LockLevel,
+                    Locked = entry.Locked,
+                    KeyId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.KeyId),
+                    TrapId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.TrapId),
+                };
+                return true;
+            }
+
+            return false;
         }
 
         static bool TryResolveCapturedSoul(

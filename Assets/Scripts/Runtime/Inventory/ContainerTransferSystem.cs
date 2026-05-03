@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -10,7 +11,9 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateAfter(typeof(ContainerWindowStateSystem))]
+    [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class ContainerTransferSystem : SystemBase
     {
         readonly HashSet<uint> _loggedMissingInteractionSounds = new();
@@ -20,11 +23,6 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<ContainerWindowState>();
             RequireForUpdate<ContainerWindowRequest>();
-            RequireForUpdate<ContainerSessionItem>();
-            RequireForUpdate<PlayerInventoryItem>();
-            RequireForUpdate<WorldJournalEntry>();
-            RequireForUpdate<InteractionAudioRequestState>();
-            RequireForUpdate<InteractionAudioRequest>();
         }
 
         protected override void OnUpdate()
@@ -49,6 +47,7 @@ namespace VVardenfell.Runtime.Inventory
             if (request.PendingTakeAll == 0 && request.PendingTakeSelected == 0)
                 return;
 
+            EnsureTransferStateReady();
             CompleteDependency();
 
             uint placedRefId = state.OpenPlacedRefId;
@@ -99,6 +98,9 @@ namespace VVardenfell.Runtime.Inventory
 
         void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)
         {
+            if (!SystemAPI.HasSingleton<InteractionAudioRequestState>() || !SystemAPI.HasSingleton<InteractionAudioRequest>())
+                return;
+
             if (!EntityManager.Exists(target) || !EntityManager.HasComponent<PlacedRefIdentity>(target))
                 return;
 
@@ -131,6 +133,18 @@ namespace VVardenfell.Runtime.Inventory
                 Kind = (byte)kind,
             });
 
+        }
+
+        void EnsureTransferStateReady()
+        {
+            if (!SystemAPI.HasSingleton<ContainerSessionItem>())
+                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one ContainerSessionItem buffer.");
+
+            if (!SystemAPI.HasSingleton<PlayerInventoryItem>())
+                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one PlayerInventoryItem buffer.");
+
+            if (!WorldJournalUtility.TryGetJournalEntity(EntityManager, out _))
+                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one world journal entity.");
         }
 
         float3 ResolveAudioPosition(Entity target)

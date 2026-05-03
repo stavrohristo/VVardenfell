@@ -27,6 +27,8 @@ namespace VVardenfell.Runtime.WorldRefs
         public int CapturedSoulActorHandleValue;
         public bool AddRuntimeSpawnIdentity;
         public byte RuntimeSpawnPersistencePolicy;
+        public PlacedRefLockState LockState;
+        public bool HasLockState;
     }
 
     internal static class LogicalRefEntityFactory
@@ -43,6 +45,14 @@ namespace VVardenfell.Runtime.WorldRefs
             ecb.AddComponent(logicalEntity, new PlacedRefIdentity { Value = descriptor.PlacedRefId });
             ecb.AddComponent(logicalEntity, new LogicalRefContent { Value = descriptor.ContentReference });
             ecb.AddComponent(logicalEntity, new PlacedRefRuntimeState());
+            ecb.AddComponent(logicalEntity, new PlacedRefInitialTransform
+            {
+                Position = descriptor.Position,
+                Rotation = descriptor.Rotation,
+                Scale = descriptor.Scale,
+            });
+            if (descriptor.HasLockState)
+                ecb.AddComponent(logicalEntity, descriptor.LockState);
             if (!descriptor.CapturedSoulId.IsEmpty && descriptor.CapturedSoulActorHandleValue > 0)
             {
                 ecb.AddComponent(logicalEntity, new PlacedRefCapturedSoul

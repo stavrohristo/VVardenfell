@@ -43,6 +43,7 @@ namespace VVardenfell.Runtime.Shell
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowRequest());
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryItemActionRequest());
+            RuntimeBootstrapUtility.EnsureBuffer<InventoryItemActionRequestElement>(EntityManager, runtimeEntity);
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryHeldItemState
             {
                 InventoryIndex = -1,

@@ -170,6 +170,7 @@ namespace VVardenfell.Importer.Bake
                         sounds,
                         actors,
                         carryables,
+                        scripts,
                         spells,
                         factions,
                         actorLocals,
@@ -199,6 +200,7 @@ namespace VVardenfell.Importer.Bake
                         sounds,
                         actors,
                         carryables,
+                        scripts,
                         spells,
                         factions,
                         actorLocals,
@@ -243,6 +245,64 @@ namespace VVardenfell.Importer.Bake
                 {
                     instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.Return });
                     continue;
+                }
+
+                if (TryCompilePlayerSkillCommand(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string playerSkillFailure))
+                {
+                    stackDepth = Math.Max(0, stackDepth - 1);
+                    continue;
+                }
+
+                if (playerSkillFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, playerSkillFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompilePlayerAttributeCommand(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string playerAttributeFailure))
+                {
+                    stackDepth = Math.Max(0, stackDepth - 1);
+                    continue;
+                }
+
+                if (playerAttributeFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, playerAttributeFailure, lineIndex);
+                    return;
                 }
 
                 if (TryCompileSet(line, localLookup, globals, sounds, actors, carryables, spells, factions, actorLocals, dialogues, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, ref stackDepth, ref maxStack, out string setFailure))
@@ -396,6 +456,17 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
+                if (TryCompileLockStateCommand(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string lockStateFailure))
+                {
+                    continue;
+                }
+
+                if (lockStateFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, lockStateFailure, lineIndex);
+                    return;
+                }
+
                 if (TryCompileActivate(line, instructions, out string activateFailure))
                 {
                     continue;
@@ -426,6 +497,105 @@ namespace VVardenfell.Importer.Bake
                 if (setAngleFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setAngleFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileSetAtStart(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string setAtStartFailure))
+                {
+                    continue;
+                }
+
+                if (setAtStartFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setAtStartFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileSetPos(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string setPosFailure))
+                {
+                    continue;
+                }
+
+                if (setPosFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, setPosFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileMoveCommand(
+                        line,
+                        "moveworld",
+                        MorrowindScriptOpcode.MoveWorld,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string moveWorldFailure))
+                {
+                    continue;
+                }
+
+                if (moveWorldFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, moveWorldFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileMoveCommand(
+                        line,
+                        "move",
+                        MorrowindScriptOpcode.Move,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string moveFailure))
+                {
+                    continue;
+                }
+
+                if (moveFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, moveFailure, lineIndex);
                     return;
                 }
 
@@ -579,8 +749,26 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileSetHealth(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string setHealthFailure))
+                if (TryCompileSetHealth(
+                        line,
+                        localLookup,
+                        globals,
+                        sounds,
+                        actors,
+                        carryables,
+                        spells,
+                        factions,
+                        actorLocals,
+                        dialogues,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out string setHealthFailure))
                 {
+                    stackDepth = Math.Max(0, stackDepth - 1);
                     continue;
                 }
 
@@ -653,6 +841,28 @@ namespace VVardenfell.Importer.Bake
                 if (showMapFailure != null)
                 {
                     DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, showMapFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileScreenFade(line, instructions, out string screenFadeFailure))
+                {
+                    continue;
+                }
+
+                if (screenFadeFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, screenFadeFailure, lineIndex);
+                    return;
+                }
+
+                if (TryCompileShellControl(line, instructions, out string shellControlFailure))
+                {
+                    continue;
+                }
+
+                if (shellControlFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, shellControlFailure, lineIndex);
                     return;
                 }
 
@@ -919,6 +1129,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, SoundDefHandle> soundLookup,
             Dictionary<string, int> actorLookup,
             Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, int> scriptLookup,
             Dictionary<string, SpellDefHandle> spellLookup,
             Dictionary<string, int> factionLookup,
             Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
@@ -950,6 +1161,7 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     actorLookup,
                     carryableLookup,
+                    scriptLookup,
                     spellLookup,
                     factionLookup,
                     actorLocalLookup,
@@ -984,6 +1196,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, SoundDefHandle> soundLookup,
             Dictionary<string, int> actorLookup,
             Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, int> scriptLookup,
             Dictionary<string, SpellDefHandle> spellLookup,
             Dictionary<string, int> factionLookup,
             Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
@@ -1009,6 +1222,7 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     actorLookup,
                     carryableLookup,
+                    scriptLookup,
                     spellLookup,
                     factionLookup,
                     actorLocalLookup,
@@ -1052,6 +1266,7 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     actorLookup,
                     carryableLookup,
+                    scriptLookup,
                     spellLookup,
                     factionLookup,
                     actorLocalLookup,
@@ -1163,6 +1378,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, SoundDefHandle> soundLookup,
             Dictionary<string, int> actorLookup,
             Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, int> scriptLookup,
             Dictionary<string, SpellDefHandle> spellLookup,
             Dictionary<string, int> factionLookup,
             Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
@@ -1203,6 +1419,7 @@ namespace VVardenfell.Importer.Bake
                     soundLookup,
                     actorLookup,
                     carryableLookup,
+                    scriptLookup,
                     spellLookup,
                     factionLookup,
                     actorLocalLookup,
@@ -1225,6 +1442,7 @@ namespace VVardenfell.Importer.Bake
                 soundLookup,
                 actorLookup,
                 carryableLookup,
+                scriptLookup,
                 spellLookup,
                 factionLookup,
                 actorLocalLookup,
@@ -1247,6 +1465,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, SoundDefHandle> soundLookup,
             Dictionary<string, int> actorLookup,
             Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, int> scriptLookup,
             Dictionary<string, SpellDefHandle> spellLookup,
             Dictionary<string, int> factionLookup,
             Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
@@ -1270,6 +1489,14 @@ namespace VVardenfell.Importer.Bake
             }
 
             int comparisonIndex = FindComparisonToken(tokens);
+            if (comparisonIndex < 0
+                && TryCompileScriptRunningExpression(tokens, scriptLookup, instructions, ref stackDepth, ref maxStack, out failure))
+            {
+                return true;
+            }
+            if (failure != null)
+                return false;
+
             if (comparisonIndex < 0)
                 return TryCompileExpression(tokens, 0, tokens.Length, localLookup, globalLookup, soundLookup, actorLookup, carryableLookup, spellLookup, factionLookup, actorLocalLookup, dialogueLookup, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure);
 
@@ -1317,6 +1544,41 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompileScriptRunningExpression(
+            string[] tokens,
+            Dictionary<string, int> scriptLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (tokens.Length < 2 || !tokens[0].Equals("scriptrunning", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string scriptId = string.Join(" ", tokens, 1, tokens.Length - 1).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(scriptId))
+            {
+                failure = "ScriptRunning requires one script id.";
+                return false;
+            }
+
+            if (scriptLookup == null || !scriptLookup.TryGetValue(ContentId.NormalizeId(scriptId), out int programIndex))
+            {
+                failure = $"ScriptRunning references unknown script '{scriptId}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.ScriptRunning,
+                Int0 = programIndex,
+            });
+            stackDepth++;
+            maxStack = Math.Max(maxStack, stackDepth);
+            return true;
+        }
+
         static bool TryCompileExpression(
             string[] tokens,
             int start,
@@ -1345,6 +1607,44 @@ namespace VVardenfell.Importer.Bake
             {
                 failure = "Expression is missing.";
                 return false;
+            }
+
+            if (count == 1
+                && tokens[start].Equals("xbox", StringComparison.OrdinalIgnoreCase))
+            {
+                EmitPushLiteral(instructions, 0, 0f, false, ref stackDepth, ref maxStack);
+                return true;
+            }
+
+            if (count >= 2
+                && tokens[start].Equals("random", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryCompileArithmeticTokens(
+                        tokens,
+                        start + 1,
+                        count - 1,
+                        localLookup,
+                        globalLookup,
+                        soundLookup,
+                        actorLookup,
+                        carryableLookup,
+                        spellLookup,
+                        factionLookup,
+                        actorLocalLookup,
+                        dialogueLookup,
+                        explicitRefTargets,
+                        ambiguousExplicitRefTargets,
+                        explicitContentTargets,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack,
+                        out failure))
+                {
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.Random });
+                return true;
             }
 
             if (count == 1
@@ -1516,16 +1816,16 @@ namespace VVardenfell.Importer.Bake
                     return true;
                 }
 
-                if (count == 1
-                    && tokens[start].Equals("gethealth", StringComparison.OrdinalIgnoreCase))
+                if (TryCompileGetActorVitalExpression(
+                        tokens,
+                        start,
+                        count,
+                        MorrowindScriptRefTargetMode.Player,
+                        0u,
+                        instructions,
+                        ref stackDepth,
+                        ref maxStack))
                 {
-                    instructions.Add(new MorrowindScriptInstructionDef
-                    {
-                        Opcode = (byte)MorrowindScriptOpcode.GetHealth,
-                        Operand0 = (byte)MorrowindScriptRefTargetMode.Player,
-                    });
-                    stackDepth++;
-                    maxStack = Math.Max(maxStack, stackDepth);
                     return true;
                 }
 
@@ -1556,6 +1856,19 @@ namespace VVardenfell.Importer.Bake
                 if (failure != null)
                     return false;
 
+                if (TryCompileGetPCRankExpression(tokens, start, count, factionLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                    return true;
+                if (failure != null)
+                    return false;
+
+                if (TryCompilePlayerFactionStatusExpression(tokens, start, count, factionLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                    return true;
+                if (failure != null)
+                    return false;
+
+                if (TryCompileGetPlayerSkillExpression(tokens, start, count, instructions, ref stackDepth, ref maxStack))
+                    return true;
+
                 failure = $"Explicit Player expression '{string.Join(" ", tokens, start, count)}' is not supported in MWScript V1.";
                 return false;
             }
@@ -1573,14 +1886,41 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
-            if (count == 1
-                && tokens[start].Equals("gethealth", StringComparison.OrdinalIgnoreCase))
+            if (TryCompileGetActorVitalExpression(
+                    tokens,
+                    start,
+                    count,
+                    refTargetMode,
+                    refTargetPlacedRefId,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack))
             {
+                return true;
+            }
+
+            if (count >= 2
+                && tokens[start].Equals("getspell", StringComparison.OrdinalIgnoreCase))
+            {
+                string spellId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+                if (string.IsNullOrWhiteSpace(spellId))
+                {
+                    failure = "GetSpell requires one spell id.";
+                    return false;
+                }
+
+                if (!spellLookup.TryGetValue(ContentId.NormalizeId(spellId), out var spell) || !spell.IsValid)
+                {
+                    failure = $"GetSpell references unknown spell '{spellId}'.";
+                    return false;
+                }
+
                 instructions.Add(new MorrowindScriptInstructionDef
                 {
-                    Opcode = (byte)MorrowindScriptOpcode.GetHealth,
+                    Opcode = (byte)MorrowindScriptOpcode.GetSpell,
                     Operand0 = (byte)refTargetMode,
                     Int0 = unchecked((int)refTargetPlacedRefId),
+                    Int1 = spell.Value,
                 });
                 stackDepth++;
                 maxStack = Math.Max(maxStack, stackDepth);
@@ -1651,6 +1991,42 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
+            if (count == 2
+                && tokens[start].Equals("getstartingangle", StringComparison.OrdinalIgnoreCase))
+            {
+                string axis = NormalizeToken(tokens[start + 1]).Trim('"');
+                if (!TryMapRotateAxis(axis, out byte axisIndex))
+                {
+                    failure = $"GetStartingAngle axis must be X, Y, or Z in MWScript V1: '{string.Join(" ", tokens, start, count)}'.";
+                    return false;
+                }
+
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetStartingAngle,
+                    Operand0 = (byte)refTargetMode,
+                    Operand1 = axisIndex,
+                    Int0 = unchecked((int)refTargetPlacedRefId),
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
+            if (count == 1
+                && tokens[start].Equals("getlocked", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef
+                {
+                    Opcode = (byte)MorrowindScriptOpcode.GetLocked,
+                    Operand0 = (byte)refTargetMode,
+                    Int0 = unchecked((int)refTargetPlacedRefId),
+                });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
             if (TryCompileGetDistanceExpression(tokens, start, count, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, refTargetMode, refTargetPlacedRefId, instructions, ref stackDepth, ref maxStack, out failure))
                 return true;
             if (failure != null)
@@ -1672,31 +2048,18 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (count >= 2
-                && tokens[start].Equals("getpcrank", StringComparison.OrdinalIgnoreCase))
-            {
-                string factionId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
-                if (string.IsNullOrWhiteSpace(factionId))
-                {
-                    failure = "GetPCRank requires one faction id.";
-                    return false;
-                }
-
-                if (!factionLookup.TryGetValue(ContentId.NormalizeId(factionId), out int factionIndex))
-                {
-                    failure = $"GetPCRank references unknown faction '{factionId}'.";
-                    return false;
-                }
-
-                instructions.Add(new MorrowindScriptInstructionDef
-                {
-                    Opcode = (byte)MorrowindScriptOpcode.GetPCRank,
-                    Int0 = factionIndex,
-                });
-                stackDepth++;
-                maxStack = Math.Max(maxStack, stackDepth);
+            if (TryCompileGetPCRankExpression(tokens, start, count, factionLookup, instructions, ref stackDepth, ref maxStack, out failure))
                 return true;
-            }
+            if (failure != null)
+                return false;
+
+            if (TryCompilePlayerFactionStatusExpression(tokens, start, count, factionLookup, instructions, ref stackDepth, ref maxStack, out failure))
+                return true;
+            if (failure != null)
+                return false;
+
+            if (TryCompileGetPlayerSkillExpression(tokens, start, count, instructions, ref stackDepth, ref maxStack))
+                return true;
 
             if (count == 1
                 && tokens[start].Equals("getpccrimelevel", StringComparison.OrdinalIgnoreCase))
@@ -1832,6 +2195,14 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
+            if (token.Equals("getcurrentweather", StringComparison.OrdinalIgnoreCase))
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.GetCurrentWeather });
+                stackDepth++;
+                maxStack = Math.Max(maxStack, stackDepth);
+                return true;
+            }
+
             if (TryParseLiteral(token, out int intValue, out float floatValue, out bool isFloat))
             {
                 EmitPushLiteral(instructions, intValue, floatValue, isFloat, ref stackDepth, ref maxStack);
@@ -1911,6 +2282,269 @@ namespace VVardenfell.Importer.Bake
 
             failure = $"Unsupported expression '{token}'.";
             return false;
+        }
+
+        static bool TryCompileGetPlayerSkillExpression(
+            string[] tokens,
+            int start,
+            int count,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack)
+        {
+            if (count != 1
+                || !MorrowindActorSkillTextUtility.TryResolveGetSkillExpression(tokens[start], out byte skill))
+            {
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.GetPlayerSkill,
+                Operand0 = skill,
+            });
+            stackDepth++;
+            maxStack = Math.Max(maxStack, stackDepth);
+            return true;
+        }
+
+        static bool TryCompileGetActorVitalExpression(
+            string[] tokens,
+            int start,
+            int count,
+            MorrowindScriptRefTargetMode targetMode,
+            uint targetPlacedRefId,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack)
+        {
+            if (count != 1 || !TryResolveGetActorVitalExpression(tokens[start], out byte vitalKind))
+                return false;
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.GetHealth,
+                Operand0 = (byte)targetMode,
+                Operand1 = vitalKind,
+                Int0 = unchecked((int)targetPlacedRefId),
+            });
+            stackDepth++;
+            maxStack = Math.Max(maxStack, stackDepth);
+            return true;
+        }
+
+        static bool TryResolveGetActorVitalExpression(string token, out byte vitalKind)
+        {
+            vitalKind = 0;
+            string normalized = NormalizeToken(token);
+            if (string.Equals(normalized, "gethealth", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 1;
+            else if (string.Equals(normalized, "getmagicka", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 2;
+            else if (string.Equals(normalized, "getfatigue", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 3;
+
+            return vitalKind != 0;
+        }
+
+        static bool TryCompilePlayerSkillCommand(
+            string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
+            Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, SpellDefHandle> spellLookup,
+            Dictionary<string, int> factionLookup,
+            Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid player skill command '{line}'.";
+                    return false;
+                }
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length == 0
+                || !MorrowindActorSkillTextUtility.TryResolveSkillCommand(tokens[0], out byte skill, out byte mutation))
+            {
+                return false;
+            }
+
+            if (!TryResolveOptionalPlayerOrExplicitTarget(
+                    explicitTargetId,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    out var targetMode,
+                    out uint targetRefKey,
+                    out failure))
+                return false;
+
+            if (tokens.Length < 2)
+            {
+                failure = $"{tokens[0]} requires one value expression in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string expressionText = string.Join(" ", tokens, 1, tokens.Length - 1);
+            if (!TryCompileArithmeticExpression(
+                    expressionText,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    actorLookup,
+                    carryableLookup,
+                    spellLookup,
+                    factionLookup,
+                    actorLocalLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+            {
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.PlayerSkillMutation,
+                Operand0 = skill,
+                Operand1 = mutation,
+                Int0 = 1,
+            });
+            return true;
+        }
+
+        static bool TryCompilePlayerAttributeCommand(
+            string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
+            Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, SpellDefHandle> spellLookup,
+            Dictionary<string, int> factionLookup,
+            Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid player attribute command '{line}'.";
+                    return false;
+                }
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length == 0
+                || !MorrowindActorAttributeTextUtility.TryResolveAttributeCommand(tokens[0], out byte attribute, out byte mutation))
+            {
+                return false;
+            }
+
+            if (!TryResolveOptionalPlayerOrExplicitTarget(
+                    explicitTargetId,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    out var targetMode,
+                    out uint targetRefKey,
+                    out failure))
+                return false;
+
+            if (tokens.Length < 2)
+            {
+                failure = $"{tokens[0]} requires one value expression in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string expressionText = string.Join(" ", tokens, 1, tokens.Length - 1);
+            if (!TryCompileArithmeticExpression(
+                    expressionText,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    actorLookup,
+                    carryableLookup,
+                    spellLookup,
+                    factionLookup,
+                    actorLocalLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+            {
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.ActorAttributeMutation,
+                Operand0 = (byte)targetMode,
+                Operand1 = attribute,
+                Int0 = unchecked((int)targetRefKey),
+                Int1 = 1,
+                Int2 = mutation,
+            });
+            return true;
+        }
+
+        static bool TryResolveOptionalPlayerOrExplicitTarget(
+            string explicitTargetId,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            out MorrowindScriptRefTargetMode targetMode,
+            out uint targetRefKey,
+            out string failure)
+        {
+            failure = null;
+            targetMode = MorrowindScriptRefTargetMode.Self;
+            targetRefKey = 0u;
+            if (string.IsNullOrWhiteSpace(explicitTargetId))
+                return true;
+
+            if (IsPlayerTarget(explicitTargetId))
+            {
+                targetMode = MorrowindScriptRefTargetMode.Player;
+                return true;
+            }
+
+            return TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetRefKey, out failure);
         }
 
         static bool TryCompileSetPCCrimeLevel(
@@ -2811,9 +3445,15 @@ namespace VVardenfell.Importer.Bake
                 return false;
 
             string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 1)
+            {
+                instructions.Add(new MorrowindScriptInstructionDef { Opcode = (byte)MorrowindScriptOpcode.StopScript });
+                return true;
+            }
+
             if (tokens.Length != 2)
             {
-                failure = $"StopScript command requires one script id in MWScript V1: '{line}'.";
+                failure = $"StopScript command requires zero arguments or one script id in MWScript V1: '{line}'.";
                 return false;
             }
 
@@ -2921,6 +3561,79 @@ namespace VVardenfell.Importer.Bake
                 Operand0 = (byte)targetMode,
                 Operand1 = disabled,
                 Int0 = unchecked((int)targetPlacedRefId),
+            });
+            return true;
+        }
+
+        static bool TryCompileLockStateCommand(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            const int defaultLockLevelSentinel = int.MinValue;
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid lock state command '{line}'.";
+                    return false;
+                }
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length == 0)
+                return false;
+
+            string command = NormalizeToken(tokens[0]);
+            bool lockCommand = command.Equals("lock", StringComparison.OrdinalIgnoreCase);
+            bool unlockCommand = command.Equals("unlock", StringComparison.OrdinalIgnoreCase);
+            if (!lockCommand && !unlockCommand)
+                return false;
+
+            if (explicitTargetId != null
+                && !TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
+            {
+                return false;
+            }
+
+            int lockLevel = defaultLockLevelSentinel;
+            if (lockCommand)
+            {
+                if (tokens.Length > 2)
+                {
+                    failure = $"Lock command supports at most one literal integer level in MWScript V2: '{line}'.";
+                    return false;
+                }
+
+                if (tokens.Length == 2
+                    && !int.TryParse(NormalizeToken(tokens[1]), NumberStyles.Integer, CultureInfo.InvariantCulture, out lockLevel))
+                {
+                    failure = $"Lock command level must be a literal integer in MWScript V2: '{line}'.";
+                    return false;
+                }
+            }
+            else if (tokens.Length != 1)
+            {
+                failure = $"Unlock command takes no arguments in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.RequestLockState,
+                Operand0 = (byte)targetMode,
+                Operand1 = (short)(lockCommand ? 1 : 2),
+                Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = lockLevel,
             });
             return true;
         }
@@ -3141,6 +3854,53 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompileSetAtStart(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit SetAtStart command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, "setatstart"))
+                return false;
+
+            if (explicitTargetId != null
+                && !TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
+            {
+                return false;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 1)
+            {
+                failure = $"SetAtStart takes no arguments in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.SetAtStart,
+                Operand0 = (byte)targetMode,
+                Int0 = unchecked((int)targetPlacedRefId),
+            });
+            return true;
+        }
+
         static bool TryCompilePositionCell(
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
@@ -3302,6 +4062,192 @@ namespace VVardenfell.Importer.Bake
                 Float0 = x * WorldScale.MwUnitsToMeters,
                 Float1 = z * WorldScale.MwUnitsToMeters,
                 Float2 = y * WorldScale.MwUnitsToMeters,
+            });
+            return true;
+        }
+
+        static bool TryCompileSetPos(
+            string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
+            Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, SpellDefHandle> spellLookup,
+            Dictionary<string, int> factionLookup,
+            Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit SetPos command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, "setpos"))
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
+                    return false;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 3)
+            {
+                failure = $"SetPos command requires axis and position in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string axis = NormalizeToken(tokens[1]).Trim('"');
+            if (!TryMapRotateAxis(axis, out byte axisIndex))
+            {
+                failure = $"SetPos command has unsupported axis '{tokens[1]}'.";
+                return false;
+            }
+
+            int firstExpressionInstruction = instructions.Count;
+            int stackDepthBeforeExpression = stackDepth;
+            if (!TryCompileArithmeticExpression(
+                    tokens[2],
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    actorLookup,
+                    carryableLookup,
+                    spellLookup,
+                    factionLookup,
+                    actorLocalLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+            {
+                instructions.RemoveRange(firstExpressionInstruction, instructions.Count - firstExpressionInstruction);
+                stackDepth = stackDepthBeforeExpression;
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.SetPos,
+                Operand0 = (byte)targetMode,
+                Operand1 = axisIndex,
+                Int0 = unchecked((int)targetPlacedRefId),
+            });
+            return true;
+        }
+
+        static bool TryCompileMoveCommand(
+            string line,
+            string command,
+            MorrowindScriptOpcode opcode,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
+            Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, SpellDefHandle> spellLookup,
+            Dictionary<string, int> factionLookup,
+            Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            var targetMode = MorrowindScriptRefTargetMode.Self;
+            uint targetPlacedRefId = 0u;
+            string commandLine = line;
+            string explicitTargetId = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                if (!TrySplitExplicitReference(line, out explicitTargetId, out commandLine))
+                {
+                    failure = $"Invalid explicit {command} command '{line}'.";
+                    return false;
+                }
+            }
+
+            if (!StartsWithCommand(commandLine, command))
+                return false;
+
+            if (explicitTargetId != null)
+            {
+                if (!TryResolveExplicitRefTarget(explicitTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out targetMode, out targetPlacedRefId, out failure))
+                    return false;
+            }
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length != 3)
+            {
+                failure = $"{command} command requires axis and speed in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string axis = NormalizeToken(tokens[1]).Trim('"');
+            if (!TryMapRotateAxis(axis, out byte axisIndex))
+            {
+                failure = $"{command} command has unsupported axis '{tokens[1]}'.";
+                return false;
+            }
+
+            int firstExpressionInstruction = instructions.Count;
+            int stackDepthBeforeExpression = stackDepth;
+            if (!TryCompileArithmeticExpression(
+                    tokens[2],
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    actorLookup,
+                    carryableLookup,
+                    spellLookup,
+                    factionLookup,
+                    actorLocalLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+            {
+                instructions.RemoveRange(firstExpressionInstruction, instructions.Count - firstExpressionInstruction);
+                stackDepth = stackDepthBeforeExpression;
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)opcode,
+                Operand0 = (byte)targetMode,
+                Operand1 = axisIndex,
+                Int0 = unchecked((int)targetPlacedRefId),
             });
             return true;
         }
@@ -3491,11 +4437,8 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!IsPlayerTarget(tokens[1]))
-            {
-                failure = $"AiFollow command supports only Player follow target in MWScript V2: '{line}'.";
+            if (!TryResolveDistanceTarget(tokens[1].Trim('"'), explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var followTargetMode, out uint followTargetRefKey, out failure))
                 return false;
-            }
 
             if (!TryParseAiFollowNumbers(tokens, 2, line, out float duration, out float x, out float y, out float z, out failure))
                 return false;
@@ -3515,6 +4458,8 @@ namespace VVardenfell.Importer.Bake
                 Operand0 = (byte)targetMode,
                 Operand1 = tokens.Length > 6 ? (short)1 : (short)0,
                 Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = unchecked((int)followTargetRefKey),
+                Int2 = (int)followTargetMode,
                 Float0 = duration,
                 Float1 = x * WorldScale.MwUnitsToMeters,
                 Float2 = z * WorldScale.MwUnitsToMeters,
@@ -3818,10 +4763,21 @@ namespace VVardenfell.Importer.Bake
 
         static bool TryCompileSetHealth(
             string line,
+            Dictionary<string, (int Index, byte Kind)> localLookup,
+            Dictionary<string, (int Index, byte Kind)> globalLookup,
+            Dictionary<string, SoundDefHandle> soundLookup,
+            Dictionary<string, int> actorLookup,
+            Dictionary<string, ContentReference> carryableLookup,
+            Dictionary<string, SpellDefHandle> spellLookup,
+            Dictionary<string, int> factionLookup,
+            Dictionary<string, ActorLocalCompileInfo> actorLocalLookup,
+            Dictionary<string, DialogueCompileInfo> dialogueLookup,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
             IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
             List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
             out string failure)
         {
             failure = null;
@@ -3839,7 +4795,7 @@ namespace VVardenfell.Importer.Bake
             }
 
             string[] tokens = SplitCommandTokens(commandLine);
-            if (tokens.Length == 0 || !string.Equals(tokens[0], "sethealth", StringComparison.OrdinalIgnoreCase))
+            if (tokens.Length == 0 || !TryResolveActorVitalCommand(tokens[0], out byte vitalKind, out bool isMod))
                 return false;
 
             if (explicitTargetId != null)
@@ -3855,9 +4811,32 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
-            if (tokens.Length != 2 || !float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float health))
+            if (tokens.Length < 2)
             {
-                failure = $"SetHealth command requires one literal numeric value in MWScript V2: '{line}'.";
+                failure = $"{tokens[0]} command requires one value expression in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string expressionText = string.Join(" ", tokens, 1, tokens.Length - 1);
+            if (!TryCompileArithmeticExpression(
+                    expressionText,
+                    localLookup,
+                    globalLookup,
+                    soundLookup,
+                    actorLookup,
+                    carryableLookup,
+                    spellLookup,
+                    factionLookup,
+                    actorLocalLookup,
+                    dialogueLookup,
+                    explicitRefTargets,
+                    ambiguousExplicitRefTargets,
+                    explicitContentTargets,
+                    instructions,
+                    ref stackDepth,
+                    ref maxStack,
+                    out failure))
+            {
                 return false;
             }
 
@@ -3865,10 +4844,57 @@ namespace VVardenfell.Importer.Bake
             {
                 Opcode = (byte)MorrowindScriptOpcode.SetHealth,
                 Operand0 = (byte)targetMode,
+                Operand1 = vitalKind,
                 Int0 = unchecked((int)targetPlacedRefId),
-                Float0 = health,
+                Int1 = 1,
+                Int2 = isMod ? 1 : 0,
             });
             return true;
+        }
+
+        static bool TryResolveActorVitalCommand(string command, out byte vitalKind, out bool isMod)
+        {
+            vitalKind = 0;
+            isMod = false;
+            string normalized = NormalizeToken(command);
+            if (string.Equals(normalized, "sethealth", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 1;
+            else if (string.Equals(normalized, "setmagicka", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 2;
+            else if (string.Equals(normalized, "setfatigue", StringComparison.OrdinalIgnoreCase))
+                vitalKind = 3;
+            else if (string.Equals(normalized, "modcurrenthealth", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 1;
+                isMod = true;
+            }
+            else if (string.Equals(normalized, "modhealth", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 1;
+                isMod = true;
+            }
+            else if (string.Equals(normalized, "modcurrentmagicka", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 2;
+                isMod = true;
+            }
+            else if (string.Equals(normalized, "modmagicka", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 2;
+                isMod = true;
+            }
+            else if (string.Equals(normalized, "modcurrentfatigue", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 3;
+                isMod = true;
+            }
+            else if (string.Equals(normalized, "modfatigue", StringComparison.OrdinalIgnoreCase))
+            {
+                vitalKind = 3;
+                isMod = true;
+            }
+
+            return vitalKind != 0;
         }
 
         static bool TryCompileActorSpellCommand(
@@ -4123,7 +5149,8 @@ namespace VVardenfell.Importer.Bake
             bool add = string.Equals(tokens[0], "additem", StringComparison.OrdinalIgnoreCase);
             bool remove = string.Equals(tokens[0], "removeitem", StringComparison.OrdinalIgnoreCase);
             bool removeSoulGem = string.Equals(tokens[0], "removesoulgem", StringComparison.OrdinalIgnoreCase);
-            if (!add && !remove && !removeSoulGem)
+            bool drop = string.Equals(tokens[0], "drop", StringComparison.OrdinalIgnoreCase);
+            if (!add && !remove && !removeSoulGem && !drop)
                 return false;
 
             if (explicitTargetId != null)
@@ -4209,9 +5236,15 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
+            if (drop && count < 0)
+            {
+                failure = $"Drop count must be non-negative in MWScript V2: '{line}'.";
+                return false;
+            }
+
             instructions.Add(new MorrowindScriptInstructionDef
             {
-                Opcode = (byte)MorrowindScriptOpcode.RequestInventoryMutation,
+                Opcode = (byte)(drop ? MorrowindScriptOpcode.Drop : MorrowindScriptOpcode.RequestInventoryMutation),
                 Operand0 = (byte)targetMode,
                 Operand1 = (short)content.Kind,
                 Int0 = unchecked((int)targetPlacedRefId),
@@ -4335,6 +5368,220 @@ namespace VVardenfell.Importer.Bake
             {
                 Opcode = (byte)MorrowindScriptOpcode.WakeUpPC,
             });
+            return true;
+        }
+
+        static bool TryCompileScreenFade(
+            string line,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!StartsWithCommand(commandLine, "fadeout") && !StartsWithCommand(commandLine, "fadein"))
+                    return false;
+
+                failure = $"Explicit screen fade references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            bool fadeOut = StartsWithCommand(line, "fadeout");
+            if (!fadeOut && !StartsWithCommand(line, "fadein"))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 2 || !float.TryParse(NormalizeToken(tokens[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out float duration))
+            {
+                failure = $"Screen fade commands require one literal duration in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.ScreenFade,
+                Operand0 = fadeOut ? (byte)1 : (byte)0,
+                Float0 = duration,
+            });
+            return true;
+        }
+
+        static bool TryCompileShellControl(
+            string line,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (line.IndexOf("->", StringComparison.Ordinal) >= 0)
+            {
+                string commandLine = StripExplicitReferencePrefix(line);
+                if (!TryResolveShellControl(commandLine, out _, out _, out _))
+                    return false;
+
+                failure = $"Explicit shell control references are not supported in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            if (!TryResolveShellControl(line, out byte operation, out byte enabled, out byte menuKind))
+                return false;
+
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length != 1)
+            {
+                failure = $"Shell control command takes no arguments in MWScript V1: '{line}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.ShellControl,
+                Operand0 = operation,
+                Int0 = enabled,
+                Int1 = menuKind,
+            });
+            return true;
+        }
+
+        static bool TryResolveShellControl(string line, out byte operation, out byte enabled, out byte menuKind)
+        {
+            operation = 0;
+            enabled = 0;
+            menuKind = 0;
+            string[] tokens = SplitCommandTokens(line);
+            if (tokens.Length == 0)
+                return false;
+
+            string command = NormalizeToken(tokens[0]);
+            if (string.Equals(command, "disableplayercontrols", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 3;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayercontrols", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 3;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableplayerfighting", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 6;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayerfighting", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 6;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableplayerjumping", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 7;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayerjumping", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 7;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableplayermagic", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 8;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayermagic", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 8;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableplayerviewswitch", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 9;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayerviewswitch", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 9;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disablerest", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 10;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enablerest", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 10;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableteleporting", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 4;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableteleporting", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 4;
+                enabled = 1;
+                return true;
+            }
+
+            if (TryResolveShellMenuControl(command, out enabled, out menuKind))
+            {
+                operation = 5;
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool TryResolveShellMenuControl(string command, out byte enabled, out byte menuKind)
+        {
+            enabled = 0;
+            menuKind = 0;
+            bool enable = command.StartsWith("enable", StringComparison.OrdinalIgnoreCase);
+            bool disable = command.StartsWith("disable", StringComparison.OrdinalIgnoreCase);
+            if (!enable && !disable)
+                return false;
+
+            string suffix = command.Substring(enable ? "enable".Length : "disable".Length);
+            if (string.Equals(suffix, "inventorymenu", StringComparison.OrdinalIgnoreCase))
+                menuKind = 1;
+            else if (string.Equals(suffix, "statsmenu", StringComparison.OrdinalIgnoreCase))
+                menuKind = 2;
+            else if (string.Equals(suffix, "magicmenu", StringComparison.OrdinalIgnoreCase))
+                menuKind = 3;
+            else if (string.Equals(suffix, "mapmenu", StringComparison.OrdinalIgnoreCase))
+                menuKind = 4;
+            else
+                return false;
+
+            enabled = enable ? (byte)1 : (byte)0;
             return true;
         }
 
@@ -4556,6 +5803,92 @@ namespace VVardenfell.Importer.Bake
                 Operand1 = (short)targetMode,
                 Int0 = unchecked((int)sourceRefKey),
                 Int1 = unchecked((int)targetRefKey),
+            });
+            stackDepth++;
+            maxStack = Math.Max(maxStack, stackDepth);
+            return true;
+        }
+
+        static bool TryCompileGetPCRankExpression(
+            string[] tokens,
+            int start,
+            int count,
+            Dictionary<string, int> factionLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (count < 1 || !tokens[start].Equals("getpcrank", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (count < 2)
+            {
+                failure = "GetPCRank requires one faction id.";
+                return false;
+            }
+
+            string factionId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(factionId))
+            {
+                failure = "GetPCRank requires one faction id.";
+                return false;
+            }
+
+            if (!factionLookup.TryGetValue(ContentId.NormalizeId(factionId), out int factionIndex))
+            {
+                failure = $"GetPCRank references unknown faction '{factionId}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.GetPCRank,
+                Int0 = factionIndex,
+            });
+            stackDepth++;
+            maxStack = Math.Max(maxStack, stackDepth);
+            return true;
+        }
+
+        static bool TryCompilePlayerFactionStatusExpression(
+            string[] tokens,
+            int start,
+            int count,
+            Dictionary<string, int> factionLookup,
+            List<MorrowindScriptInstructionDef> instructions,
+            ref int stackDepth,
+            ref int maxStack,
+            out string failure)
+        {
+            failure = null;
+            if (count < 1 || !tokens[start].Equals("pcexpelled", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (count < 2)
+            {
+                failure = "PCExpelled requires one faction id.";
+                return false;
+            }
+
+            string factionId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(factionId))
+            {
+                failure = "PCExpelled requires one faction id.";
+                return false;
+            }
+
+            if (!factionLookup.TryGetValue(ContentId.NormalizeId(factionId), out int factionIndex))
+            {
+                failure = $"PCExpelled references unknown faction '{factionId}'.";
+                return false;
+            }
+
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.PCExpelled,
+                Int0 = factionIndex,
             });
             stackDepth++;
             maxStack = Math.Max(maxStack, stackDepth);
@@ -5028,8 +6361,20 @@ namespace VVardenfell.Importer.Bake
                 return lookup;
 
             for (int i = 0; i < factions.Length; i++)
-                lookup[ContentId.NormalizeId(factions[i].Id)] = i;
+            {
+                AddFactionLookupAlias(lookup, factions[i].Id, i);
+                AddFactionLookupAlias(lookup, factions[i].Name, i);
+                AddFactionLookupAlias(lookup, "House " + factions[i].Id, i);
+                AddFactionLookupAlias(lookup, "Great House " + factions[i].Id, i);
+            }
             return lookup;
+        }
+
+        static void AddFactionLookupAlias(Dictionary<string, int> lookup, string id, int index)
+        {
+            string normalizedId = ContentId.NormalizeId(id);
+            if (!string.IsNullOrEmpty(normalizedId))
+                lookup[normalizedId] = index;
         }
 
         static Dictionary<string, ActorLocalCompileInfo> BuildActorLocalLookup(ActorDef[] actors, GenericRecordDef[] scripts)

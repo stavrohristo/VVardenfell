@@ -151,6 +151,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
             RequireForUpdate<MorrowindMovementSettings>();
+            RequireForUpdate<RuntimeShellState>();
         }
 
         protected override void OnUpdate()
@@ -191,6 +192,13 @@ namespace VVardenfell.Runtime.Interactions
             if (door.IsTeleport == 0)
             {
                 TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
+                ClearFocus();
+                transition.TransitionInProgress = 0;
+                return;
+            }
+
+            if (SystemAPI.GetSingleton<RuntimeShellState>().TeleportingDisabled != 0)
+            {
                 ClearFocus();
                 transition.TransitionInProgress = 0;
                 return;

@@ -502,9 +502,11 @@ namespace VVardenfell.Importer.Bake
                     RefBytes = BuildRefBytes(staged.BakedRefs),
                     DoorBytes = BuildDoorBytes(staged.DoorEntries),
                     CapturedSoulBytes = BuildCapturedSoulBytes(staged.CapturedSouls),
+                    LockStateBytes = BuildLockStateBytes(staged.LockStates),
                     RefCount = staged.BakedRefs?.Count ?? 0,
                     DoorCount = staged.DoorEntries?.Count ?? 0,
                     CapturedSoulCount = staged.CapturedSouls?.Count ?? 0,
+                    LockStateCount = staged.LockStates?.Count ?? 0,
                 };
             }
             finally

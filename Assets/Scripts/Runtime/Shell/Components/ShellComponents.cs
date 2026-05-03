@@ -28,6 +28,22 @@ namespace VVardenfell.Runtime.Components
         public byte DialogueOpen;
         public byte PlayerSleeping;
         public byte SelectedAction;
+        public byte PlayerControlsDisabled;
+        public byte PlayerFightingDisabled;
+        public byte PlayerJumpingDisabled;
+        public byte PlayerMagicDisabled;
+        public byte PlayerViewSwitchDisabled;
+        public byte RestDisabled;
+        public byte TeleportingDisabled;
+        public byte InventoryMenuDisabled;
+        public byte StatsMenuDisabled;
+        public byte MagicMenuDisabled;
+        public byte MapMenuDisabled;
+        public float ScreenFadeAlpha;
+        public float ScreenFadeStartAlpha;
+        public float ScreenFadeTargetAlpha;
+        public float ScreenFadeDuration;
+        public float ScreenFadeElapsed;
         public FixedString128Bytes ModalTitle;
         public FixedString512Bytes ModalBody;
     }

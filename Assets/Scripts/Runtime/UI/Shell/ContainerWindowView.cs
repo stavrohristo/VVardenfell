@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
@@ -58,6 +57,7 @@ namespace VVardenfell.Runtime.UI.Shell
             public Button Button;
             public Image Icon;
             public BitmapTextGraphic Count;
+            public RuntimeInventoryItemDragSource DragSource;
         }
 
         readonly RuntimeUiTheme _theme;
@@ -66,6 +66,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Action _onRectChanged;
         readonly Action<int, InventoryItemClickContext> _onItemClicked;
         readonly Action _onBackgroundClicked;
+        readonly Func<bool> _hasHeldItem;
         readonly Action _onTakeAll;
         readonly Action _onClose;
 
@@ -88,6 +89,7 @@ namespace VVardenfell.Runtime.UI.Shell
             Action onRectChanged,
             Action<int, InventoryItemClickContext> onItemClicked,
             Action onBackgroundClicked,
+            Func<bool> hasHeldItem,
             Action onTakeAll,
             Action onClose)
         {
@@ -97,6 +99,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _onRectChanged = onRectChanged;
             _onItemClicked = onItemClicked;
             _onBackgroundClicked = onBackgroundClicked;
+            _hasHeldItem = hasHeldItem;
             _onTakeAll = onTakeAll;
             _onClose = onClose;
 
@@ -192,6 +195,8 @@ namespace VVardenfell.Runtime.UI.Shell
             backgroundButton.transition = Selectable.Transition.None;
             backgroundButton.navigation = new Navigation { mode = Navigation.Mode.None };
             backgroundButton.onClick.AddListener(() => _onBackgroundClicked?.Invoke());
+            var dropTarget = viewportRect.gameObject.AddComponent<RuntimeInventoryDropTarget>();
+            dropTarget.Initialize(_onBackgroundClicked, _hasHeldItem);
 
             var gridContent = RuntimeUiFactory.CreateAnchoredRect(
                 "GridContent",
@@ -212,11 +217,12 @@ namespace VVardenfell.Runtime.UI.Shell
 
             // Footer: right-aligned button row. Vanilla uses HBox + Spacer to push the
             // buttons to the right. We anchor each button's right edge and count back.
-            var footerRoot = RuntimeUiFactory.CreateAnchoredRect(
+            var footerRoot = RuntimeUiFactory.CreateAnchorRect(
                 "FooterRoot",
                 _window.Client,
                 new Vector2(0f, 0f),
                 new Vector2(1f, 0f),
+                new Vector2(0.5f, 0f),
                 Vector2.zero,
                 new Vector2(0f, footerHeight));
 
@@ -235,14 +241,14 @@ namespace VVardenfell.Runtime.UI.Shell
 
         MorrowindButtonView BuildFooterButton(RectTransform footerRoot, string name, string label, float rightEdgeX, float width, UnityEngine.Events.UnityAction onClick)
         {
-            var rect = RuntimeUiFactory.CreateAnchoredRect(
+            var rect = RuntimeUiFactory.CreateAnchorRect(
                 $"{name}Rect",
                 footerRoot,
                 new Vector2(1f, 0f),
                 new Vector2(1f, 1f),
-                new Vector2(rightEdgeX, 0f),
-                new Vector2(width, 0f));
-            rect.pivot = new Vector2(1f, 0.5f);
+                new Vector2(1f, 0.5f),
+                new Vector2(rightEdgeX - width, 0f),
+                new Vector2(rightEdgeX, 0f));
 
             var button = RuntimeUiFactory.CreateMorrowindButton(
                 name,
@@ -294,6 +300,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 var entry = entries[i];
                 cell.InventoryIndex = entry.InventoryIndex;
+                cell.DragSource.SetItemIndex(entry.InventoryIndex);
                 RuntimeUiPopupUtility.SetTooltip(cell.Root.gameObject, BuildItemTooltip(entry));
                 cell.Icon.sprite = _iconService.GetSprite(entry.IconPath);
                 cell.Icon.preserveAspect = true;
@@ -401,20 +408,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 Count = count,
             };
 
-            button.onClick.AddListener(() => _onItemClicked?.Invoke(cell.InventoryIndex, CaptureClickContext()));
+            cell.DragSource = root.gameObject.AddComponent<RuntimeInventoryItemDragSource>();
+            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem);
             return cell;
-        }
-
-        static InventoryItemClickContext CaptureClickContext()
-        {
-            var keyboard = Keyboard.current;
-            if (keyboard == null)
-                return default;
-
-            bool control = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
-            return new InventoryItemClickContext(control, shift, alt);
         }
 
         void SyncButtonState(MorrowindButtonView buttonView, bool enabled)

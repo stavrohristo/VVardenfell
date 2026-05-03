@@ -1,11 +1,14 @@
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateBefore(typeof(LocalPlayerVisualCombatSyncSystem))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateAfter(typeof(InventoryItemActionSystem))]
+    [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class LocalPlayerVisualEquipmentSyncSystem : SystemBase
     {
         EntityQuery _playerQuery;

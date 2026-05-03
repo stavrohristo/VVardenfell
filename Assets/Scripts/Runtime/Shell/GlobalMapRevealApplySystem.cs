@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class GlobalMapRevealApplySystem : SystemBase
     {

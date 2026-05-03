@@ -9,8 +9,8 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorWeaponAnimationSystem))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
+    [UpdateAfter(typeof(ActorRigidEquipmentAttachmentSystem))]
     public partial struct ActorRigidEquipmentVisibilitySystem : ISystem
     {
         ComponentLookup<ActorWeaponAnimationState> _weaponStateLookup;

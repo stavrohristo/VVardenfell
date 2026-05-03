@@ -6,13 +6,14 @@ using Unity.Rendering;
 using Unity.Transforms;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
     public partial class MorrowindScriptTransformApplySystem : SystemBase
     {
@@ -51,7 +52,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var request = requests[i];
                 Entity target = ResolveLiveTarget(request, logicalRefLookup);
                 if (target == Entity.Null || !EntityManager.Exists(target))
+                {
+                    if (request.Operation == 6)
+                        throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} is not live.");
+
                     continue;
+                }
 
                 if (request.Operation == 2)
                 {
@@ -62,6 +68,24 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (request.Operation == 3)
                 {
                     ApplyPosition(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    continue;
+                }
+
+                if (request.Operation == 4)
+                {
+                    ApplyPositionOnly(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    continue;
+                }
+
+                if (request.Operation == 5)
+                {
+                    ApplyMove(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    continue;
+                }
+
+                if (request.Operation == 6)
+                {
+                    ApplySetAtStart(target, request, loadedCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
@@ -154,6 +178,81 @@ namespace VVardenfell.Runtime.MorrowindScript
             ProjectPositionCellTarget(target, active);
         }
 
+        void ApplyPositionOnly(
+            Entity target,
+            in MorrowindScriptTransformRequest request,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
+        {
+            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+                throw new InvalidOperationException($"SetPos target ref={request.TargetPlacedRefId} has no logical location.");
+
+            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
+                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+                : request.Position;
+
+            if (!EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"SetPos target ref={request.TargetPlacedRefId} has no LocalTransform.");
+
+            var transform = EntityManager.GetComponentData<LocalTransform>(target);
+            MoveEntity(target, request.Position, transform.Rotation);
+            MoveUnparentedChildrenByDelta(target, request.Position - previousPosition);
+
+            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(target, active);
+        }
+
+        void ApplyMove(
+            Entity target,
+            in MorrowindScriptTransformRequest request,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
+        {
+            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+                throw new InvalidOperationException($"Move target ref={request.TargetPlacedRefId} has no logical location.");
+
+            if (!EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"Move target ref={request.TargetPlacedRefId} has no LocalTransform.");
+
+            var transform = EntityManager.GetComponentData<LocalTransform>(target);
+            float3 delta = request.Position - transform.Position;
+            MoveEntity(target, request.Position, transform.Rotation);
+            MoveUnparentedChildrenByDelta(target, delta);
+            MoveStandingActorsByDelta(target, delta);
+
+            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(target, active);
+        }
+
+        void ApplySetAtStart(
+            Entity target,
+            in MorrowindScriptTransformRequest request,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
+        {
+            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+                throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no logical location.");
+
+            if (!EntityManager.HasComponent<PlacedRefInitialTransform>(target))
+                throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no initial transform.");
+
+            if (!EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no LocalTransform.");
+
+            var initial = EntityManager.GetComponentData<PlacedRefInitialTransform>(target);
+            var current = EntityManager.GetComponentData<LocalTransform>(target);
+            float3 delta = initial.Position - current.Position;
+            MoveEntity(target, initial.Position, initial.Rotation, initial.Scale);
+            MoveUnparentedChildrenByDelta(target, delta);
+            MoveStandingActorsByDelta(target, delta);
+
+            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(target, active);
+        }
+
         void MoveUnparentedChildrenByDelta(Entity target, float3 delta)
         {
             if (!EntityManager.HasBuffer<LogicalRefChild>(target))
@@ -182,7 +281,33 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
+        void MoveStandingActorsByDelta(Entity target, float3 delta)
+        {
+            if (math.lengthsq(delta) <= 0f)
+                return;
+
+            using var query = EntityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<MorrowindMovementState>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var states = query.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (states[i].StandingOn != target || entities[i] == target || !EntityManager.Exists(entities[i]))
+                    continue;
+
+                if (!EntityManager.HasComponent<LocalTransform>(entities[i]))
+                    continue;
+
+                var transform = EntityManager.GetComponentData<LocalTransform>(entities[i]);
+                MoveEntity(entities[i], transform.Position + delta, transform.Rotation);
+            }
+        }
+
         void MoveEntity(Entity entity, float3 position, quaternion rotation)
+            => MoveEntity(entity, position, rotation, float.NaN);
+
+        void MoveEntity(Entity entity, float3 position, quaternion rotation, float scale)
         {
             if (!EntityManager.HasComponent<LocalTransform>(entity))
                 return;
@@ -193,6 +318,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             var transform = EntityManager.GetComponentData<LocalTransform>(entity);
             transform.Position = position;
             transform.Rotation = rotation;
+            if (!float.IsNaN(scale))
+                transform.Scale = scale;
             EntityManager.SetComponentData(entity, transform);
 
             if (EntityManager.HasComponent<LocalToWorld>(entity))

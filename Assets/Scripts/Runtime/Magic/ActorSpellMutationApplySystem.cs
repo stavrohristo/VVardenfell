@@ -9,7 +9,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Magic
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class ActorSpellMutationApplySystem : SystemBase
     {

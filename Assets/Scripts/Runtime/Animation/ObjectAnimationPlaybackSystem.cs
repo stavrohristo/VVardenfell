@@ -10,7 +10,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     public partial struct ObjectAnimationPlaybackSystem : ISystem
     {
         const int AudioSequenceStride = 64;
@@ -48,6 +48,15 @@ namespace VVardenfell.Runtime.Animation
             }
 
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
+            byte paused = SystemAPI.HasSingleton<MorrowindRuntimePaused>() ? (byte)1 : (byte)0;
+            uint openContainerPlacedRefId = 0u;
+            if (paused != 0
+                && SystemAPI.TryGetSingleton<ContainerWindowState>(out var containerWindow)
+                && SystemAPI.TryGetSingleton<RuntimeShellState>(out var shell)
+                && shell.ContainerOpen != 0)
+            {
+                openContainerPlacedRefId = containerWindow.OpenPlacedRefId;
+            }
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0;
             if (SystemAPI.TryGetSingleton<InteriorTransitionState>(out var interiorTransition) && interiorTransition.InteriorActive != 0)
@@ -65,6 +74,9 @@ namespace VVardenfell.Runtime.Animation
                 InteriorActive = interiorActive,
                 HasActiveExteriorCells = loadedCells.Active.IsCreated ? (byte)1 : (byte)0,
                 DeltaTime = SystemAPI.Time.DeltaTime,
+                Paused = paused,
+                OpenContainerPlacedRefId = openContainerPlacedRefId,
+                Containers = SystemAPI.GetComponentLookup<ContainerAuthoring>(true),
                 AudioSequenceBase = sequenceBase,
                 EmitAudio = emitAudio,
                 Ecb = ecb.AsParallelWriter(),
@@ -83,6 +95,9 @@ namespace VVardenfell.Runtime.Animation
             public byte InteriorActive;
             public byte HasActiveExteriorCells;
             public float DeltaTime;
+            public byte Paused;
+            public uint OpenContainerPlacedRefId;
+            [ReadOnly] public ComponentLookup<ContainerAuthoring> Containers;
             public uint AudioSequenceBase;
             public byte EmitAudio;
             public EntityCommandBuffer.ParallelWriter Ecb;
@@ -95,6 +110,14 @@ namespace VVardenfell.Runtime.Animation
                 in PlacedRefIdentity placedRef,
                 in LocalTransform transform)
             {
+                if (Paused != 0
+                    && (OpenContainerPlacedRefId == 0u
+                        || placedRef.Value != OpenContainerPlacedRefId
+                        || !Containers.HasComponent(entity)))
+                {
+                    return;
+                }
+
                 animation.Active = IsLocationActive(location) ? (byte)1 : (byte)0;
                 if (animation.Active == 0 || !Catalog.IsCreated)
                     return;

@@ -240,6 +240,8 @@ namespace VVardenfell.Importer.Bake
                 DoorBytes = preparedWrite.DoorBytes,
                 CapturedSoulCountBytes = BuildUInt32Bytes((uint)preparedWrite.CapturedSoulCount),
                 CapturedSoulBytes = preparedWrite.CapturedSoulBytes,
+                LockStateCountBytes = BuildUInt32Bytes((uint)preparedWrite.LockStateCount),
+                LockStateBytes = preparedWrite.LockStateBytes,
             };
         }
 
@@ -331,6 +333,8 @@ namespace VVardenfell.Importer.Bake
                 WriteSegment(fs, preparedWrite.FinalBuffer.DoorBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulCountBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.LockStateCountBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.LockStateBytes);
 
                 fs.Flush(flushToDisk: true);
 
@@ -490,6 +494,27 @@ namespace VVardenfell.Importer.Bake
             return ms.ToArray();
         }
 
+        private static byte[] BuildLockStateBytes(IReadOnlyList<PlacedRefLockEntry> entries)
+        {
+            int count = entries?.Count ?? 0;
+            if (count == 0)
+                return null;
+
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            for (int i = 0; i < count; i++)
+            {
+                var entry = entries[i];
+                w.Write(entry.PlacedRefId);
+                w.Write(entry.LockLevel);
+                w.Write(entry.Locked);
+                w.Write(entry.KeyId ?? string.Empty);
+                w.Write(entry.TrapId ?? string.Empty);
+            }
+
+            return ms.ToArray();
+        }
+
 
         private static byte[] BuildCellHeaderBytes(PreparedCellWriteData preparedWrite)
         {
@@ -631,6 +656,14 @@ namespace VVardenfell.Importer.Bake
                 for (int i = 0; i < capturedSoulCount; i++)
                 {
                     SkipExact(r, sizeof(uint), "captured soul table entry placed ref id");
+                    r.ReadString();
+                }
+
+                uint lockStateCount = r.ReadUInt32();
+                for (int i = 0; i < lockStateCount; i++)
+                {
+                    SkipExact(r, sizeof(uint) + sizeof(int) + sizeof(byte), "lock state table entry fixed fields");
+                    r.ReadString();
                     r.ReadString();
                 }
 

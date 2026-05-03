@@ -36,6 +36,7 @@ namespace VVardenfell.Runtime.Cache
         public RefEntry[] Refs;
         public DoorRefEntry[] Doors;
         public PlacedRefSoulEntry[] CapturedSouls;
+        public PlacedRefLockEntry[] LockStates;
         public CellPlacementAuditData PlacementAudit;
 
         public bool HasStaticCollider => StaticColliderBlob.IsCreated;
@@ -244,6 +245,7 @@ namespace VVardenfell.Runtime.Cache
                 }
 
                 cell.CapturedSouls = System.Array.Empty<PlacedRefSoulEntry>();
+                cell.LockStates = System.Array.Empty<PlacedRefLockEntry>();
                 if (fs.Position < fs.Length)
                 {
                     currentSection = "captured soul table count";
@@ -264,6 +266,29 @@ namespace VVardenfell.Runtime.Cache
                                 SoulId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} soul id"),
                             };
                         }
+                    }
+                }
+
+                if (fs.Position < fs.Length)
+                {
+                    currentSection = "lock state table count";
+                    EnsureRemaining(r, sizeof(uint), path, cellId, isInterior, currentSection);
+                    uint lockStateCount = r.ReadUInt32();
+
+                    currentSection = "lock state table";
+                    cell.LockStates = new PlacedRefLockEntry[lockStateCount];
+                    for (int i = 0; i < lockStateCount; i++)
+                    {
+                        string entrySection = $"lock state table entry {i}";
+                        EnsureRemaining(r, sizeof(uint) + sizeof(int) + sizeof(byte), path, cellId, isInterior, entrySection);
+                        cell.LockStates[i] = new PlacedRefLockEntry
+                        {
+                            PlacedRefId = r.ReadUInt32(),
+                            LockLevel = r.ReadInt32(),
+                            Locked = r.ReadByte(),
+                            KeyId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} key id"),
+                            TrapId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} trap id"),
+                        };
                     }
                 }
 

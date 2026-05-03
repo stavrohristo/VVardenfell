@@ -21,6 +21,11 @@ namespace VVardenfell.Runtime.Animation
         public int RigFamilyIndex;
     }
 
+    public struct ActorPresentationEquipmentSignature : IComponentData
+    {
+        public ulong Value;
+    }
+
     public struct ActorSkeleton : IComponentData
     {
         public int SkeletonIndex;

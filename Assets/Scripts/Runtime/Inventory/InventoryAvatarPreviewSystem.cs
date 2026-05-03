@@ -8,12 +8,11 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
-using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
     public partial class InventoryAvatarPreviewSystem : SystemBase
     {
@@ -23,16 +22,13 @@ namespace VVardenfell.Runtime.Inventory
 
         protected override void OnCreate()
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<InventoryWindowState>();
             RequireForUpdate<PlayerTag>();
             RequireForUpdate<ActorEquipmentSlot>();
         }
 
         protected override void OnDestroy()
         {
-            if (_previewEntity != Entity.Null && EntityManager.Exists(_previewEntity))
-                EntityManager.DestroyEntity(_previewEntity);
+            DestroyPreview();
             _previewEntity = Entity.Null;
         }
 
@@ -40,15 +36,6 @@ namespace VVardenfell.Runtime.Inventory
         {
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
             if (contentDb == null || !contentDb.TryGetActorHandle("player", out var actorHandle) || !actorHandle.IsValid)
-            {
-                DestroyPreview();
-                return;
-            }
-
-            var shell = SystemAPI.GetSingleton<RuntimeShellState>();
-            var inventoryState = SystemAPI.GetSingleton<InventoryWindowState>();
-            bool visible = shell.InventoryOpen != 0 || shell.ContainerOpen != 0 || inventoryState.Pinned != 0;
-            if (!visible)
             {
                 DestroyPreview();
                 return;
@@ -71,52 +58,52 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
+            using var equipmentSnapshot = new NativeList<ActorEquipmentSlot>(equipment.Length, Allocator.Temp);
+            for (int i = 0; i < equipment.Length; i++)
+                equipmentSnapshot.Add(equipment[i]);
+
             DestroyPreview();
-            CreatePreview(actorHandle, equipment, signature);
+            CreatePreview(actorHandle, equipmentSnapshot.AsArray(), signature);
         }
 
-        void CreatePreview(ActorDefHandle actorHandle, DynamicBuffer<ActorEquipmentSlot> equipment, ulong signature)
+        void CreatePreview(ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
         {
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            Entity preview = ecb.CreateEntity();
-            ecb.SetName(preview, new FixedString64Bytes("VVardenfell.InventoryAvatarPreview"));
-            ecb.AddComponent(preview, new ActorSpawnSource
+            Entity preview = EntityManager.CreateEntity();
+            EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
+            EntityManager.AddComponentData(preview, new ActorSpawnSource
             {
                 Definition = actorHandle,
                 FirstPerson = 0,
             });
-            ecb.AddComponent(preview, LocalTransform.FromPositionRotationScale(
+            EntityManager.AddComponentData(preview, LocalTransform.FromPositionRotationScale(
                 InventoryAvatarPreviewRuntimeUtility.Position,
                 InventoryAvatarPreviewRuntimeUtility.Rotation,
                 1f));
-            ecb.AddComponent(preview, new LocalToWorld
+            EntityManager.AddComponentData(preview, new LocalToWorld
             {
                 Value = float4x4.TRS(
                     InventoryAvatarPreviewRuntimeUtility.Position,
                     InventoryAvatarPreviewRuntimeUtility.Rotation,
                     new float3(1f)),
             });
-            ecb.AddComponent(preview, new MorrowindMovementState
+            EntityManager.AddComponentData(preview, new MorrowindMovementState
             {
                 Grounded = true,
                 GroundNormal = math.up(),
             });
-            ecb.AddComponent(preview, new ActorWeaponAnimationState
+            EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
             {
                 WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
                 Phase = ActorWeaponAnimationPhase.Hidden,
             });
-            ecb.AddComponent<ActorRenderVisible>(preview);
-            ecb.SetComponentEnabled<ActorRenderVisible>(preview, true);
-            ecb.AddComponent<ActorShadowCasterVisible>(preview);
-            ecb.SetComponentEnabled<ActorShadowCasterVisible>(preview, false);
+            EntityManager.AddComponent<ActorRenderVisible>(preview);
+            EntityManager.SetComponentEnabled<ActorRenderVisible>(preview, true);
+            EntityManager.AddComponent<ActorShadowCasterVisible>(preview);
+            EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(preview, false);
 
-            var previewEquipment = ecb.AddBuffer<ActorEquipmentSlot>(preview);
+            var previewEquipment = EntityManager.AddBuffer<ActorEquipmentSlot>(preview);
             for (int i = 0; i < equipment.Length; i++)
                 previewEquipment.Add(equipment[i]);
-
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
 
             _previewEntity = preview;
             _lastActor = actorHandle;

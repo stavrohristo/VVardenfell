@@ -7,7 +7,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class MorrowindScriptActorVitalApplySystem : SystemBase
     {
@@ -35,13 +35,27 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] SetHealth target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId} is not loaded.");
 
             if (!EntityManager.HasComponent<ActorVitalSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] SetHealth target ref={request.TargetPlacedRefId} has no ActorVitalSet.");
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId} has no ActorVitalSet.");
 
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            vitals.CurrentHealth = request.Health;
+            switch (request.Kind)
+            {
+                case 0:
+                case 1:
+                    vitals.CurrentHealth = request.IsMod != 0 ? vitals.CurrentHealth + request.Value : request.Value;
+                    break;
+                case 2:
+                    vitals.CurrentMagicka = request.IsMod != 0 ? vitals.CurrentMagicka + request.Value : request.Value;
+                    break;
+                case 3:
+                    vitals.CurrentFatigue = request.IsMod != 0 ? vitals.CurrentFatigue + request.Value : request.Value;
+                    break;
+                default:
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] Unknown actor vital kind {request.Kind}.");
+            }
             EntityManager.SetComponentData(target, vitals);
         }
     }

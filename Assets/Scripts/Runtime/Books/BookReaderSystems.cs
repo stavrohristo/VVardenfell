@@ -8,7 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Books
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class BookReaderRequestSystem : SystemBase
@@ -58,7 +58,7 @@ namespace VVardenfell.Runtime.Books
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(BookReaderRequestSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class BookReadRequestSystem : SystemBase

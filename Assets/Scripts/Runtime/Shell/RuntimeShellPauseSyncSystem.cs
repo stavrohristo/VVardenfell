@@ -5,8 +5,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
-    [UpdateAfter(typeof(RuntimeShellInputSystem))]
-    [UpdateAfter(typeof(RuntimeShellActionSystem))]
+    [UpdateAfter(typeof(MorrowindMenuMutationSystemGroup))]
     public partial class RuntimeShellPauseSyncSystem : SystemBase
     {
         protected override void OnCreate()

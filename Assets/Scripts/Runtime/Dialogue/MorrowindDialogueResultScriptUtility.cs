@@ -49,6 +49,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests,
             DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests,
+            DynamicBuffer<ActorAttributeMutationRequest> playerAttributeRequests,
+            DynamicBuffer<PlayerSkillMutationRequest> playerSkillRequests,
             DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
             DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
@@ -158,10 +160,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
-                if (TryApplyPlayerSkillResult(entityManager, line))
+                if (TryApplyPlayerSkillResult(playerSkillRequests, line))
                     continue;
 
-                if (TryApplyPlayerAttributeResult(entityManager, line))
+                if (TryApplyPlayerAttributeResult(entityManager, playerAttributeRequests, line))
                     continue;
 
                 if (TryApplyFactionReactionResult(contentDb, factionReactionOverrides, line))
@@ -1593,139 +1595,55 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static bool TryApplyPlayerSkillResult(EntityManager entityManager, string line)
+        static bool TryApplyPlayerSkillResult(DynamicBuffer<PlayerSkillMutationRequest> playerSkillRequests, string line)
         {
             string[] tokens = SplitCommandTokens(line);
-            if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
+            if (tokens.Length != 2 || !float.TryParse(tokens[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!TryApplyPlayerSkillCommand(ref command, ref value, entityManager, target))
-                return false;
-
-            return true;
-        }
-
-        static bool TryApplyPlayerSkillCommand(
-            ref string command,
-            ref int value,
-            EntityManager entityManager,
-            string target)
-        {
-            if (!TryResolvePlayerSkillCommand(command, out PlayerSkillKind skillKind)
+            if (!MorrowindActorSkillTextUtility.TryResolveSkillCommand(command, out byte skill, out byte mutation)
+                || mutation != MorrowindActorSkillTextUtility.MutationMod
                 || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
             {
                 return false;
             }
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<ActorSkillSet>());
-            if (query.IsEmptyIgnoreFilter)
-                return false;
-
-            var entity = query.GetSingletonEntity();
-            var skills = entityManager.GetComponentData<ActorSkillSet>(entity);
-            ApplyPlayerSkillDelta(ref skills, skillKind, value);
-            entityManager.SetComponentData(entity, skills);
+            playerSkillRequests.Add(new PlayerSkillMutationRequest
+            {
+                Skill = skill,
+                Kind = mutation,
+                Value = value,
+            });
             return true;
         }
 
-        static bool TryResolvePlayerSkillCommand(string command, out PlayerSkillKind skillKind)
-        {
-            skillKind = PlayerSkillKind.None;
-            if (string.IsNullOrWhiteSpace(command)
-                || command.Length <= 3
-                || !command.StartsWith("mod", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            string skill = command.Substring(3);
-            if (string.Equals(skill, "block", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Block;
-            else if (string.Equals(skill, "armorer", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Armorer;
-            else if (string.Equals(skill, "mediumarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.MediumArmor;
-            else if (string.Equals(skill, "heavyarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.HeavyArmor;
-            else if (string.Equals(skill, "bluntweapon", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.BluntWeapon;
-            else if (string.Equals(skill, "longblade", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.LongBlade;
-            else if (string.Equals(skill, "axe", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Axe;
-            else if (string.Equals(skill, "spear", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Spear;
-            else if (string.Equals(skill, "athletics", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Athletics;
-            else if (string.Equals(skill, "enchant", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Enchant;
-            else if (string.Equals(skill, "destruction", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Destruction;
-            else if (string.Equals(skill, "alteration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Alteration;
-            else if (string.Equals(skill, "illusion", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Illusion;
-            else if (string.Equals(skill, "conjuration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Conjuration;
-            else if (string.Equals(skill, "mysticism", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Mysticism;
-            else if (string.Equals(skill, "restoration", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Restoration;
-            else if (string.Equals(skill, "alchemy", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Alchemy;
-            else if (string.Equals(skill, "unarmored", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Unarmored;
-            else if (string.Equals(skill, "security", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Security;
-            else if (string.Equals(skill, "sneak", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Sneak;
-            else if (string.Equals(skill, "acrobatics", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Acrobatics;
-            else if (string.Equals(skill, "lightarmor", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.LightArmor;
-            else if (string.Equals(skill, "shortblade", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.ShortBlade;
-            else if (string.Equals(skill, "marksman", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Marksman;
-            else if (string.Equals(skill, "mercantile", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Mercantile;
-            else if (string.Equals(skill, "speechcraft", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.Speechcraft;
-            else if (string.Equals(skill, "handtohand", StringComparison.OrdinalIgnoreCase)) skillKind = PlayerSkillKind.HandToHand;
-
-            return skillKind != PlayerSkillKind.None;
-        }
-
-        static void ApplyPlayerSkillDelta(ref ActorSkillSet skills, PlayerSkillKind skillKind, int value)
-        {
-            switch (skillKind)
-            {
-                case PlayerSkillKind.Block: skills.Block += value; break;
-                case PlayerSkillKind.Armorer: skills.Armorer += value; break;
-                case PlayerSkillKind.MediumArmor: skills.MediumArmor += value; break;
-                case PlayerSkillKind.HeavyArmor: skills.HeavyArmor += value; break;
-                case PlayerSkillKind.BluntWeapon: skills.BluntWeapon += value; break;
-                case PlayerSkillKind.LongBlade: skills.LongBlade += value; break;
-                case PlayerSkillKind.Axe: skills.Axe += value; break;
-                case PlayerSkillKind.Spear: skills.Spear += value; break;
-                case PlayerSkillKind.Athletics: skills.Athletics += value; break;
-                case PlayerSkillKind.Enchant: skills.Enchant += value; break;
-                case PlayerSkillKind.Destruction: skills.Destruction += value; break;
-                case PlayerSkillKind.Alteration: skills.Alteration += value; break;
-                case PlayerSkillKind.Illusion: skills.Illusion += value; break;
-                case PlayerSkillKind.Conjuration: skills.Conjuration += value; break;
-                case PlayerSkillKind.Mysticism: skills.Mysticism += value; break;
-                case PlayerSkillKind.Restoration: skills.Restoration += value; break;
-                case PlayerSkillKind.Alchemy: skills.Alchemy += value; break;
-                case PlayerSkillKind.Unarmored: skills.Unarmored += value; break;
-                case PlayerSkillKind.Security: skills.Security += value; break;
-                case PlayerSkillKind.Sneak: skills.Sneak += value; break;
-                case PlayerSkillKind.Acrobatics: skills.Acrobatics += value; break;
-                case PlayerSkillKind.LightArmor: skills.LightArmor += value; break;
-                case PlayerSkillKind.ShortBlade: skills.ShortBlade += value; break;
-                case PlayerSkillKind.Marksman: skills.Marksman += value; break;
-                case PlayerSkillKind.Mercantile: skills.Mercantile += value; break;
-                case PlayerSkillKind.Speechcraft: skills.Speechcraft += value; break;
-                case PlayerSkillKind.HandToHand: skills.HandToHand += value; break;
-            }
-        }
-
-        static bool TryApplyPlayerAttributeResult(EntityManager entityManager, string line)
+        static bool TryApplyPlayerAttributeResult(EntityManager entityManager, DynamicBuffer<ActorAttributeMutationRequest> playerAttributeRequests, string line)
         {
             string[] tokens = SplitCommandTokens(line);
-            if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
+            if (tokens.Length != 2 || !float.TryParse(tokens[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
                 return false;
 
             ParseTargetCommand(tokens[0], out string target, out string command);
-            if (!string.Equals(command, "modstrength", StringComparison.OrdinalIgnoreCase)
+            if (!MorrowindActorAttributeTextUtility.TryResolveAttributeCommand(command, out byte attribute, out byte mutation)
+                || mutation != MorrowindActorAttributeTextUtility.MutationMod
                 || (!string.IsNullOrWhiteSpace(target) && !string.Equals(target, "player", StringComparison.OrdinalIgnoreCase)))
             {
                 return false;
             }
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<ActorAttributeSet>());
-            if (query.IsEmptyIgnoreFilter)
+            Entity player = MorrowindRuntimeTargetResolver.ResolvePlayerEntity(entityManager);
+            if (player == Entity.Null)
                 return false;
 
-            var entity = query.GetSingletonEntity();
-            var attributes = entityManager.GetComponentData<ActorAttributeSet>(entity);
-            attributes.Strength += value;
-            entityManager.SetComponentData(entity, attributes);
+            playerAttributeRequests.Add(new ActorAttributeMutationRequest
+            {
+                TargetEntity = player,
+                TargetPlacedRefId = 0u,
+                Attribute = attribute,
+                Kind = mutation,
+                Value = value,
+            });
             return true;
         }
 
@@ -2529,38 +2447,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             Fight = 2,
             Flee = 3,
             Alarm = 4,
-        }
-
-        enum PlayerSkillKind : byte
-        {
-            None = 0,
-            Block = 1,
-            Armorer = 2,
-            MediumArmor = 3,
-            HeavyArmor = 4,
-            BluntWeapon = 5,
-            LongBlade = 6,
-            Axe = 7,
-            Spear = 8,
-            Athletics = 9,
-            Enchant = 10,
-            Destruction = 11,
-            Alteration = 12,
-            Illusion = 13,
-            Conjuration = 14,
-            Mysticism = 15,
-            Restoration = 16,
-            Alchemy = 17,
-            Unarmored = 18,
-            Security = 19,
-            Sneak = 20,
-            Acrobatics = 21,
-            LightArmor = 22,
-            ShortBlade = 23,
-            Marksman = 24,
-            Mercantile = 25,
-            Speechcraft = 26,
-            HandToHand = 27,
         }
 
         struct SetExpression

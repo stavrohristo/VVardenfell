@@ -11,7 +11,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateAfter(typeof(ObjectAnimationPlaybackSystem))]
     public partial struct ObjectAnimationSamplingSystem : ISystem
     {

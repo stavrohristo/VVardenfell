@@ -9,7 +9,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellActionSystem))]
     public partial class MorrowindDialogueSessionSystem : SystemBase
     {
@@ -51,6 +51,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             var globalMapRevealRequests = EntityManager.GetBuffer<GlobalMapRevealRequest>(runtimeEntity);
             var forceGreetingRequests = EntityManager.GetBuffer<ActorForceGreetingRequest>(runtimeEntity);
             var playerReputationRequests = EntityManager.GetBuffer<PlayerReputationMutationRequest>(runtimeEntity);
+            var playerAttributeRequests = EntityManager.GetBuffer<ActorAttributeMutationRequest>(runtimeEntity);
+            var playerSkillRequests = EntityManager.GetBuffer<PlayerSkillMutationRequest>(runtimeEntity);
             var playerFactionRequests = EntityManager.GetBuffer<PlayerFactionMutationRequest>(runtimeEntity);
             var actorFactionRequests = EntityManager.GetBuffer<ActorFactionRankMutationRequest>(runtimeEntity);
             ref var dialogueState = ref SystemAPI.GetSingletonRW<MorrowindDialogueState>().ValueRW;
@@ -71,7 +73,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.NeedsGreeting = 0;
                 lines.Clear();
                 choices.Clear();
-                if (!TryAppendGreeting(contentDb, activeExplicitRefs, ref shell, ref session, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerFactionRequests, actorFactionRequests, lines, choices, ref dialogueState, ref questState, time, questStates, questEntries))
+                if (!TryAppendGreeting(contentDb, activeExplicitRefs, ref shell, ref session, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, lines, choices, ref dialogueState, ref questState, time, questStates, questEntries))
                 {
                     Debug.LogWarning($"[VVardenfell][Dialogue] no greeting matched speaker '{session.SpeakerId}'.");
                     RuntimeShellStateUtility.CloseDialogue(ref shell);
@@ -123,6 +125,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     globalMapRevealRequests,
                     forceGreetingRequests,
                     playerReputationRequests,
+                    playerAttributeRequests,
+                    playerSkillRequests,
                     playerFactionRequests,
                     actorFactionRequests,
                     lines,
@@ -156,6 +160,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     globalMapRevealRequests,
                     forceGreetingRequests,
                     playerReputationRequests,
+                    playerAttributeRequests,
+                    playerSkillRequests,
                     playerFactionRequests,
                     actorFactionRequests,
                     lines,
@@ -188,6 +194,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests,
             DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests,
+            DynamicBuffer<ActorAttributeMutationRequest> playerAttributeRequests,
+            DynamicBuffer<PlayerSkillMutationRequest> playerSkillRequests,
             DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
             DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindDialogueSessionLine> lines,
@@ -224,7 +232,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.SelectedTopicDialogueIndex = dialogueIndex;
                 string response = contentDb.Data.DialogueInfos[infoIndex].Response;
                 MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, EntityManager, session.SpeakerEntity, session.SpeakerActor);
-                if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
+                if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
                     CloseDialogue(ref shell, ref session, lines, choices);
                 return true;
             }
@@ -253,6 +261,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests,
             DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests,
+            DynamicBuffer<ActorAttributeMutationRequest> playerAttributeRequests,
+            DynamicBuffer<PlayerSkillMutationRequest> playerSkillRequests,
             DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
             DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindDialogueSessionLine> lines,
@@ -304,7 +314,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.SpeakerId);
             string response = contentDb.Data.DialogueInfos[infoIndex].Response;
             MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, EntityManager, session.SpeakerEntity, session.SpeakerActor);
-            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
+            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 
@@ -329,6 +339,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests,
             DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests,
+            DynamicBuffer<ActorAttributeMutationRequest> playerAttributeRequests,
+            DynamicBuffer<PlayerSkillMutationRequest> playerSkillRequests,
             DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
             DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindDialogueSessionLine> lines,
@@ -400,7 +412,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             string response = contentDb.Data.DialogueInfos[infoIndex].Response;
             MorrowindDialogueUtility.AddTopicsFromResponse(contentDb, knownTopics, response, EntityManager, session.SpeakerEntity, session.SpeakerActor);
-            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
+            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(contentDb, EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, contentDb.Data.DialogueInfos[infoIndex].ResultScript, ref shell, ref session))
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 

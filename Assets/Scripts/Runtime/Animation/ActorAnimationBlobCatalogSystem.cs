@@ -5,7 +5,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup), OrderFirst = true)]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup), OrderFirst = true)]
     public partial class ActorAnimationBlobCatalogSystem : SystemBase
     {
         protected override void OnUpdate()

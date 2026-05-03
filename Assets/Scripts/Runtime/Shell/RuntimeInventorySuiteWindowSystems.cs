@@ -5,7 +5,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     public partial class StatsWindowStateSystem : SystemBase
     {
@@ -22,12 +22,12 @@ namespace VVardenfell.Runtime.Shell
             ref var state = ref SystemAPI.GetSingletonRW<StatsWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<StatsWindowRequest>().ValueRW;
             RuntimeWindowGeometryUtility.ApplyRectRequest(ref state.Rect, ref request.RectRequest);
-            state.Visible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 ? (byte)1 : (byte)0;
+            state.Visible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 && shell.StatsMenuDisabled == 0 ? (byte)1 : (byte)0;
             request = default;
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     public partial class SpellWindowStateSystem : SystemBase
     {
@@ -48,12 +48,12 @@ namespace VVardenfell.Runtime.Shell
                 state.SelectedSpellIndex = request.SelectedSpellIndex;
             if (request.PendingFilterTextChange != 0)
                 state.FilterText = request.FilterText;
-            state.Visible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 ? (byte)1 : (byte)0;
+            state.Visible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 && shell.MagicMenuDisabled == 0 ? (byte)1 : (byte)0;
             request = default;
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     public partial class MapWindowStateSystem : SystemBase
     {
@@ -70,7 +70,7 @@ namespace VVardenfell.Runtime.Shell
             ref var state = ref SystemAPI.GetSingletonRW<MapWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<MapWindowRequest>().ValueRW;
             bool wasVisible = state.Visible != 0;
-            byte desiredVisible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 ? (byte)1 : (byte)0;
+            byte desiredVisible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 && shell.MapMenuDisabled == 0 ? (byte)1 : (byte)0;
             RuntimeWindowGeometryUtility.ApplyRectRequest(ref state.Rect, ref request.RectRequest);
             if (request.PendingModeChange != 0)
                 state.Mode = NormalizeMapMode(request.Mode);

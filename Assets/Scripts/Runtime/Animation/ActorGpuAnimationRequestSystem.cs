@@ -6,9 +6,8 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAnimationControllerSystem))]
-    [UpdateBefore(typeof(ActorPoseSamplingSystem))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
+    [UpdateAfter(typeof(ActorPresentationSpawnSystem))]
     public partial struct ActorGpuAnimationRequestSystem : ISystem
     {
         const int MainPriority = 0;

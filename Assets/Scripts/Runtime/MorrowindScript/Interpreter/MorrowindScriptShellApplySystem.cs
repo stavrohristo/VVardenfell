@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class MorrowindScriptShellApplySystem : SystemBase
     {
@@ -38,6 +38,86 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 shell.PlayerSleeping = 0;
                 return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.ScreenFade)
+            {
+                shell.ScreenFadeStartAlpha = shell.ScreenFadeAlpha;
+                shell.ScreenFadeTargetAlpha = request.FadeOut != 0 ? 1f : 0f;
+                shell.ScreenFadeDuration = request.Duration < 0f ? 0f : request.Duration;
+                shell.ScreenFadeElapsed = 0f;
+                if (shell.ScreenFadeDuration <= 0f)
+                {
+                    shell.ScreenFadeAlpha = shell.ScreenFadeTargetAlpha;
+                    shell.ScreenFadeElapsed = shell.ScreenFadeDuration;
+                }
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerControls)
+            {
+                shell.PlayerControlsDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerFighting)
+            {
+                shell.PlayerFightingDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerJumping)
+            {
+                shell.PlayerJumpingDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerMagic)
+            {
+                shell.PlayerMagicDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerViewSwitch)
+            {
+                shell.PlayerViewSwitchDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.Rest)
+            {
+                shell.RestDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.Teleporting)
+            {
+                shell.TeleportingDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.MenuEnabled)
+            {
+                byte disabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                switch (request.MenuKind)
+                {
+                    case 1:
+                        shell.InventoryMenuDisabled = disabled;
+                        if (disabled != 0)
+                            shell.InventoryOpen = 0;
+                        return;
+                    case 2:
+                        shell.StatsMenuDisabled = disabled;
+                        return;
+                    case 3:
+                        shell.MagicMenuDisabled = disabled;
+                        return;
+                    case 4:
+                        shell.MapMenuDisabled = disabled;
+                        return;
+                    default:
+                        throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell menu kind {request.MenuKind}.");
+                }
             }
 
             throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell request operation {request.Operation}.");

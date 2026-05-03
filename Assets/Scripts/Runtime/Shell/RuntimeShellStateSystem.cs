@@ -1,11 +1,12 @@
 using Unity.Entities;
+using Unity.Mathematics;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     public partial class RuntimeShellStateSystem : SystemBase
     {
         protected override void OnCreate()
@@ -20,6 +21,8 @@ namespace VVardenfell.Runtime.Shell
 
             if (state.SelectedAction == 0)
                 state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
+
+            AdvanceScreenFade(ref state, SystemAPI.Time.DeltaTime);
 
             if (state.PauseMenuOpen == 0 && state.SaveLoadBrowserOpen == 0 && state.ModalOpen != 0)
                 RuntimeShellStateUtility.ClearModal(ref state);
@@ -51,6 +54,23 @@ namespace VVardenfell.Runtime.Shell
             }
 
             RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
+        }
+
+        static void AdvanceScreenFade(ref RuntimeShellState state, float deltaTime)
+        {
+            if (state.ScreenFadeElapsed >= state.ScreenFadeDuration)
+                return;
+
+            if (state.ScreenFadeDuration <= 0f)
+            {
+                state.ScreenFadeAlpha = state.ScreenFadeTargetAlpha;
+                state.ScreenFadeElapsed = state.ScreenFadeDuration;
+                return;
+            }
+
+            state.ScreenFadeElapsed = math.min(state.ScreenFadeDuration, state.ScreenFadeElapsed + math.max(0f, deltaTime));
+            float t = math.saturate(state.ScreenFadeElapsed / state.ScreenFadeDuration);
+            state.ScreenFadeAlpha = math.lerp(state.ScreenFadeStartAlpha, state.ScreenFadeTargetAlpha, t);
         }
     }
 }

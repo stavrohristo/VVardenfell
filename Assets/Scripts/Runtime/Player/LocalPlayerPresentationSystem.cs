@@ -12,7 +12,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
     public partial class LocalPlayerPresentationSpawnSystem : SystemBase
     {

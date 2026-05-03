@@ -113,10 +113,10 @@ namespace VVardenfell.Runtime.Shell
             var playerStats = BuildPlayerPresentationStats();
             var location = BuildLocationPresentation(RuntimeContentDatabase.Active);
             bool suiteOpen = shell.InventoryOpen != 0 && shell.ContainerOpen == 0;
-            bool inventoryVisible = suiteOpen || (shell.ContainerOpen == 0 && inventoryState.Pinned != 0);
-            bool statsVisible = suiteOpen || (shell.ContainerOpen == 0 && statsState.Pinned != 0);
-            bool spellVisible = suiteOpen || (shell.ContainerOpen == 0 && spellState.Pinned != 0);
-            bool mapVisible = suiteOpen || (shell.ContainerOpen == 0 && mapState.Pinned != 0);
+            bool inventoryVisible = (suiteOpen || (shell.ContainerOpen == 0 && inventoryState.Pinned != 0)) && shell.InventoryMenuDisabled == 0;
+            bool statsVisible = (suiteOpen || (shell.ContainerOpen == 0 && statsState.Pinned != 0)) && shell.StatsMenuDisabled == 0;
+            bool spellVisible = (suiteOpen || (shell.ContainerOpen == 0 && spellState.Pinned != 0)) && shell.MagicMenuDisabled == 0;
+            bool mapVisible = (suiteOpen || (shell.ContainerOpen == 0 && mapState.Pinned != 0)) && shell.MapMenuDisabled == 0;
 
             InventoryWindowViewModel inventoryModel = inventoryVisible
                 ? BuildInventoryModel(
@@ -198,6 +198,7 @@ namespace VVardenfell.Runtime.Shell
                 shell.PauseMenuOpen != 0,
                 shell.ModalOpen != 0,
                 shell.OptionsOpen != 0,
+                shell.ScreenFadeAlpha,
                 ResolveModalTitle(shell.ModalOpen != 0, shell.ModalTitle),
                 ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody));
         }

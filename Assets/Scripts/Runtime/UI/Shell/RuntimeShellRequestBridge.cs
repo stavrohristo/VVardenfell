@@ -382,6 +382,19 @@ namespace VVardenfell.Runtime.UI.Shell
             int count,
             out string error)
         {
+            if (TryAppendInventoryItemAction(
+                    action,
+                    source,
+                    target,
+                    sourceIndex,
+                    sourcePlacedRefId,
+                    targetPlacedRefId,
+                    count,
+                    out error))
+            {
+                return true;
+            }
+
             return TryMutateRequest<InventoryItemActionRequest>(
                 "Inventory item action request state",
                 (ref InventoryItemActionRequest request) =>
@@ -401,6 +414,42 @@ namespace VVardenfell.Runtime.UI.Shell
                     };
                 },
                 out error);
+        }
+
+        static bool TryAppendInventoryItemAction(
+            InventoryItemActionKind action,
+            InventoryItemOwnerKind source,
+            InventoryItemOwnerKind target,
+            int sourceIndex,
+            uint sourcePlacedRefId,
+            uint targetPlacedRefId,
+            int count,
+            out string error)
+        {
+            if (!TryGetSingletonBufferOwner<InventoryItemActionRequestElement>(
+                    "Inventory item action request queue",
+                    out var entityManager,
+                    out Entity entity,
+                    out error))
+            {
+                return false;
+            }
+
+            var queue = entityManager.GetBuffer<InventoryItemActionRequestElement>(entity);
+            uint sequence = queue.Length > 0 ? queue[queue.Length - 1].Sequence + 1u : 1u;
+            queue.Add(new InventoryItemActionRequestElement
+            {
+                Action = (byte)action,
+                SourceOwner = (byte)source,
+                TargetOwner = (byte)target,
+                SourceIndex = sourceIndex,
+                SourcePlacedRefId = sourcePlacedRefId,
+                TargetPlacedRefId = targetPlacedRefId,
+                Count = count,
+                Sequence = sequence,
+            });
+            error = null;
+            return true;
         }
 
         static uint ResolveOpenContainerPlacedRefId()
@@ -674,6 +723,36 @@ namespace VVardenfell.Runtime.UI.Shell
             out Entity entity,
             out string error)
             where T : unmanaged, IComponentData
+        {
+            entity = Entity.Null;
+            entityManager = default;
+
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+            {
+                error = "Default ECS world is not ready.";
+                return false;
+            }
+
+            entityManager = world.EntityManager;
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            if (query.IsEmptyIgnoreFilter)
+            {
+                error = $"{label} is not ready.";
+                return false;
+            }
+
+            entity = query.GetSingletonEntity();
+            error = null;
+            return true;
+        }
+
+        static bool TryGetSingletonBufferOwner<T>(
+            string label,
+            out EntityManager entityManager,
+            out Entity entity,
+            out string error)
+            where T : unmanaged, IBufferElementData
         {
             entity = Entity.Null;
             entityManager = default;

@@ -8,7 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class ContainerWindowStateSystem : SystemBase

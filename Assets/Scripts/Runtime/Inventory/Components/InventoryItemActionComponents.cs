@@ -38,6 +38,21 @@ namespace VVardenfell.Runtime.Components
         public uint Sequence;
     }
 
+    public struct InventoryItemActionRequestElement : IBufferElementData
+    {
+        public byte Action;
+        public byte SourceOwner;
+        public byte TargetOwner;
+        public int SourceIndex;
+        public uint SourcePlacedRefId;
+        public uint TargetPlacedRefId;
+        public ContentReference Content;
+        public FixedString64Bytes SoulId;
+        public int SoulActorHandleValue;
+        public int Count;
+        public uint Sequence;
+    }
+
     public struct InventoryHeldItemState : IComponentData
     {
         public byte Active;

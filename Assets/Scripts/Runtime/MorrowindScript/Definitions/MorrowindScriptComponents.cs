@@ -16,6 +16,7 @@ namespace VVardenfell.Runtime.Components
     public struct MorrowindScriptRuntimeState : IComponentData
     {
         public uint NextAudioRequestSequence;
+        public uint RandomState;
     }
 
     public struct MorrowindScriptInstance : IComponentData
@@ -174,7 +175,9 @@ namespace VVardenfell.Runtime.Components
     {
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
-        public float Health;
+        public float Value;
+        public byte Kind;
+        public byte IsMod;
     }
 
     public struct MorrowindScriptInventoryMutationRequest : IBufferElementData
@@ -233,6 +236,21 @@ namespace VVardenfell.Runtime.Components
         public quaternion Rotation;
     }
 
+    public struct MorrowindScriptInitialTransformSnapshot
+    {
+        public uint PlacedRefId;
+        public float3 Position;
+        public quaternion Rotation;
+        public float Scale;
+    }
+
+    public struct MorrowindScriptLockStateSnapshot
+    {
+        public uint PlacedRefId;
+        public int LockLevel;
+        public byte Locked;
+    }
+
     public struct MorrowindScriptInventoryCountSnapshot
     {
         public uint PlacedRefId;
@@ -252,6 +270,8 @@ namespace VVardenfell.Runtime.Components
     {
         public uint PlacedRefId;
         public float Health;
+        public float Magicka;
+        public float Fatigue;
     }
 
     public struct MorrowindScriptActorDiseaseSnapshot
@@ -259,6 +279,19 @@ namespace VVardenfell.Runtime.Components
         public uint PlacedRefId;
         public byte HasCommonDisease;
         public byte HasBlightDisease;
+    }
+
+    public struct MorrowindScriptActorKnownSpellSnapshot
+    {
+        public Entity ActorEntity;
+        public uint PlacedRefId;
+        public SpellDefHandle Spell;
+    }
+
+    public struct MorrowindScriptRunningProgramSnapshot
+    {
+        public int ProgramIndex;
+        public byte Running;
     }
 
     public struct MorrowindScriptOnDeathConsumeRequest : IBufferElementData
@@ -270,11 +303,24 @@ namespace VVardenfell.Runtime.Components
     public enum MorrowindScriptShellRequestOperation : byte
     {
         WakeUpPlayer = 1,
+        ScreenFade = 2,
+        PlayerControls = 3,
+        Teleporting = 4,
+        MenuEnabled = 5,
+        PlayerFighting = 6,
+        PlayerJumping = 7,
+        PlayerMagic = 8,
+        PlayerViewSwitch = 9,
+        Rest = 10,
     }
 
     public struct MorrowindScriptShellRequest : IBufferElementData
     {
         public byte Operation;
+        public byte FadeOut;
+        public byte Enabled;
+        public byte MenuKind;
+        public float Duration;
     }
 
     public struct MorrowindScriptJailRequest : IBufferElementData

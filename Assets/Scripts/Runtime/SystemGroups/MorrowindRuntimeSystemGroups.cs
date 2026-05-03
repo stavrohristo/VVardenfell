@@ -60,6 +60,12 @@ namespace VVardenfell.Runtime.Systems
     {
     }
 
+    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateBefore(typeof(VVardenfell.Runtime.Shell.RuntimeShellPauseSyncSystem))]
+    public partial class MorrowindMenuMutationSystemGroup : MorrowindRuntimeGatedSystemGroup
+    {
+    }
+
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateBefore(typeof(PhysicsSystemGroup))]
     public partial class MorrowindOwnedPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
@@ -113,6 +119,13 @@ namespace VVardenfell.Runtime.Systems
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateBefore(typeof(TransformSystemGroup))]
+    public partial class MorrowindPresentationBuildSystemGroup : MorrowindRuntimeGatedSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(TransformSystemGroup))]
     public partial class MorrowindPostTransformSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
@@ -141,9 +154,9 @@ namespace VVardenfell.Runtime.Systems
     {
     }
 
-    [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class MorrowindInteractionPresentationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(MorrowindPostTransformSimulationSystemGroup))]
+    public partial class MorrowindInteractionPresentationSystemGroup : MorrowindRuntimeGatedSystemGroup
     {
     }
 

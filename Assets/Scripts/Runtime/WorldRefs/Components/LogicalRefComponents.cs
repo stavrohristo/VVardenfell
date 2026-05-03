@@ -27,6 +27,29 @@ namespace VVardenfell.Runtime.Components
         public byte Disabled;
     }
 
+    public struct PlacedRefInitialTransform : IComponentData
+    {
+        public float3 Position;
+        public quaternion Rotation;
+        public float Scale;
+    }
+
+    public struct PlacedRefLockState : IComponentData
+    {
+        public int LockLevel;
+        public byte Locked;
+        public FixedString64Bytes KeyId;
+        public FixedString64Bytes TrapId;
+    }
+
+    public struct PlacedRefLockRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public int LockLevel;
+        public byte Operation;
+    }
+
     public struct PlacedRefCapturedSoul : IComponentData
     {
         public FixedString64Bytes SoulId;

@@ -96,6 +96,7 @@ namespace VVardenfell.Runtime.UI.Shell
         MorrowindButtonView _countCancelButton;
         RectTransform _dragIconRoot;
         Image _dragIcon;
+        Image _screenFade;
         BitmapTextGraphic _dragCount;
         BitmapTextGraphic _dragCountShadow;
         bool _inventoryVisible;
@@ -171,6 +172,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RequestInventoryItemClicked,
                 RequestDropHeldToInventory,
                 RequestUseHeldOnAvatar,
+                HasManagedDrag,
                 RequestInventoryFilterText,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Inventory));
             _containerView = new ContainerWindowView(
@@ -181,6 +183,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RequestContainerWindowRectUpdate,
                 RequestContainerItemClicked,
                 RequestDropHeldToContainer,
+                HasManagedDrag,
                 RequestTakeAll,
                 RequestCloseContainer);
             _statsView = new StatsWindowView(
@@ -249,6 +252,7 @@ namespace VVardenfell.Runtime.UI.Shell
             BuildCountDialog();
             BuildDragIcon();
             _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme, _iconService);
+            BuildScreenFade();
             gameObject.SetActive(false);
         }
 
@@ -267,6 +271,7 @@ namespace VVardenfell.Runtime.UI.Shell
             bool pauseMenuOpen,
             bool modalOpen,
             bool optionsOpen,
+            float screenFadeAlpha,
             string modalTitle,
             string modalBody)
         {
@@ -379,6 +384,8 @@ namespace VVardenfell.Runtime.UI.Shell
 
             if (!pauseMenuOpen && !inventoryVisible && !containerVisible && !saveLoadVisible && !journalVisible && !dialogueVisible)
                 ClearSelectionIfOwned();
+
+            SyncScreenFade(screenFadeAlpha);
         }
 
         // Vanilla MW pause/main menu has no window chrome. The buttons float on a dim
@@ -656,6 +663,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeUiFactory.ResolveThinFrame(_theme),
                 new Color(0f, 0f, 0f, 0.62f));
             RuntimeUiFactory.Stretch(frame.Root);
+            SetFrameRaycastTarget(frame, false);
             _dragIcon = RuntimeUiFactory.CreateImage("Icon", frame.Client, Color.white);
             RuntimeUiFactory.SetInset(
                 _dragIcon.rectTransform,
@@ -667,6 +675,43 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _dragCountShadow = CreateDragCountText(frame.Client, "CountShadow", new Color(0f, 0f, 0f, 0.82f), new Vector2(-2f, 1f));
             _dragCount = CreateDragCountText(frame.Client, "Count", new Color(0.94f, 0.85f, 0.68f), new Vector2(-3f, 2f));
+        }
+
+        void BuildScreenFade()
+        {
+            _screenFade = RuntimeUiFactory.CreateImage("ScreenFade", _rootRect, Color.clear);
+            RuntimeUiFactory.Stretch(_screenFade.rectTransform);
+            _screenFade.raycastTarget = false;
+            _screenFade.gameObject.SetActive(false);
+            _screenFade.rectTransform.SetAsLastSibling();
+        }
+
+        void SyncScreenFade(float alpha)
+        {
+            if (_screenFade == null)
+                return;
+
+            alpha = Mathf.Clamp01(alpha);
+            bool active = alpha > 0.0001f;
+            SetActiveIfChanged(_screenFade.gameObject, active);
+            if (!active)
+                return;
+
+            _screenFade.color = new Color(0f, 0f, 0f, alpha);
+            _screenFade.rectTransform.SetAsLastSibling();
+        }
+
+        static void SetFrameRaycastTarget(BorderFrameView frame, bool value)
+        {
+            if (frame?.Center != null) frame.Center.raycastTarget = value;
+            if (frame?.Top != null) frame.Top.raycastTarget = value;
+            if (frame?.Bottom != null) frame.Bottom.raycastTarget = value;
+            if (frame?.Left != null) frame.Left.raycastTarget = value;
+            if (frame?.Right != null) frame.Right.raycastTarget = value;
+            if (frame?.TopLeft != null) frame.TopLeft.raycastTarget = value;
+            if (frame?.TopRight != null) frame.TopRight.raycastTarget = value;
+            if (frame?.BottomLeft != null) frame.BottomLeft.raycastTarget = value;
+            if (frame?.BottomRight != null) frame.BottomRight.raycastTarget = value;
         }
 
         BitmapTextGraphic CreateDragCountText(RectTransform parent, string name, Color color, Vector2 offset)
@@ -886,7 +931,8 @@ namespace VVardenfell.Runtime.UI.Shell
             if (entry == null)
                 return;
 
-            RequestInventorySelection(inventoryIndex);
+            if (context.Alt)
+                RequestInventorySelection(inventoryIndex);
             BeginItemActionWithCount(
                 InventoryItemOwnerKind.PlayerInventory,
                 context.Alt ? InventoryItemActionKind.DirectTransfer : InventoryItemActionKind.BeginDrag,
@@ -907,7 +953,8 @@ namespace VVardenfell.Runtime.UI.Shell
             if (entry == null)
                 return;
 
-            RequestContainerSelection(itemIndex);
+            if (context.Alt)
+                RequestContainerSelection(itemIndex);
             BeginItemActionWithCount(
                 InventoryItemOwnerKind.Container,
                 context.Alt ? InventoryItemActionKind.DirectTransfer : InventoryItemActionKind.BeginDrag,
@@ -1094,6 +1141,9 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void RequestDropHeldToInventory()
         {
+            if (!_dragActive)
+                return;
+
             if (!RuntimeShellRequestBridge.TryDropHeldItemToInventory(out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed dropping held item to inventory: {error}");
             ClearManagedDrag();
@@ -1123,10 +1173,16 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void RequestDropHeldToContainer()
         {
+            if (!_dragActive)
+                return;
+
             if (!RuntimeShellRequestBridge.TryDropHeldItemToContainer(out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed dropping held item to container: {error}");
             ClearManagedDrag();
         }
+
+        bool HasManagedDrag()
+            => _dragActive;
 
         void RequestTakeAll()
         {

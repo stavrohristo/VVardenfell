@@ -16,7 +16,7 @@ using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateAfter(typeof(ActorAnimationBlobCatalogSystem))]
     public partial class ActorPresentationSpawnSystem : SystemBase
     {
@@ -183,6 +183,10 @@ namespace VVardenfell.Runtime.Animation
                             attachmentBoneBuffer.Add(attachmentBones[i]);
                     }
                 }
+                ecb.AddComponent(entity, new ActorPresentationEquipmentSignature
+                {
+                    Value = BuildEquipmentSignature(hasEquipment, equipmentBuffer),
+                });
                 ecb.AddComponent(entity, actorBounds);
             }
 
@@ -720,6 +724,28 @@ namespace VVardenfell.Runtime.Animation
         static bool ShouldSpawnRigidEquipmentAtPresentation(in ItemEquipmentDef equipment)
         {
             return equipment.Kind == ItemEquipmentKind.Weapon;
+        }
+
+        static ulong BuildEquipmentSignature(bool hasEquipment, DynamicBuffer<ActorEquipmentSlot> equipment)
+        {
+            if (!hasEquipment || !equipment.IsCreated)
+                return 0ul;
+
+            unchecked
+            {
+                ulong hash = 1469598103934665603ul;
+                for (int i = 0; i < equipment.Length; i++)
+                {
+                    var slot = equipment[i];
+                    hash = (hash ^ (byte)slot.Slot) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.Content.Kind) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.Content.HandleValue) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.InventoryIndex) * 1099511628211ul;
+                    hash = (hash ^ slot.VisualMode) * 1099511628211ul;
+                }
+
+                return hash;
+            }
         }
 
     }

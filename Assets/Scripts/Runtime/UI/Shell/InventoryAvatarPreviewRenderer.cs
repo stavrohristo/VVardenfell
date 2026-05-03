@@ -5,6 +5,7 @@ namespace VVardenfell.Runtime.UI.Shell
 {
     sealed class InventoryAvatarPreviewRenderer
     {
+        static readonly int LocalMapRenderId = Shader.PropertyToID("_VV_LocalMapRender");
         const int TextureWidth = 256;
         const int TextureHeight = 320;
         const float OrthographicSize = 1.12f;
@@ -24,14 +25,19 @@ namespace VVardenfell.Runtime.UI.Shell
             camera.transform.LookAt(ToVector3(InventoryAvatarPreviewRuntimeUtility.LookAt), Vector3.up);
             camera.orthographicSize = OrthographicSize;
             camera.aspect = TextureWidth / (float)TextureHeight;
+            camera.nearClipPlane = 0.01f;
+            camera.farClipPlane = 8f;
             camera.ResetProjectionMatrix();
             camera.ResetWorldToCameraMatrix();
+            float previousLocalMapRender = Shader.GetGlobalFloat(LocalMapRenderId);
+            Shader.SetGlobalFloat(LocalMapRenderId, 1f);
             try
             {
                 camera.Render();
             }
             finally
             {
+                Shader.SetGlobalFloat(LocalMapRenderId, previousLocalMapRender);
                 camera.targetTexture = null;
             }
         }

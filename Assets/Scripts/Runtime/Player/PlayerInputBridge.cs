@@ -2,6 +2,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -22,6 +23,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<MorrowindMovementInput>());
             RequireForUpdate(_playerQuery);
             RequireForUpdate<FixedTickSystem.Singleton>();
+            RequireForUpdate<RuntimeShellState>();
         }
 
         protected override void OnStartRunning()
@@ -47,6 +49,7 @@ namespace VVardenfell.Runtime.Player
             ref var control = ref controlRef.ValueRW;
             ref var movementInput = ref inputRef.ValueRW;
             ref var state = ref stateRef.ValueRW;
+            var shell = SystemAPI.GetSingleton<RuntimeShellState>();
 
             bool gameplayInputAllowed = !GameplayInputGate.BlocksGameplayInput;
             ApplyCursorState(gameplayInputAllowed);
@@ -87,10 +90,21 @@ namespace VVardenfell.Runtime.Player
             bool attackHeld = mouse != null && mouse.leftButton.isPressed;
             bool attackPressedThisFrame = mouse != null && mouse.leftButton.wasPressedThisFrame;
             bool attackReleasedThisFrame = mouse != null && mouse.leftButton.wasReleasedThisFrame;
+            if (shell.PlayerJumpingDisabled != 0)
+                jumpPressedThisFrame = false;
+            if (shell.PlayerViewSwitchDisabled != 0)
+                toggleViewPressedThisFrame = false;
+            if (shell.PlayerFightingDisabled != 0)
+            {
+                readyWeaponTogglePressedThisFrame = false;
+                attackHeld = false;
+                attackPressedThisFrame = false;
+                attackReleasedThisFrame = false;
+            }
 
             control.MoveInput = move;
             control.LookDeltaDegrees += frameLookDelta;
-            control.JumpHeld = kb.spaceKey.isPressed;
+            control.JumpHeld = shell.PlayerJumpingDisabled == 0 && kb.spaceKey.isPressed;
             control.SprintHeld = kb.leftShiftKey.isPressed;
             control.CrouchHeld = kb.leftCtrlKey.isPressed || kb.cKey.isPressed;
             control.InteractPressed |= interactPressedThisFrame;
