@@ -15,7 +15,8 @@ namespace VVardenfell.Runtime.Shell
             RuntimeContentDatabase contentDb,
             in InventoryWindowState state,
             DynamicBuffer<PlayerInventoryItem> inventory,
-            in PlayerPresentationStats playerStats)
+            in PlayerPresentationStats playerStats,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
         {
             var viewModel = new InventoryWindowViewModel
             {
@@ -58,7 +59,7 @@ namespace VVardenfell.Runtime.Shell
                     entry.Count,
                     i,
                     i == state.SelectedInventoryIndex,
-                    ResolveEquippedState(entry, i)));
+                    ResolveEquippedState(equipment, entry, i)));
             }
 
             viewModel.WeightLabel = hasWeightData && playerStats.HasPlayer
@@ -73,19 +74,22 @@ namespace VVardenfell.Runtime.Shell
             return viewModel;
         }
 
-        /// <summary>
-        /// Placeholder stub for the inventory-to-equipment lookup. The equipment
-        /// system is not online yet; this always returns false so the
-        /// inventory renders borderless today. Replace the body with a real
-        /// slot query (weapon / cuirass / helmet / gauntlets / etc.) once
-        /// ActorEquipmentSlots (or whatever the eventual component is named)
-        /// exists. The caller is in BuildInventoryModel, which has access to
-        /// PlayerPresentationStats if slot lookup needs it.
-        /// </summary>
-        static bool ResolveEquippedState(PlayerInventoryItem entry, int inventoryIndex)
+        static bool ResolveEquippedState(DynamicBuffer<ActorEquipmentSlot> equipment, PlayerInventoryItem entry, int inventoryIndex)
         {
-            _ = entry;
-            _ = inventoryIndex;
+            if (!equipment.IsCreated)
+                return false;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var slot = equipment[i];
+                if (slot.InventoryIndex == inventoryIndex
+                    && slot.Content.Kind == entry.Content.Kind
+                    && slot.Content.HandleValue == entry.Content.HandleValue)
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
 

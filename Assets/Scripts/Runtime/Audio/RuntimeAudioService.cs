@@ -478,26 +478,40 @@ namespace VVardenfell.Runtime.Audio
         {
             using var _ = k_QueueScriptEvent.Auto();
 
-            if (contentDb == null || !request.Sound.IsValid)
+            bool directPath = !request.DirectPath.IsEmpty;
+            if (contentDb == null || (!request.Sound.IsValid && !directPath))
                 return;
 
-            string path = ResolveSoundPath(contentDb, request.Sound);
+            string path = request.Sound.IsValid
+                ? ResolveSoundPath(contentDb, request.Sound)
+                : ResolveDirectSoundPath(request.DirectPath.ToString());
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
             float requestVolume = Mathf.Clamp01(request.Volume <= 0f ? 1f : request.Volume);
-            float volume = ResolveSoundVolume(
-                contentDb,
-                request.Sound,
-                tuning.InteractionFallbackBaseVolume,
-                tuning.InteractionVolumeMultiplier) * requestVolume;
-            ResolveSoundRange(
-                contentDb,
-                request.Sound,
-                tuning.InteractionMinDistanceMultiplier,
-                tuning.InteractionMaxDistanceMultiplier,
-                out float minDistance,
-                out float maxDistance);
+            float volume = request.Sound.IsValid
+                ? ResolveSoundVolume(
+                    contentDb,
+                    request.Sound,
+                    tuning.InteractionFallbackBaseVolume,
+                    tuning.InteractionVolumeMultiplier) * requestVolume
+                : Mathf.Clamp01(tuning.InteractionFallbackBaseVolume * tuning.InteractionVolumeMultiplier) * requestVolume;
+            float minDistance;
+            float maxDistance;
+            if (request.Sound.IsValid)
+            {
+                ResolveSoundRange(
+                    contentDb,
+                    request.Sound,
+                    tuning.InteractionMinDistanceMultiplier,
+                    tuning.InteractionMaxDistanceMultiplier,
+                    out minDistance,
+                    out maxDistance);
+            }
+            else
+            {
+                ResolveVoiceSoundRange(contentDb, out minDistance, out maxDistance);
+            }
 
             var position = new Vector3(request.Position.x, request.Position.y, request.Position.z);
             if (request.Spatial != 0 && IsBeyondSpatialMaxDistance(position, maxDistance))
@@ -623,6 +637,25 @@ namespace VVardenfell.Runtime.Audio
                 return mp3Path;
 
             WarnMissing(wavPath, "resolve");
+            return null;
+        }
+
+        string ResolveDirectSoundPath(string rawPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath) || string.IsNullOrWhiteSpace(_installPath))
+                return null;
+
+            string relativePath = SoundPathResolver.Correct(rawPath);
+            string directPath = Path.Combine(_installPath, "Data Files", relativePath.Replace('\\', Path.DirectorySeparatorChar));
+            if (File.Exists(directPath))
+                return directPath;
+
+            string mp3RelativePath = SoundPathResolver.ChangeExtension(relativePath, ".mp3");
+            string mp3Path = Path.Combine(_installPath, "Data Files", mp3RelativePath.Replace('\\', Path.DirectorySeparatorChar));
+            if (File.Exists(mp3Path))
+                return mp3Path;
+
+            WarnMissing(directPath, "resolve");
             return null;
         }
 
@@ -1280,6 +1313,42 @@ namespace VVardenfell.Runtime.Audio
 
             minRange *= Mathf.Max(0f, minMultiplier);
             maxRange *= Mathf.Max(0f, maxMultiplier);
+            if (contentDb.TryGetGameSettingFloat("fAudioMinDistanceMult", out float audioMinMultiplier))
+                minRange *= Mathf.Max(0f, audioMinMultiplier);
+            else
+                WarnMissingAudioGameSetting("fAudioMinDistanceMult");
+
+            if (contentDb.TryGetGameSettingFloat("fAudioMaxDistanceMult", out float audioMaxMultiplier))
+                maxRange *= Mathf.Max(0f, audioMaxMultiplier);
+            else
+                WarnMissingAudioGameSetting("fAudioMaxDistanceMult");
+
+            minRange = Mathf.Max(minRange, 1f);
+            maxRange = Mathf.Max(minRange, maxRange);
+
+            minDistance = minRange * WorldScale.MwUnitsToMeters;
+            maxDistance = maxRange * WorldScale.MwUnitsToMeters;
+        }
+
+        void ResolveVoiceSoundRange(RuntimeContentDatabase contentDb, out float minDistance, out float maxDistance)
+        {
+            minDistance = 0f;
+            maxDistance = 0f;
+            if (contentDb == null)
+                return;
+
+            float minRange = 0f;
+            float maxRange = 0f;
+            if (contentDb.TryGetGameSettingFloat("fAudioVoiceDefaultMinDistance", out float defaultMin))
+                minRange = defaultMin;
+            else
+                WarnMissingAudioGameSetting("fAudioVoiceDefaultMinDistance");
+
+            if (contentDb.TryGetGameSettingFloat("fAudioVoiceDefaultMaxDistance", out float defaultMax))
+                maxRange = defaultMax;
+            else
+                WarnMissingAudioGameSetting("fAudioVoiceDefaultMaxDistance");
+
             if (contentDb.TryGetGameSettingFloat("fAudioMinDistanceMult", out float audioMinMultiplier))
                 minRange *= Mathf.Max(0f, audioMinMultiplier);
             else

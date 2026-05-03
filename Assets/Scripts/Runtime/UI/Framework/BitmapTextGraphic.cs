@@ -45,6 +45,7 @@ namespace VVardenfell.Runtime.UI.Framework
         [SerializeField] BitmapTextWrapMode _wrapMode = BitmapTextWrapMode.None;
 
         readonly List<string> _lineBuffer = new();
+        readonly List<string> _measureLineBuffer = new();
 
         public BitmapFontAsset Font
         {
@@ -186,6 +187,15 @@ namespace VVardenfell.Runtime.UI.Framework
 
                 return widest;
             }
+        }
+
+        public float MeasureHeightForWidth(float availableWidth)
+        {
+            if (_font == null || string.IsNullOrEmpty(_text))
+                return 0f;
+
+            BuildLines(_text, availableWidth, _measureLineBuffer);
+            return _measureLineBuffer.Count * _font.LineHeight * _fontScale;
         }
 
         protected override void OnPopulateMesh(VertexHelper vh)

@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.WorldState
         public uint NextJournalSequence;
         public uint NextRuntimeRefId;
         public PlayerInventoryItem[] Inventory;
+        public ActorEquipmentSlot[] PlayerEquipment;
         public ActorKnownSpell[] KnownSpells;
         public ActorActiveMagicEffect[] ActiveMagicEffects;
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;

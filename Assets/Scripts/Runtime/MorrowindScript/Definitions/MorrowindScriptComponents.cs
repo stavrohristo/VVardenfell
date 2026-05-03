@@ -188,13 +188,12 @@ namespace VVardenfell.Runtime.Components
         public byte Operation;
     }
 
-    public struct MorrowindScriptCastRequest : IBufferElementData
+    public struct MorrowindScriptSayRequest : IBufferElementData
     {
-        public Entity CasterEntity;
-        public uint CasterPlacedRefId;
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
-        public SpellDefHandle Spell;
+        public FixedString512Bytes VoicePath;
+        public FixedString512Bytes Subtitle;
     }
 
     public struct MorrowindScriptActorLocalSetRequest : IBufferElementData
@@ -215,11 +214,22 @@ namespace VVardenfell.Runtime.Components
     {
         public uint PlacedRefId;
         public byte Status;
+        public int CurrentPackageTypeId;
+    }
+
+    public struct MorrowindScriptActorCombatTargetSnapshot
+    {
+        public Entity ActorEntity;
+        public uint ActorPlacedRefId;
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public byte Active;
     }
 
     public struct MorrowindScriptRefTransformSnapshot
     {
         public uint PlacedRefId;
+        public float3 Position;
         public quaternion Rotation;
     }
 
@@ -238,15 +248,23 @@ namespace VVardenfell.Runtime.Components
         public byte Consumed;
     }
 
+    public struct MorrowindScriptActorVitalSnapshot
+    {
+        public uint PlacedRefId;
+        public float Health;
+    }
+
+    public struct MorrowindScriptActorDiseaseSnapshot
+    {
+        public uint PlacedRefId;
+        public byte HasCommonDisease;
+        public byte HasBlightDisease;
+    }
+
     public struct MorrowindScriptOnDeathConsumeRequest : IBufferElementData
     {
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
-    }
-
-    public struct MorrowindScriptMessageBoxRequest : IBufferElementData
-    {
-        public FixedString512Bytes Body;
     }
 
     public enum MorrowindScriptShellRequestOperation : byte
@@ -300,6 +318,7 @@ namespace VVardenfell.Runtime.Components
     {
         public uint Sequence;
         public SoundDefHandle Sound;
+        public FixedString512Bytes DirectPath;
         public Entity SourceEntity;
         public uint SourcePlacedRefId;
         public float3 Position;

@@ -188,7 +188,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static bool ContainsTopicEntry(DynamicBuffer<MorrowindTopicJournalEntry> entries, int dialogueIndex, int infoIndex)
+        public static bool ContainsTopicEntry(DynamicBuffer<MorrowindTopicJournalEntry> entries, int dialogueIndex, int infoIndex)
         {
             for (int i = 0; i < entries.Length; i++)
             {
@@ -198,6 +198,9 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return false;
         }
+
+        public static bool ResponseContainsTopicReference(string response, string topic)
+            => !string.IsNullOrWhiteSpace(response) && ContainsTopicReference(response, topic);
 
         static bool ContainsTopicReference(string response, string topic)
         {

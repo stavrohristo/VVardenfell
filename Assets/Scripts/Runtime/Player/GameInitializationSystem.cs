@@ -118,6 +118,7 @@ namespace VVardenfell.Runtime.Player
                 init.PlayerCrime = payload.PlayerCrime;
                 if (payload.PlayerFactions != null)
                     PopulateInitializationFactions(em, initEntity, payload.PlayerFactions);
+                PopulateInitializationEquipment(em, initEntity, payload.PlayerEquipment);
                 PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
                 PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
                 WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
@@ -196,6 +197,7 @@ namespace VVardenfell.Runtime.Player
                         activeEffects.Add(initEffects[i]);
                 }
             }
+            PopulatePlayerEquipment(em, initEntity, player);
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
@@ -273,6 +275,69 @@ namespace VVardenfell.Runtime.Player
                 Reputation = actor.Reputation,
                 Joined = 1,
             });
+        }
+
+        static void PopulateInitializationEquipment(EntityManager em, Entity initEntity, ActorEquipmentSlot[] equipment)
+        {
+            var buffer = em.HasBuffer<ActorEquipmentSlot>(initEntity)
+                ? em.GetBuffer<ActorEquipmentSlot>(initEntity)
+                : em.AddBuffer<ActorEquipmentSlot>(initEntity);
+
+            buffer.Clear();
+            if (equipment == null)
+                return;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                if (equipment[i].Content.IsValid)
+                    buffer.Add(equipment[i]);
+            }
+        }
+
+        static void PopulatePlayerEquipment(EntityManager em, Entity initEntity, Entity player)
+        {
+            var equipment = em.AddBuffer<ActorEquipmentSlot>(player);
+            if (em.HasBuffer<ActorEquipmentSlot>(initEntity))
+            {
+                var initEquipment = em.GetBuffer<ActorEquipmentSlot>(initEntity);
+                for (int i = 0; i < initEquipment.Length; i++)
+                {
+                    if (initEquipment[i].Content.IsValid)
+                        equipment.Add(initEquipment[i]);
+                }
+
+                return;
+            }
+
+            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(em);
+            if (inventoryEntity == Entity.Null || !em.HasBuffer<PlayerInventoryItem>(inventoryEntity))
+                return;
+            if (RuntimeContentDatabase.Active == null || !RuntimeContentDatabase.Active.TryGetActorHandle("player", out var actorHandle))
+                return;
+
+            ref readonly var actor = ref RuntimeContentDatabase.Active.Get(actorHandle);
+            var inventory = em.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+            using var actorInventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                var item = inventory[i];
+                if (item.Count <= 0 || !item.Content.IsValid)
+                    continue;
+
+                actorInventory.Add(new ActorInventoryItem
+                {
+                    Content = item.Content,
+                    SoulId = item.SoulId,
+                    SoulActorHandleValue = item.SoulActorHandleValue,
+                    Count = item.Count,
+                    AuthoredOrder = i,
+                });
+            }
+
+            using var selectedEquipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(RuntimeContentDatabase.Active, actor, actorInventory.AsArray(), selectedEquipment);
+            for (int i = 0; i < selectedEquipment.Length; i++)
+                equipment.Add(selectedEquipment[i]);
         }
 
         void ConfigureStreamingAfterInitialization(EntityManager em, in GameInitializationSingleton init)

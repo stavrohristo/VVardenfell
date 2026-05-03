@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
@@ -63,8 +64,8 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeInventoryIconService _iconService;
         readonly RectTransform _viewport;
         readonly Action _onRectChanged;
-        readonly Action<int> _onSelectionChanged;
-        readonly Action _onTakeSelected;
+        readonly Action<int, InventoryItemClickContext> _onItemClicked;
+        readonly Action _onBackgroundClicked;
         readonly Action _onTakeAll;
         readonly Action _onClose;
 
@@ -85,8 +86,8 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiTheme theme,
             RuntimeInventoryIconService iconService,
             Action onRectChanged,
-            Action<int> onSelectionChanged,
-            Action onTakeSelected,
+            Action<int, InventoryItemClickContext> onItemClicked,
+            Action onBackgroundClicked,
             Action onTakeAll,
             Action onClose)
         {
@@ -94,8 +95,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _iconService = iconService;
             _viewport = viewport;
             _onRectChanged = onRectChanged;
-            _onSelectionChanged = onSelectionChanged;
-            _onTakeSelected = onTakeSelected;
+            _onItemClicked = onItemClicked;
+            _onBackgroundClicked = onBackgroundClicked;
             _onTakeAll = onTakeAll;
             _onClose = onClose;
 
@@ -186,6 +187,11 @@ namespace VVardenfell.Runtime.UI.Shell
             viewportImage.color = new Color(1f, 1f, 1f, 0.001f); // near-invisible but needed for scroll raycasts
             viewportImage.raycastTarget = true;
             viewportRect.gameObject.AddComponent<RectMask2D>();
+            var backgroundButton = viewportRect.gameObject.AddComponent<Button>();
+            backgroundButton.targetGraphic = viewportImage;
+            backgroundButton.transition = Selectable.Transition.None;
+            backgroundButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            backgroundButton.onClick.AddListener(() => _onBackgroundClicked?.Invoke());
 
             var gridContent = RuntimeUiFactory.CreateAnchoredRect(
                 "GridContent",
@@ -395,16 +401,20 @@ namespace VVardenfell.Runtime.UI.Shell
                 Count = count,
             };
 
-            // Click = take. Vanilla behavior: single click on an item in a container
-            // removes it and adds it to the player's inventory. We chain selection +
-            // take-selected through the existing shell request callbacks so the bridge
-            // doesn't need to grow a "take at index" entry point.
-            button.onClick.AddListener(() =>
-            {
-                _onSelectionChanged?.Invoke(cell.InventoryIndex);
-                _onTakeSelected?.Invoke();
-            });
+            button.onClick.AddListener(() => _onItemClicked?.Invoke(cell.InventoryIndex, CaptureClickContext()));
             return cell;
+        }
+
+        static InventoryItemClickContext CaptureClickContext()
+        {
+            var keyboard = Keyboard.current;
+            if (keyboard == null)
+                return default;
+
+            bool control = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
+            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
+            return new InventoryItemClickContext(control, shift, alt);
         }
 
         void SyncButtonState(MorrowindButtonView buttonView, bool enabled)

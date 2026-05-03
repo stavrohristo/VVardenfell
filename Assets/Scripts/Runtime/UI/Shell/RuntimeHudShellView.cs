@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
@@ -61,6 +62,9 @@ namespace VVardenfell.Runtime.UI.Shell
         const float ModalHeight = 160f;
         const float ModalTitlePixelHeight = RuntimeClassicUiFontSizes.Caption;
         const float ModalBodyPixelHeight = RuntimeClassicUiFontSizes.Body;
+        const float CountDialogWidth = 330f;
+        const float CountDialogHeight = 150f;
+        const float DragIconSize = 42f;
 
         RuntimeUiTheme _theme;
         RuntimeInventoryIconService _iconService;
@@ -84,6 +88,16 @@ namespace VVardenfell.Runtime.UI.Shell
         RectTransform _modalRoot;
         BitmapTextGraphic _modalTitle;
         BitmapTextGraphic _modalBody;
+        RectTransform _countRoot;
+        BitmapTextGraphic _countTitle;
+        BitmapTextGraphic _countValueText;
+        InputField _countInput;
+        MorrowindButtonView _countOkButton;
+        MorrowindButtonView _countCancelButton;
+        RectTransform _dragIconRoot;
+        Image _dragIcon;
+        BitmapTextGraphic _dragCount;
+        BitmapTextGraphic _dragCountShadow;
         bool _inventoryVisible;
         bool _containerVisible;
         bool _pauseMenuOpen;
@@ -91,6 +105,17 @@ namespace VVardenfell.Runtime.UI.Shell
         bool _optionsOpen;
         bool _journalVisible;
         bool _dialogueVisible;
+        InventoryWindowViewModel _inventoryModel;
+        ContainerWindowViewModel _containerModel;
+        InventoryItemActionKind _pendingCountAction;
+        InventoryItemOwnerKind _pendingCountOwner;
+        int _pendingCountIndex = -1;
+        int _pendingCountMax;
+        int _pendingCountValue;
+        InventoryWindowEntryViewModel _pendingCountEntry;
+        bool _suppressCountInput;
+        bool _dragActive;
+        InventoryWindowEntryViewModel _dragEntry;
 
         readonly List<PauseMenuButtonView> _buttons = new();
 
@@ -101,6 +126,11 @@ namespace VVardenfell.Runtime.UI.Shell
             var view = go.AddComponent<RuntimeHudShellView>();
             view.Initialize();
             return view;
+        }
+
+        void Update()
+        {
+            SyncDragIconPosition();
         }
 
         void Initialize()
@@ -138,7 +168,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 _iconService,
                 RequestInventoryWindowRectUpdate,
                 RequestInventoryCategory,
-                RequestInventorySelection,
+                RequestInventoryItemClicked,
+                RequestDropHeldToInventory,
+                RequestUseHeldOnAvatar,
                 RequestInventoryFilterText,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Inventory));
             _containerView = new ContainerWindowView(
@@ -147,8 +179,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 _iconService,
                 RequestContainerWindowRectUpdate,
-                RequestContainerSelection,
-                RequestTakeSelected,
+                RequestContainerItemClicked,
+                RequestDropHeldToContainer,
                 RequestTakeAll,
                 RequestCloseContainer);
             _statsView = new StatsWindowView(
@@ -186,8 +218,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _theme,
                 RequestDialogueTopicSelection,
                 RequestDialogueChoiceSelection,
-                RequestDialogueGoodbye,
-                RequestDialogueClose);
+                RequestDialogueGoodbye);
             _saveLoadBrowserView = new SaveLoadBrowserView(
                 _rootRect,
                 _theme,
@@ -215,6 +246,8 @@ namespace VVardenfell.Runtime.UI.Shell
 
             BuildPauseMenu();
             BuildModal();
+            BuildCountDialog();
+            BuildDragIcon();
             _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme, _iconService);
             gameObject.SetActive(false);
         }
@@ -283,6 +316,8 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _inventoryVisible = inventoryVisible;
             _containerVisible = containerVisible;
+            _inventoryModel = inventoryModel;
+            _containerModel = containerModel;
             _pauseMenuOpen = pauseMenuOpen;
             _modalOpen = modalOpen;
             _journalVisible = journalVisible;
@@ -318,6 +353,9 @@ namespace VVardenfell.Runtime.UI.Shell
             SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
             _popupLayer?.Sync();
+            if (!inventoryVisible && !containerVisible)
+                ClearManagedDrag();
+            SyncDragIconPosition();
 
             if (_modalRoot.gameObject.activeSelf)
             {
@@ -501,6 +539,154 @@ namespace VVardenfell.Runtime.UI.Shell
             _modalBody.rectTransform.offsetMax = new Vector2(-RuntimeClassicUiMetrics.Ui(20f), -RuntimeClassicUiMetrics.Ui(40f));
             _modalBody.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             _modalBody.raycastTarget = false;
+        }
+
+        void BuildCountDialog()
+        {
+            _countRoot = RuntimeUiFactory.CreateAnchoredRect(
+                "InventoryCountDialog",
+                _rootRect,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                Vector2.zero,
+                RuntimeClassicUiMetrics.Ui(new Vector2(CountDialogWidth, CountDialogHeight)));
+            _countRoot.pivot = new Vector2(0.5f, 0.5f);
+            _countRoot.gameObject.SetActive(false);
+
+            var frame = RuntimeUiFactory.CreateBorderFrame(
+                "Frame",
+                _countRoot,
+                RuntimeUiFactory.ResolveThinFrame(_theme),
+                new Color(0f, 0f, 0f, 0.88f));
+            RuntimeUiFactory.Stretch(frame.Root);
+
+            _countTitle = RuntimeUiFactory.CreateBitmapText(
+                "Title",
+                frame.Client,
+                _theme.DefaultFont,
+                1f,
+                new Color(0.94f, 0.82f, 0.53f),
+                BitmapTextAlignment.Center);
+            _countTitle.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Caption);
+            _countTitle.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _countTitle.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _countTitle.rectTransform.offsetMin = RuntimeClassicUiMetrics.Ui(new Vector2(12f, -36f));
+            _countTitle.rectTransform.offsetMax = RuntimeClassicUiMetrics.Ui(new Vector2(-12f, -10f));
+
+            _countValueText = RuntimeUiFactory.CreateBitmapText(
+                "CountValue",
+                frame.Client,
+                _theme.DefaultFont,
+                1f,
+                new Color(0.94f, 0.85f, 0.68f),
+                BitmapTextAlignment.Center);
+            _countValueText.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Body);
+            _countValueText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
+            _countValueText.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+            _countValueText.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            _countValueText.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            _countValueText.rectTransform.anchoredPosition = RuntimeClassicUiMetrics.Ui(new Vector2(0f, 12f));
+            _countValueText.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(180f, 24f));
+
+            var inputView = RuntimeUiFactory.CreateBitmapInputField(
+                "CountInput",
+                frame.Client,
+                _theme,
+                1f,
+                new Color(0.94f, 0.85f, 0.68f),
+                new Color(0f, 0f, 0f, 0.7f),
+                "1",
+                8f,
+                4f,
+                6);
+            inputView.Root.anchorMin = new Vector2(0.5f, 0.5f);
+            inputView.Root.anchorMax = new Vector2(0.5f, 0.5f);
+            inputView.Root.pivot = new Vector2(0.5f, 0.5f);
+            inputView.Root.anchoredPosition = RuntimeClassicUiMetrics.Ui(new Vector2(0f, -18f));
+            inputView.Root.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(86f, 24f));
+            inputView.InputField.contentType = InputField.ContentType.IntegerNumber;
+            inputView.InputField.onValueChanged.AddListener(OnCountInputChanged);
+            _countInput = inputView.InputField;
+
+            BuildCountButton(frame.Client, "Minus", "-", new Vector2(-72f, -18f), () => SetCountValue(_pendingCountValue - 1));
+            BuildCountButton(frame.Client, "Plus", "+", new Vector2(72f, -18f), () => SetCountValue(_pendingCountValue + 1));
+            _countOkButton = BuildCountButton(frame.Client, "OK", "OK", new Vector2(-52f, -58f), ConfirmCountDialog, 72f);
+            _countCancelButton = BuildCountButton(frame.Client, "Cancel", "Cancel", new Vector2(52f, -58f), CancelCountDialog, 72f);
+        }
+
+        MorrowindButtonView BuildCountButton(RectTransform parent, string name, string label, Vector2 position, UnityEngine.Events.UnityAction onClick, float width = 42f)
+        {
+            var rect = RuntimeUiFactory.CreateAnchoredRect(
+                $"{name}Rect",
+                parent,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                RuntimeClassicUiMetrics.Ui(position),
+                RuntimeClassicUiMetrics.Ui(new Vector2(width, 24f)));
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            var button = RuntimeUiFactory.CreateMorrowindButton(
+                name,
+                rect,
+                _theme,
+                label,
+                RuntimeClassicUiMetrics.WindowText(0.46f),
+                new Color(0.94f, 0.85f, 0.68f),
+                new Color(0.12f, 0.1f, 0.08f, 0.9f));
+            RuntimeUiFactory.Stretch(button.Root);
+            button.Button.onClick.AddListener(onClick);
+            return button;
+        }
+
+        void BuildDragIcon()
+        {
+            _dragIconRoot = RuntimeUiFactory.CreateAnchoredRect(
+                "InventoryDragIcon",
+                _rootRect,
+                new Vector2(0f, 0f),
+                new Vector2(0f, 0f),
+                Vector2.zero,
+                RuntimeClassicUiMetrics.Ui(new Vector2(DragIconSize, DragIconSize)));
+            _dragIconRoot.pivot = new Vector2(0f, 1f);
+            _dragIconRoot.gameObject.SetActive(false);
+            _dragIconRoot.SetAsLastSibling();
+
+            var frame = RuntimeUiFactory.CreateBorderFrame(
+                "Frame",
+                _dragIconRoot,
+                RuntimeUiFactory.ResolveThinFrame(_theme),
+                new Color(0f, 0f, 0f, 0.62f));
+            RuntimeUiFactory.Stretch(frame.Root);
+            _dragIcon = RuntimeUiFactory.CreateImage("Icon", frame.Client, Color.white);
+            RuntimeUiFactory.SetInset(
+                _dragIcon.rectTransform,
+                RuntimeClassicUiMetrics.Ui(2f),
+                RuntimeClassicUiMetrics.Ui(2f),
+                -RuntimeClassicUiMetrics.Ui(2f),
+                -RuntimeClassicUiMetrics.Ui(2f));
+            _dragIcon.raycastTarget = false;
+
+            _dragCountShadow = CreateDragCountText(frame.Client, "CountShadow", new Color(0f, 0f, 0f, 0.82f), new Vector2(-2f, 1f));
+            _dragCount = CreateDragCountText(frame.Client, "Count", new Color(0.94f, 0.85f, 0.68f), new Vector2(-3f, 2f));
+        }
+
+        BitmapTextGraphic CreateDragCountText(RectTransform parent, string name, Color color, Vector2 offset)
+        {
+            var text = RuntimeUiFactory.CreateBitmapText(
+                name,
+                parent,
+                _theme.DefaultFont,
+                1f,
+                color,
+                BitmapTextAlignment.Right);
+            text.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Count);
+            text.VerticalAlignment = BitmapTextVerticalAlignment.Bottom;
+            text.rectTransform.anchorMin = new Vector2(1f, 0f);
+            text.rectTransform.anchorMax = new Vector2(1f, 0f);
+            text.rectTransform.pivot = new Vector2(1f, 0f);
+            text.rectTransform.anchoredPosition = RuntimeClassicUiMetrics.Ui(offset);
+            text.rectTransform.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(34f, 13f));
+            text.raycastTarget = false;
+            return text;
         }
 
         void ConfigurePauseNavigation()
@@ -688,6 +874,212 @@ namespace VVardenfell.Runtime.UI.Shell
                 Debug.LogWarning($"[VVardenfell][UI] failed setting inventory filter text: {error}");
         }
 
+        void RequestInventoryItemClicked(int inventoryIndex, InventoryItemClickContext context)
+        {
+            if (_dragActive)
+            {
+                RequestDropHeldToInventory();
+                return;
+            }
+
+            var entry = FindEntry(_inventoryModel?.Entries, inventoryIndex);
+            if (entry == null)
+                return;
+
+            RequestInventorySelection(inventoryIndex);
+            BeginItemActionWithCount(
+                InventoryItemOwnerKind.PlayerInventory,
+                context.Alt ? InventoryItemActionKind.DirectTransfer : InventoryItemActionKind.BeginDrag,
+                inventoryIndex,
+                entry,
+                context);
+        }
+
+        void RequestContainerItemClicked(int itemIndex, InventoryItemClickContext context)
+        {
+            if (_dragActive)
+            {
+                RequestDropHeldToContainer();
+                return;
+            }
+
+            var entry = FindEntry(_containerModel?.Entries, itemIndex);
+            if (entry == null)
+                return;
+
+            RequestContainerSelection(itemIndex);
+            BeginItemActionWithCount(
+                InventoryItemOwnerKind.Container,
+                context.Alt ? InventoryItemActionKind.DirectTransfer : InventoryItemActionKind.BeginDrag,
+                itemIndex,
+                entry,
+                context);
+        }
+
+        void BeginItemActionWithCount(
+            InventoryItemOwnerKind owner,
+            InventoryItemActionKind action,
+            int index,
+            InventoryWindowEntryViewModel entry,
+            InventoryItemClickContext context)
+        {
+            int max = Mathf.Max(1, ParseCount(entry.CountText));
+            int count = context.Control ? 1 : max;
+            if (max > 1 && !context.Shift && !context.Control)
+            {
+                OpenCountDialog(owner, action, index, entry, max);
+                return;
+            }
+
+            ExecuteItemAction(owner, action, index, count, entry);
+        }
+
+        void OpenCountDialog(
+            InventoryItemOwnerKind owner,
+            InventoryItemActionKind action,
+            int index,
+            InventoryWindowEntryViewModel entry,
+            int max)
+        {
+            _pendingCountOwner = owner;
+            _pendingCountAction = action;
+            _pendingCountIndex = index;
+            _pendingCountMax = Mathf.Max(1, max);
+            _pendingCountEntry = entry;
+            _countTitle.Text = string.IsNullOrWhiteSpace(entry?.Name) ? "Take" : entry.Name.Trim();
+            _countValueText.Text = action == InventoryItemActionKind.DirectTransfer ? "Transfer Count" : "Take Count";
+            SetCountValue(_pendingCountMax);
+            _countRoot.gameObject.SetActive(true);
+            _countRoot.SetAsLastSibling();
+            _eventSystem?.SetSelectedGameObject(_countInput.gameObject);
+        }
+
+        void ConfirmCountDialog()
+        {
+            _countRoot.gameObject.SetActive(false);
+            ExecuteItemAction(_pendingCountOwner, _pendingCountAction, _pendingCountIndex, _pendingCountValue, _pendingCountEntry);
+            _pendingCountOwner = InventoryItemOwnerKind.None;
+            _pendingCountAction = InventoryItemActionKind.None;
+            _pendingCountIndex = -1;
+            _pendingCountEntry = null;
+        }
+
+        void CancelCountDialog()
+        {
+            _countRoot.gameObject.SetActive(false);
+            _pendingCountOwner = InventoryItemOwnerKind.None;
+            _pendingCountAction = InventoryItemActionKind.None;
+            _pendingCountIndex = -1;
+            _pendingCountEntry = null;
+        }
+
+        void OnCountInputChanged(string value)
+        {
+            if (_suppressCountInput)
+                return;
+
+            if (!int.TryParse(value, out int parsed))
+                parsed = 1;
+            SetCountValue(parsed);
+        }
+
+        void SetCountValue(int value)
+        {
+            _pendingCountValue = Mathf.Clamp(value, 1, Mathf.Max(1, _pendingCountMax));
+            if (_countInput != null)
+            {
+                _suppressCountInput = true;
+                _countInput.SetTextWithoutNotify(_pendingCountValue.ToString());
+                _suppressCountInput = false;
+            }
+        }
+
+        void ExecuteItemAction(
+            InventoryItemOwnerKind owner,
+            InventoryItemActionKind action,
+            int index,
+            int count,
+            InventoryWindowEntryViewModel entry)
+        {
+            bool success;
+            string error;
+            if (owner == InventoryItemOwnerKind.PlayerInventory)
+            {
+                success = action == InventoryItemActionKind.DirectTransfer
+                    ? RuntimeShellRequestBridge.TryDirectTransferInventoryItem(index, count, out error)
+                    : RuntimeShellRequestBridge.TryBeginInventoryItemDrag(index, count, out error);
+            }
+            else
+            {
+                success = action == InventoryItemActionKind.DirectTransfer
+                    ? RuntimeShellRequestBridge.TryDirectTransferContainerItem(index, count, out error)
+                    : RuntimeShellRequestBridge.TryBeginContainerItemDrag(index, count, out error);
+            }
+
+            if (!success)
+            {
+                Debug.LogWarning($"[VVardenfell][UI] failed requesting inventory item action: {error}");
+                return;
+            }
+
+            if (action == InventoryItemActionKind.BeginDrag)
+                BeginManagedDrag(entry, count);
+        }
+
+        void BeginManagedDrag(InventoryWindowEntryViewModel entry, int count)
+        {
+            _dragActive = true;
+            _dragEntry = entry;
+            _dragIcon.sprite = _iconService.GetSprite(entry?.IconPath);
+            _dragIcon.preserveAspect = true;
+            string countText = count > 1 ? count.ToString() : string.Empty;
+            bool hasCount = !string.IsNullOrEmpty(countText);
+            _dragCount.gameObject.SetActive(hasCount);
+            _dragCountShadow.gameObject.SetActive(hasCount);
+            _dragCount.Text = countText;
+            _dragCountShadow.Text = countText;
+            _dragIconRoot.gameObject.SetActive(true);
+            _dragIconRoot.SetAsLastSibling();
+            SyncDragIconPosition();
+        }
+
+        void ClearManagedDrag()
+        {
+            _dragActive = false;
+            _dragEntry = null;
+            if (_dragIconRoot != null)
+                _dragIconRoot.gameObject.SetActive(false);
+        }
+
+        void SyncDragIconPosition()
+        {
+            if (!_dragActive || _dragIconRoot == null || Mouse.current == null)
+                return;
+
+            Vector2 mouse = Mouse.current.position.ReadValue();
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(_rootRect, mouse, null, out Vector2 local);
+            _dragIconRoot.anchoredPosition = local + RuntimeClassicUiMetrics.Ui(new Vector2(8f, -8f));
+        }
+
+        static InventoryWindowEntryViewModel FindEntry(InventoryWindowEntryViewModel[] entries, int inventoryIndex)
+        {
+            if (entries == null)
+                return null;
+
+            for (int i = 0; i < entries.Length; i++)
+            {
+                if (entries[i].InventoryIndex == inventoryIndex)
+                    return entries[i];
+            }
+
+            return null;
+        }
+
+        static int ParseCount(string countText)
+        {
+            return int.TryParse(countText, out int value) && value > 0 ? value : 1;
+        }
+
         void RequestInventoryCategory(InventoryWindowCategory category)
         {
             if (!RuntimeShellRequestBridge.TrySetInventoryCategory(category, out string error))
@@ -700,6 +1092,23 @@ namespace VVardenfell.Runtime.UI.Shell
                 Debug.LogWarning($"[VVardenfell][UI] failed selecting inventory item {inventoryIndex}: {error}");
         }
 
+        void RequestDropHeldToInventory()
+        {
+            if (!RuntimeShellRequestBridge.TryDropHeldItemToInventory(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed dropping held item to inventory: {error}");
+            ClearManagedDrag();
+        }
+
+        void RequestUseHeldOnAvatar()
+        {
+            if (!_dragActive)
+                return;
+
+            if (!RuntimeShellRequestBridge.TryUseHeldInventoryItem(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed using held inventory item: {error}");
+            ClearManagedDrag();
+        }
+
         void RequestContainerSelection(int itemIndex)
         {
             if (!RuntimeShellRequestBridge.TrySelectContainerItem(itemIndex, out string error))
@@ -710,6 +1119,13 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             if (!RuntimeShellRequestBridge.TryTakeSelectedContainerItem(out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed taking selected container item: {error}");
+        }
+
+        void RequestDropHeldToContainer()
+        {
+            if (!RuntimeShellRequestBridge.TryDropHeldItemToContainer(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed dropping held item to container: {error}");
+            ClearManagedDrag();
         }
 
         void RequestTakeAll()
@@ -964,6 +1380,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void OnDestroy()
         {
+            _inventoryView?.Dispose();
             _iconService?.Dispose();
             _iconService = null;
             _theme?.Dispose();

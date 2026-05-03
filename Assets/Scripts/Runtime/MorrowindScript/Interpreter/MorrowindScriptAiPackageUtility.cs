@@ -9,6 +9,7 @@ using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -20,7 +21,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             in MorrowindScriptAiPackageRequest request,
             in LogicalRefLookup lookup)
         {
-            Entity target = ResolveLiveTarget(entityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(entityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null)
                 return false;
 
@@ -119,21 +120,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (packageType == (byte)MorrowindScriptAiPackageRequestType.Follow)
                 return (byte)ActorAiRuntimePackageType.Follow;
             return (byte)ActorAiRuntimePackageType.Wander;
-        }
-
-        public static Entity ResolveLiveTarget(
-            EntityManager entityManager,
-            Entity targetEntity,
-            uint targetPlacedRefId,
-            in LogicalRefLookup lookup)
-        {
-            if (targetEntity != Entity.Null && entityManager.Exists(targetEntity))
-                return targetEntity;
-
-            if (targetPlacedRefId != 0u && lookup.Map.IsCreated && lookup.Map.TryGetValue(targetPlacedRefId, out Entity target))
-                return target;
-
-            return Entity.Null;
         }
 
         static void EnsureActorAiComponents(

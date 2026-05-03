@@ -407,6 +407,23 @@ namespace VVardenfell.Core.Cache
         WakeUpPC = 70,
         SetMovementFlag = 71,
         PlaceAtPC = 72,
+        StartScript = 73,
+        GetHealth = 74,
+        GetCurrentAiPackage = 75,
+        GetCommonDisease = 76,
+        GetBlightDisease = 77,
+        AddSpell = 78,
+        RemoveSpell = 79,
+        Say = 80,
+        GetDistance = 81,
+        Cast = 82,
+        ForceGreeting = 83,
+        ModPlayerReputation = 84,
+        GetPos = 85,
+        GetTarget = 86,
+        ShowMap = 87,
+        PlayerFactionMutation = 88,
+        ActorRaiseRank = 89,
     }
 
     public enum MorrowindScriptRefTargetMode : byte

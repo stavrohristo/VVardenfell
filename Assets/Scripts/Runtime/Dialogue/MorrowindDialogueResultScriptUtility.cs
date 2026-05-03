@@ -18,6 +18,8 @@ using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.WorldState;
+using VVardenfell.Runtime.WorldRefs;
+using static VVardenfell.Core.MorrowindCommandTextUtility;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -41,7 +43,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<MorrowindScriptJailRequest> jailRequests,
             DynamicBuffer<MorrowindScriptMovementFlagRequest> movementFlagRequests,
             DynamicBuffer<MorrowindScriptPlaceAtRequest> placeAtRequests,
-            DynamicBuffer<MorrowindScriptCastRequest> castRequests,
+            DynamicBuffer<ScriptedCastRequest> castRequests,
+            DynamicBuffer<ActorSpellMutationRequest> actorSpellRequests,
+            DynamicBuffer<ShellMessageBoxRequest> shellMessageBoxRequests,
+            DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests,
+            DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
+            DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests,
+            DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
+            DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
             DynamicBuffer<MorrowindDialogueChoice> choices,
@@ -98,10 +107,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
-                if (TryApplyShowMapResult(line))
+                if (TryApplyShowMapResult(globalMapRevealRequests, line))
                     continue;
 
-                if (TryApplyMessageBoxResult(ref shell, line))
+                if (TryApplyMessageBoxResult(shellMessageBoxRequests, line))
                     continue;
 
                 if (TryApplyClearInfoActorResult(contentDb, topicEntries, ref session, line))
@@ -122,7 +131,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyInventoryResult(contentDb, entityManager, activeExplicitRefs, ref session, line))
                     continue;
 
-                if (TryApplyActorSpellResult(contentDb, entityManager, ref session, line))
+                if (TryApplyActorSpellResult(contentDb, entityManager, ref session, actorSpellRequests, line))
                     continue;
 
                 if (TryApplyScriptedCastResult(contentDb, entityManager, ref session, castRequests, line))
@@ -131,13 +140,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyDispositionResult(contentDb, entityManager, ref session, line))
                     continue;
 
-                if (TryApplyActorFactionResult(contentDb, entityManager, ref session, line))
+                if (TryApplyActorFactionResult(contentDb, entityManager, ref session, actorFactionRequests, line))
                     continue;
 
-                if (TryApplyPlayerFactionResult(contentDb, entityManager, ref session, line))
+                if (TryApplyPlayerFactionResult(contentDb, ref session, playerFactionRequests, line))
                     continue;
 
-                if (TryApplyPlayerReputationResult(entityManager, line))
+                if (TryApplyPlayerReputationResult(playerReputationRequests, line))
                     continue;
 
                 if (TryApplyPlayerCrimeResult(entityManager, line))
@@ -182,7 +191,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyAiFollowCellResult(contentDb, entityManager, ref session, line))
                     continue;
 
-                if (TryApplyForceGreetingResult(entityManager, ref shell, ref session, line))
+                if (TryApplyForceGreetingResult(entityManager, ref session, forceGreetingRequests, line))
                     continue;
 
                 if (StartsWithCommand(line, "goodbye"))
@@ -201,8 +210,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool TryApplyForceGreetingResult(
             EntityManager entityManager,
-            ref RuntimeShellState shell,
             ref MorrowindDialogueSession session,
+            DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
@@ -230,9 +239,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            RuntimeShellStateUtility.OpenDialogue(ref shell);
-            session.Active = 1;
-            session.NeedsGreeting = 1;
+            forceGreetingRequests.Add(new ActorForceGreetingRequest
+            {
+                TargetEntity = speaker,
+                TargetPlacedRefId = session.SpeakerPlacedRefId,
+            });
             return true;
         }
 
@@ -500,37 +511,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             string target,
             out Entity targetEntity,
             out uint targetPlacedRefId)
-        {
-            targetEntity = Entity.Null;
-            targetPlacedRefId = 0u;
-            if (contentDb == null || string.IsNullOrWhiteSpace(target))
-                return false;
-
-            if (contentDb.TryGetExplicitRefTarget(target, out targetPlacedRefId) && targetPlacedRefId != 0u)
-                return true;
-
-            if (!contentDb.TryResolvePlaceable(target, out var content) || !contentDb.IsValid(content))
-                return false;
-
-            if (!activeExplicitRefs.ByContentKey.IsCreated)
-                throw new InvalidOperationException($"[VVardenfell][Dialogue] active explicit-ref lookup is not initialized for '{target}'.");
-
-            int key = ActiveExplicitRefLookupUtility.Pack(content);
-            if (!activeExplicitRefs.ByContentKey.TryGetValue(key, out var activeTarget))
-            {
-                throw new InvalidOperationException($"[VVardenfell][Dialogue] explicit reference '{target}' resolved to content, but no active loaded ref was found.");
-            }
-
-            if (activeTarget.Ambiguous != 0)
-                throw new InvalidOperationException($"[VVardenfell][Dialogue] explicit reference '{target}' resolved to multiple active loaded refs.");
-
-            if (activeTarget.PlacedRefId == 0u || activeTarget.Entity == Entity.Null)
-                throw new InvalidOperationException($"[VVardenfell][Dialogue] explicit reference '{target}' resolved to content, but no active loaded ref was found.");
-
-            targetEntity = activeTarget.Entity;
-            targetPlacedRefId = activeTarget.PlacedRefId;
-            return true;
-        }
+            => MorrowindRuntimeTargetResolver.TryResolveExplicitRefTarget(contentDb, activeExplicitRefs, target, out targetEntity, out targetPlacedRefId);
 
         static bool TryApplyPositionCellResult(
             RuntimeContentDatabase contentDb,
@@ -983,58 +964,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             string target,
             out Entity targetEntity,
             out uint targetPlacedRefId)
-        {
-            targetEntity = Entity.Null;
-            targetPlacedRefId = 0u;
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                targetEntity = session.SpeakerEntity;
-                targetPlacedRefId = session.SpeakerPlacedRefId;
-                return targetEntity != Entity.Null
-                       && entityManager.Exists(targetEntity)
-                       && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
-            }
-
-            if (contentDb == null)
-                return false;
-
-            string normalizedTarget = ContentId.NormalizeId(target);
-            if (string.IsNullOrEmpty(normalizedTarget))
-                return false;
-
-            Entity matchEntity = Entity.Null;
-            uint matchPlacedRefId = 0u;
-            int matchCount = 0;
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<ActorSpawnSource>(),
-                ComponentType.ReadOnly<PlacedRefIdentity>());
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
-            using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
-            {
-                ActorDefHandle actorHandle = sources[i].Definition;
-                if (!actorHandle.IsValid)
-                    continue;
-
-                ref readonly var actor = ref contentDb.Get(actorHandle);
-                if (!ActorIdMatches(actor, normalizedTarget))
-                    continue;
-
-                matchCount++;
-                matchEntity = entities[i];
-                matchPlacedRefId = placedRefs[i].Value;
-                if (matchCount > 1)
-                    return false;
-            }
-
-            if (matchCount != 1)
-                return false;
-
-            targetEntity = matchEntity;
-            targetPlacedRefId = matchPlacedRefId;
-            return true;
-        }
+            => MorrowindRuntimeTargetResolver.TryResolveDefaultOrUniqueActorById(
+                contentDb,
+                entityManager,
+                target,
+                session.SpeakerEntity,
+                session.SpeakerPlacedRefId,
+                out targetEntity,
+                out targetPlacedRefId);
 
         static bool ActorIdMatches(in ActorDef actor, string normalizedTarget)
             => string.Equals(ContentId.NormalizeId(actor.Id), normalizedTarget, StringComparison.OrdinalIgnoreCase)
@@ -1520,7 +1457,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return choiceText.Length > 0;
         }
 
-        static bool TryApplyPlayerReputationResult(EntityManager entityManager, string line)
+        static bool TryApplyPlayerReputationResult(DynamicBuffer<PlayerReputationMutationRequest> playerReputationRequests, string line)
         {
             string[] tokens = SplitCommandTokens(line);
             if (tokens.Length != 2 || !int.TryParse(tokens[1], out int value))
@@ -1533,14 +1470,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<ActorIdentitySet>());
-            if (query.IsEmptyIgnoreFilter)
-                return false;
-
-            var entity = query.GetSingletonEntity();
-            var identity = entityManager.GetComponentData<ActorIdentitySet>(entity);
-            identity.Reputation += value;
-            entityManager.SetComponentData(entity, identity);
+            playerReputationRequests.Add(new PlayerReputationMutationRequest
+            {
+                Delta = value,
+            });
             return true;
         }
 
@@ -1798,8 +1731,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool TryApplyPlayerFactionResult(
             RuntimeContentDatabase contentDb,
-            EntityManager entityManager,
             ref MorrowindDialogueSession session,
+            DynamicBuffer<PlayerFactionMutationRequest> playerFactionRequests,
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
@@ -1821,98 +1754,22 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!TryResolveFactionArgument(contentDb, session.SpeakerActor, tokens, modRep, out int factionIndex, out int value))
                 return false;
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadWrite<PlayerFactionMembership>());
-            if (query.IsEmptyIgnoreFilter)
-                return false;
-
-            var factions = entityManager.GetBuffer<PlayerFactionMembership>(query.GetSingletonEntity());
-            int index = FindPlayerFactionIndex(factions, factionIndex);
-            if (expell)
+            playerFactionRequests.Add(new PlayerFactionMutationRequest
             {
-                if (index < 0)
-                {
-                    factions.Add(new PlayerFactionMembership
-                    {
-                        FactionIndex = factionIndex,
-                        Rank = -1,
-                        Expelled = 1,
-                    });
-                }
-                else
-                {
-                    var membership = factions[index];
-                    membership.Expelled = 1;
-                    factions[index] = membership;
-                }
-
-                return true;
-            }
-
-            if (clearExpelled)
-            {
-                if (index >= 0)
-                {
-                    var membership = factions[index];
-                    membership.Expelled = 0;
-                    factions[index] = membership;
-                }
-
-                return true;
-            }
-
-            if (modRep)
-            {
-                if (index < 0)
-                {
-                    factions.Add(new PlayerFactionMembership
-                    {
-                        FactionIndex = factionIndex,
-                        Rank = -1,
-                        Reputation = value,
-                    });
-                }
-                else
-                {
-                    var membership = factions[index];
-                    membership.Reputation += value;
-                    factions[index] = membership;
-                }
-
-                return true;
-            }
-
-            if (index < 0)
-            {
-                factions.Add(new PlayerFactionMembership
-                {
-                    FactionIndex = factionIndex,
-                    Rank = 0,
-                    Joined = 1,
-                });
-                return true;
-            }
-
-            if (joinFaction)
-            {
-                var membership = factions[index];
-                membership.Joined = 1;
-                if (membership.Rank < 0)
-                    membership.Rank = 0;
-                factions[index] = membership;
-                return true;
-            }
-
-            if (raiseRank)
-            {
-                var membership = factions[index];
-                membership.Joined = 1;
-                if (membership.Rank < 0)
-                    membership.Rank = 0;
-                else
-                    membership.Rank += 1;
-                factions[index] = membership;
-            }
-
+                SourceEntity = session.SpeakerEntity,
+                SourcePlacedRefId = session.SpeakerPlacedRefId,
+                FactionIndex = factionIndex,
+                Value = value,
+                Kind = (byte)(modRep
+                    ? PlayerFactionMutationKind.ModReputation
+                    : raiseRank
+                        ? PlayerFactionMutationKind.RaiseRank
+                        : joinFaction
+                            ? PlayerFactionMutationKind.Join
+                            : expell
+                                ? PlayerFactionMutationKind.Expel
+                                : PlayerFactionMutationKind.ClearExpelled),
+            });
             return true;
         }
 
@@ -1920,6 +1777,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
+            DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
@@ -1940,42 +1798,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!TryResolveAiCommandTarget(contentDb, entityManager, ref session, target, out targetEntity, out _))
                 return false;
 
-            if (IsPlayerEntity(entityManager, targetEntity))
-                return true;
-
-            if (!entityManager.HasComponent<ActorSpawnSource>(targetEntity))
-                throw new InvalidOperationException("RaiseRank target is not backed by an actor spawn source.");
-
-            ActorDefHandle actorHandle = entityManager.GetComponentData<ActorSpawnSource>(targetEntity).Definition;
-            if (!actorHandle.IsValid)
-                throw new InvalidOperationException("RaiseRank target has an invalid actor definition.");
-
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            if (string.IsNullOrWhiteSpace(actor.FactionId))
-                return true;
-
-            if (!contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle) || !factionHandle.IsValid)
-                throw new InvalidOperationException($"RaiseRank target actor '{actor.Id}' references unknown faction '{actor.FactionId}'.");
-
-            if (!entityManager.HasBuffer<ActorFactionMembership>(targetEntity))
-                throw new InvalidOperationException($"RaiseRank target actor '{actor.Id}' has no actor faction state.");
-
-            var factions = entityManager.GetBuffer<ActorFactionMembership>(targetEntity);
-            int index = FindActorFactionIndex(factions, factionHandle.Index);
-            if (index >= 0)
+            actorFactionRequests.Add(new ActorFactionRankMutationRequest
             {
-                var membership = factions[index];
-                membership.Joined = 1;
-                membership.Rank += 1;
-                factions[index] = membership;
-                return true;
-            }
-
-            factions.Add(new ActorFactionMembership
-            {
-                FactionIndex = factionHandle.Index,
-                Rank = actor.Rank + 1,
-                Joined = 1,
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = entityManager.HasComponent<PlacedRefIdentity>(targetEntity)
+                    ? entityManager.GetComponentData<PlacedRefIdentity>(targetEntity).Value
+                    : 0u,
             });
             return true;
         }
@@ -2348,6 +2176,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
+            DynamicBuffer<ActorSpellMutationRequest> actorSpellRequests,
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
@@ -2367,26 +2196,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            if (!TryResolveActorSpellTarget(contentDb, entityManager, ref session, target, out Entity actorEntity)
-                || !entityManager.HasBuffer<ActorKnownSpell>(actorEntity)
-                || !entityManager.HasBuffer<ActorActiveMagicEffect>(actorEntity))
+            if (!TryResolveActorSpellTarget(contentDb, entityManager, ref session, target, out Entity actorEntity, out uint actorPlacedRefId))
             {
                 return false;
             }
 
-            var spells = entityManager.GetBuffer<ActorKnownSpell>(actorEntity);
-            if (add)
-                return MorrowindActorMagicUtility.AddKnownSpell(spells, spellHandle);
-
-            var activeEffects = entityManager.GetBuffer<ActorActiveMagicEffect>(actorEntity);
-            return MorrowindActorMagicUtility.RemoveKnownSpell(contentDb, spells, activeEffects, spellHandle);
+            actorSpellRequests.Add(new ActorSpellMutationRequest
+            {
+                TargetEntity = actorEntity,
+                TargetPlacedRefId = actorPlacedRefId,
+                Spell = spellHandle,
+                Remove = remove ? (byte)1 : (byte)0,
+            });
+            return true;
         }
 
         static bool TryApplyScriptedCastResult(
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             ref MorrowindDialogueSession session,
-            DynamicBuffer<MorrowindScriptCastRequest> castRequests,
+            DynamicBuffer<ScriptedCastRequest> castRequests,
             string line)
         {
             string[] tokens = SplitCommandTokens(line);
@@ -2407,17 +2236,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            if (MorrowindActorMagicUtility.CanRepresentScriptedCast(contentDb, spellHandle))
-            {
-                if (!entityManager.HasBuffer<ActorActiveMagicEffect>(targetEntity))
-                    throw new InvalidOperationException("Scripted Cast target has no active magic effect state.");
-
-                var targetEffects = entityManager.GetBuffer<ActorActiveMagicEffect>(targetEntity);
-                return MorrowindActorMagicUtility.ApplyScriptedCast(contentDb, targetEffects, spellHandle);
-            }
-
-            // TODO: Replace this placeholder request with real scripted casting once the casting system exists.
-            castRequests.Add(new MorrowindScriptCastRequest
+            castRequests.Add(new ScriptedCastRequest
             {
                 CasterEntity = casterEntity,
                 CasterPlacedRefId = casterPlacedRefId,
@@ -2460,13 +2279,9 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool IsPlayerEntity(EntityManager entityManager, Entity entity)
-        {
-            return entity != Entity.Null
-                   && entityManager.Exists(entity)
-                   && entityManager.HasComponent<PlayerTag>(entity);
-        }
+            => MorrowindRuntimeTargetResolver.IsPlayerEntity(entityManager, entity);
 
-        static bool TryApplyShowMapResult(string line)
+        static bool TryApplyShowMapResult(DynamicBuffer<GlobalMapRevealRequest> globalMapRevealRequests, string line)
         {
             if (!StartsWithCommand(line, "showmap"))
                 return false;
@@ -2475,11 +2290,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (string.IsNullOrWhiteSpace(cellNamePrefix))
                 return false;
 
-            GlobalMapPresentationCache.AddVisitedLocationsByCellNamePrefix(cellNamePrefix);
+            globalMapRevealRequests.Add(new GlobalMapRevealRequest
+            {
+                CellNamePrefix = cellNamePrefix,
+            });
             return true;
         }
 
-        static bool TryApplyMessageBoxResult(ref RuntimeShellState shell, string line)
+        static bool TryApplyMessageBoxResult(DynamicBuffer<ShellMessageBoxRequest> shellMessageBoxRequests, string line)
         {
             string[] tokens = SplitCommandTokens(line);
             if ((tokens.Length != 2 && tokens.Length != 3)
@@ -2492,7 +2310,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (tokens.Length == 3 && !IsOkButton(tokens[2]))
                 return false;
 
-            RuntimeShellStateUtility.ShowMessageBox(ref shell, tokens[1]);
+            shellMessageBoxRequests.Add(new ShellMessageBoxRequest
+            {
+                Body = tokens[1],
+            });
             return true;
         }
 
@@ -2621,33 +2442,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             return semicolon >= 0 ? line.Substring(0, semicolon) : line;
         }
 
-        static bool StartsWithCommand(string line, string command)
-            => line.Length >= command.Length
-               && string.Compare(line, 0, command, 0, command.Length, StringComparison.OrdinalIgnoreCase) == 0
-               && (line.Length == command.Length || char.IsWhiteSpace(line[command.Length]) || line[command.Length] == ',');
-
-        static string ExtractCommandArgumentText(string line, string command)
-        {
-            if (line == null || line.Length <= command.Length)
-                return string.Empty;
-
-            return line.Substring(command.Length).Trim().TrimStart(',');
-        }
-
-        static void ParseTargetCommand(string token, out string target, out string command)
-        {
-            int arrow = token.IndexOf("->", StringComparison.Ordinal);
-            if (arrow < 0)
-            {
-                target = string.Empty;
-                command = token;
-                return;
-            }
-
-            target = token.Substring(0, arrow).Trim().Trim('"');
-            command = token.Substring(arrow + 2).Trim();
-        }
-
         static void NormalizeSeparatedExplicitCommand(string[] tokens, out string[] normalized)
         {
             normalized = tokens;
@@ -2658,38 +2452,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             normalized[0] = tokens[0] + tokens[1];
             for (int i = 2; i < tokens.Length; i++)
                 normalized[i - 1] = tokens[i];
-        }
-
-        static string[] SplitCommandTokens(string line)
-        {
-            var tokens = new List<string>();
-            var current = new System.Text.StringBuilder();
-            bool quoted = false;
-            for (int i = 0; i < line.Length; i++)
-            {
-                char ch = line[i];
-                if (ch == '"')
-                {
-                    quoted = !quoted;
-                    continue;
-                }
-
-                if (!quoted && (char.IsWhiteSpace(ch) || ch == ','))
-                {
-                    if (current.Length > 0)
-                    {
-                        tokens.Add(current.ToString());
-                        current.Length = 0;
-                    }
-                    continue;
-                }
-
-                current.Append(ch);
-            }
-
-            if (current.Length > 0)
-                tokens.Add(current.ToString());
-            return tokens.ToArray();
         }
 
         static byte ResolveAiWanderRepeat(string[] tokens)
@@ -2704,9 +2466,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ? (byte)1
                 : (byte)0;
         }
-
-        static string NormalizeToken(string token)
-            => (token ?? string.Empty).Trim().Trim(',');
 
         static string NormalizeGoldId(string itemId)
         {
@@ -2742,17 +2501,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                    && float.TryParse(NormalizeToken(tokens[start + 3]), NumberStyles.Float, CultureInfo.InvariantCulture, out z);
         }
 
-        static bool IsPlayerTarget(string target)
-            => string.Equals(NormalizeToken(target).Trim('"'), "player", StringComparison.OrdinalIgnoreCase);
-
-        static bool IsOkButton(string value)
-            => string.Equals(NormalizeToken(value).Trim('"'), "ok", StringComparison.OrdinalIgnoreCase);
-
         static Entity ResolvePlayerEntity(EntityManager entityManager)
-        {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            return query.IsEmptyIgnoreFilter ? Entity.Null : query.GetSingletonEntity();
-        }
+            => MorrowindRuntimeTargetResolver.ResolvePlayerEntity(entityManager);
 
         static ulong HashInteriorCellId(string value)
         {

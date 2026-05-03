@@ -45,6 +45,7 @@ namespace VVardenfell.Runtime.WorldState
             init.PlayerCrime = payload.PlayerCrime;
             if (payload.PlayerFactions != null)
                 PopulateInitializationFactions(entityManager, payload.PlayerFactions);
+            PopulateInitializationEquipment(entityManager, payload.PlayerEquipment);
             PopulateInitializationSpellbook(entityManager, payload.KnownSpells);
             PopulateInitializationActiveEffects(entityManager, payload.ActiveMagicEffects);
 
@@ -188,6 +189,7 @@ namespace VVardenfell.Runtime.WorldState
             if (entityManager.HasComponent<PlayerCrimeState>(playerEntity))
                 entityManager.SetComponentData(playerEntity, payload.PlayerCrime);
             ApplyPlayerFactionPayload(entityManager, playerEntity, payload.PlayerFactions);
+            ApplyPlayerEquipmentPayload(entityManager, playerEntity, payload.PlayerEquipment);
             entityManager.SetComponentData(playerEntity, new PlayerCharacterControl());
             entityManager.SetComponentData(playerEntity, new PlayerCharacterState());
             entityManager.SetComponentData(playerEntity, new MorrowindMovementInput());
@@ -257,6 +259,12 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.Inventory == null)
             {
                 error = "Save payload is missing inventory data.";
+                return false;
+            }
+
+            if (payload.PlayerEquipment == null)
+            {
+                error = "Save payload is missing player equipment data.";
                 return false;
             }
 
@@ -480,6 +488,52 @@ namespace VVardenfell.Runtime.WorldState
             {
                 if (factions[i].FactionIndex >= 0)
                     buffer.Add(factions[i]);
+            }
+        }
+
+        static void PopulateInitializationEquipment(EntityManager entityManager, ActorEquipmentSlot[] equipment)
+        {
+            Entity initEntity = WorldStateEntityQueryUtility.GetSingletonEntity<GameInitializationSingleton>(entityManager);
+            if (initEntity == Entity.Null)
+                return;
+
+            if (!entityManager.HasBuffer<ActorEquipmentSlot>(initEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorEquipmentSlot>(initEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+
+            DynamicBuffer<ActorEquipmentSlot> buffer = entityManager.GetBuffer<ActorEquipmentSlot>(initEntity);
+            buffer.Clear();
+            if (equipment == null)
+                return;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                if (equipment[i].Content.IsValid)
+                    buffer.Add(equipment[i]);
+            }
+        }
+
+        static void ApplyPlayerEquipmentPayload(EntityManager entityManager, Entity playerEntity, ActorEquipmentSlot[] equipment)
+        {
+            if (!entityManager.HasBuffer<ActorEquipmentSlot>(playerEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorEquipmentSlot>(playerEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+
+            DynamicBuffer<ActorEquipmentSlot> buffer = entityManager.GetBuffer<ActorEquipmentSlot>(playerEntity);
+            buffer.Clear();
+            if (equipment == null)
+                return;
+
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                if (equipment[i].Content.IsValid)
+                    buffer.Add(equipment[i]);
             }
         }
 

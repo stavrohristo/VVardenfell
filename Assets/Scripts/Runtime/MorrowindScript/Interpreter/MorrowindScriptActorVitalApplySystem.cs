@@ -3,6 +3,7 @@ using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -32,7 +33,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         void ApplyRequest(in MorrowindScriptActorVitalRequest request, in LogicalRefLookup lookup)
         {
-            Entity target = MorrowindScriptAiPackageUtility.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !EntityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] SetHealth target ref={request.TargetPlacedRefId} is not loaded.");
 

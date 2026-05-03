@@ -72,6 +72,15 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < inventory.Length; i++)
                 inventoryEntries[i] = inventory[i];
 
+            ActorEquipmentSlot[] playerEquipment = Array.Empty<ActorEquipmentSlot>();
+            if (entityManager.HasBuffer<ActorEquipmentSlot>(playerEntity))
+            {
+                var equipmentBuffer = entityManager.GetBuffer<ActorEquipmentSlot>(playerEntity);
+                playerEquipment = new ActorEquipmentSlot[equipmentBuffer.Length];
+                for (int i = 0; i < equipmentBuffer.Length; i++)
+                    playerEquipment[i] = equipmentBuffer[i];
+            }
+
             ActorKnownSpell[] knownSpells = Array.Empty<ActorKnownSpell>();
             if (entityManager.HasBuffer<ActorKnownSpell>(playerEntity))
             {
@@ -109,6 +118,7 @@ namespace VVardenfell.Runtime.WorldState
                 Dialogue = dialoguePayload,
                 ActorDeathCounts = actorDeathCounts,
                 Inventory = inventoryEntries,
+                PlayerEquipment = playerEquipment,
                 KnownSpells = knownSpells,
                 ActiveMagicEffects = activeMagicEffects,
                 ExteriorMapDiscovery = exteriorMapDiscovery,

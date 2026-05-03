@@ -8,6 +8,13 @@ namespace VVardenfell.Runtime.UI.Shell
         public DialogueResponseLineViewModel[] Lines = Array.Empty<DialogueResponseLineViewModel>();
         public DialogueTopicRowViewModel[] Topics = Array.Empty<DialogueTopicRowViewModel>();
         public DialogueChoiceRowViewModel[] Choices = Array.Empty<DialogueChoiceRowViewModel>();
+        public bool DispositionVisible;
+        public int DispositionValue;
+        public float DispositionFillNormalized;
+        public bool TopicsEnabled;
+        public bool GoodbyeEnabled;
+        public bool ShowInlineGoodbye;
+        public string GoodbyeText;
     }
 
     public sealed class DialogueResponseLineViewModel
@@ -21,6 +28,7 @@ namespace VVardenfell.Runtime.UI.Shell
         public int DialogueIndex;
         public string Title;
         public bool Selected;
+        public DialogueTopicVisualState VisualState;
     }
 
     public sealed class DialogueChoiceRowViewModel

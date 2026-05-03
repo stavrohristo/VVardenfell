@@ -44,6 +44,16 @@ namespace VVardenfell.Runtime.Components
         public byte PinWindow;
     }
 
+    public struct ShellMessageBoxRequest : IBufferElementData
+    {
+        public FixedString512Bytes Body;
+    }
+
+    public struct GlobalMapRevealRequest : IBufferElementData
+    {
+        public FixedString512Bytes CellNamePrefix;
+    }
+
     /// <summary>
     /// Selects which pinnable window a <c>TogglePin</c> request targets. Mirrors
     /// vanilla MW's MW_Window_Pinnable subwindows of the inventory group.

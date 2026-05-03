@@ -381,6 +381,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                     }
                     return false;
 
+                case DialogueConditionFunction.PcClothingModifier:
+                    if (TryReadPlayerClothingModifier(contentDb, entityManager, out int clothingModifier))
+                    {
+                        matched = Compare(clothingModifier, rule);
+                        return true;
+                    }
+                    return false;
+
                 case DialogueConditionFunction.PcHealth:
                 case DialogueConditionFunction.PcMagicka:
                 case DialogueConditionFunction.PcFatigue:
@@ -549,6 +557,44 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return true;
         }
+
+        static bool TryReadPlayerClothingModifier(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            out int value)
+        {
+            value = 0;
+            if (contentDb == null)
+                return false;
+
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>());
+            if (query.IsEmptyIgnoreFilter)
+                return false;
+
+            var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(query.GetSingletonEntity(), true);
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var slot = equipment[i];
+                if (!IsPcClothingModifierSlot(slot.Slot))
+                    continue;
+
+                if (slot.Content.Kind != ContentReferenceKind.Item || slot.Content.HandleValue <= 0)
+                    return false;
+
+                var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
+                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    return false;
+
+                value += itemEquipment.Value;
+            }
+
+            return true;
+        }
+
+        static bool IsPcClothingModifierSlot(ItemEquipmentSlot slot)
+            => slot != ItemEquipmentSlot.None
+               && slot != ItemEquipmentSlot.Weapon
+               && slot != ItemEquipmentSlot.Shield;
 
         static bool TryResolvePlayerAttributeOrSkill(EntityManager entityManager, DialogueConditionFunction function, out float value)
         {

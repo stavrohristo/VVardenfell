@@ -119,7 +119,16 @@ namespace VVardenfell.Runtime.Shell
             bool mapVisible = suiteOpen || (shell.ContainerOpen == 0 && mapState.Pinned != 0);
 
             InventoryWindowViewModel inventoryModel = inventoryVisible
-                ? BuildInventoryModel(RuntimeContentDatabase.Active, inventoryState, inventory, playerStats)
+                ? BuildInventoryModel(
+                    RuntimeContentDatabase.Active,
+                    inventoryState,
+                    inventory,
+                    playerStats,
+                    playerStats.HasPlayer
+                    && EntityManager.Exists(playerStats.PlayerEntity)
+                    && EntityManager.HasBuffer<ActorEquipmentSlot>(playerStats.PlayerEntity)
+                        ? EntityManager.GetBuffer<ActorEquipmentSlot>(playerStats.PlayerEntity, true)
+                        : default)
                 : null;
             if (inventoryModel != null)
                 inventoryModel.Pinned = inventoryState.Pinned != 0;
@@ -170,6 +179,7 @@ namespace VVardenfell.Runtime.Shell
                     SystemAPI.GetSingleton<MorrowindDialogueSession>(),
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueSessionLine>(true),
                     SystemAPI.GetSingletonBuffer<MorrowindKnownDialogueTopic>(true),
+                    SystemAPI.GetSingletonBuffer<MorrowindTopicJournalEntry>(true),
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueChoice>(true))
                 : null;
 

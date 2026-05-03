@@ -42,6 +42,11 @@ namespace VVardenfell.Runtime.Shell
                 ActiveCategory = (byte)InventoryWindowCategory.All,
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryItemActionRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryHeldItemState
+            {
+                InventoryIndex = -1,
+            });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new StatsWindowState
             {
                 Rect = new RuntimeWindowRect

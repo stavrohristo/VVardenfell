@@ -14,7 +14,8 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 21;
+        const int PayloadVersion = 22;
+        const int PlayerEquipmentPayloadVersion = 22;
         const int CapturedSoulInventoryPayloadVersion = 21;
         const int PlayerCrimePayloadVersion = 19;
         const int PreviousPayloadVersion = 18;
@@ -37,6 +38,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
                 && version != PreviousPlayerFactionPayloadVersion
@@ -122,6 +124,13 @@ namespace VVardenfell.Runtime.WorldState
                     WriteInventoryEntry(w, payload.Inventory[i]);
             }
 
+            w.Write(payload.PlayerEquipment?.Length ?? 0);
+            if (payload.PlayerEquipment != null)
+            {
+                for (int i = 0; i < payload.PlayerEquipment.Length; i++)
+                    WriteEquipmentEntry(w, payload.PlayerEquipment[i]);
+            }
+
             w.Write(payload.JournalEntries?.Length ?? 0);
             if (payload.JournalEntries != null)
             {
@@ -144,6 +153,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
                 && version != PreviousPlayerFactionPayloadVersion
@@ -203,6 +213,18 @@ namespace VVardenfell.Runtime.WorldState
             payload.Inventory = new PlayerInventoryItem[inventoryCount];
             for (int i = 0; i < inventoryCount; i++)
                 payload.Inventory[i] = ReadInventoryEntry(r, version);
+
+            if (version >= PlayerEquipmentPayloadVersion)
+            {
+                int equipmentCount = ReadCount(r, "player equipment");
+                payload.PlayerEquipment = new ActorEquipmentSlot[equipmentCount];
+                for (int i = 0; i < equipmentCount; i++)
+                    payload.PlayerEquipment[i] = ReadEquipmentEntry(r);
+            }
+            else
+            {
+                payload.PlayerEquipment = Array.Empty<ActorEquipmentSlot>();
+            }
 
             int journalCount = ReadCount(r, "journal");
             payload.JournalEntries = new WorldJournalEntry[journalCount];
@@ -445,6 +467,25 @@ namespace VVardenfell.Runtime.WorldState
                 SoulId = soulId,
                 SoulActorHandleValue = soulActorHandleValue,
                 Count = r.ReadInt32(),
+            };
+        }
+
+        static void WriteEquipmentEntry(BinaryWriter w, in ActorEquipmentSlot value)
+        {
+            w.Write((byte)value.Slot);
+            WriteContentReference(w, value.Content);
+            w.Write(value.InventoryIndex);
+            w.Write(value.VisualMode);
+        }
+
+        static ActorEquipmentSlot ReadEquipmentEntry(BinaryReader r)
+        {
+            return new ActorEquipmentSlot
+            {
+                Slot = (ItemEquipmentSlot)r.ReadByte(),
+                Content = ReadContentReference(r),
+                InventoryIndex = r.ReadInt32(),
+                VisualMode = r.ReadByte(),
             };
         }
 

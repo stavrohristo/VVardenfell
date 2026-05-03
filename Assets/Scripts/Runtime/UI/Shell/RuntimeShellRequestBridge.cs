@@ -221,6 +221,101 @@ namespace VVardenfell.Runtime.UI.Shell
                 out error);
         }
 
+        public static bool TryBeginInventoryItemDrag(int inventoryIndex, int count, out string error)
+        {
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.BeginDrag,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.None,
+                inventoryIndex,
+                0u,
+                0u,
+                count,
+                out error);
+        }
+
+        public static bool TryDirectTransferInventoryItem(int inventoryIndex, int count, out string error)
+        {
+            uint targetPlacedRefId = ResolveOpenContainerPlacedRefId();
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.DirectTransfer,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.Container,
+                inventoryIndex,
+                0u,
+                targetPlacedRefId,
+                count,
+                out error);
+        }
+
+        public static bool TryBeginContainerItemDrag(int itemIndex, int count, out string error)
+        {
+            uint placedRefId = ResolveOpenContainerPlacedRefId();
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.BeginDrag,
+                InventoryItemOwnerKind.Container,
+                InventoryItemOwnerKind.None,
+                itemIndex,
+                placedRefId,
+                0u,
+                count,
+                out error);
+        }
+
+        public static bool TryDirectTransferContainerItem(int itemIndex, int count, out string error)
+        {
+            uint placedRefId = ResolveOpenContainerPlacedRefId();
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.DirectTransfer,
+                InventoryItemOwnerKind.Container,
+                InventoryItemOwnerKind.PlayerInventory,
+                itemIndex,
+                placedRefId,
+                0u,
+                count,
+                out error);
+        }
+
+        public static bool TryDropHeldItemToInventory(out string error)
+        {
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.DropHeldToInventory,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.PlayerInventory,
+                -1,
+                0u,
+                0u,
+                0,
+                out error);
+        }
+
+        public static bool TryDropHeldItemToContainer(out string error)
+        {
+            uint placedRefId = ResolveOpenContainerPlacedRefId();
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.DropHeldToContainer,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.Container,
+                -1,
+                0u,
+                placedRefId,
+                0,
+                out error);
+        }
+
+        public static bool TryUseHeldInventoryItem(out string error)
+        {
+            return TryRequestInventoryItemAction(
+                InventoryItemActionKind.UseHeld,
+                InventoryItemOwnerKind.PlayerInventory,
+                InventoryItemOwnerKind.PlayerInventory,
+                -1,
+                0u,
+                0u,
+                0,
+                out error);
+        }
+
         public static bool TrySelectContainerItem(int itemIndex, out string error)
         {
             return TryMutateRequest<ContainerWindowRequest>(
@@ -275,6 +370,52 @@ namespace VVardenfell.Runtime.UI.Shell
                     RuntimeWindowGeometryUtility.SetRectRequest(ref request.RectRequest, normalizedRect);
                 },
                 out error);
+        }
+
+        static bool TryRequestInventoryItemAction(
+            InventoryItemActionKind action,
+            InventoryItemOwnerKind source,
+            InventoryItemOwnerKind target,
+            int sourceIndex,
+            uint sourcePlacedRefId,
+            uint targetPlacedRefId,
+            int count,
+            out string error)
+        {
+            return TryMutateRequest<InventoryItemActionRequest>(
+                "Inventory item action request state",
+                (ref InventoryItemActionRequest request) =>
+                {
+                    uint sequence = request.Sequence + 1u;
+                    request = new InventoryItemActionRequest
+                    {
+                        Pending = 1,
+                        Action = (byte)action,
+                        SourceOwner = (byte)source,
+                        TargetOwner = (byte)target,
+                        SourceIndex = sourceIndex,
+                        SourcePlacedRefId = sourcePlacedRefId,
+                        TargetPlacedRefId = targetPlacedRefId,
+                        Count = count,
+                        Sequence = sequence,
+                    };
+                },
+                out error);
+        }
+
+        static uint ResolveOpenContainerPlacedRefId()
+        {
+            if (!TryGetSingleton<ContainerWindowState>(
+                    "Container window state",
+                    out EntityManager entityManager,
+                    out Entity entity,
+                    out _))
+            {
+                return 0u;
+            }
+
+            var state = entityManager.GetComponentData<ContainerWindowState>(entity);
+            return state.Visible != 0 ? state.OpenPlacedRefId : 0u;
         }
 
         public static bool TrySetStatsWindowRect(Rect normalizedRect, out string error)

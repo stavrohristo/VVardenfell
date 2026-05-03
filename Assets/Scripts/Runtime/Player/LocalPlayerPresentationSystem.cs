@@ -151,22 +151,15 @@ namespace VVardenfell.Runtime.Player
             ecb.AddComponent<ActorShadowCasterVisible>(visual);
             ecb.SetComponentEnabled<ActorShadowCasterVisible>(visual, !firstPerson);
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            var equipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
-            try
+            if (EntityManager.HasBuffer<ActorEquipmentSlot>(player))
             {
-                HydratePlayerVisualEquipment(contentDb, actor, inventory, ref equipment);
-                if (equipment.Length > 0)
+                var playerEquipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
+                if (playerEquipment.Length > 0)
                 {
                     var equipmentBuffer = ecb.AddBuffer<ActorEquipmentSlot>(visual);
-                    for (int i = 0; i < equipment.Length; i++)
-                        equipmentBuffer.Add(equipment[i]);
+                    for (int i = 0; i < playerEquipment.Length; i++)
+                        equipmentBuffer.Add(playerEquipment[i]);
                 }
-            }
-            finally
-            {
-                if (equipment.IsCreated)
-                    equipment.Dispose();
             }
 
             return visual;
@@ -207,36 +200,6 @@ namespace VVardenfell.Runtime.Player
             ecb.Dispose();
         }
 
-        static void HydratePlayerVisualEquipment(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
-            DynamicBuffer<PlayerInventoryItem> playerInventory,
-            ref NativeList<ActorEquipmentSlot> equipment)
-        {
-            if (contentDb == null)
-                return;
-
-            using var actorInventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
-            for (int i = 0; i < playerInventory.Length; i++)
-            {
-                var item = playerInventory[i];
-                if (item.Count <= 0 || !item.Content.IsValid)
-                    continue;
-
-                int inventoryIndex = actorInventory.Length;
-                actorInventory.Add(new ActorInventoryItem
-                {
-                    Content = item.Content,
-                    Count = item.Count,
-                    AuthoredOrder = i,
-                });
-
-                if (item.Content.Kind != ContentReferenceKind.Item)
-                    continue;
-            }
-
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, actorInventory.AsArray(), equipment);
-        }
     }
 
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]

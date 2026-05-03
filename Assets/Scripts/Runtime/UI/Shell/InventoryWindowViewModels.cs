@@ -4,6 +4,20 @@ using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.UI.Shell
 {
+    public readonly struct InventoryItemClickContext
+    {
+        public InventoryItemClickContext(bool control, bool shift, bool alt)
+        {
+            Control = control;
+            Shift = shift;
+            Alt = alt;
+        }
+
+        public bool Control { get; }
+        public bool Shift { get; }
+        public bool Alt { get; }
+    }
+
     public sealed class RuntimeHudViewModel
     {
         public bool Visible;

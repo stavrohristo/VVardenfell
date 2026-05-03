@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.UI.Assets;
@@ -145,10 +146,13 @@ namespace VVardenfell.Runtime.UI.Shell
 
         readonly RuntimeUiTheme _theme;
         readonly RuntimeInventoryIconService _iconService;
+        readonly InventoryAvatarPreviewRenderer _avatarPreviewRenderer = new();
         readonly RectTransform _viewport;
         readonly Action _onRectChanged;
         readonly Action<InventoryWindowCategory> _onCategoryChanged;
-        readonly Action<int> _onSelectionChanged;
+        readonly Action<int, InventoryItemClickContext> _onItemClicked;
+        readonly Action _onBackgroundClicked;
+        readonly Action _onAvatarClicked;
         readonly Action<string> _onFilterChanged;
 
         readonly MorrowindWindowView _window;
@@ -162,6 +166,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly BitmapTextGraphic _encumbranceTextShadow;
         readonly BitmapTextGraphic _armorText;
         readonly BitmapTextGraphic _armorTextShadow;
+        readonly RawImage _avatarPreviewImage;
 
         // Right pane parts.
         readonly RectTransform _rightPane;
@@ -182,7 +187,9 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeInventoryIconService iconService,
             Action onRectChanged,
             Action<InventoryWindowCategory> onCategoryChanged,
-            Action<int> onSelectionChanged,
+            Action<int, InventoryItemClickContext> onItemClicked,
+            Action onBackgroundClicked,
+            Action onAvatarClicked,
             Action<string> onFilterChanged,
             Action onPinToggled = null)
         {
@@ -191,7 +198,9 @@ namespace VVardenfell.Runtime.UI.Shell
             _viewport = viewport;
             _onRectChanged = onRectChanged;
             _onCategoryChanged = onCategoryChanged;
-            _onSelectionChanged = onSelectionChanged;
+            _onItemClicked = onItemClicked;
+            _onBackgroundClicked = onBackgroundClicked;
+            _onAvatarClicked = onAvatarClicked;
             _onFilterChanged = onFilterChanged;
 
             _window = RuntimeUiFactory.CreateMorrowindWindow(
@@ -220,7 +229,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 onRectChanged);
 
             (_leftPane, _rightPane) = BuildPanes(_window.Client);
-            (_encumbranceFill, _encumbranceText, _encumbranceTextShadow, _armorText, _armorTextShadow) = BuildLeftPane(_leftPane);
+            (_encumbranceFill, _encumbranceText, _encumbranceTextShadow, _armorText, _armorTextShadow, _avatarPreviewImage) = BuildLeftPane(_leftPane);
             (_listClient, _gridContent, _searchInputView, _searchInputField, _emptyStateText) = BuildRightPane(_rightPane);
             _searchInputField.onValueChanged.AddListener(OnFilterValueChanged);
         }
@@ -254,6 +263,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RuntimeWindowSurfaceUtility.ApplyNormalizedRect(_window.Root, _viewport, model.NormalizedRect);
 
             SyncEncumbrance(model.WeightLabel, model.WeightBarFillNormalized);
+            SyncAvatarPreview();
             string armorTextValue = string.IsNullOrWhiteSpace(model.ArmorSummary) ? "Armor Rating 0" : model.ArmorSummary;
             _armorText.Text = armorTextValue;
             if (_armorTextShadow != null)
@@ -314,7 +324,12 @@ namespace VVardenfell.Runtime.UI.Shell
 
         // ----- Left pane: encumbrance + avatar --------------------------------
 
-        (Image fill, BitmapTextGraphic barText, BitmapTextGraphic barTextShadow, BitmapTextGraphic armorText, BitmapTextGraphic armorTextShadow) BuildLeftPane(RectTransform leftPane)
+        public void Dispose()
+        {
+            _avatarPreviewRenderer.Dispose();
+        }
+
+        (Image fill, BitmapTextGraphic barText, BitmapTextGraphic barTextShadow, BitmapTextGraphic armorText, BitmapTextGraphic armorTextShadow, RawImage avatarPreview) BuildLeftPane(RectTransform leftPane)
         {
             float pad = RuntimeClassicUiMetrics.Ui(PaneInnerPadding);
             float barHeight = RuntimeClassicUiMetrics.Ui(EncumbranceHeight);
@@ -374,6 +389,23 @@ namespace VVardenfell.Runtime.UI.Shell
                 AvatarBoxCenterColor);
             RuntimeUiFactory.Stretch(avatarFrame.Root);
 
+            var preview = RuntimeUiFactory.CreateRawImage("AvatarPreviewImage", avatarFrame.Client, Color.white);
+            preview.texture = _avatarPreviewRenderer.Texture;
+            preview.raycastTarget = false;
+            preview.rectTransform.anchorMin = new Vector2(0f, 0f);
+            preview.rectTransform.anchorMax = new Vector2(1f, 1f);
+            preview.rectTransform.offsetMin = new Vector2(0f, armorStrip);
+            preview.rectTransform.offsetMax = Vector2.zero;
+
+            var avatarRaycast = RuntimeUiFactory.CreateImage("UseTarget", avatarFrame.Client, new Color(1f, 1f, 1f, 0.001f));
+            RuntimeUiFactory.Stretch(avatarRaycast.rectTransform);
+            avatarRaycast.raycastTarget = true;
+            var avatarButton = avatarFrame.Client.gameObject.AddComponent<Button>();
+            avatarButton.targetGraphic = avatarRaycast;
+            avatarButton.transition = Selectable.Transition.None;
+            avatarButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            avatarButton.onClick.AddListener(() => _onAvatarClicked?.Invoke());
+
             // Portrait area: reserved but intentionally empty. The paper-doll preview
             // lands when character rendering is online; until then the MW_Box stays
             // blank (matching vanilla's appearance before the avatar model streams in).
@@ -396,7 +428,16 @@ namespace VVardenfell.Runtime.UI.Shell
             var armorTextShadow = BuildOverlayTextLayer(armorRoot, "TextShadow", TextShadowColor, new Vector2(1f, -1f), BodyTextPixelHeight);
             var armorText = BuildOverlayTextLayer(armorRoot, "Text", ArmorTextColor, Vector2.zero, BodyTextPixelHeight);
 
-            return (fill, barText, barTextShadow, armorText, armorTextShadow);
+            return (fill, barText, barTextShadow, armorText, armorTextShadow, preview);
+        }
+
+        void SyncAvatarPreview()
+        {
+            if (_avatarPreviewImage == null)
+                return;
+
+            _avatarPreviewImage.texture = _avatarPreviewRenderer.Texture;
+            _avatarPreviewRenderer.Render();
         }
 
         /// <summary>
@@ -485,6 +526,11 @@ namespace VVardenfell.Runtime.UI.Shell
             viewportImage.color = new Color(1f, 1f, 1f, 0.001f);   // near-invisible but enables scroll raycasts
             viewportImage.raycastTarget = true;
             viewportRect.gameObject.AddComponent<RectMask2D>();
+            var backgroundButton = viewportRect.gameObject.AddComponent<Button>();
+            backgroundButton.targetGraphic = viewportImage;
+            backgroundButton.transition = Selectable.Transition.None;
+            backgroundButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            backgroundButton.onClick.AddListener(() => _onBackgroundClicked?.Invoke());
 
             var gridContent = RuntimeUiFactory.CreateAnchoredRect(
                 "GridContent",
@@ -798,8 +844,20 @@ namespace VVardenfell.Runtime.UI.Shell
             // Click = select. Vanilla inventory: single click selects the item (details
             // surface via tooltip), double-click equips/unequips. We fire the selection
             // callback only; equip-on-double-click can land with the tooltip pipeline.
-            button.onClick.AddListener(() => _onSelectionChanged?.Invoke(cell.InventoryIndex));
+            button.onClick.AddListener(() => _onItemClicked?.Invoke(cell.InventoryIndex, CaptureClickContext()));
             return cell;
+        }
+
+        static InventoryItemClickContext CaptureClickContext()
+        {
+            var keyboard = Keyboard.current;
+            if (keyboard == null)
+                return default;
+
+            bool control = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
+            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
+            return new InventoryItemClickContext(control, shift, alt);
         }
 
         /// <summary>

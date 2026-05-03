@@ -57,6 +57,12 @@ namespace VVardenfell.Runtime.Components
         public byte Kind;
     }
 
+    public struct ActorForceGreetingRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+    }
+
     public struct DoorInteractable : IComponentData
     {
         public byte IsTeleport;

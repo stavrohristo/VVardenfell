@@ -1,0 +1,194 @@
+using System;
+using Unity.Collections;
+using Unity.Entities;
+using VVardenfell.Core;
+using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Streaming;
+
+namespace VVardenfell.Runtime.WorldRefs
+{
+    public static class MorrowindRuntimeTargetResolver
+    {
+        public static Entity ResolveLiveTarget(
+            EntityManager entityManager,
+            Entity targetEntity,
+            uint targetPlacedRefId,
+            in LogicalRefLookup lookup)
+        {
+            if (targetEntity != Entity.Null && entityManager.Exists(targetEntity))
+                return targetEntity;
+
+            if (targetPlacedRefId != 0u && lookup.Map.IsCreated && lookup.Map.TryGetValue(targetPlacedRefId, out Entity target))
+                return target;
+
+            return Entity.Null;
+        }
+
+        public static bool TryResolveExplicitRefTarget(
+            RuntimeContentDatabase contentDb,
+            ActiveExplicitRefLookup activeExplicitRefs,
+            string target,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (contentDb == null || string.IsNullOrWhiteSpace(target))
+                return false;
+
+            if (contentDb.TryGetExplicitRefTarget(target, out targetPlacedRefId) && targetPlacedRefId != 0u)
+                return true;
+
+            if (!contentDb.TryResolvePlaceable(target, out var content) || !contentDb.IsValid(content))
+                return false;
+
+            if (!activeExplicitRefs.ByContentKey.IsCreated)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] active explicit-ref lookup is not initialized for '{target}'.");
+
+            int key = ActiveExplicitRefLookupUtility.Pack(content);
+            if (!activeExplicitRefs.ByContentKey.TryGetValue(key, out var activeTarget))
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] explicit reference '{target}' resolved to content, but no active loaded ref was found.");
+
+            if (activeTarget.Ambiguous != 0)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] explicit reference '{target}' resolved to multiple active loaded refs.");
+
+            if (activeTarget.PlacedRefId == 0u || activeTarget.Entity == Entity.Null)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] explicit reference '{target}' resolved to content, but no active loaded ref was found.");
+
+            targetEntity = activeTarget.Entity;
+            targetPlacedRefId = activeTarget.PlacedRefId;
+            return true;
+        }
+
+        public static bool TryResolveActorTarget(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            ActiveExplicitRefLookup activeExplicitRefs,
+            string target,
+            Entity defaultEntity,
+            uint defaultPlacedRefId,
+            bool allowPlayer,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                targetEntity = defaultEntity;
+                targetPlacedRefId = defaultPlacedRefId;
+                return targetEntity != Entity.Null
+                       && entityManager.Exists(targetEntity)
+                       && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
+            }
+
+            if (allowPlayer && MorrowindCommandTextUtility.IsPlayerTarget(target))
+            {
+                targetEntity = ResolvePlayerEntity(entityManager);
+                targetPlacedRefId = targetEntity != Entity.Null && entityManager.HasComponent<PlacedRefIdentity>(targetEntity)
+                    ? entityManager.GetComponentData<PlacedRefIdentity>(targetEntity).Value
+                    : 0u;
+                return targetEntity != Entity.Null && entityManager.Exists(targetEntity);
+            }
+
+            if (TryResolveExplicitRefTarget(contentDb, activeExplicitRefs, target, out targetEntity, out targetPlacedRefId))
+                return targetEntity == Entity.Null || entityManager.Exists(targetEntity);
+
+            return TryResolveUniqueActorById(contentDb, entityManager, target, out targetEntity, out targetPlacedRefId);
+        }
+
+        public static bool TryResolveDefaultOrUniqueActorById(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            string target,
+            Entity defaultEntity,
+            uint defaultPlacedRefId,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                targetEntity = defaultEntity;
+                targetPlacedRefId = defaultPlacedRefId;
+                return targetEntity != Entity.Null
+                       && entityManager.Exists(targetEntity)
+                       && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
+            }
+
+            return TryResolveUniqueActorById(contentDb, entityManager, target, out targetEntity, out targetPlacedRefId);
+        }
+
+        public static Entity ResolvePlayerEntity(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            return entities.Length == 1 ? entities[0] : Entity.Null;
+        }
+
+        public static bool IsPlayerEntity(EntityManager entityManager, Entity entity)
+        {
+            return entity != Entity.Null
+                   && entityManager.Exists(entity)
+                   && entityManager.HasComponent<PlayerTag>(entity);
+        }
+
+        static bool TryResolveUniqueActorById(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            string target,
+            out Entity targetEntity,
+            out uint targetPlacedRefId)
+        {
+            targetEntity = Entity.Null;
+            targetPlacedRefId = 0u;
+            if (contentDb == null)
+                return false;
+
+            string normalizedTarget = ContentId.NormalizeId(target);
+            if (string.IsNullOrEmpty(normalizedTarget))
+                return false;
+
+            Entity matchEntity = Entity.Null;
+            uint matchPlacedRefId = 0u;
+            int matchCount = 0;
+            using var query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ActorSpawnSource>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
+            using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                ActorDefHandle actorHandle = sources[i].Definition;
+                if (!actorHandle.IsValid)
+                    continue;
+
+                ref readonly var actor = ref contentDb.Get(actorHandle);
+                if (!ActorIdMatches(actor, normalizedTarget))
+                    continue;
+
+                matchCount++;
+                matchEntity = entities[i];
+                matchPlacedRefId = placedRefs[i].Value;
+                if (matchCount > 1)
+                    return false;
+            }
+
+            if (matchCount != 1)
+                return false;
+
+            targetEntity = matchEntity;
+            targetPlacedRefId = matchPlacedRefId;
+            return true;
+        }
+
+        static bool ActorIdMatches(in ActorDef actor, string normalizedTarget)
+            => string.Equals(ContentId.NormalizeId(actor.Id), normalizedTarget, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(ContentId.NormalizeId(actor.OriginalId), normalizedTarget, StringComparison.OrdinalIgnoreCase);
+    }
+}

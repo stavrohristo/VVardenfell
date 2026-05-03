@@ -1,28 +1,25 @@
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Systems;
 
-namespace VVardenfell.Runtime.MorrowindScript
+namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptMessageBoxApplySystem : SystemBase
+    public partial class ShellMessageBoxApplySystem : SystemBase
     {
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptMessageBoxRequest>();
+            RequireForUpdate<ShellMessageBoxRequest>();
             RequireForUpdate<RuntimeShellState>();
         }
 
         protected override void OnUpdate()
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            if (!EntityManager.HasBuffer<MorrowindScriptMessageBoxRequest>(runtimeEntity))
-                return;
-
-            var requests = EntityManager.GetBuffer<MorrowindScriptMessageBoxRequest>(runtimeEntity);
+            var requests = EntityManager.GetBuffer<ShellMessageBoxRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
