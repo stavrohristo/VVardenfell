@@ -113,6 +113,8 @@ namespace VVardenfell.Runtime.UI.Shell
         int _pendingCountIndex = -1;
         int _pendingCountMax;
         int _pendingCountValue;
+        Vector2 _pendingCountScreenPosition;
+        bool _pendingCountHasScreenPosition;
         InventoryWindowEntryViewModel _pendingCountEntry;
         bool _suppressCountInput;
         bool _dragActive;
@@ -974,11 +976,11 @@ namespace VVardenfell.Runtime.UI.Shell
             int count = context.Control ? 1 : max;
             if (max > 1 && !context.Shift && !context.Control)
             {
-                OpenCountDialog(owner, action, index, entry, max);
+                OpenCountDialog(owner, action, index, entry, max, context);
                 return;
             }
 
-            ExecuteItemAction(owner, action, index, count, entry);
+            ExecuteItemAction(owner, action, index, count, entry, context);
         }
 
         void OpenCountDialog(
@@ -986,13 +988,16 @@ namespace VVardenfell.Runtime.UI.Shell
             InventoryItemActionKind action,
             int index,
             InventoryWindowEntryViewModel entry,
-            int max)
+            int max,
+            InventoryItemClickContext context)
         {
             _pendingCountOwner = owner;
             _pendingCountAction = action;
             _pendingCountIndex = index;
             _pendingCountMax = Mathf.Max(1, max);
             _pendingCountEntry = entry;
+            _pendingCountScreenPosition = context.ScreenPosition;
+            _pendingCountHasScreenPosition = context.HasScreenPosition;
             _countTitle.Text = string.IsNullOrWhiteSpace(entry?.Name) ? "Take" : entry.Name.Trim();
             _countValueText.Text = action == InventoryItemActionKind.DirectTransfer ? "Transfer Count" : "Take Count";
             SetCountValue(_pendingCountMax);
@@ -1004,11 +1009,18 @@ namespace VVardenfell.Runtime.UI.Shell
         void ConfirmCountDialog()
         {
             _countRoot.gameObject.SetActive(false);
-            ExecuteItemAction(_pendingCountOwner, _pendingCountAction, _pendingCountIndex, _pendingCountValue, _pendingCountEntry);
+            ExecuteItemAction(
+                _pendingCountOwner,
+                _pendingCountAction,
+                _pendingCountIndex,
+                _pendingCountValue,
+                _pendingCountEntry,
+                new InventoryItemClickContext(false, false, false, _pendingCountScreenPosition, _pendingCountHasScreenPosition));
             _pendingCountOwner = InventoryItemOwnerKind.None;
             _pendingCountAction = InventoryItemActionKind.None;
             _pendingCountIndex = -1;
             _pendingCountEntry = null;
+            _pendingCountHasScreenPosition = false;
         }
 
         void CancelCountDialog()
@@ -1018,6 +1030,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _pendingCountAction = InventoryItemActionKind.None;
             _pendingCountIndex = -1;
             _pendingCountEntry = null;
+            _pendingCountHasScreenPosition = false;
         }
 
         void OnCountInputChanged(string value)
@@ -1046,7 +1059,8 @@ namespace VVardenfell.Runtime.UI.Shell
             InventoryItemActionKind action,
             int index,
             int count,
-            InventoryWindowEntryViewModel entry)
+            InventoryWindowEntryViewModel entry,
+            InventoryItemClickContext context)
         {
             bool success;
             string error;
@@ -1070,15 +1084,16 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             if (action == InventoryItemActionKind.BeginDrag)
-                BeginManagedDrag(entry, count);
+                BeginManagedDrag(entry, count, context);
         }
 
-        void BeginManagedDrag(InventoryWindowEntryViewModel entry, int count)
+        void BeginManagedDrag(InventoryWindowEntryViewModel entry, int count, InventoryItemClickContext context)
         {
             _dragActive = true;
             _dragEntry = entry;
             _dragIcon.sprite = _iconService.GetSprite(entry?.IconPath);
             _dragIcon.preserveAspect = true;
+            _dragIcon.enabled = _dragIcon.sprite != null;
             string countText = count > 1 ? count.ToString() : string.Empty;
             bool hasCount = !string.IsNullOrEmpty(countText);
             _dragCount.gameObject.SetActive(hasCount);
@@ -1087,7 +1102,10 @@ namespace VVardenfell.Runtime.UI.Shell
             _dragCountShadow.Text = countText;
             _dragIconRoot.gameObject.SetActive(true);
             _dragIconRoot.SetAsLastSibling();
-            SyncDragIconPosition();
+            if (context.HasScreenPosition)
+                SetDragIconScreenPosition(context.ScreenPosition);
+            else
+                SyncDragIconPosition();
         }
 
         void ClearManagedDrag()
@@ -1103,8 +1121,16 @@ namespace VVardenfell.Runtime.UI.Shell
             if (!_dragActive || _dragIconRoot == null || Mouse.current == null)
                 return;
 
-            Vector2 mouse = Mouse.current.position.ReadValue();
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(_rootRect, mouse, null, out Vector2 local);
+            SetDragIconScreenPosition(Mouse.current.position.ReadValue());
+        }
+
+        void SetDragIconScreenPosition(Vector2 screenPosition)
+        {
+            if (!_dragActive || _dragIconRoot == null)
+                return;
+
+            _dragIconRoot.SetAsLastSibling();
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(_rootRect, screenPosition, null, out Vector2 local);
             _dragIconRoot.anchoredPosition = local + RuntimeClassicUiMetrics.Ui(new Vector2(8f, -8f));
         }
 

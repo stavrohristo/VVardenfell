@@ -27,7 +27,7 @@ namespace VVardenfell.Runtime.Audio
         {
             _playerQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<LocalTransform>());
+                ComponentType.ReadOnly<LocalToWorld>());
             RequireForUpdate<AudioContextState>();
             RequireForUpdate<NearWaterAudioState>();
         }
@@ -42,10 +42,12 @@ namespace VVardenfell.Runtime.Audio
                 return;
             if (!contentDb.TryGetSoundHandle(NearWaterSoundId, out var sound) || !sound.IsValid)
                 return;
+
+            EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
 
-            var playerPosition = _playerQuery.GetSingleton<LocalTransform>().Position;
+            var playerPosition = _playerQuery.GetSingleton<LocalToWorld>().Position;
             bool interior = false;
             CellData interiorCell = null;
             if (SystemAPI.HasSingleton<InteriorTransitionState>())

@@ -34,7 +34,7 @@ namespace VVardenfell.Runtime.UI.Shell
             if (_hasHeldItem != null && _hasHeldItem())
                 return;
 
-            _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext());
+            _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext(eventData));
         }
 
         public void OnDrag(PointerEventData eventData)
@@ -51,19 +51,16 @@ namespace VVardenfell.Runtime.UI.Shell
             if (_dragStarted || eventData.button != PointerEventData.InputButton.Left)
                 return;
 
-            _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext());
+            _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext(eventData));
         }
 
-        static InventoryItemClickContext CaptureClickContext()
+        static InventoryItemClickContext CaptureClickContext(PointerEventData eventData)
         {
             var keyboard = Keyboard.current;
-            if (keyboard == null)
-                return default;
-
-            bool control = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
-            return new InventoryItemClickContext(control, shift, alt);
+            bool control = keyboard != null && (keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed);
+            bool shift = keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
+            bool alt = keyboard != null && (keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed);
+            return new InventoryItemClickContext(control, shift, alt, eventData.position, true);
         }
     }
 }

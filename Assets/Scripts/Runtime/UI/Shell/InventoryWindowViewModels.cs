@@ -7,15 +7,24 @@ namespace VVardenfell.Runtime.UI.Shell
     public readonly struct InventoryItemClickContext
     {
         public InventoryItemClickContext(bool control, bool shift, bool alt)
+            : this(control, shift, alt, default, false)
+        {
+        }
+
+        public InventoryItemClickContext(bool control, bool shift, bool alt, Vector2 screenPosition, bool hasScreenPosition)
         {
             Control = control;
             Shift = shift;
             Alt = alt;
+            ScreenPosition = screenPosition;
+            HasScreenPosition = hasScreenPosition;
         }
 
         public bool Control { get; }
         public bool Shift { get; }
         public bool Alt { get; }
+        public Vector2 ScreenPosition { get; }
+        public bool HasScreenPosition { get; }
     }
 
     public sealed class RuntimeHudViewModel
