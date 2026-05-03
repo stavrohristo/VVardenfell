@@ -29,6 +29,10 @@ namespace VVardenfell.Runtime.Components
         public FixedString128Bytes DisabledReason;
     }
 
+    public struct MorrowindScriptFaultReported : IComponentData
+    {
+    }
+
     public struct MorrowindGlobalScriptInstance : IComponentData
     {
         public Entity TargetEntity;

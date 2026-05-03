@@ -144,12 +144,14 @@ namespace VVardenfell.Runtime.MorrowindScript
         public byte StopRequested;
         public byte Halted;
         public byte Faulted;
+        public int FaultProgramCounter;
+        public byte FaultOpcode;
     }
 
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        const int OpcodeCount = 134;
+        public const int OpcodeCount = 134;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {

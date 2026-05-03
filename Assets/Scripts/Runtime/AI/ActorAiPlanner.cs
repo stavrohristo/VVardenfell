@@ -15,9 +15,11 @@ namespace VVardenfell.Runtime.AI
 {
     public enum ActorAiRuntimePackageType : byte
     {
-        Wander = 1,
-        Travel = 2,
+        Wander = 0,
+        Travel = 1,
+        Escort = 2,
         Follow = 3,
+        Activate = 4,
     }
 
     public enum ActorAiPlannerStatus : byte
@@ -36,6 +38,7 @@ namespace VVardenfell.Runtime.AI
         public int GoalNodeIndex;
         public float3 HomePosition;
         public float WaitUntilTime;
+        public float LastPackageActionTime;
         public uint RandomSeed;
         public byte Status;
     }
@@ -64,21 +67,14 @@ namespace VVardenfell.Runtime.AI
         public float FollowDistance;
         public ulong DestinationInteriorCellHash;
         public uint FollowTargetPlacedRefId;
+        public FixedString128Bytes TargetId;
     }
 
     public static class ActorAiRuntimeAuthoringUtility
     {
-        public static bool HasSupportedPackage(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        public static bool HasPackage(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
         {
-            var packages = contentDb.GetActorAiPackages(actorHandle);
-            for (int i = 0; i < packages.Length; i++)
-            {
-                var package = packages[i];
-                if (package.Type == ActorAiPackageType.Travel || package.Type == ActorAiPackageType.Wander)
-                    return true;
-            }
-
-            return false;
+            return contentDb.GetActorAiPackages(actorHandle).Length > 0;
         }
 
         public static void HydratePackages(
@@ -115,6 +111,52 @@ namespace VVardenfell.Runtime.AI
                         IdleSeconds = 1.5f,
                     });
                 }
+                else if (package.Type == ActorAiPackageType.Follow)
+                {
+                    target.Add(new ActorAiPackageRuntime
+                    {
+                        Type = (byte)ActorAiRuntimePackageType.Follow,
+                        ShouldRepeat = package.ShouldRepeat,
+                        AllowPartial = 1,
+                        SourcePackageIndex = i,
+                        TargetPathGridIndex = ResolvePackagePathGrid(contentDb, package.CellName, anchor),
+                        TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
+                        FollowDistance = 256f * WorldScale.MwUnitsToMeters,
+                        IdleSeconds = 0.5f,
+                        DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
+                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                    });
+                }
+                else if (package.Type == ActorAiPackageType.Escort)
+                {
+                    target.Add(new ActorAiPackageRuntime
+                    {
+                        Type = (byte)ActorAiRuntimePackageType.Escort,
+                        ShouldRepeat = package.ShouldRepeat,
+                        AllowPartial = 1,
+                        SourcePackageIndex = i,
+                        TargetPathGridIndex = ResolvePackagePathGrid(contentDb, package.CellName, anchor),
+                        TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
+                        FollowDistance = 450f * WorldScale.MwUnitsToMeters,
+                        IdleSeconds = 0.5f,
+                        DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
+                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                    });
+                }
+                else if (package.Type == ActorAiPackageType.Activate)
+                {
+                    target.Add(new ActorAiPackageRuntime
+                    {
+                        Type = (byte)ActorAiRuntimePackageType.Activate,
+                        ShouldRepeat = package.ShouldRepeat,
+                        AllowPartial = 1,
+                        SourcePackageIndex = i,
+                        TargetPathGridIndex = anchor.IsResolved != 0 ? anchor.PathGridIndex : -1,
+                        FollowDistance = 128f * WorldScale.MwUnitsToMeters,
+                        IdleSeconds = 0.25f,
+                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                    });
+                }
             }
         }
 
@@ -132,6 +174,14 @@ namespace VVardenfell.Runtime.AI
 
         static float3 ConvertMwPosition(float x, float y, float z)
             => new float3(x, z, y) * WorldScale.MwUnitsToMeters;
+
+        static ulong ResolveInteriorCellHash(string cellName)
+        {
+            if (string.IsNullOrWhiteSpace(cellName))
+                return 0UL;
+
+            return InteriorCellIdHash.Hash(cellName);
+        }
     }
 
     [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
@@ -399,9 +449,17 @@ namespace VVardenfell.Runtime.AI
             {
                 scheduled = TryScheduleTravel(package, startNode, ref aiState, ref traversalRequest);
             }
+            else if (package.Type == (byte)ActorAiRuntimePackageType.Escort)
+            {
+                scheduled = TryScheduleEscort(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
+            }
             else if (package.Type == (byte)ActorAiRuntimePackageType.Follow)
             {
                 scheduled = TryScheduleFollow(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
+            }
+            else if (package.Type == (byte)ActorAiRuntimePackageType.Activate)
+            {
+                scheduled = TryScheduleActivate(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
             }
             else
             {
@@ -438,6 +496,38 @@ namespace VVardenfell.Runtime.AI
             WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest);
             aiState.GoalNodeIndex = goalNode;
             return true;
+        }
+
+        bool TryScheduleEscort(
+            in ActorAiPackageRuntime package,
+            int startNode,
+            float3 actorPosition,
+            ref ActorAiState aiState,
+            ref PathGridTraversalPendingRequest traversalRequest,
+            out bool waiting)
+        {
+            waiting = false;
+            if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
+            {
+                waiting = true;
+                return false;
+            }
+
+            float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            float maxDistance = math.max(0.5f, package.FollowDistance);
+            if (math.lengthsq(FlatDelta(targetPosition, actorPosition)) > maxDistance * maxDistance)
+            {
+                waiting = true;
+                return false;
+            }
+
+            if (package.DestinationInteriorCellHash == 0UL
+                && math.lengthsq(FlatDelta(package.TargetPosition, actorPosition)) <= maxDistance * maxDistance)
+            {
+                return false;
+            }
+
+            return TryScheduleTravel(package, startNode, ref aiState, ref traversalRequest);
         }
 
         bool TryScheduleFollow(
@@ -479,6 +569,41 @@ namespace VVardenfell.Runtime.AI
             }
 
             WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, distanceSq > FollowRunDistanceSq());
+            aiState.GoalNodeIndex = goalNode;
+            return true;
+        }
+
+        bool TryScheduleActivate(
+            in ActorAiPackageRuntime package,
+            int startNode,
+            float3 actorPosition,
+            ref ActorAiState aiState,
+            ref PathGridTraversalPendingRequest traversalRequest,
+            out bool waiting)
+        {
+            waiting = false;
+            if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
+            {
+                waiting = true;
+                return false;
+            }
+
+            float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            float activateDistance = math.max(0.5f, package.FollowDistance);
+            if (math.lengthsq(FlatDelta(targetPosition, actorPosition)) <= activateDistance * activateDistance)
+            {
+                waiting = true;
+                return false;
+            }
+
+            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
+            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
+            {
+                waiting = true;
+                return false;
+            }
+
+            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest);
             aiState.GoalNodeIndex = goalNode;
             return true;
         }

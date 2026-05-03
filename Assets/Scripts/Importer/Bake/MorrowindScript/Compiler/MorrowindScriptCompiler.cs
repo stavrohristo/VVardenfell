@@ -3707,10 +3707,11 @@ namespace VVardenfell.Importer.Bake
                 return true;
             }
 
-            failure = $"Set target '{target}' is not a declared local or baked global.";
+            // OpenMW treats bad vanilla Set targets as compiler warnings and skips the assignment.
+            // avSlavehunter in Morrowind.esm relies on that behavior for its undeclared "counter" target.
             instructions.RemoveRange(firstExpressionInstruction, instructions.Count - firstExpressionInstruction);
             stackDepth = stackDepthBeforeExpression;
-            return false;
+            return true;
         }
 
         static bool TryCompileArithmeticExpression(

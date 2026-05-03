@@ -224,7 +224,7 @@ namespace VVardenfell.Runtime.Components
 
             QueueActorCollider(ref ecb, logicalEntity);
 
-            if (ActorAiRuntimeAuthoringUtility.HasSupportedPackage(contentDb, actorHandle))
+            if (ActorAiRuntimeAuthoringUtility.HasPackage(contentDb, actorHandle))
             {
                 var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
                 ecb.AddComponent(logicalEntity, new ActorAiState

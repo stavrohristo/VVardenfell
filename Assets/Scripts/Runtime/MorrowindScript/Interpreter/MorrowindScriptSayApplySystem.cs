@@ -1,4 +1,5 @@
 using System;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
@@ -30,18 +31,24 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
+            var requestCopy = new NativeArray<MorrowindScriptSayRequest>(requests.Length, Allocator.Temp);
+            for (int i = 0; i < requests.Length; i++)
+                requestCopy[i] = requests[i];
+            requests.Clear();
+
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref var runtimeState = ref SystemAPI.GetSingletonRW<MorrowindScriptRuntimeState>().ValueRW;
             bool showSubtitles = HudUserPreferences.ShowSubtitles;
 
-            for (int i = 0; i < requests.Length; i++)
+            for (int i = 0; i < requestCopy.Length; i++)
             {
-                ApplyRequest(requests[i], lookup, ref runtimeState);
-                if (showSubtitles && !requests[i].Subtitle.IsEmpty && SystemAPI.TryGetSingletonRW<RuntimeShellState>(out var shell))
-                    RuntimeShellStateUtility.ShowMessageBox(ref shell.ValueRW, requests[i].Subtitle);
+                var request = requestCopy[i];
+                ApplyRequest(request, lookup, ref runtimeState);
+                if (showSubtitles && !request.Subtitle.IsEmpty && SystemAPI.TryGetSingletonRW<RuntimeShellState>(out var shell))
+                    RuntimeShellStateUtility.ShowMessageBox(ref shell.ValueRW, request.Subtitle);
             }
 
-            requests.Clear();
+            requestCopy.Dispose();
         }
 
         void ApplyRequest(

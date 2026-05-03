@@ -303,6 +303,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             var common = new MorrowindScriptInterpretCommon
             {
                 Programs = catalog.Programs,
+                ProgramIds = catalog.ProgramIds,
                 Instructions = catalog.Instructions,
                 Messages = catalog.Messages,
                 OpcodeHandlers = catalog.OpcodeHandlers,
@@ -599,7 +600,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 (byte)ActorAiRuntimePackageType.Wander => 0,
                 (byte)ActorAiRuntimePackageType.Travel => 1,
+                (byte)ActorAiRuntimePackageType.Escort => 2,
                 (byte)ActorAiRuntimePackageType.Follow => 3,
+                (byte)ActorAiRuntimePackageType.Activate => 4,
                 _ => -1,
             };
         }
@@ -1635,6 +1638,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         unsafe struct MorrowindScriptInterpretCommon
         {
             [ReadOnly] public NativeArray<MorrowindScriptProgramRuntime> Programs;
+            [ReadOnly] public NativeArray<FixedString128Bytes> ProgramIds;
             [ReadOnly] public NativeArray<MorrowindScriptInstructionRuntime> Instructions;
             [ReadOnly] public NativeArray<FixedString512Bytes> Messages;
             [ReadOnly] public NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> OpcodeHandlers;
@@ -1722,11 +1726,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if ((uint)instance.ProgramIndex >= (uint)Programs.Length)
                 {
-                    Fault(ref instance, "Invalid script program index.");
+                    Fault(ref instance, FormatScriptFault(default, -1, 0, ScriptFaultReason.InvalidProgramIndex));
                     return false;
                 }
 
                 var program = Programs[instance.ProgramIndex];
+                FixedString128Bytes programId = ProgramIds[instance.ProgramIndex];
                 if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled || program.InstructionCount <= 0)
                     return false;
 
@@ -1744,7 +1749,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (!QuestJournal.HasBuffer(RuntimeEntity))
                 {
-                    Fault(ref instance, "Missing quest journal runtime buffer.");
+                    Fault(ref instance, FormatScriptFault(programId, -1, 0, ScriptFaultReason.MissingQuestJournalRuntimeBuffer));
                     return false;
                 }
 
@@ -1891,6 +1896,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                     var instruction = Instructions[program.FirstInstructionIndex + pc];
                     context.ProgramCounter = 1;
+                    context.FaultProgramCounter = pc;
+                    context.FaultOpcode = instruction.Opcode;
                     if ((uint)instruction.Opcode >= (uint)OpcodeHandlers.Length)
                     {
                         context.Faulted = 1;
@@ -1909,7 +1916,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (context.Faulted != 0)
                 {
-                    Fault(ref instance, "Script VM fault.");
+                    Fault(ref instance, FormatScriptFault(programId, context.FaultProgramCounter, context.FaultOpcode, ScriptFaultReason.ScriptVmFault));
                     return false;
                 }
 
@@ -1919,7 +1926,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (context.StopRequested != 0)
                 {
                     instance.Status = (byte)MorrowindScriptInstanceStatus.Disabled;
-                    instance.DisabledReason = "Stopped by StopScript.";
+                    instance.DisabledReason = BuildStoppedByStopScriptReason();
                 }
 
                 instance.ProgramCounter = 0;
@@ -1930,6 +1937,222 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 instance.Status = (byte)MorrowindScriptInstanceStatus.Faulted;
                 instance.DisabledReason = reason;
+            }
+
+            enum ScriptFaultReason : byte
+            {
+                InvalidProgramIndex,
+                MissingQuestJournalRuntimeBuffer,
+                ScriptVmFault,
+            }
+
+            static FixedString128Bytes FormatScriptFault(FixedString128Bytes programId, int pc, byte opcode, ScriptFaultReason reason)
+            {
+                var text = default(FixedString128Bytes);
+                AppendScriptEquals(ref text);
+                if (programId.IsEmpty)
+                    AppendUnknown(ref text);
+                else
+                    text.Append(programId);
+                if (pc >= 0)
+                {
+                    AppendPcEquals(ref text);
+                    text.Append(pc);
+                    AppendOpEquals(ref text);
+                    text.Append(opcode);
+                }
+                AppendColonSpace(ref text);
+                AppendFaultReason(ref text, reason);
+                return text;
+            }
+
+            static FixedString128Bytes BuildStoppedByStopScriptReason()
+            {
+                var text = default(FixedString128Bytes);
+                AppendStoppedByStopScript(ref text);
+                return text;
+            }
+
+            static void AppendFaultReason(ref FixedString128Bytes text, ScriptFaultReason reason)
+            {
+                switch (reason)
+                {
+                    case ScriptFaultReason.InvalidProgramIndex:
+                        AppendInvalidProgramIndex(ref text);
+                        break;
+                    case ScriptFaultReason.MissingQuestJournalRuntimeBuffer:
+                        AppendMissingQuestJournalRuntimeBuffer(ref text);
+                        break;
+                    case ScriptFaultReason.ScriptVmFault:
+                        AppendScriptVmFault(ref text);
+                        break;
+                }
+            }
+
+            static void AppendScriptEquals(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'s');
+                text.Append((byte)'c');
+                text.Append((byte)'r');
+                text.Append((byte)'i');
+                text.Append((byte)'p');
+                text.Append((byte)'t');
+                text.Append((byte)'=');
+            }
+
+            static void AppendUnknown(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'<');
+                text.Append((byte)'u');
+                text.Append((byte)'n');
+                text.Append((byte)'k');
+                text.Append((byte)'n');
+                text.Append((byte)'o');
+                text.Append((byte)'w');
+                text.Append((byte)'n');
+                text.Append((byte)'>');
+            }
+
+            static void AppendPcEquals(ref FixedString128Bytes text)
+            {
+                text.Append((byte)' ');
+                text.Append((byte)'p');
+                text.Append((byte)'c');
+                text.Append((byte)'=');
+            }
+
+            static void AppendOpEquals(ref FixedString128Bytes text)
+            {
+                text.Append((byte)' ');
+                text.Append((byte)'o');
+                text.Append((byte)'p');
+                text.Append((byte)'=');
+            }
+
+            static void AppendColonSpace(ref FixedString128Bytes text)
+            {
+                text.Append((byte)':');
+                text.Append((byte)' ');
+            }
+
+            static void AppendStoppedByStopScript(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'S');
+                text.Append((byte)'t');
+                text.Append((byte)'o');
+                text.Append((byte)'p');
+                text.Append((byte)'p');
+                text.Append((byte)'e');
+                text.Append((byte)'d');
+                text.Append((byte)' ');
+                text.Append((byte)'b');
+                text.Append((byte)'y');
+                text.Append((byte)' ');
+                text.Append((byte)'S');
+                text.Append((byte)'t');
+                text.Append((byte)'o');
+                text.Append((byte)'p');
+                text.Append((byte)'S');
+                text.Append((byte)'c');
+                text.Append((byte)'r');
+                text.Append((byte)'i');
+                text.Append((byte)'p');
+                text.Append((byte)'t');
+                text.Append((byte)'.');
+            }
+
+            static void AppendInvalidProgramIndex(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'I');
+                text.Append((byte)'n');
+                text.Append((byte)'v');
+                text.Append((byte)'a');
+                text.Append((byte)'l');
+                text.Append((byte)'i');
+                text.Append((byte)'d');
+                text.Append((byte)' ');
+                text.Append((byte)'s');
+                text.Append((byte)'c');
+                text.Append((byte)'r');
+                text.Append((byte)'i');
+                text.Append((byte)'p');
+                text.Append((byte)'t');
+                text.Append((byte)' ');
+                text.Append((byte)'p');
+                text.Append((byte)'r');
+                text.Append((byte)'o');
+                text.Append((byte)'g');
+                text.Append((byte)'r');
+                text.Append((byte)'a');
+                text.Append((byte)'m');
+                text.Append((byte)' ');
+                text.Append((byte)'i');
+                text.Append((byte)'n');
+                text.Append((byte)'d');
+                text.Append((byte)'e');
+                text.Append((byte)'x');
+                text.Append((byte)'.');
+            }
+
+            static void AppendMissingQuestJournalRuntimeBuffer(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'M');
+                text.Append((byte)'i');
+                text.Append((byte)'s');
+                text.Append((byte)'s');
+                text.Append((byte)'i');
+                text.Append((byte)'n');
+                text.Append((byte)'g');
+                text.Append((byte)' ');
+                text.Append((byte)'q');
+                text.Append((byte)'u');
+                text.Append((byte)'e');
+                text.Append((byte)'s');
+                text.Append((byte)'t');
+                text.Append((byte)' ');
+                text.Append((byte)'j');
+                text.Append((byte)'o');
+                text.Append((byte)'u');
+                text.Append((byte)'r');
+                text.Append((byte)'n');
+                text.Append((byte)'a');
+                text.Append((byte)'l');
+                text.Append((byte)' ');
+                text.Append((byte)'r');
+                text.Append((byte)'u');
+                text.Append((byte)'n');
+                text.Append((byte)'t');
+                text.Append((byte)'i');
+                text.Append((byte)'m');
+                text.Append((byte)'e');
+                text.Append((byte)' ');
+                text.Append((byte)'b');
+                text.Append((byte)'u');
+                text.Append((byte)'f');
+                text.Append((byte)'f');
+                text.Append((byte)'e');
+                text.Append((byte)'r');
+                text.Append((byte)'.');
+            }
+
+            static void AppendScriptVmFault(ref FixedString128Bytes text)
+            {
+                text.Append((byte)'S');
+                text.Append((byte)'c');
+                text.Append((byte)'r');
+                text.Append((byte)'i');
+                text.Append((byte)'p');
+                text.Append((byte)'t');
+                text.Append((byte)' ');
+                text.Append((byte)'V');
+                text.Append((byte)'M');
+                text.Append((byte)' ');
+                text.Append((byte)'f');
+                text.Append((byte)'a');
+                text.Append((byte)'u');
+                text.Append((byte)'l');
+                text.Append((byte)'t');
+                text.Append((byte)'.');
             }
         }
 
