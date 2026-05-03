@@ -1544,13 +1544,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             entityManager.SetComponentData(entity, crime);
             SheathePlayerWeapon(entityManager, entity);
 
-            int daysMod = 100;
-            if (contentDb != null
-                && contentDb.TryGetGameSettingFloat("iDaysinPrisonMod", out float gmstDaysMod)
-                && gmstDaysMod > 0f)
-            {
-                daysMod = math.max(1, (int)gmstDaysMod);
-            }
+            if (contentDb == null)
+                throw new InvalidOperationException("[VVardenfell][Dialogue] Missing content database for gotojail result.");
+
+            int daysMod = contentDb.RequireGameSettingInt("iDaysinPrisonMod");
+            if (daysMod <= 0)
+                throw new InvalidOperationException("[VVardenfell][Dialogue] GMST iDaysinPrisonMod must be greater than zero.");
 
             jailRequests.Add(new MorrowindScriptJailRequest
             {
@@ -1924,8 +1923,10 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryCalculateCrimeGold(RuntimeContentDatabase contentDb, int bounty, string gmstId, out int value)
         {
             value = 0;
-            if (contentDb == null || !contentDb.TryGetGameSettingFloat(gmstId, out float multiplier))
-                return false;
+            if (contentDb == null)
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] Missing content database for {gmstId}.");
+
+            float multiplier = contentDb.RequireGameSettingFloat(gmstId);
 
             value = (int)(bounty * multiplier);
             if (bounty > 0 && value < 1)

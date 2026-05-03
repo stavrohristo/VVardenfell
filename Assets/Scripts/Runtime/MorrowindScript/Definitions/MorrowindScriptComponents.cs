@@ -175,6 +175,8 @@ namespace VVardenfell.Runtime.Components
         Follow = 3,
         StopCombat = 4,
         StartCombat = 5,
+        Escort = 6,
+        Activate = 7,
     }
 
     public struct MorrowindScriptActorAiSettingRequest : IBufferElementData
@@ -490,11 +492,21 @@ namespace VVardenfell.Runtime.Components
         public float3 TargetPosition;
         public float WanderRadius;
         public float IdleSeconds;
+        public float DurationHours;
         public float FollowDistance;
         public ulong DestinationInteriorCellHash;
         public byte PackageType;
         public byte ShouldRepeat;
         public byte AllowPartial;
+        public byte IdleChance0;
+        public byte IdleChance1;
+        public byte IdleChance2;
+        public byte IdleChance3;
+        public byte IdleChance4;
+        public byte IdleChance5;
+        public byte IdleChance6;
+        public byte IdleChance7;
+        public FixedString128Bytes TargetId;
     }
 
     public struct MorrowindScriptAudioRequest : IComponentData

@@ -9,7 +9,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAiPlannerSystem))]
+    [UpdateAfter(typeof(ActorAiActivateDirectSteeringSystem))]
     public partial class ActorAiActivateRequestSystem : SystemBase
     {
         EntityQuery _runtimeQuery;

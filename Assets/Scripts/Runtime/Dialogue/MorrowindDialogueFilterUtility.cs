@@ -1,6 +1,7 @@
 using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -335,6 +336,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                     matched = Compare(choice, rule);
                     return true;
 
+                case DialogueConditionFunction.Fight:
+                case DialogueConditionFunction.Hello:
+                case DialogueConditionFunction.Alarm:
+                case DialogueConditionFunction.Flee:
+                    matched = Compare(ResolveAiSetting(entityManager, speakerEntity, actor, function, rule.Index), rule);
+                    return true;
+
                 case DialogueConditionFunction.NotId:
                     matched = !IdEquals(rule.Variable, actor.Id) && !IdEquals(rule.Variable, actor.OriginalId);
                     return true;
@@ -381,6 +389,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     }
                     return false;
 
+                case DialogueConditionFunction.TalkedToPc:
+                    matched = Compare(0, rule);
+                    return true;
+
                 case DialogueConditionFunction.PcClothingModifier:
                     if (TryReadPlayerClothingModifier(contentDb, entityManager, out int clothingModifier))
                     {
@@ -418,6 +430,40 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             unsupportedReason = $"unsupported dialogue select function {function}.";
             return false;
+        }
+
+        static int ResolveAiSetting(
+            EntityManager entityManager,
+            Entity speakerEntity,
+            in ActorDef actor,
+            DialogueConditionFunction function,
+            byte argument)
+        {
+            ActorAiSettingsState settings = entityManager.Exists(speakerEntity) && entityManager.HasComponent<ActorAiSettingsState>(speakerEntity)
+                ? entityManager.GetComponentData<ActorAiSettingsState>(speakerEntity)
+                : new ActorAiSettingsState
+                {
+                    Hello = actor.AiData.Hello,
+                    Fight = actor.AiData.Fight,
+                    Flee = actor.AiData.Flee,
+                    Alarm = actor.AiData.Alarm,
+                };
+
+            return argument switch
+            {
+                0 => settings.Hello,
+                1 => settings.Fight,
+                2 => settings.Flee,
+                3 => settings.Alarm,
+                _ => function switch
+                {
+                    DialogueConditionFunction.Hello => settings.Hello,
+                    DialogueConditionFunction.Fight => settings.Fight,
+                    DialogueConditionFunction.Flee => settings.Flee,
+                    DialogueConditionFunction.Alarm => settings.Alarm,
+                    _ => 0,
+                },
+            };
         }
 
         static bool TryReadGlobal(EntityManager entityManager, int index, out float value)

@@ -6,7 +6,6 @@ using Unity.Physics;
 using Unity.Profiling;
 using Unity.Rendering;
 using Unity.Transforms;
-using UnityEngine;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
@@ -19,6 +18,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -38,22 +38,26 @@ namespace VVardenfell.Runtime.Interactions
         {
             float3 origin = viewPose.Position;
             float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
-            var activationInput = new RaycastInput
+            return CastFromCameraRay(physicsWorld, origin, forward, MaxInteractDistance, 0f, sequence);
+        }
+
+        public static PlayerInteractionRaycastHit CastFromCameraRay(
+            in PhysicsWorldSingleton physicsWorld,
+            float3 origin,
+            float3 forward,
+            float queryDistance,
+            float reportedDistanceOffset,
+            uint sequence)
+        {
+            forward = math.normalizesafe(forward, new float3(0f, 0f, 1f));
+            queryDistance = math.max(0f, queryDistance);
+            reportedDistanceOffset = math.max(0f, reportedDistanceOffset);
+            var input = new RaycastInput
             {
                 Start = origin,
-                End = origin + forward * MaxInteractDistance,
-                Filter = InteractionCollisionLayers.ActivationQueryFilter,
+                End = origin + forward * queryDistance,
+                Filter = InteractionCollisionLayers.InteractionPickQueryFilter,
             };
-
-            var solidInput = new RaycastInput
-            {
-                Start = origin,
-                End = activationInput.End,
-                Filter = InteractionCollisionLayers.SolidQueryFilter,
-            };
-
-            bool hasProxyHit = TryCastNearestUsableHit(physicsWorld, activationInput, out Unity.Physics.RaycastHit proxyHit);
-            bool hasSolidHit = TryCastNearestUsableHit(physicsWorld, solidInput, out Unity.Physics.RaycastHit solidHit);
 
             var hit = new PlayerInteractionRaycastHit
             {
@@ -61,36 +65,18 @@ namespace VVardenfell.Runtime.Interactions
                 HitEntity = Entity.Null,
                 ProxyHitEntity = Entity.Null,
                 SolidHitEntity = Entity.Null,
-                HasProxyHit = (byte)(hasProxyHit ? 1 : 0),
-                HasSolidHit = (byte)(hasSolidHit ? 1 : 0),
             };
 
-            if (hasProxyHit)
-            {
-                hit.ProxyHitEntity = proxyHit.Entity;
-                hit.ProxyHitPosition = proxyHit.Position;
-                hit.ProxyHitNormal = proxyHit.SurfaceNormal;
-                hit.ProxyHitFraction = proxyHit.Fraction;
-                hit.ProxyHitDistance = proxyHit.Fraction * MaxInteractDistance;
-            }
+            if (queryDistance <= 0f || !TryCastNearestUsableHit(physicsWorld, input, out Unity.Physics.RaycastHit pickHit))
+                return hit;
 
-            if (hasSolidHit)
-            {
-                hit.SolidHitEntity = solidHit.Entity;
-                hit.SolidHitPosition = solidHit.Position;
-                hit.SolidHitNormal = solidHit.SurfaceNormal;
-                hit.SolidHitFraction = solidHit.Fraction;
-                hit.SolidHitDistance = solidHit.Fraction * MaxInteractDistance;
-            }
-
-            if (hasProxyHit && (!hasSolidHit || proxyHit.Fraction <= solidHit.Fraction))
-            {
-                SetPrimaryHit(ref hit, proxyHit.Entity, proxyHit.Position, proxyHit.SurfaceNormal, proxyHit.Fraction);
-            }
-            else if (hasSolidHit)
-            {
-                SetPrimaryHit(ref hit, solidHit.Entity, solidHit.Position, solidHit.SurfaceNormal, solidHit.Fraction);
-            }
+            SetPrimaryHit(
+                ref hit,
+                pickHit.Entity,
+                pickHit.Position,
+                pickHit.SurfaceNormal,
+                pickHit.Fraction,
+                math.max(0f, pickHit.Fraction * queryDistance - reportedDistanceOffset));
 
             return hit;
         }
@@ -129,14 +115,14 @@ namespace VVardenfell.Runtime.Interactions
             }
         }
 
-        static void SetPrimaryHit(ref PlayerInteractionRaycastHit hit, Entity entity, float3 position, float3 normal, float fraction)
+        static void SetPrimaryHit(ref PlayerInteractionRaycastHit hit, Entity entity, float3 position, float3 normal, float fraction, float distance)
         {
             hit.HasHit = 1;
             hit.HitEntity = entity;
             hit.HitPosition = position;
             hit.HitNormal = normal;
             hit.HitFraction = fraction;
-            hit.HitDistance = fraction * MaxInteractDistance;
+            hit.HitDistance = distance;
         }
 
         public static bool TryResolveFromRaycastHit(
@@ -149,48 +135,18 @@ namespace VVardenfell.Runtime.Interactions
             hitEntity = Entity.Null;
             resolved = default;
 
-            bool hasProxyHit = hit.HasProxyHit != 0;
-            bool hasSolidHit = hit.HasSolidHit != 0;
-
-            if (hasProxyHit && TryResolveEntity(entityManager, logicalRefLookup, hit.ProxyHitEntity, out ResolvedInteractionTarget proxyResolved))
-            {
-                if (hasSolidHit && SolidHitBlocksProxy(entityManager, logicalRefLookup, hit.SolidHitEntity, hit.SolidHitFraction, proxyResolved.TargetEntity, hit.ProxyHitFraction))
-                {
-                    hitEntity = hit.SolidHitEntity;
-                    if (TryResolveEntity(entityManager, logicalRefLookup, hit.SolidHitEntity, out resolved))
-                    {
-                        resolved = new ResolvedInteractionTarget(
-                            resolved.TargetEntity,
-                            resolved.PlacedRefId,
-                            resolved.Kind,
-                            hit.SolidHitDistance);
-                        return true;
-                    }
-
-                    return false;
-                }
-
-                hitEntity = hit.ProxyHitEntity;
-                resolved = new ResolvedInteractionTarget(
-                    proxyResolved.TargetEntity,
-                    proxyResolved.PlacedRefId,
-                    proxyResolved.Kind,
-                    hit.ProxyHitDistance);
-                return true;
-            }
-
-            if (!hasSolidHit)
+            if (hit.HasHit == 0)
                 return false;
 
-            hitEntity = hit.SolidHitEntity;
-            if (!TryResolveEntity(entityManager, logicalRefLookup, hit.SolidHitEntity, out resolved))
+            hitEntity = hit.HitEntity;
+            if (!TryResolveEntity(entityManager, logicalRefLookup, hit.HitEntity, out resolved))
                 return false;
 
             resolved = new ResolvedInteractionTarget(
                 resolved.TargetEntity,
                 resolved.PlacedRefId,
                 resolved.Kind,
-                hit.SolidHitDistance);
+                hit.HitDistance);
             return true;
         }
 
@@ -247,27 +203,6 @@ namespace VVardenfell.Runtime.Interactions
             }
 
             return false;
-        }
-
-        static bool SolidHitBlocksProxy(
-            EntityManager entityManager,
-            in LogicalRefLookup logicalRefLookup,
-            Entity solidHitEntity,
-            float solidHitFraction,
-            Entity proxyTargetEntity,
-            float proxyFraction)
-        {
-            const float FractionEpsilon = 0.0005f;
-            if (solidHitFraction + FractionEpsilon >= proxyFraction)
-                return false;
-
-            if (TryResolveLogicalEntity(entityManager, logicalRefLookup, solidHitEntity, out Entity solidLogicalEntity)
-                && solidLogicalEntity == proxyTargetEntity)
-            {
-                return false;
-            }
-
-            return true;
         }
 
         public static bool TryResolveLogicalEntity(
@@ -334,44 +269,34 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateAfter(typeof(PlayerPhysicsViewPoseSystem))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionRaycastSystem : SystemBase
     {
-        EntityQuery _playerQuery;
+        EntityQuery _viewPoseQuery;
         EntityQuery _raycastHitQuery;
 
         protected override void OnCreate()
         {
-            _playerQuery = GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<LocalPlayerPresentationPose>());
+            _viewPoseQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
             _raycastHitQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
-            RequireForUpdate(_playerQuery);
+            RequireForUpdate(_viewPoseQuery);
             RequireForUpdate(_raycastHitQuery);
             RequireForUpdate<PhysicsWorldSingleton>();
         }
 
         protected override void OnUpdate()
         {
-            var presentationPose = _playerQuery.GetSingleton<LocalPlayerPresentationPose>();
-            if (presentationPose.Initialized == 0)
-                return;
-
-            var viewPose = new PlayerPhysicsViewPose
-            {
-                Position = presentationPose.ViewPosition,
-                Rotation = presentationPose.ViewRotation,
-                FixedTick = presentationPose.LastFixedTick,
-            };
             var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
+            var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
             uint sequence = hitRef.ValueRO.Sequence + 1u;
             hitRef.ValueRW = InteractionTargetResolver.CastFromViewRay(physicsWorld, viewPose, sequence);
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionRaycastSystem))]
     public partial class InteractionTargetResolutionSystem : SystemBase
     {

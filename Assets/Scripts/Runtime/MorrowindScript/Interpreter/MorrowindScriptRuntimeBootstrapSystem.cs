@@ -2,6 +2,8 @@ using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
@@ -15,7 +17,11 @@ namespace VVardenfell.Runtime.MorrowindScript
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<MorrowindScriptRuntimeState>())
+            {
+                Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
+                RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(EntityManager, runtimeEntity);
                 return;
+            }
 
             var contentDb = RuntimeContentDatabase.Active;
             if (contentDb == null)
@@ -100,6 +106,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<PlayerFactionMutationRequest>(runtime);
             EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
+            EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
             EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);

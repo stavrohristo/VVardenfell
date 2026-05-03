@@ -8,6 +8,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Interactions;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace VVardenfell.Runtime.Streaming
@@ -54,6 +55,8 @@ namespace VVardenfell.Runtime.Streaming
                     out proxyQueueCount);
             }
 
+            EnableInteriorPickColliders(em, spawnedEntities);
+
             var spawnedBuffer = em.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
             for (int i = 0; i < spawnedEntities.Count; i++)
                 spawnedBuffer.Add(new InteriorSpawnedEntity { Value = spawnedEntities[i] });
@@ -79,6 +82,41 @@ namespace VVardenfell.Runtime.Streaming
                 RuntimeColliderKind.StaticCell,
                 active: true);
             spawnedEntities.Add(staticEntity);
+        }
+
+        static void EnableInteriorPickColliders(EntityManager em, List<Entity> spawnedEntities)
+        {
+            if (spawnedEntities == null)
+                return;
+
+            for (int i = 0; i < spawnedEntities.Count; i++)
+            {
+                Entity entity = spawnedEntities[i];
+                if (entity == Entity.Null || !em.Exists(entity))
+                    continue;
+                if (!em.HasComponent<InteractionPickSurfaceTag>(entity) || !em.HasComponent<RuntimeColliderSource>(entity))
+                    continue;
+
+                var source = em.GetComponentData<RuntimeColliderSource>(entity);
+                if (source.Kind != RuntimeColliderKind.InteractionPick)
+                    continue;
+
+                if (em.HasComponent<ModelPrefabNodeTag>(entity)
+                    && em.HasComponent<LogicalRefParent>(entity)
+                    && IsActorLogicalRef(em, em.GetComponentData<LogicalRefParent>(entity).Value))
+                {
+                    continue;
+                }
+
+                RuntimeColliderAttachmentUtility.EnablePhysics(em, entity);
+            }
+        }
+
+        static bool IsActorLogicalRef(EntityManager em, Entity logicalEntity)
+        {
+            return logicalEntity != Entity.Null
+                   && em.Exists(logicalEntity)
+                   && em.HasComponent<PassiveActorPresence>(logicalEntity);
         }
     }
 }

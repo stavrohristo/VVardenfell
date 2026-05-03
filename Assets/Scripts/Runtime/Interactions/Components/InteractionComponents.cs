@@ -27,6 +27,14 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
+    public struct InteractionPickSurfaceTag : IComponentData
+    {
+    }
+
+    public struct InteractionActorPickSurfaceTag : IComponentData
+    {
+    }
+
     public struct DialogueReadinessState : IComponentData
     {
         public Entity PendingTargetEntity;

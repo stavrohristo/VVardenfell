@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.Interactions
     {
         protected override void OnCreate()
         {
+            Enabled = false;
             RequireForUpdate<LoadedCellsMap>();
         }
 

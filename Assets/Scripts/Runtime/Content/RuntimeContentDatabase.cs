@@ -198,9 +198,10 @@ namespace VVardenfell.Runtime.Content
             => _explicitRefTargetsById.TryGetValue(ContentId.NormalizeId(id ?? string.Empty), out placedRefId);
         public bool TryGetGameSettingFloat(string id, out float value)
         {
-            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsNumericGameSetting(id))
             {
-                value = GetGameSetting(handle).Float0;
+                ref readonly var gameSetting = ref GetGameSetting(handle);
+                value = IsIntegerGameSetting(id) ? gameSetting.Int0 : gameSetting.Float0;
                 return true;
             }
 
@@ -208,9 +209,60 @@ namespace VVardenfell.Runtime.Content
             return false;
         }
 
+        public bool TryGetGameSettingInt(string id, out int value)
+        {
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsIntegerGameSetting(id))
+            {
+                ref readonly var gameSetting = ref GetGameSetting(handle);
+                value = gameSetting.Int0;
+                return true;
+            }
+
+            value = default;
+            return false;
+        }
+
+        public float RequireGameSettingFloat(string id)
+        {
+            if (!IsNumericGameSetting(id))
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a numeric game setting.");
+
+            if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
+
+            ref readonly var gameSetting = ref GetGameSetting(handle);
+            return IsIntegerGameSetting(id) ? gameSetting.Int0 : gameSetting.Float0;
+        }
+
+        public int RequireGameSettingInt(string id)
+        {
+            if (!IsIntegerGameSetting(id))
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not an integer game setting.");
+
+            if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
+
+            return GetGameSetting(handle).Int0;
+        }
+
+        public string RequireGameSettingString(string id)
+        {
+            if (!IsStringGameSetting(id))
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a string game setting.");
+
+            if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
+
+            string value = GetGameSetting(handle).Text;
+            if (string.IsNullOrWhiteSpace(value))
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' has no string value.");
+
+            return value;
+        }
+
         public bool TryGetGameSettingString(string id, out string value)
         {
-            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsStringGameSetting(id))
             {
                 value = GetGameSetting(handle).Text;
                 return !string.IsNullOrWhiteSpace(value);
@@ -219,6 +271,18 @@ namespace VVardenfell.Runtime.Content
             value = default;
             return false;
         }
+
+        static bool IsIntegerGameSetting(string id)
+            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 'i';
+
+        static bool IsFloatGameSetting(string id)
+            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 'f';
+
+        static bool IsStringGameSetting(string id)
+            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 's';
+
+        static bool IsNumericGameSetting(string id)
+            => IsIntegerGameSetting(id) || IsFloatGameSetting(id);
 
         public bool IsValid(ContentReference contentRef)
         {

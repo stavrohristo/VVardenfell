@@ -27,10 +27,12 @@ namespace VVardenfell.Runtime.Shell
         LocationPresentation _location = LocationPresentation.Unavailable;
         FixedString128Bytes _lastFocusText;
         FixedString128Bytes _lastNotificationText;
+        FixedString512Bytes _lastSubtitleText;
         FixedString128Bytes _lastModalTitle;
         FixedString512Bytes _lastModalBody;
         string _cachedFocusText;
         string _cachedNotificationText;
+        string _cachedSubtitleText;
         string _cachedModalTitle = string.Empty;
         string _cachedModalBody = string.Empty;
         string _lastWeaponLabel = string.Empty;
@@ -102,6 +104,9 @@ namespace VVardenfell.Runtime.Shell
                 return;
 
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
+            var subtitle = SystemAPI.TryGetSingleton<RuntimeSubtitleState>(out var subtitleState)
+                ? subtitleState
+                : default;
             var interaction = SystemAPI.GetSingleton<InteractionPresentationState>();
             var inventoryState = SystemAPI.GetSingleton<InventoryWindowState>();
             var containerState = SystemAPI.GetSingleton<ContainerWindowState>();
@@ -147,7 +152,8 @@ namespace VVardenfell.Runtime.Shell
                 location,
                 inventoryState,
                 inventory,
-                spellState);
+                spellState,
+                subtitle);
             StatsWindowViewModel statsModel = statsVisible
                 ? BuildStatsModel(RuntimeContentDatabase.Active, EntityManager, statsState, playerStats)
                 : null;
@@ -357,6 +363,20 @@ namespace VVardenfell.Runtime.Shell
             }
 
             return _cachedNotificationText;
+        }
+
+        string ResolveSubtitleText(in RuntimeSubtitleState subtitle)
+        {
+            if (subtitle.Visible == 0)
+                return null;
+
+            if (!_lastSubtitleText.Equals(subtitle.Text))
+            {
+                _lastSubtitleText = subtitle.Text;
+                _cachedSubtitleText = subtitle.Text.ToString();
+            }
+
+            return _cachedSubtitleText;
         }
 
         string ResolveModalTitle(bool modalOpen, FixedString128Bytes value)

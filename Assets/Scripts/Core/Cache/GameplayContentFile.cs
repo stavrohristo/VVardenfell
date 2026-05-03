@@ -468,6 +468,8 @@ namespace VVardenfell.Core.Cache
         PlayBink = 131,
         ModFactionReaction = 132,
         Resurrect = 133,
+        AiEscort = 134,
+        AiActivate = 135,
     }
 
     public enum MorrowindScriptRefTargetMode : byte

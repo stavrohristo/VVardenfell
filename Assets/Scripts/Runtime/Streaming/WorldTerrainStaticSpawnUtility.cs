@@ -9,6 +9,7 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
 using Material = UnityEngine.Material;
 using Collider = Unity.Physics.Collider;
 
@@ -48,6 +49,7 @@ namespace VVardenfell.Runtime.Streaming
                     terrBlob,
                     RuntimeColliderKind.TerrainCell,
                     active);
+                CreateTerrainPickEntity(em, coord, terrBlob, active);
                 terrainColliderCount = 1;
             }
 
@@ -147,6 +149,39 @@ namespace VVardenfell.Runtime.Streaming
             WorldResources.RegisterExteriorCellEntity(coord, terrainEntity);
             em.AddComponent<Unity.Transforms.Static>(terrainEntity);
             return terrainEntity;
+        }
+
+        static Entity CreateTerrainPickEntity(EntityManager em, int2 coord, BlobAssetReference<Collider> terrainBlob, bool active)
+        {
+            if (!terrainBlob.IsCreated)
+                return Entity.Null;
+
+            Entity pickEntity = em.CreateEntity();
+            em.SetName(pickEntity, $"TerrainPick({coord.x},{coord.y})");
+            float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            em.AddComponentData(pickEntity, LocalTransform.FromPositionRotationScale(
+                new float3(ox, 0f, oz),
+                quaternion.identity,
+                1f));
+            em.AddComponentData(pickEntity, new LocalToWorld
+            {
+                Value = float4x4.Translate(new float3(ox, 0f, oz))
+            });
+            em.AddComponent<Unity.Transforms.Static>(pickEntity);
+            em.AddComponentData(pickEntity, new CellLink { Value = coord });
+            em.AddComponent<InteractionPickSurfaceTag>(pickEntity);
+            WorldResources.RegisterExteriorCellEntity(coord, pickEntity);
+
+            var pickBlob = terrainBlob.Value.Clone();
+            RuntimeColliderAttachmentUtility.AttachSource(
+                em,
+                pickEntity,
+                pickBlob,
+                RuntimeColliderKind.InteractionPick,
+                active,
+                temporary: true);
+            return pickEntity;
         }
 
         static Material BuildTerrainMaterial(CellData data)

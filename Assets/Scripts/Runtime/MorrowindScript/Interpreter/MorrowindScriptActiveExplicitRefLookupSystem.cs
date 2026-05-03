@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.SetComponentData(_lookupEntity, new ActiveExplicitRefLookup
             {
                 ByContentKey = new NativeParallelHashMap<int, ActiveExplicitRefTarget>(1024, Allocator.Persistent),
+                AllByContentKey = new NativeParallelHashMap<int, ActiveExplicitRefTarget>(1024, Allocator.Persistent),
             });
 
             RequireForUpdate<ActiveExplicitRefLookup>();
@@ -40,20 +41,25 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var lookup = EntityManager.GetComponentData<ActiveExplicitRefLookup>(_lookupEntity);
                 if (lookup.ByContentKey.IsCreated)
                     lookup.ByContentKey.Dispose();
+                if (lookup.AllByContentKey.IsCreated)
+                    lookup.AllByContentKey.Dispose();
             }
         }
 
         protected override void OnUpdate()
         {
             var lookup = EntityManager.GetComponentData<ActiveExplicitRefLookup>(_lookupEntity);
-            if (!lookup.ByContentKey.IsCreated)
+            if (!lookup.ByContentKey.IsCreated || !lookup.AllByContentKey.IsCreated)
                 throw new InvalidOperationException("[VVardenfell][MWScript] Active explicit reference lookup is not constructed.");
 
             int count = Math.Max(_logicalRefQuery.CalculateEntityCount(), 1024);
             if (lookup.ByContentKey.Capacity < count)
                 lookup.ByContentKey.Capacity = count;
+            if (lookup.AllByContentKey.Capacity < count)
+                lookup.AllByContentKey.Capacity = count;
 
             lookup.ByContentKey.Clear();
+            lookup.AllByContentKey.Clear();
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0UL;
@@ -70,31 +76,44 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int i = 0; i < entities.Length; i++)
             {
                 uint placedRefId = identities[i].Value;
-                if (placedRefId == 0u || !contents[i].Value.IsValid || !IsActive(locations[i], loadedCells, interiorActive, activeInteriorCellHash))
+                if (placedRefId == 0u || !contents[i].Value.IsValid)
                     continue;
 
                 int key = ActiveExplicitRefLookupUtility.Pack(contents[i].Value);
-                if (!lookup.ByContentKey.TryGetValue(key, out var existing))
-                {
-                    lookup.ByContentKey.Add(key, new ActiveExplicitRefTarget
-                    {
-                        Entity = entities[i],
-                        PlacedRefId = placedRefId,
-                        Ambiguous = 0,
-                    });
-                    continue;
-                }
-
-                if (existing.PlacedRefId == placedRefId)
+                AddExplicitRefTarget(lookup.AllByContentKey, key, entities[i], placedRefId);
+                if (!IsActive(locations[i], loadedCells, interiorActive, activeInteriorCellHash))
                     continue;
 
-                existing.Ambiguous = 1;
-                existing.Entity = Entity.Null;
-                existing.PlacedRefId = 0u;
-                lookup.ByContentKey[key] = existing;
+                AddExplicitRefTarget(lookup.ByContentKey, key, entities[i], placedRefId);
             }
 
             EntityManager.SetComponentData(_lookupEntity, lookup);
+        }
+
+        static void AddExplicitRefTarget(
+            NativeParallelHashMap<int, ActiveExplicitRefTarget> targets,
+            int key,
+            Entity entity,
+            uint placedRefId)
+        {
+            if (!targets.TryGetValue(key, out var existing))
+            {
+                targets.Add(key, new ActiveExplicitRefTarget
+                {
+                    Entity = entity,
+                    PlacedRefId = placedRefId,
+                    Ambiguous = 0,
+                });
+                return;
+            }
+
+            if (existing.PlacedRefId == placedRefId)
+                return;
+
+            existing.Ambiguous = 1;
+            existing.Entity = Entity.Null;
+            existing.PlacedRefId = 0u;
+            targets[key] = existing;
         }
 
         static bool IsActive(

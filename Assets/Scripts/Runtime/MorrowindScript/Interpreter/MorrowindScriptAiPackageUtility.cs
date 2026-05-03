@@ -73,10 +73,21 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetPosition = request.TargetPosition,
                 WanderRadius = math.max(0f, request.WanderRadius),
                 IdleSeconds = math.max(0f, request.IdleSeconds),
+                DurationHours = math.max(0f, request.DurationHours),
+                RemainingDurationHours = math.max(0f, request.DurationHours),
                 FollowTargetEntity = request.FollowTargetEntity,
                 FollowTargetPlacedRefId = request.FollowTargetPlacedRefId,
                 FollowDistance = math.max(0f, request.FollowDistance),
                 DestinationInteriorCellHash = request.DestinationInteriorCellHash,
+                IdleChance0 = request.IdleChance0,
+                IdleChance1 = request.IdleChance1,
+                IdleChance2 = request.IdleChance2,
+                IdleChance3 = request.IdleChance3,
+                IdleChance4 = request.IdleChance4,
+                IdleChance5 = request.IdleChance5,
+                IdleChance6 = request.IdleChance6,
+                IdleChance7 = request.IdleChance7,
+                TargetId = request.TargetId,
             });
 
             var aiState = entityManager.GetComponentData<ActorAiState>(target);
@@ -84,6 +95,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             aiState.CurrentNodeIndex = -1;
             aiState.GoalNodeIndex = -1;
             aiState.WaitUntilTime = 0f;
+            aiState.FollowActive = 0;
+            aiState.PendingIdleGroup = 0;
+            aiState.ActiveIdleGroupHash = 0UL;
             aiState.Status = (byte)ActorAiPlannerStatus.Idle;
             if (entityManager.HasComponent<LocalTransform>(target))
                 aiState.HomePosition = entityManager.GetComponentData<LocalTransform>(target).Position;
@@ -119,6 +133,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return (byte)ActorAiRuntimePackageType.Travel;
             if (packageType == (byte)MorrowindScriptAiPackageRequestType.Follow)
                 return (byte)ActorAiRuntimePackageType.Follow;
+            if (packageType == (byte)MorrowindScriptAiPackageRequestType.Escort)
+                return (byte)ActorAiRuntimePackageType.Escort;
+            if (packageType == (byte)MorrowindScriptAiPackageRequestType.Activate)
+                return (byte)ActorAiRuntimePackageType.Activate;
             return (byte)ActorAiRuntimePackageType.Wander;
         }
 

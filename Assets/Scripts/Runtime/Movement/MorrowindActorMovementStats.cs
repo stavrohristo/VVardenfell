@@ -105,9 +105,9 @@ namespace VVardenfell.Runtime.Movement
 
             float Gmst(string id, float fallback)
             {
-                if (_contentDb != null && _contentDb.TryGetGameSettingFloat(id, out float value))
-                    return value;
-                return fallback;
+                return _contentDb != null
+                    ? _contentDb.RequireGameSettingFloat(id)
+                    : fallback;
             }
         }
 
@@ -675,9 +675,9 @@ namespace VVardenfell.Runtime.Movement
 
         static float Gmst(RuntimeContentDatabase contentDb, string id, float fallback)
         {
-            if (contentDb != null && contentDb.TryGetGameSettingFloat(id, out float value))
-                return value;
-            return fallback;
+            return contentDb != null
+                ? contentDb.RequireGameSettingFloat(id)
+                : fallback;
         }
 
         static float ClampVital(float current, float max)

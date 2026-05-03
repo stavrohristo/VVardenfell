@@ -110,12 +110,12 @@ namespace VVardenfell.Runtime.Audio
         readonly Dictionary<string, AudioClip> _clipCache = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _missingPathWarnings = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _loadFailureWarnings = new(StringComparer.OrdinalIgnoreCase);
-        readonly HashSet<string> _rangeWarnings = new(StringComparer.OrdinalIgnoreCase);
         readonly List<OneShotRequest> _pendingEventRequests = new();
         readonly Dictionary<ulong, ChannelState> _scriptLoopChannels = new();
         readonly HashSet<ulong> _scriptLoopTouched = new();
         readonly List<ulong> _scriptLoopRemovalKeys = new();
         readonly List<ActiveSayPlayback> _activeSayPlaybacks = new();
+        readonly RuntimeSoundResourceResolver _soundResourceResolver = new();
 
         readonly GameObject _root;
         readonly ChannelState _music;
@@ -335,6 +335,7 @@ namespace VVardenfell.Runtime.Audio
                     UnityEngine.Object.Destroy(clip);
             }
             _clipCache.Clear();
+            _soundResourceResolver.Dispose();
 
             if (_root != null)
                 UnityEngine.Object.Destroy(_root);
@@ -507,14 +508,27 @@ namespace VVardenfell.Runtime.Audio
             }
 
             bool directPath = !request.DirectPath.IsEmpty;
-            if (contentDb == null || (!request.Sound.IsValid && !directPath))
+            if (contentDb == null)
+            {
+                if (request.Sound.IsValid || directPath)
+                    throw new InvalidOperationException("[VVardenfell][Audio] Missing content database for script audio request.");
+                return;
+            }
+
+            if (!request.Sound.IsValid && !directPath)
                 return;
 
             string path = request.Sound.IsValid
                 ? ResolveSoundPath(contentDb, request.Sound)
                 : ResolveDirectSoundPath(request.DirectPath.ToString());
             if (string.IsNullOrWhiteSpace(path))
-                return;
+            {
+                if (directPath)
+                    throw new InvalidOperationException($"[VVardenfell][Audio] Missing direct audio file '{request.DirectPath.ToString()}'.");
+
+                ref readonly var sound = ref contentDb.Get(request.Sound);
+                throw new InvalidOperationException($"[VVardenfell][Audio] Missing audio file for sound '{sound.Id}'.");
+            }
 
             float requestVolume = Mathf.Clamp01(request.Volume <= 0f ? 1f : request.Volume);
             float volume = request.Sound.IsValid
@@ -697,16 +711,10 @@ namespace VVardenfell.Runtime.Audio
                 return null;
 
             string relativePath = SoundPathResolver.Correct(sound.SoundPath);
-            string wavPath = Path.Combine(_installPath, "Data Files", relativePath.Replace('\\', Path.DirectorySeparatorChar));
-            if (File.Exists(wavPath))
-                return wavPath;
+            if (_soundResourceResolver.TryResolve(_installPath, relativePath, out string resolvedPath))
+                return resolvedPath;
 
-            string mp3RelativePath = SoundPathResolver.ChangeExtension(relativePath, ".mp3");
-            string mp3Path = Path.Combine(_installPath, "Data Files", mp3RelativePath.Replace('\\', Path.DirectorySeparatorChar));
-            if (File.Exists(mp3Path))
-                return mp3Path;
-
-            WarnMissing(wavPath, "resolve");
+            WarnMissing(BuildLooseSoundPath(relativePath), "resolve");
             return null;
         }
 
@@ -716,18 +724,17 @@ namespace VVardenfell.Runtime.Audio
                 return null;
 
             string relativePath = SoundPathResolver.Correct(rawPath);
-            string directPath = Path.Combine(_installPath, "Data Files", relativePath.Replace('\\', Path.DirectorySeparatorChar));
-            if (File.Exists(directPath))
-                return directPath;
+            if (_soundResourceResolver.TryResolve(_installPath, relativePath, out string resolvedPath))
+                return resolvedPath;
 
-            string mp3RelativePath = SoundPathResolver.ChangeExtension(relativePath, ".mp3");
-            string mp3Path = Path.Combine(_installPath, "Data Files", mp3RelativePath.Replace('\\', Path.DirectorySeparatorChar));
-            if (File.Exists(mp3Path))
-                return mp3Path;
-
-            WarnMissing(directPath, "resolve");
+            WarnMissing(BuildLooseSoundPath(relativePath), "resolve");
             return null;
         }
+
+        string BuildLooseSoundPath(string relativePath)
+            => string.IsNullOrWhiteSpace(_installPath) || string.IsNullOrWhiteSpace(relativePath)
+                ? null
+                : Path.Combine(_installPath, "Data Files", relativePath.Replace('\\', Path.DirectorySeparatorChar));
 
         float ResolveSoundVolume(RuntimeContentDatabase contentDb, SoundDefHandle handle, float fallbackBaseVolume, float multiplier)
         {
@@ -1560,14 +1567,6 @@ namespace VVardenfell.Runtime.Audio
             Debug.LogWarning($"[VVardenfell][Audio] failed loading {channelName} clip '{path}': {error}");
         }
 
-        void WarnMissingAudioGameSetting(string id)
-        {
-            if (!_rangeWarnings.Add(id))
-                return;
-
-            Debug.LogWarning($"[VVardenfell][Audio] missing audio game setting '{id}' required for zero-range SOUN default handling.");
-        }
-
         float ResolveMusicVolume(in MusicState state, in AudioTuningState tuning)
         {
             float categoryScalar = state.Category switch
@@ -1600,28 +1599,16 @@ namespace VVardenfell.Runtime.Audio
             float maxRange = sound.MaxRange;
             if (sound.MinRange == 0 && sound.MaxRange == 0)
             {
-                if (contentDb.TryGetGameSettingFloat("fAudioDefaultMinDistance", out float defaultMin))
-                    minRange = defaultMin;
-                else
-                    WarnMissingAudioGameSetting("fAudioDefaultMinDistance");
-
-                if (contentDb.TryGetGameSettingFloat("fAudioDefaultMaxDistance", out float defaultMax))
-                    maxRange = defaultMax;
-                else
-                    WarnMissingAudioGameSetting("fAudioDefaultMaxDistance");
+                minRange = contentDb.RequireGameSettingFloat("fAudioDefaultMinDistance");
+                maxRange = contentDb.RequireGameSettingFloat("fAudioDefaultMaxDistance");
             }
 
             minRange *= Mathf.Max(0f, minMultiplier);
             maxRange *= Mathf.Max(0f, maxMultiplier);
-            if (contentDb.TryGetGameSettingFloat("fAudioMinDistanceMult", out float audioMinMultiplier))
-                minRange *= Mathf.Max(0f, audioMinMultiplier);
-            else
-                WarnMissingAudioGameSetting("fAudioMinDistanceMult");
-
-            if (contentDb.TryGetGameSettingFloat("fAudioMaxDistanceMult", out float audioMaxMultiplier))
-                maxRange *= Mathf.Max(0f, audioMaxMultiplier);
-            else
-                WarnMissingAudioGameSetting("fAudioMaxDistanceMult");
+            float audioMinMultiplier = contentDb.RequireGameSettingFloat("fAudioMinDistanceMult");
+            float audioMaxMultiplier = contentDb.RequireGameSettingFloat("fAudioMaxDistanceMult");
+            minRange *= Mathf.Max(0f, audioMinMultiplier);
+            maxRange *= Mathf.Max(0f, audioMaxMultiplier);
 
             minRange = Mathf.Max(minRange, 1f);
             maxRange = Mathf.Max(minRange, maxRange);
@@ -1639,25 +1626,12 @@ namespace VVardenfell.Runtime.Audio
 
             float minRange = 0f;
             float maxRange = 0f;
-            if (contentDb.TryGetGameSettingFloat("fAudioVoiceDefaultMinDistance", out float defaultMin))
-                minRange = defaultMin;
-            else
-                WarnMissingAudioGameSetting("fAudioVoiceDefaultMinDistance");
-
-            if (contentDb.TryGetGameSettingFloat("fAudioVoiceDefaultMaxDistance", out float defaultMax))
-                maxRange = defaultMax;
-            else
-                WarnMissingAudioGameSetting("fAudioVoiceDefaultMaxDistance");
-
-            if (contentDb.TryGetGameSettingFloat("fAudioMinDistanceMult", out float audioMinMultiplier))
-                minRange *= Mathf.Max(0f, audioMinMultiplier);
-            else
-                WarnMissingAudioGameSetting("fAudioMinDistanceMult");
-
-            if (contentDb.TryGetGameSettingFloat("fAudioMaxDistanceMult", out float audioMaxMultiplier))
-                maxRange *= Mathf.Max(0f, audioMaxMultiplier);
-            else
-                WarnMissingAudioGameSetting("fAudioMaxDistanceMult");
+            minRange = contentDb.RequireGameSettingFloat("fAudioVoiceDefaultMinDistance");
+            maxRange = contentDb.RequireGameSettingFloat("fAudioVoiceDefaultMaxDistance");
+            float audioMinMultiplier = contentDb.RequireGameSettingFloat("fAudioMinDistanceMult");
+            float audioMaxMultiplier = contentDb.RequireGameSettingFloat("fAudioMaxDistanceMult");
+            minRange *= Mathf.Max(0f, audioMinMultiplier);
+            maxRange *= Mathf.Max(0f, audioMaxMultiplier);
 
             minRange = Mathf.Max(minRange, 1f);
             maxRange = Mathf.Max(minRange, maxRange);

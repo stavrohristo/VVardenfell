@@ -198,9 +198,7 @@ namespace VVardenfell.Runtime.Shell
             if (cachedEffects == null || cachedEffects.Length == 0)
                 return;
 
-            float fadeTime = 1f;
-            if (contentDb.TryGetGameSettingFloat("fMagicStartIconBlink", out float gmstFadeTime) && gmstFadeTime > 0f)
-                fadeTime = gmstFadeTime;
+            float fadeTime = contentDb.RequireGameSettingFloat("fMagicStartIconBlink");
 
             for (int i = 0; i < cachedEffects.Length; i++)
             {
@@ -256,9 +254,7 @@ namespace VVardenfell.Runtime.Shell
             if (ordered.Count == 0)
                 return Array.Empty<RuntimeMagicEffectIconViewModel>();
 
-            float fadeTime = 1f;
-            if (contentDb.TryGetGameSettingFloat("fMagicStartIconBlink", out float gmstFadeTime) && gmstFadeTime > 0f)
-                fadeTime = gmstFadeTime;
+            float fadeTime = contentDb.RequireGameSettingFloat("fMagicStartIconBlink");
 
             var result = new RuntimeMagicEffectIconViewModel[ordered.Count];
             for (int i = 0; i < ordered.Count; i++)

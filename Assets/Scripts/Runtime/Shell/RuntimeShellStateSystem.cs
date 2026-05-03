@@ -23,6 +23,8 @@ namespace VVardenfell.Runtime.Shell
                 state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
 
             AdvanceScreenFade(ref state, SystemAPI.Time.DeltaTime);
+            if (SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
+                AdvanceSubtitle(ref subtitle.ValueRW, SystemAPI.Time.DeltaTime);
 
             if (state.PauseMenuOpen == 0 && state.SaveLoadBrowserOpen == 0 && state.ModalOpen != 0)
                 RuntimeShellStateUtility.ClearModal(ref state);
@@ -71,6 +73,19 @@ namespace VVardenfell.Runtime.Shell
             state.ScreenFadeElapsed = math.min(state.ScreenFadeDuration, state.ScreenFadeElapsed + math.max(0f, deltaTime));
             float t = math.saturate(state.ScreenFadeElapsed / state.ScreenFadeDuration);
             state.ScreenFadeAlpha = math.lerp(state.ScreenFadeStartAlpha, state.ScreenFadeTargetAlpha, t);
+        }
+
+        static void AdvanceSubtitle(ref RuntimeSubtitleState state, float deltaTime)
+        {
+            if (state.Visible == 0)
+                return;
+
+            state.SecondsRemaining = math.max(0f, state.SecondsRemaining - math.max(0f, deltaTime));
+            if (state.SecondsRemaining > 0f)
+                return;
+
+            state.Visible = 0;
+            state.Text = default;
         }
     }
 }

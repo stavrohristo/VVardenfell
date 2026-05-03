@@ -46,7 +46,7 @@ namespace VVardenfell.Importer.Bake
                 ? collisions.AddOrGet(source.Collision)
                 : -1;
 
-            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisionIndex, actorAnimation, objectAnimation);
+            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisions, collisionIndex, actorAnimation, objectAnimation);
             int index = _records.Count;
             _records.Add(record);
 
@@ -74,6 +74,7 @@ namespace VVardenfell.Importer.Bake
             MeshBakery meshes,
             MaterialBakery materials,
             TextureBakery textures,
+            CollisionBakery collisions,
             int collisionIndex,
             ActorAnimationBakery.Assignment actorAnimation,
             ModelObjectAnimationDef objectAnimation)
@@ -103,6 +104,7 @@ namespace VVardenfell.Importer.Bake
                 int meshIndex = -1;
                 int materialIndex = -1;
                 int textureIndex = -1;
+                int pickColliderIndex = -1;
                 bool renderableLeaf = node.Kind == ModelPrefabNodeKind.RenderLeaf
                                       && node.RenderLeaf.VertexCount > 0
                                       && node.RenderLeaf.HasNormals
@@ -113,6 +115,7 @@ namespace VVardenfell.Importer.Bake
                     meshIndex = meshes.AddOrGet($"{modelPath}#{i}", node.RenderLeaf);
                     materialIndex = materials.AddOrGet(node.MaterialFlags);
                     textureIndex = textures.AddOrGet(node.TexturePath);
+                    pickColliderIndex = AddPickCollider(collisions, node.RenderLeaf, modelPath, i);
                 }
 
                 var bounds = renderableLeaf ? node.RenderLeaf.LocalBounds : default;
@@ -127,6 +130,7 @@ namespace VVardenfell.Importer.Bake
                     GlobalMeshIndex = meshIndex,
                     MaterialIndex = materialIndex,
                     TextureIndex = textureIndex,
+                    PickColliderIndex = pickColliderIndex,
                     PosX = node.LocalPosition.x,
                     PosY = node.LocalPosition.y,
                     PosZ = node.LocalPosition.z,
@@ -181,6 +185,7 @@ namespace VVardenfell.Importer.Bake
                     GlobalMeshIndex = node.GlobalMeshIndex,
                     MaterialIndex = node.MaterialIndex,
                     TextureIndex = node.TextureIndex,
+                    PickColliderIndex = node.PickColliderIndex,
                     PosX = node.PosX,
                     PosY = node.PosY,
                     PosZ = node.PosZ,
@@ -278,6 +283,23 @@ namespace VVardenfell.Importer.Bake
                 Keys = clonedKeys,
                 TextMarkers = clonedMarkers,
             };
+        }
+
+        static int AddPickCollider(
+            CollisionBakery collisions,
+            in NifMeshBuilder.RawBuiltMesh mesh,
+            string modelPath,
+            int nodeIndex)
+        {
+            if (collisions == null)
+                return -1;
+            if (mesh.Vertices == null || mesh.Vertices.Length == 0 || mesh.Indices == null || mesh.Indices.Length == 0)
+                return -1;
+            if (mesh.Indices.Length % 3 != 0)
+                throw new InvalidOperationException(
+                    $"Model prefab '{modelPath}' node {nodeIndex} has non-triangle render index count {mesh.Indices.Length}.");
+
+            return collisions.AddOrGetInteractionPick(new CollisionPayload(mesh.Vertices, mesh.Indices));
         }
     }
 }

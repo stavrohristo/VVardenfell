@@ -24,6 +24,7 @@ namespace VVardenfell.Runtime.Shell
                 SelectedAction = (byte)RuntimeShellMenuActionId.Resume,
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellActionRequest());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeSubtitleState());
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserState
             {
                 DraftSaveName = new FixedString64Bytes("New Save"),

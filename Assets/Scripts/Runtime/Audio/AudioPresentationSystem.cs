@@ -89,10 +89,10 @@ namespace VVardenfell.Runtime.Audio
                 _service.SyncNearWater(contentDb, default, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(false);
-                using (k_QueueScriptEvent.Auto())
-                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false, keepActiveLoops: false);
                 interactionRequests.Clear();
                 interactionState = default;
+                using (k_QueueScriptEvent.Auto())
+                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false, keepActiveLoops: false);
             }
 
             _service.Tick(SystemAPI.Time.DeltaTime);

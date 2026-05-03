@@ -30,6 +30,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int QuestJournalCount;
         public NativeParallelHashMap<uint, byte> RefDisabledStates;
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> ActiveExplicitRefs;
+        public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllExplicitRefs;
         public float SecondsPassed;
         public float3 Position;
         public quaternion Rotation;
@@ -151,7 +152,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        public const int OpcodeCount = 134;
+        public const int OpcodeCount = 136;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {
@@ -208,6 +209,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             handlers[(int)MorrowindScriptOpcode.AiTravel] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AiTravel);
             handlers[(int)MorrowindScriptOpcode.AiFollow] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AiFollow);
             handlers[(int)MorrowindScriptOpcode.AiFollowCell] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AiFollowCell);
+            handlers[(int)MorrowindScriptOpcode.AiEscort] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AiEscort);
+            handlers[(int)MorrowindScriptOpcode.AiActivate] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(AiActivate);
             handlers[(int)MorrowindScriptOpcode.StopCombat] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(StopCombat);
             handlers[(int)MorrowindScriptOpcode.StartCombat] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(StartCombat);
             handlers[(int)MorrowindScriptOpcode.SetActorAiSetting] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(SetActorAiSetting);
@@ -1404,7 +1407,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 PackageType = (byte)MorrowindScriptAiPackageRequestType.Wander,
                 ShouldRepeat = instruction->Operand1 != 0 ? (byte)1 : (byte)0,
                 WanderRadius = math.max(0f, instruction->Float0),
-                IdleSeconds = 1.5f,
+                DurationHours = math.max(0f, instruction->Float1),
+                IdleChance0 = UnpackByte(instruction->Int1, 0),
+                IdleChance1 = UnpackByte(instruction->Int1, 1),
+                IdleChance2 = UnpackByte(instruction->Int1, 2),
+                IdleChance3 = UnpackByte(instruction->Int1, 3),
+                IdleChance4 = UnpackByte(instruction->Int2, 0),
+                IdleChance5 = UnpackByte(instruction->Int2, 1),
+                IdleChance6 = UnpackByte(instruction->Int2, 2),
+                IdleChance7 = UnpackByte(instruction->Int2, 3),
             });
         }
 
@@ -1434,7 +1445,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void AiFollow(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
-            EmitFollowRequest(context, instruction, destinationInteriorCellHash: 0UL);
+            EmitFollowRequest(context, instruction, destinationInteriorCellHash: 0UL, packageType: (byte)MorrowindScriptAiPackageRequestType.Follow);
         }
 
         [BurstCompile]
@@ -1447,7 +1458,49 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            EmitFollowRequest(context, instruction, interiorCellHash);
+            EmitFollowRequest(context, instruction, interiorCellHash, packageType: (byte)MorrowindScriptAiPackageRequestType.Follow);
+        }
+
+        [BurstCompile]
+        static void AiEscort(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            EmitFollowRequest(context, instruction, destinationInteriorCellHash: 0UL, packageType: (byte)MorrowindScriptAiPackageRequestType.Escort);
+        }
+
+        [BurstCompile]
+        static void AiActivate(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if (targetPlacedRefId == 0u
+                || context->AiRuntimeEntity == Entity.Null
+                || context->Messages == null
+                || (uint)instruction->Int1 >= (uint)context->MessageCount)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            FixedString128Bytes targetId = default;
+            targetId.CopyFromTruncated(context->Messages[instruction->Int1]);
+            if (targetId.IsEmpty)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->AiRuntimeEntity, new MorrowindScriptAiPackageRequest
+            {
+                TargetEntity = targetEntity,
+                TargetPlacedRefId = targetPlacedRefId,
+                PackageType = (byte)MorrowindScriptAiPackageRequestType.Activate,
+                ShouldRepeat = instruction->Operand1 != 0 ? (byte)1 : (byte)0,
+                AllowPartial = 1,
+                FollowDistance = 128f * WorldScale.MwUnitsToMeters,
+                IdleSeconds = 0.25f,
+                TargetId = targetId,
+            });
         }
 
         [BurstCompile]
@@ -3129,7 +3182,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         static void EmitFollowRequest(
             MorrowindScriptExecutionContext* context,
             MorrowindScriptInstructionRuntime* instruction,
-            ulong destinationInteriorCellHash)
+            ulong destinationInteriorCellHash,
+            byte packageType)
         {
             if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
@@ -3156,12 +3210,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetPlacedRefId = targetPlacedRefId,
                 FollowTargetEntity = followTargetEntity,
                 FollowTargetPlacedRefId = followTargetPlacedRefId,
-                PackageType = (byte)MorrowindScriptAiPackageRequestType.Follow,
+                PackageType = packageType,
                 ShouldRepeat = instruction->Operand1 != 0 ? (byte)1 : (byte)0,
                 AllowPartial = 1,
                 TargetPosition = new float3(instruction->Float1, instruction->Float2, instruction->Float3),
                 DestinationInteriorCellHash = destinationInteriorCellHash,
-                FollowDistance = 256f * WorldScale.MwUnitsToMeters,
+                FollowDistance = packageType == (byte)MorrowindScriptAiPackageRequestType.Escort
+                    ? 450f * WorldScale.MwUnitsToMeters
+                    : 256f * WorldScale.MwUnitsToMeters,
+                DurationHours = math.max(0f, instruction->Float0),
                 IdleSeconds = 0.5f,
             });
         }
@@ -3190,6 +3247,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Operation = operation,
             });
         }
+
+        static byte UnpackByte(int packed, int index)
+            => (byte)((packed >> (index * 8)) & 0xFF);
 
         [BurstCompile]
         static void GetDisabled(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
@@ -3228,7 +3288,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void RequestSetDisabled(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
-            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+            if (!TryResolveRefStateTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
 
             if (targetPlacedRefId == 0u || context->RefStateRuntimeEntity == Entity.Null)
@@ -3535,6 +3595,42 @@ namespace VVardenfell.Runtime.MorrowindScript
             out uint targetPlacedRefId,
             out Entity targetEntity)
             => TryResolveRefTarget(context, instruction->Operand0, instruction->Int0, out targetPlacedRefId, out targetEntity);
+
+        static bool TryResolveRefStateTarget(
+            MorrowindScriptExecutionContext* context,
+            MorrowindScriptInstructionRuntime* instruction,
+            out uint targetPlacedRefId,
+            out Entity targetEntity)
+        {
+            if (instruction->Operand0 != (byte)MorrowindScriptRefTargetMode.ActiveContentRef)
+                return TryResolveRefTarget(context, instruction, out targetPlacedRefId, out targetEntity);
+
+            int targetRefKey = instruction->Int0;
+            if (context->ActiveExplicitRefs.IsCreated
+                && context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var activeTarget)
+                && activeTarget.Ambiguous == 0
+                && activeTarget.PlacedRefId != 0u)
+            {
+                targetPlacedRefId = activeTarget.PlacedRefId;
+                targetEntity = activeTarget.Entity;
+                return true;
+            }
+
+            if (!context->AllExplicitRefs.IsCreated
+                || !context->AllExplicitRefs.TryGetValue(targetRefKey, out var target)
+                || target.Ambiguous != 0
+                || target.PlacedRefId == 0u)
+            {
+                targetPlacedRefId = 0u;
+                targetEntity = Entity.Null;
+                context->Faulted = 1;
+                return false;
+            }
+
+            targetPlacedRefId = target.PlacedRefId;
+            targetEntity = target.Entity;
+            return true;
+        }
 
         static bool IsResolvedTargetDisabled(MorrowindScriptExecutionContext* context, byte targetMode, uint targetPlacedRefId)
         {

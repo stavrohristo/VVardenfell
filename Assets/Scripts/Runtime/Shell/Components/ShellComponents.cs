@@ -145,6 +145,13 @@ namespace VVardenfell.Runtime.Components
         public FixedString128Bytes Button9;
     }
 
+    public struct RuntimeSubtitleState : IComponentData
+    {
+        public FixedString512Bytes Text;
+        public float SecondsRemaining;
+        public byte Visible;
+    }
+
     public struct GlobalMapRevealRequest : IBufferElementData
     {
         public FixedString512Bytes CellNamePrefix;

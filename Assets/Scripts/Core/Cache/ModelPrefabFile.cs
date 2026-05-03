@@ -31,6 +31,7 @@ namespace VVardenfell.Core.Cache
         public int GlobalMeshIndex;
         public int MaterialIndex;
         public int TextureIndex;
+        public int PickColliderIndex = -1;
         public float PosX;
         public float PosY;
         public float PosZ;
@@ -71,7 +72,7 @@ namespace VVardenfell.Core.Cache
     public static class ModelPrefabFile
     {
         const uint Magic = 0x50464D44u; // 'DMFP'
-        const uint Version = 4u;
+        const uint Version = 5u;
 
         public static bool TryRead(string path, out ModelPrefabCatalogData data)
         {
@@ -177,6 +178,7 @@ namespace VVardenfell.Core.Cache
                 GlobalMeshIndex = r.ReadInt32(),
                 MaterialIndex = r.ReadInt32(),
                 TextureIndex = r.ReadInt32(),
+                PickColliderIndex = r.ReadInt32(),
                 PosX = r.ReadSingle(),
                 PosY = r.ReadSingle(),
                 PosZ = r.ReadSingle(),
@@ -229,6 +231,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.GlobalMeshIndex ?? -1);
             w.Write(value?.MaterialIndex ?? -1);
             w.Write(value?.TextureIndex ?? -1);
+            w.Write(value?.PickColliderIndex ?? -1);
             w.Write(value?.PosX ?? 0f);
             w.Write(value?.PosY ?? 0f);
             w.Write(value?.PosZ ?? 0f);

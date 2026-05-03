@@ -19,7 +19,8 @@ namespace VVardenfell.Runtime.Shell
             in LocationPresentation location,
             in InventoryWindowState inventoryState,
             DynamicBuffer<PlayerInventoryItem> inventory,
-            in SpellWindowState spellState)
+            in SpellWindowState spellState,
+            in RuntimeSubtitleState subtitle)
         {
             string itemLabel = ResolveSelectedInventoryLabel(contentDb, inventoryState, inventory);
             string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState, out string spellIconPath, out string spellTooltip);
@@ -31,6 +32,7 @@ namespace VVardenfell.Runtime.Shell
             _hudModel.ShowCrosshair = showHud && interaction.ShowCrosshair != 0 && HudUserPreferences.ShowCrosshair;
             _hudModel.FocusText = showHud ? ResolveFocusText(interaction) : null;
             _hudModel.NotificationText = showHud ? ResolveNotificationText(interaction) : null;
+            _hudModel.SubtitleText = showHud ? ResolveSubtitleText(subtitle) : null;
             _hudModel.WeaponSpellText = showHud ? BuildWeaponSpellText(itemLabel, spellLabel) : string.Empty;
             _hudModel.CellNameText = showHud ? location.DisplayName : string.Empty;
             _hudModel.HealthFillNormalized = playerStats.HasPlayer ? playerStats.HealthFill : 0f;

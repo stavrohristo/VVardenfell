@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.UI.Shell
         const float BottomRightClusterHeight = 120f;
         const float FocusWidth = 280f;
         const float NotificationWidth = 360f;
+        const float SubtitleWidth = 520f;
 
         // Vanilla MW bar tint palette. Matches the fontcolour=health/magic/fatigue values
         // used by MW_BarTrack_Red/Blue/Green in openmw_hud_energybar.skin.xml and the
@@ -45,6 +46,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly BitmapTextGraphic _cellNameText;
         readonly BitmapTextGraphic _focusText;
         readonly BitmapTextGraphic _notificationText;
+        readonly BitmapTextGraphic _subtitleText;
         readonly Image _healthFill;
         readonly Image _magickaFill;
         readonly Image _fatigueFill;
@@ -67,6 +69,7 @@ namespace VVardenfell.Runtime.UI.Shell
         GameObject _crosshairGo;
         GameObject _focusAnchorGo;
         GameObject _notificationAnchorGo;
+        GameObject _subtitleAnchorGo;
         GameObject _spellIconGo;
         GameObject _enemyHealthRowGo;
         GameObject _sneakSlotRowGo;
@@ -110,7 +113,7 @@ namespace VVardenfell.Runtime.UI.Shell
             (_healthFill, _magickaFill, _fatigueFill, _enemyHealthFill, _enemyHealthRow) = BuildStatBars();
             (_weaponSpellText, _weaponStatusFill, _spellStatusFill, _spellIcon, _spellSlotRoot, _sneakSlotRow) = BuildQuickSlots();
             (_cellNameText, _effectBoxRoot, _activeEffectStrip) = BuildMapCluster();
-            (_focusText, _notificationText) = BuildMessages();
+            (_focusText, _notificationText, _subtitleText) = BuildMessages();
             _rootGo = _root.gameObject;
             _healthFillParent = (RectTransform)_healthFill.transform.parent;
             _magickaFillParent = (RectTransform)_magickaFill.transform.parent;
@@ -120,6 +123,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _spellStatusFillParent = (RectTransform)_spellStatusFill.transform.parent;
             _focusAnchorGo = _focusText.transform.parent.gameObject;
             _notificationAnchorGo = _notificationText.transform.parent.gameObject;
+            _subtitleAnchorGo = _subtitleText.transform.parent.gameObject;
             _spellIconGo = _spellIcon.gameObject;
             _enemyHealthRowGo = _enemyHealthRow.gameObject;
             _sneakSlotRowGo = _sneakSlotRow.gameObject;
@@ -157,8 +161,10 @@ namespace VVardenfell.Runtime.UI.Shell
             SetActiveIfChanged(_crosshairGo, model.ShowCrosshair);
             SetActiveIfChanged(_focusAnchorGo, !string.IsNullOrWhiteSpace(model.FocusText));
             SetActiveIfChanged(_notificationAnchorGo, !string.IsNullOrWhiteSpace(model.NotificationText));
+            SetActiveIfChanged(_subtitleAnchorGo, !string.IsNullOrWhiteSpace(model.SubtitleText));
             _focusText.Text = model.FocusText ?? string.Empty;
             _notificationText.Text = model.NotificationText ?? string.Empty;
+            _subtitleText.Text = model.SubtitleText ?? string.Empty;
             _weaponSpellText.Text = model.WeaponSpellText ?? string.Empty;
             _cellNameText.Text = model.CellNameText ?? string.Empty;
 
@@ -444,7 +450,7 @@ namespace VVardenfell.Runtime.UI.Shell
             return (cellName, effectBox, activeEffectStrip);
         }
 
-        (BitmapTextGraphic focusText, BitmapTextGraphic notificationText) BuildMessages()
+        (BitmapTextGraphic focusText, BitmapTextGraphic notificationText, BitmapTextGraphic subtitleText) BuildMessages()
         {
             // Vanilla MW shows the raycast-target label as floating text with no backdrop
             // or border — just the name of the focused object painted below the crosshair.
@@ -485,7 +491,28 @@ namespace VVardenfell.Runtime.UI.Shell
                 BitmapTextAlignment.Center);
             RuntimeUiFactory.Stretch(notificationText.rectTransform);
             notificationText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
-            return (focusText, notificationText);
+
+            var subtitleBackdrop = RuntimeUiFactory.CreateImage("SubtitleBackdrop", _root, new Color(0f, 0f, 0f, 0.66f));
+            subtitleBackdrop.raycastTarget = false;
+            subtitleBackdrop.rectTransform.anchorMin = new Vector2(0.5f, 0f);
+            subtitleBackdrop.rectTransform.anchorMax = new Vector2(0.5f, 0f);
+            subtitleBackdrop.rectTransform.pivot = new Vector2(0.5f, 0f);
+            subtitleBackdrop.rectTransform.anchoredPosition = new Vector2(0f, RuntimeClassicUiMetrics.HudLayout(108f));
+            subtitleBackdrop.rectTransform.sizeDelta = new Vector2(RuntimeClassicUiMetrics.HudLayout(SubtitleWidth), RuntimeClassicUiMetrics.HudLayout(38f));
+
+            var subtitleText = RuntimeUiFactory.CreateBitmapText(
+                "SubtitleText",
+                subtitleBackdrop.transform,
+                _theme.DefaultFont,
+                RuntimeClassicUiMetrics.OverlayText(0.78f),
+                new Color(0.97f, 0.94f, 0.86f),
+                BitmapTextAlignment.Center);
+            subtitleText.WrapMode = BitmapTextWrapMode.Word;
+            RuntimeUiFactory.Stretch(subtitleText.rectTransform);
+            subtitleText.rectTransform.offsetMin = new Vector2(RuntimeClassicUiMetrics.HudLayout(8f), RuntimeClassicUiMetrics.HudLayout(4f));
+            subtitleText.rectTransform.offsetMax = new Vector2(-RuntimeClassicUiMetrics.HudLayout(8f), -RuntimeClassicUiMetrics.HudLayout(4f));
+            subtitleText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
+            return (focusText, notificationText, subtitleText);
         }
 
         RectTransform CreateCluster(string name, Vector2 anchor, Vector2 pivot, Vector2 anchoredPosition, Vector2 size)

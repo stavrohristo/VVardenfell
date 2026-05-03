@@ -35,6 +35,7 @@ namespace VVardenfell.Core.Cache
         public static string WorldCollisionValidationReport => Path.Combine(Root, "world_collision_validation.txt");
         public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");
         public static string TexturesDir => Path.Combine(Root, "textures");
+        public static string AudioDir => Path.Combine(Root, "audio");
         public static string CellsDir => Path.Combine(Root, "cells");
         public static string InteriorCellsDir => Path.Combine(Root, "interiors");
         public static string UiMoviesDir => Path.Combine(Root, "ui_movies");
@@ -61,6 +62,7 @@ namespace VVardenfell.Core.Cache
         {
             Directory.CreateDirectory(Root);
             Directory.CreateDirectory(TexturesDir);
+            Directory.CreateDirectory(AudioDir);
             Directory.CreateDirectory(CellsDir);
             Directory.CreateDirectory(InteriorCellsDir);
             Directory.CreateDirectory(UiMoviesDir);

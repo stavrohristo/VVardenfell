@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
+using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
@@ -208,6 +209,7 @@ namespace VVardenfell.Runtime.Components
                 Flee = actor.AiData.Flee,
                 Alarm = actor.AiData.Alarm,
             });
+            ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
                 statSeed.Attributes,
@@ -223,6 +225,11 @@ namespace VVardenfell.Runtime.Components
             QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
 
             QueueActorCollider(ref ecb, logicalEntity);
+            QueueActorPickCollider(
+                ref ecb,
+                logicalEntity,
+                isInterior,
+                exteriorCell);
 
             if (ActorAiRuntimeAuthoringUtility.HasPackage(contentDb, actorHandle))
             {
@@ -384,6 +391,36 @@ namespace VVardenfell.Runtime.Components
             ecb.AddSharedComponent(logicalEntity, new PhysicsWorldIndex { Value = 0 });
         }
 
+        static void QueueActorPickCollider(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            bool isInterior,
+            int2 exteriorCell)
+        {
+            var collider = EnsureActorPickCapsuleCollider();
+            if (!collider.IsCreated)
+                return;
+
+            Entity pickEntity = ecb.CreateEntity();
+            ecb.SetName(pickEntity, new FixedString64Bytes("ActorInteractionPick"));
+            ecb.AddComponent<InteractionPickSurfaceTag>(pickEntity);
+            ecb.AddComponent<InteractionActorPickSurfaceTag>(pickEntity);
+            ecb.AddComponent(pickEntity, new LogicalRefParent { Value = logicalEntity });
+            ecb.AppendToBuffer(logicalEntity, new LogicalRefChild { Value = pickEntity });
+            ecb.AddComponent(pickEntity, LocalTransform.Identity);
+            ecb.AddComponent(pickEntity, new LocalToWorld { Value = float4x4.identity });
+            if (isInterior)
+                ecb.AddComponent<InteriorCellMember>(pickEntity);
+            else
+                ecb.AddComponent(pickEntity, new CellLink { Value = exteriorCell });
+            RuntimeColliderAttachmentUtility.QueueAttachNewSource(
+                ref ecb,
+                pickEntity,
+                collider,
+                RuntimeColliderKind.InteractionPick,
+                active: true);
+        }
+
         static BlobAssetReference<Collider> EnsureActorCapsuleCollider()
         {
             if (WorldResources.ActorCapsuleCollider.IsCreated)
@@ -400,6 +437,24 @@ namespace VVardenfell.Runtime.Components
                 },
                 InteractionCollisionLayers.PlayerBodyFilter);
             return WorldResources.ActorCapsuleCollider;
+        }
+
+        static BlobAssetReference<Collider> EnsureActorPickCapsuleCollider()
+        {
+            if (WorldResources.ActorPickCapsuleCollider.IsCreated)
+                return WorldResources.ActorPickCapsuleCollider;
+
+            const float Radius = 0.35f;
+            const float Height = 1.8f;
+            WorldResources.ActorPickCapsuleCollider = CapsuleCollider.Create(
+                new CapsuleGeometry
+                {
+                    Vertex0 = new float3(0f, Radius, 0f),
+                    Vertex1 = new float3(0f, Height - Radius, 0f),
+                    Radius = Radius,
+                },
+                InteractionCollisionLayers.InteractionPickFilter);
+            return WorldResources.ActorPickCapsuleCollider;
         }
 
         static ActorAiNavigationAnchor BuildActorAiAnchor(

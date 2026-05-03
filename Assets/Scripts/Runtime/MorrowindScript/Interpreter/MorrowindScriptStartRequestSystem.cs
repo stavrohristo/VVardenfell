@@ -37,10 +37,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(contentDb, requests[i]);
-
+            using var snapshot = requests.ToNativeArray(Allocator.Temp);
             requests.Clear();
+            for (int i = 0; i < snapshot.Length; i++)
+                ApplyRequest(contentDb, snapshot[i]);
         }
 
         void ApplyRequest(RuntimeContentDatabase contentDb, in MorrowindScriptStartRequest request)

@@ -79,6 +79,16 @@ namespace VVardenfell.Importer.Bake
             return AddOrGetEncoded(payload, encoded, hash);
         }
 
+        public int AddOrGetInteractionPick(in CollisionPayload payload)
+        {
+            if (payload.IsEmpty)
+                return -1;
+
+            byte[] encoded = EncodePayload(payload);
+            string hash = "interaction-pick:" + ComputePayloadHash(encoded);
+            return AddOrGetEncoded(payload, encoded, hash);
+        }
+
         public int AddOrGetEncoded(in CollisionPayload payload, byte[] encoded, string hash)
         {
             lock (_gate)

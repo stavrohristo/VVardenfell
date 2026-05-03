@@ -343,6 +343,9 @@ namespace VVardenfell.Runtime.Physics
                 case RuntimeColliderKind.ActivationProxy:
                     filter = InteractionCollisionLayers.ActivationProxyFilter;
                     return true;
+                case RuntimeColliderKind.InteractionPick:
+                    filter = InteractionCollisionLayers.InteractionPickFilter;
+                    return true;
                 case RuntimeColliderKind.Player:
                 case RuntimeColliderKind.Actor:
                     filter = InteractionCollisionLayers.PlayerBodyFilter;

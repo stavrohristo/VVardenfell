@@ -12,6 +12,11 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateBefore(typeof(InteractionActivationProxySystem))]
     public partial class InteractionActivationProxyFollowSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            Enabled = false;
+        }
+
         protected override void OnUpdate()
         {
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();

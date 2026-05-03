@@ -722,11 +722,13 @@ namespace VVardenfell.Importer.Bake
             foreach (var pair in ordered)
             {
                 var def = pair.Value.Def;
+                var infoOrder = BuildDialogueInfoOrder(pair.Value.Infos);
                 def.FirstInfoIndex = infoList.Count;
-                def.InfoCount = pair.Value.Infos.Count;
+                def.InfoCount = infoOrder.Count;
                 dialogueList.Add(def);
-                for (int i = 0; i < pair.Value.Infos.Count; i++)
+                for (int orderIndex = 0; orderIndex < infoOrder.Count; orderIndex++)
                 {
+                    int i = infoOrder[orderIndex];
                     var info = pair.Value.Infos[i];
                     var selectRules = i < pair.Value.SelectRules.Count ? pair.Value.SelectRules[i] : null;
                     if (selectRules != null && selectRules.Count > 0)
@@ -748,6 +750,48 @@ namespace VVardenfell.Importer.Bake
             dialogues = dialogueList.ToArray();
             infos = infoList.ToArray();
             conditions = conditionList.ToArray();
+        }
+
+        static List<int> BuildDialogueInfoOrder(List<DialogueInfoDef> infos)
+        {
+            var ordered = new List<int>(infos?.Count ?? 0);
+            if (infos == null || infos.Count == 0)
+                return ordered;
+
+            var positionsById = new Dictionary<string, int>(infos.Count, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < infos.Count; i++)
+            {
+                string id = infos[i].Id ?? string.Empty;
+                if (positionsById.TryGetValue(id, out int existingPosition))
+                {
+                    ordered.RemoveAt(existingPosition);
+                    RebuildDialogueInfoPositions(infos, ordered, positionsById);
+                }
+
+                int insertIndex = 0;
+                string previousId = infos[i].PrevId ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(previousId))
+                    insertIndex = positionsById.TryGetValue(previousId, out int previousPosition) ? previousPosition + 1 : ordered.Count;
+
+                ordered.Insert(insertIndex, i);
+                RebuildDialogueInfoPositions(infos, ordered, positionsById);
+            }
+
+            return ordered;
+        }
+
+        static void RebuildDialogueInfoPositions(
+            List<DialogueInfoDef> infos,
+            List<int> ordered,
+            Dictionary<string, int> positionsById)
+        {
+            positionsById.Clear();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                string id = infos[ordered[i]].Id ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(id))
+                    positionsById[id] = i;
+            }
         }
 
 

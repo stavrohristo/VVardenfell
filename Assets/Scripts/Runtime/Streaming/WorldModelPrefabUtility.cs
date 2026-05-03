@@ -9,6 +9,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Interactions;
 using Material = UnityEngine.Material;
 
 namespace VVardenfell.Runtime.Streaming
@@ -198,6 +199,8 @@ namespace VVardenfell.Runtime.Streaming
                         MaterialIndex = node.MaterialIndex,
                         TextureIndex = node.TextureIndex,
                     });
+
+                    AttachInteractionPickCollider(em, entity, node, modelPrefabIndex, i);
                 }
 
                 if (node.Kind == ModelPrefabNodeKind.Billboard)
@@ -211,6 +214,34 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             return root;
+        }
+
+        static void AttachInteractionPickCollider(
+            EntityManager em,
+            Entity entity,
+            ModelPrefabNodeDef node,
+            int modelPrefabIndex,
+            int nodeIndex)
+        {
+            if (node.PickColliderIndex < 0)
+                return;
+
+            var colliderBlobs = WorldResources.ColliderBlobs;
+            if (colliderBlobs == null
+                || (uint)node.PickColliderIndex >= (uint)colliderBlobs.Length
+                || !colliderBlobs[node.PickColliderIndex].IsCreated)
+            {
+                throw new System.InvalidOperationException(
+                    $"Model prefab {modelPrefabIndex} node {nodeIndex} references missing interaction pick collider {node.PickColliderIndex}.");
+            }
+
+            RuntimeColliderAttachmentUtility.AttachSource(
+                em,
+                entity,
+                colliderBlobs[node.PickColliderIndex],
+                RuntimeColliderKind.InteractionPick,
+                active: false);
+            em.AddComponent<InteractionPickSurfaceTag>(entity);
         }
 
         static RenderMeshArray GetOrCreateLeafRenderMeshArray(

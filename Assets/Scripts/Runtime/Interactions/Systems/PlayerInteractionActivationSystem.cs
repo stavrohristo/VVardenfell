@@ -8,7 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
-    [UpdateInGroup(typeof(MorrowindInteractionSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionActivationSystem : SystemBase
     {

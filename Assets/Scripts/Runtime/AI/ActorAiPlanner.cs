@@ -41,6 +41,9 @@ namespace VVardenfell.Runtime.AI
         public float LastPackageActionTime;
         public uint RandomSeed;
         public byte Status;
+        public byte FollowActive;
+        public byte PendingIdleGroup;
+        public ulong ActiveIdleGroupHash;
     }
 
     public struct ActorAiNavigationAnchor : IComponentData
@@ -64,9 +67,19 @@ namespace VVardenfell.Runtime.AI
         public float3 TargetPosition;
         public float WanderRadius;
         public float IdleSeconds;
+        public float DurationHours;
+        public float RemainingDurationHours;
         public float FollowDistance;
         public ulong DestinationInteriorCellHash;
         public uint FollowTargetPlacedRefId;
+        public byte IdleChance0;
+        public byte IdleChance1;
+        public byte IdleChance2;
+        public byte IdleChance3;
+        public byte IdleChance4;
+        public byte IdleChance5;
+        public byte IdleChance6;
+        public byte IdleChance7;
         public FixedString128Bytes TargetId;
     }
 
@@ -108,7 +121,16 @@ namespace VVardenfell.Runtime.AI
                         SourcePackageIndex = i,
                         TargetPathGridIndex = -1,
                         WanderRadius = math.max(0f, package.WanderDistance) * WorldScale.MwUnitsToMeters,
-                        IdleSeconds = 1.5f,
+                        DurationHours = math.max(0, package.Duration),
+                        RemainingDurationHours = math.max(0, package.Duration),
+                        IdleChance0 = package.Idle0,
+                        IdleChance1 = package.Idle1,
+                        IdleChance2 = package.Idle2,
+                        IdleChance3 = package.Idle3,
+                        IdleChance4 = package.Idle4,
+                        IdleChance5 = package.Idle5,
+                        IdleChance6 = package.Idle6,
+                        IdleChance7 = package.Idle7,
                     });
                 }
                 else if (package.Type == ActorAiPackageType.Follow)
@@ -123,6 +145,8 @@ namespace VVardenfell.Runtime.AI
                         TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
                         FollowDistance = 256f * WorldScale.MwUnitsToMeters,
                         IdleSeconds = 0.5f,
+                        DurationHours = math.max(0, package.Duration),
+                        RemainingDurationHours = math.max(0, package.Duration),
                         DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
                         TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
                     });
@@ -139,6 +163,8 @@ namespace VVardenfell.Runtime.AI
                         TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
                         FollowDistance = 450f * WorldScale.MwUnitsToMeters,
                         IdleSeconds = 0.5f,
+                        DurationHours = math.max(0, package.Duration),
+                        RemainingDurationHours = math.max(0, package.Duration),
                         DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
                         TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
                     });
@@ -303,8 +329,9 @@ namespace VVardenfell.Runtime.AI
             _traversalStateHandle = state.GetComponentTypeHandle<PathGridTraversalState>(isReadOnly: false);
             _traversalPendingRequestHandle = state.GetComponentTypeHandle<PathGridTraversalPendingRequest>(isReadOnly: false);
             _traversalAwaitingResultHandle = state.GetComponentTypeHandle<PathGridTraversalAwaitingResult>(isReadOnly: false);
-            _packageHandle = state.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: true);
+            _packageHandle = state.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: false);
             _targetTransformLookup = state.GetComponentLookup<LocalTransform>(isReadOnly: true);
+            state.RequireForUpdate<MorrowindTimeState>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -312,6 +339,13 @@ namespace VVardenfell.Runtime.AI
             var navigation = WorldResources.PathGridNavigation;
             if (!navigation.IsCreated)
                 return;
+
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null)
+                throw new System.InvalidOperationException("[VVardenfell][AI] Missing GMST fIdleChanceMultiplier for AiWander.");
+
+            float idleChanceMultiplier = contentDb.RequireGameSettingFloat("fIdleChanceMultiplier");
+            var time = SystemAPI.GetSingleton<MorrowindTimeState>();
 
             _transformHandle.Update(ref state);
             _aiStateHandle.Update(ref state);
@@ -326,6 +360,8 @@ namespace VVardenfell.Runtime.AI
             {
                 Navigation = navigation,
                 ElapsedTime = (float)SystemAPI.Time.ElapsedTime,
+                DeltaGameHours = math.max(0f, SystemAPI.Time.DeltaTime) * math.max(0f, time.TimeScale) / 3600f,
+                IdleChanceMultiplier = math.saturate(idleChanceMultiplier),
                 TargetTransforms = _targetTransformLookup,
                 TransformHandle = _transformHandle,
                 AiStateHandle = _aiStateHandle,
@@ -350,7 +386,9 @@ namespace VVardenfell.Runtime.AI
         public ComponentTypeHandle<PathGridTraversalState> TraversalStateHandle;
         public ComponentTypeHandle<PathGridTraversalPendingRequest> TraversalPendingRequestHandle;
         public ComponentTypeHandle<PathGridTraversalAwaitingResult> TraversalAwaitingResultHandle;
-        [ReadOnly] public BufferTypeHandle<ActorAiPackageRuntime> PackageHandle;
+        public BufferTypeHandle<ActorAiPackageRuntime> PackageHandle;
+        public float DeltaGameHours;
+        public float IdleChanceMultiplier;
 
         public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
         {
@@ -437,6 +475,14 @@ namespace VVardenfell.Runtime.AI
             }
 
             var package = packages[aiState.CurrentPackageIndex];
+            if (UpdateDuration(ref package, ref aiState))
+            {
+                packages[aiState.CurrentPackageIndex] = package;
+                FinishPackage(packages, ref aiState, ref traversalState);
+                return;
+            }
+
+            packages[aiState.CurrentPackageIndex] = package;
             if (!TryResolveNearestNode(anchor.PathGridIndex, actorPosition, out int startNode))
             {
                 aiState.Status = (byte)ActorAiPlannerStatus.Failed;
@@ -463,7 +509,7 @@ namespace VVardenfell.Runtime.AI
             }
             else
             {
-                scheduled = TryScheduleWander(package, anchor.PathGridIndex, startNode, actorPosition, ref aiState, ref traversalRequest);
+                scheduled = TryScheduleWander(package, anchor.PathGridIndex, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
             }
 
             if (scheduled)
@@ -474,13 +520,33 @@ namespace VVardenfell.Runtime.AI
             }
             else if (waiting)
             {
-                aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+                if (aiState.Status != (byte)ActorAiPlannerStatus.Waiting)
+                    aiState.Status = (byte)ActorAiPlannerStatus.Idle;
                 traversalState.Status = (byte)PathGridTraversalStatus.Idle;
             }
             else
             {
                 FinishPackage(packages, ref aiState, ref traversalState);
             }
+        }
+
+        bool UpdateDuration(ref ActorAiPackageRuntime package, ref ActorAiState aiState)
+        {
+            if (package.DurationHours <= 0f)
+                return false;
+
+            if (package.Type == (byte)ActorAiRuntimePackageType.Follow && aiState.FollowActive == 0)
+                return false;
+
+            if (package.RemainingDurationHours <= 0f)
+                package.RemainingDurationHours = package.DurationHours;
+
+            package.RemainingDurationHours = math.max(0f, package.RemainingDurationHours - DeltaGameHours);
+            if (package.RemainingDurationHours > 0f)
+                return false;
+
+            aiState.FollowActive = 0;
+            return true;
         }
 
         bool TryScheduleTravel(
@@ -555,7 +621,20 @@ namespace VVardenfell.Runtime.AI
 
             float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
             float distanceSq = math.lengthsq(FlatDelta(targetPosition, actorPosition));
-            if (distanceSq <= followDistance * followDistance)
+            if (aiState.FollowActive == 0)
+            {
+                float activeRange = followDistance + 384f * WorldScale.MwUnitsToMeters;
+                if (distanceSq > activeRange * activeRange)
+                {
+                    waiting = true;
+                    return false;
+                }
+
+                aiState.FollowActive = 1;
+            }
+
+            float stopDistance = followDistance + (aiState.Status == (byte)ActorAiPlannerStatus.Traversing ? 0f : 30f * WorldScale.MwUnitsToMeters);
+            if (distanceSq <= stopDistance * stopDistance)
             {
                 waiting = true;
                 return false;
@@ -592,20 +671,14 @@ namespace VVardenfell.Runtime.AI
             float activateDistance = math.max(0.5f, package.FollowDistance);
             if (math.lengthsq(FlatDelta(targetPosition, actorPosition)) <= activateDistance * activateDistance)
             {
+                aiState.WaitUntilTime = ElapsedTime + 0.01f;
+                aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
                 waiting = true;
                 return false;
             }
 
-            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
-            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
-            {
-                waiting = true;
-                return false;
-            }
-
-            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest);
-            aiState.GoalNodeIndex = goalNode;
-            return true;
+            waiting = true;
+            return false;
         }
 
         bool TryScheduleWander(
@@ -614,14 +687,77 @@ namespace VVardenfell.Runtime.AI
             int startNode,
             float3 actorPosition,
             ref ActorAiState aiState,
-            ref PathGridTraversalPendingRequest traversalRequest)
+            ref PathGridTraversalPendingRequest traversalRequest,
+            out bool waiting)
         {
+            waiting = false;
+            if (TryChooseWanderIdle(package, ref aiState.RandomSeed, out byte idleGroup))
+            {
+                aiState.PendingIdleGroup = idleGroup;
+                aiState.WaitUntilTime = float.PositiveInfinity;
+                aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
+                waiting = true;
+                return false;
+            }
+
+            if (package.WanderRadius <= 0f)
+            {
+                aiState.WaitUntilTime = ElapsedTime + 0.5f;
+                aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
+                waiting = true;
+                return false;
+            }
+
             if (!TryChooseWanderNode(pathGridIndex, startNode, actorPosition, package.WanderRadius, ref aiState.RandomSeed, out int goalNode))
                 return false;
 
             WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest);
             aiState.GoalNodeIndex = goalNode;
             return true;
+        }
+
+        bool TryChooseWanderIdle(in ActorAiPackageRuntime package, ref uint randomSeed, out byte idleGroup)
+        {
+            idleGroup = 0;
+            var random = new Random(randomSeed == 0u ? 1u : randomSeed);
+            if (random.NextFloat() > IdleChanceMultiplier)
+            {
+                randomSeed = random.state == 0u ? 1u : random.state;
+                return false;
+            }
+
+            float maxRoll = 0f;
+            for (int i = 0; i < 8; i++)
+            {
+                byte chance = GetIdleChance(package, i);
+                if (chance == 0)
+                    continue;
+
+                float roll = random.NextFloat() * 100f;
+                if (roll <= chance && roll > maxRoll)
+                {
+                    maxRoll = roll;
+                    idleGroup = (byte)(i + 2);
+                }
+            }
+
+            randomSeed = random.state == 0u ? 1u : random.state;
+            return idleGroup != 0;
+        }
+
+        static byte GetIdleChance(in ActorAiPackageRuntime package, int index)
+        {
+            return index switch
+            {
+                0 => package.IdleChance0,
+                1 => package.IdleChance1,
+                2 => package.IdleChance2,
+                3 => package.IdleChance3,
+                4 => package.IdleChance4,
+                5 => package.IdleChance5,
+                6 => package.IdleChance6,
+                _ => package.IdleChance7,
+            };
         }
 
         void FinishPackage(
@@ -638,6 +774,11 @@ namespace VVardenfell.Runtime.AI
 
             var package = packages[aiState.CurrentPackageIndex];
             aiState.WaitUntilTime = ElapsedTime + math.max(0f, package.IdleSeconds);
+            package.RemainingDurationHours = package.DurationHours;
+            packages[aiState.CurrentPackageIndex] = package;
+            aiState.FollowActive = 0;
+            aiState.PendingIdleGroup = 0;
+            aiState.ActiveIdleGroupHash = 0UL;
             if (package.ShouldRepeat == 0)
                 aiState.CurrentPackageIndex++;
 

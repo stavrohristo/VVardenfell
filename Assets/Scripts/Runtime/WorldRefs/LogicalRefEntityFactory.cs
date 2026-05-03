@@ -114,39 +114,7 @@ namespace VVardenfell.Runtime.WorldRefs
 
         public static bool QueueEnsureInteractionProxyQueued(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, bool assumeNewEntity = false)
         {
-            if (assumeNewEntity)
-            {
-                ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
-                return true;
-            }
-
-            if (entityManager.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity))
-                return false;
-
-            if (!entityManager.Exists(logicalEntity)
-                || !entityManager.HasComponent<LogicalRefTag>(logicalEntity)
-                || !entityManager.HasComponent<PlacedRefIdentity>(logicalEntity))
-            {
-                return false;
-            }
-
-            if (InteractionActivationProxyBuildUtility.HasLiveProxy(entityManager, logicalEntity))
-                return false;
-
-            if (entityManager.HasComponent<InteractionActivationProxyState>(logicalEntity))
-            {
-                Entity existingProxy = entityManager.GetComponentData<InteractionActivationProxyState>(logicalEntity).ProxyEntity;
-                if (existingProxy != Entity.Null && entityManager.Exists(existingProxy))
-                    return false;
-
-                ecb.RemoveComponent<InteractionActivationProxyState>(logicalEntity);
-            }
-
-            if (!InteractionTargetResolver.TryResolveSupportedKind(entityManager, logicalEntity, out _))
-                return false;
-
-            ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
-            return true;
+            return false;
         }
     }
 }

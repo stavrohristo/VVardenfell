@@ -13,6 +13,7 @@ namespace VVardenfell.Runtime.Components
         RuntimeSpawn = 5,
         Player = 6,
         Actor = 7,
+        InteractionPick = 8,
     }
 
     public struct RuntimeColliderSource : IComponentData

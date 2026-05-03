@@ -312,6 +312,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 QuestJournal = _questJournalLookup,
                 RefDisabledStates = placedRefRuntimeStates.DisabledByPlacedRef,
                 ActiveExplicitRefs = activeExplicitRefs.ByContentKey,
+                AllExplicitRefs = activeExplicitRefs.AllByContentKey,
                 RuntimeEntity = runtimeEntity,
                 RefStateRuntimeEntity = runtimeEntity,
                 TransformRuntimeEntity = runtimeEntity,
@@ -1647,6 +1648,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             [NativeDisableParallelForRestriction] public BufferLookup<MorrowindQuestJournalIndex> QuestJournal;
             [ReadOnly] public NativeParallelHashMap<uint, byte> RefDisabledStates;
             [ReadOnly] public NativeParallelHashMap<int, ActiveExplicitRefTarget> ActiveExplicitRefs;
+            [ReadOnly] public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllExplicitRefs;
             public Entity RuntimeEntity;
             public Entity RefStateRuntimeEntity;
             public Entity TransformRuntimeEntity;
@@ -1775,6 +1777,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     QuestJournalCount = questJournal.Length,
                     RefDisabledStates = RefDisabledStates,
                     ActiveExplicitRefs = ActiveExplicitRefs,
+                    AllExplicitRefs = AllExplicitRefs,
                     Position = position,
                     Rotation = rotation,
                     PlayerPosition = PlayerPosition,
@@ -1991,168 +1994,168 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             static void AppendScriptEquals(ref FixedString128Bytes text)
             {
-                text.Append((byte)'s');
-                text.Append((byte)'c');
-                text.Append((byte)'r');
-                text.Append((byte)'i');
-                text.Append((byte)'p');
-                text.Append((byte)'t');
-                text.Append((byte)'=');
+                text.Append((char)'s');
+                text.Append((char)'c');
+                text.Append((char)'r');
+                text.Append((char)'i');
+                text.Append((char)'p');
+                text.Append((char)'t');
+                text.Append((char)'=');
             }
 
             static void AppendUnknown(ref FixedString128Bytes text)
             {
-                text.Append((byte)'<');
-                text.Append((byte)'u');
-                text.Append((byte)'n');
-                text.Append((byte)'k');
-                text.Append((byte)'n');
-                text.Append((byte)'o');
-                text.Append((byte)'w');
-                text.Append((byte)'n');
-                text.Append((byte)'>');
+                text.Append((char)'<');
+                text.Append((char)'u');
+                text.Append((char)'n');
+                text.Append((char)'k');
+                text.Append((char)'n');
+                text.Append((char)'o');
+                text.Append((char)'w');
+                text.Append((char)'n');
+                text.Append((char)'>');
             }
 
             static void AppendPcEquals(ref FixedString128Bytes text)
             {
-                text.Append((byte)' ');
-                text.Append((byte)'p');
-                text.Append((byte)'c');
-                text.Append((byte)'=');
+                text.Append((char)' ');
+                text.Append((char)'p');
+                text.Append((char)'c');
+                text.Append((char)'=');
             }
 
             static void AppendOpEquals(ref FixedString128Bytes text)
             {
-                text.Append((byte)' ');
-                text.Append((byte)'o');
-                text.Append((byte)'p');
-                text.Append((byte)'=');
+                text.Append((char)' ');
+                text.Append((char)'o');
+                text.Append((char)'p');
+                text.Append((char)'=');
             }
 
             static void AppendColonSpace(ref FixedString128Bytes text)
             {
-                text.Append((byte)':');
-                text.Append((byte)' ');
+                text.Append((char)':');
+                text.Append((char)' ');
             }
 
             static void AppendStoppedByStopScript(ref FixedString128Bytes text)
             {
-                text.Append((byte)'S');
-                text.Append((byte)'t');
-                text.Append((byte)'o');
-                text.Append((byte)'p');
-                text.Append((byte)'p');
-                text.Append((byte)'e');
-                text.Append((byte)'d');
-                text.Append((byte)' ');
-                text.Append((byte)'b');
-                text.Append((byte)'y');
-                text.Append((byte)' ');
-                text.Append((byte)'S');
-                text.Append((byte)'t');
-                text.Append((byte)'o');
-                text.Append((byte)'p');
-                text.Append((byte)'S');
-                text.Append((byte)'c');
-                text.Append((byte)'r');
-                text.Append((byte)'i');
-                text.Append((byte)'p');
-                text.Append((byte)'t');
-                text.Append((byte)'.');
+                text.Append((char)'S');
+                text.Append((char)'t');
+                text.Append((char)'o');
+                text.Append((char)'p');
+                text.Append((char)'p');
+                text.Append((char)'e');
+                text.Append((char)'d');
+                text.Append((char)' ');
+                text.Append((char)'b');
+                text.Append((char)'y');
+                text.Append((char)' ');
+                text.Append((char)'S');
+                text.Append((char)'t');
+                text.Append((char)'o');
+                text.Append((char)'p');
+                text.Append((char)'S');
+                text.Append((char)'c');
+                text.Append((char)'r');
+                text.Append((char)'i');
+                text.Append((char)'p');
+                text.Append((char)'t');
+                text.Append((char)'.');
             }
 
             static void AppendInvalidProgramIndex(ref FixedString128Bytes text)
             {
-                text.Append((byte)'I');
-                text.Append((byte)'n');
-                text.Append((byte)'v');
-                text.Append((byte)'a');
-                text.Append((byte)'l');
-                text.Append((byte)'i');
-                text.Append((byte)'d');
-                text.Append((byte)' ');
-                text.Append((byte)'s');
-                text.Append((byte)'c');
-                text.Append((byte)'r');
-                text.Append((byte)'i');
-                text.Append((byte)'p');
-                text.Append((byte)'t');
-                text.Append((byte)' ');
-                text.Append((byte)'p');
-                text.Append((byte)'r');
-                text.Append((byte)'o');
-                text.Append((byte)'g');
-                text.Append((byte)'r');
-                text.Append((byte)'a');
-                text.Append((byte)'m');
-                text.Append((byte)' ');
-                text.Append((byte)'i');
-                text.Append((byte)'n');
-                text.Append((byte)'d');
-                text.Append((byte)'e');
-                text.Append((byte)'x');
-                text.Append((byte)'.');
+                text.Append((char)'I');
+                text.Append((char)'n');
+                text.Append((char)'v');
+                text.Append((char)'a');
+                text.Append((char)'l');
+                text.Append((char)'i');
+                text.Append((char)'d');
+                text.Append((char)' ');
+                text.Append((char)'s');
+                text.Append((char)'c');
+                text.Append((char)'r');
+                text.Append((char)'i');
+                text.Append((char)'p');
+                text.Append((char)'t');
+                text.Append((char)' ');
+                text.Append((char)'p');
+                text.Append((char)'r');
+                text.Append((char)'o');
+                text.Append((char)'g');
+                text.Append((char)'r');
+                text.Append((char)'a');
+                text.Append((char)'m');
+                text.Append((char)' ');
+                text.Append((char)'i');
+                text.Append((char)'n');
+                text.Append((char)'d');
+                text.Append((char)'e');
+                text.Append((char)'x');
+                text.Append((char)'.');
             }
 
             static void AppendMissingQuestJournalRuntimeBuffer(ref FixedString128Bytes text)
             {
-                text.Append((byte)'M');
-                text.Append((byte)'i');
-                text.Append((byte)'s');
-                text.Append((byte)'s');
-                text.Append((byte)'i');
-                text.Append((byte)'n');
-                text.Append((byte)'g');
-                text.Append((byte)' ');
-                text.Append((byte)'q');
-                text.Append((byte)'u');
-                text.Append((byte)'e');
-                text.Append((byte)'s');
-                text.Append((byte)'t');
-                text.Append((byte)' ');
-                text.Append((byte)'j');
-                text.Append((byte)'o');
-                text.Append((byte)'u');
-                text.Append((byte)'r');
-                text.Append((byte)'n');
-                text.Append((byte)'a');
-                text.Append((byte)'l');
-                text.Append((byte)' ');
-                text.Append((byte)'r');
-                text.Append((byte)'u');
-                text.Append((byte)'n');
-                text.Append((byte)'t');
-                text.Append((byte)'i');
-                text.Append((byte)'m');
-                text.Append((byte)'e');
-                text.Append((byte)' ');
-                text.Append((byte)'b');
-                text.Append((byte)'u');
-                text.Append((byte)'f');
-                text.Append((byte)'f');
-                text.Append((byte)'e');
-                text.Append((byte)'r');
-                text.Append((byte)'.');
+                text.Append((char)'M');
+                text.Append((char)'i');
+                text.Append((char)'s');
+                text.Append((char)'s');
+                text.Append((char)'i');
+                text.Append((char)'n');
+                text.Append((char)'g');
+                text.Append((char)' ');
+                text.Append((char)'q');
+                text.Append((char)'u');
+                text.Append((char)'e');
+                text.Append((char)'s');
+                text.Append((char)'t');
+                text.Append((char)' ');
+                text.Append((char)'j');
+                text.Append((char)'o');
+                text.Append((char)'u');
+                text.Append((char)'r');
+                text.Append((char)'n');
+                text.Append((char)'a');
+                text.Append((char)'l');
+                text.Append((char)' ');
+                text.Append((char)'r');
+                text.Append((char)'u');
+                text.Append((char)'n');
+                text.Append((char)'t');
+                text.Append((char)'i');
+                text.Append((char)'m');
+                text.Append((char)'e');
+                text.Append((char)' ');
+                text.Append((char)'b');
+                text.Append((char)'u');
+                text.Append((char)'f');
+                text.Append((char)'f');
+                text.Append((char)'e');
+                text.Append((char)'r');
+                text.Append((char)'.');
             }
 
             static void AppendScriptVmFault(ref FixedString128Bytes text)
             {
-                text.Append((byte)'S');
-                text.Append((byte)'c');
-                text.Append((byte)'r');
-                text.Append((byte)'i');
-                text.Append((byte)'p');
-                text.Append((byte)'t');
-                text.Append((byte)' ');
-                text.Append((byte)'V');
-                text.Append((byte)'M');
-                text.Append((byte)' ');
-                text.Append((byte)'f');
-                text.Append((byte)'a');
-                text.Append((byte)'u');
-                text.Append((byte)'l');
-                text.Append((byte)'t');
-                text.Append((byte)'.');
+                text.Append((char)'S');
+                text.Append((char)'c');
+                text.Append((char)'r');
+                text.Append((char)'i');
+                text.Append((char)'p');
+                text.Append((char)'t');
+                text.Append((char)' ');
+                text.Append((char)'V');
+                text.Append((char)'M');
+                text.Append((char)' ');
+                text.Append((char)'f');
+                text.Append((char)'a');
+                text.Append((char)'u');
+                text.Append((char)'l');
+                text.Append((char)'t');
+                text.Append((char)'.');
             }
         }
 

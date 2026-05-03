@@ -6,9 +6,8 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
-    [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateAfter(typeof(ActorGpuAnimationRequestSystem))]
-    [UpdateBefore(typeof(ActorPoseSamplingSystem))]
     public partial struct ActorAnimationEventSystem : ISystem
     {
         public void OnCreate(ref SystemState state)

@@ -123,6 +123,7 @@ namespace VVardenfell.Runtime.Components
     public struct ActiveExplicitRefLookup : IComponentData
     {
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> ByContentKey;
+        public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllByContentKey;
     }
 
     public struct DoorAuthoring : IComponentData

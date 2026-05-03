@@ -123,6 +123,7 @@ namespace VVardenfell.Runtime.Streaming
         /// </summary>
         public static BlobAssetReference<Collider>[] ColliderBlobs;
         public static BlobAssetReference<Collider> ActorCapsuleCollider;
+        public static BlobAssetReference<Collider> ActorPickCapsuleCollider;
 
         /// <summary>Per-cell combined STAT collider (null for wilderness cells).</summary>
         public static readonly Dictionary<int2, BlobAssetReference<Collider>> StaticCellColliders = new();
@@ -263,6 +264,11 @@ namespace VVardenfell.Runtime.Streaming
             {
                 ActorCapsuleCollider.Dispose();
                 ActorCapsuleCollider = default;
+            }
+            if (ActorPickCapsuleCollider.IsCreated)
+            {
+                ActorPickCapsuleCollider.Dispose();
+                ActorPickCapsuleCollider = default;
             }
             ActorEntitiesGraphicsRenderer?.Dispose();
             ActorEntitiesGraphicsRenderer = null;

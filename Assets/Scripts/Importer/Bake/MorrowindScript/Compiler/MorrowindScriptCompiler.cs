@@ -738,6 +738,17 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
+                if (TryCompileAiActivate(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, messages, instructions, out string aiActivateFailure))
+                {
+                    continue;
+                }
+
+                if (aiActivateFailure != null)
+                {
+                    DisableUnsupported(script, scriptIndex, firstInstruction, firstLocal, instructions, locals, programs, aiActivateFailure, lineIndex);
+                    return;
+                }
+
                 if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiFollowFailure))
                 {
                     continue;
@@ -5453,6 +5464,12 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
+            if (!float.TryParse(NormalizeToken(tokens[2]), NumberStyles.Float, CultureInfo.InvariantCulture, out float duration))
+            {
+                failure = $"AiWander command has invalid duration: '{line}'.";
+                return false;
+            }
+
             for (int i = 2; i < tokens.Length; i++)
             {
                 if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
@@ -5468,9 +5485,31 @@ namespace VVardenfell.Importer.Bake
                 Operand0 = (byte)targetMode,
                 Operand1 = ResolveAiWanderRepeat(tokens),
                 Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = PackAiWanderIdleChances(tokens, 4),
+                Int2 = PackAiWanderIdleChances(tokens, 8),
                 Float0 = math.max(0f, range) * WorldScale.MwUnitsToMeters,
+                Float1 = math.max(0f, duration),
             });
             return true;
+        }
+
+        static int PackAiWanderIdleChances(string[] tokens, int startIndex)
+        {
+            int packed = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int tokenIndex = startIndex + i;
+                int chance = 0;
+                if ((uint)tokenIndex < (uint)tokens.Length
+                    && float.TryParse(NormalizeToken(tokens[tokenIndex]), NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
+                {
+                    chance = (int)math.clamp(math.round(value), 0f, 100f);
+                }
+
+                packed |= (chance & 0xFF) << (i * 8);
+            }
+
+            return packed;
         }
 
         static bool TryCompileAiTravel(
@@ -5572,6 +5611,55 @@ namespace VVardenfell.Importer.Bake
             return true;
         }
 
+        static bool TryCompileAiActivate(
+            string line,
+            IReadOnlyDictionary<string, uint> explicitRefTargets,
+            ISet<string> ambiguousExplicitRefTargets,
+            IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptMessageDef> messages,
+            List<MorrowindScriptInstructionDef> instructions,
+            out string failure)
+        {
+            failure = null;
+            if (!TrySplitOptionalExplicitCommand(line, "aiactivate", explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var targetMode, out uint targetPlacedRefId, out string commandLine, out failure))
+                return false;
+
+            string[] tokens = SplitCommandTokens(commandLine);
+            if (tokens.Length < 2)
+            {
+                failure = $"AiActivate command requires target id in MWScript V2: '{line}'.";
+                return false;
+            }
+
+            string targetId = NormalizeToken(tokens[1]).Trim('"');
+            if (string.IsNullOrWhiteSpace(targetId))
+            {
+                failure = $"AiActivate command has empty target id: '{line}'.";
+                return false;
+            }
+
+            for (int i = 2; i < tokens.Length; i++)
+            {
+                if (!float.TryParse(NormalizeToken(tokens[i]), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                {
+                    failure = $"AiActivate command has invalid reset argument: '{line}'.";
+                    return false;
+                }
+            }
+
+            int targetIdIndex = messages.Count;
+            messages.Add(new MorrowindScriptMessageDef { Text = targetId });
+            instructions.Add(new MorrowindScriptInstructionDef
+            {
+                Opcode = (byte)MorrowindScriptOpcode.AiActivate,
+                Operand0 = (byte)targetMode,
+                Operand1 = tokens.Length > 2 ? (short)1 : (short)0,
+                Int0 = unchecked((int)targetPlacedRefId),
+                Int1 = targetIdIndex,
+            });
+            return true;
+        }
+
         static bool TryCompileAiEscort(
             string line,
             IReadOnlyDictionary<string, uint> explicitRefTargets,
@@ -5608,7 +5696,7 @@ namespace VVardenfell.Importer.Bake
 
             instructions.Add(new MorrowindScriptInstructionDef
             {
-                Opcode = (byte)MorrowindScriptOpcode.AiFollow,
+                Opcode = (byte)MorrowindScriptOpcode.AiEscort,
                 Operand0 = (byte)targetMode,
                 Operand1 = tokens.Length > 6 ? (short)1 : (short)0,
                 Int0 = unchecked((int)targetPlacedRefId),

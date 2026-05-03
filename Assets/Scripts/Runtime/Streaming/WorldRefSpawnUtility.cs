@@ -189,11 +189,6 @@ namespace VVardenfell.Runtime.Streaming
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
                     placedRefsToResolve.Add(placedRefId);
                     logicalRefCount++;
-                    if ((!logicalOnlyRef || contentReference.Kind == ContentReferenceKind.Actor)
-                        && LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(em, ref ecb, logicalEntity, assumeNewEntity: true))
-                    {
-                        proxyQueueCount++;
-                    }
                 }
 
                 if (hasChild)

@@ -340,13 +340,14 @@ namespace VVardenfell.Runtime.Audio
             };
 
             if (string.IsNullOrEmpty(weightSetting)
-                || !contentDb.TryGetGameSettingFloat(weightSetting, out float typeWeight)
-                || !contentDb.TryGetGameSettingFloat("fLightMaxMod", out float lightMax)
-                || !contentDb.TryGetGameSettingFloat("fMedMaxMod", out float mediumMax))
+                || contentDb == null)
             {
                 return false;
             }
 
+            int typeWeight = contentDb.RequireGameSettingInt(weightSetting);
+            float lightMax = contentDb.RequireGameSettingFloat("fLightMaxMod");
+            float mediumMax = contentDb.RequireGameSettingFloat("fMedMaxMod");
             float baseWeight = math.floor(typeWeight);
             if (equipment.Weight <= baseWeight * lightMax + 0.0005f)
             {

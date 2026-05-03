@@ -22,7 +22,12 @@ namespace VVardenfell.Runtime.Shell
             => 0.1f * math.max(0f, attributes.Endurance);
 
         public static float MagickaPerSleepHour(RuntimeContentDatabase contentDb, in ActorAttributeSet attributes)
-            => ReadGmst(contentDb, "fRestMagicMult", 0f) * math.max(0f, attributes.Intelligence);
+        {
+            if (contentDb == null)
+                throw new InvalidOperationException("[VVardenfell][Rest] Missing content database for fRestMagicMult.");
+
+            return contentDb.RequireGameSettingFloat("fRestMagicMult") * math.max(0f, attributes.Intelligence);
+        }
 
         public static bool HasStuntedMagicka(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
             => GetStuntedMagickaTimeLeftSeconds(activeEffects) != 0f;
@@ -109,11 +114,5 @@ namespace VVardenfell.Runtime.Shell
                    && (effect.DurationSeconds < 0f || effect.TimeLeftSeconds > 0f);
         }
 
-        static float ReadGmst(RuntimeContentDatabase contentDb, string id, float fallback)
-        {
-            if (contentDb != null && contentDb.TryGetGameSettingFloat(id, out float value))
-                return value;
-            return fallback;
-        }
     }
 }

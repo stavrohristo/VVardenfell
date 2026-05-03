@@ -11,6 +11,8 @@ namespace VVardenfell.Runtime.Interactions
         public const uint Geometry = 1u << 5;
         public const uint DynamicRef = 1u << 6;
         public const uint LineOfSightQuery = 1u << 7;
+        public const uint InteractionPick = 1u << 8;
+        public const uint InteractionPickQuery = 1u << 9;
 
         public static CollisionFilter ActivationProxyFilter => new()
         {
@@ -30,6 +32,20 @@ namespace VVardenfell.Runtime.Interactions
         {
             BelongsTo = SolidQuery,
             CollidesWith = Geometry | DynamicRef,
+            GroupIndex = 0,
+        };
+
+        public static CollisionFilter InteractionPickFilter => new()
+        {
+            BelongsTo = InteractionPick,
+            CollidesWith = InteractionPickQuery,
+            GroupIndex = 0,
+        };
+
+        public static CollisionFilter InteractionPickQueryFilter => new()
+        {
+            BelongsTo = InteractionPickQuery,
+            CollidesWith = InteractionPick,
             GroupIndex = 0,
         };
 

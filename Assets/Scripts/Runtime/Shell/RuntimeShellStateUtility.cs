@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
@@ -233,6 +234,16 @@ namespace VVardenfell.Runtime.Shell
             state.ModalButton7 = request.Button7;
             state.ModalButton8 = request.Button8;
             state.ModalButton9 = request.Button9;
+        }
+
+        public static void ShowSubtitle(ref RuntimeSubtitleState state, FixedString512Bytes text, float seconds)
+        {
+            if (text.IsEmpty)
+                return;
+
+            state.Text = text;
+            state.SecondsRemaining = math.max(0.1f, seconds);
+            state.Visible = 1;
         }
 
         public static void OpenSaveLoadBrowser(ref RuntimeShellState state, ref SaveLoadBrowserState browser, SaveLoadBrowserMode mode, string saveName)

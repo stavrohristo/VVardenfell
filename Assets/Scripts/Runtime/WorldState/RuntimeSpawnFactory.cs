@@ -49,7 +49,6 @@ namespace VVardenfell.Runtime.WorldState
                     RuntimeSpawnPersistencePolicy = persistencePolicy,
                 });
 
-            LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(entityManager, ref ecb, logicalEntity, assumeNewEntity: true);
             return true;
         }
 
@@ -111,8 +110,6 @@ namespace VVardenfell.Runtime.WorldState
                     AddRuntimeSpawnIdentity = true,
                     RuntimeSpawnPersistencePolicy = persistencePolicy,
                 });
-
-            LogicalRefEntityFactory.QueueEnsureInteractionProxyQueued(entityManager, ref ecb, logicalEntity, assumeNewEntity: true);
 
             return true;
         }

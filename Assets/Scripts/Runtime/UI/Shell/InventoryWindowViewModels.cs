@@ -33,6 +33,7 @@ namespace VVardenfell.Runtime.UI.Shell
         public bool ShowCrosshair;
         public string FocusText;
         public string NotificationText;
+        public string SubtitleText;
         public string WeaponSpellText;
         public string CellNameText;
         public float HealthFillNormalized;
