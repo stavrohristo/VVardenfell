@@ -43,6 +43,11 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
     }
 
+    public struct MorrowindScriptStopRequest : IBufferElementData
+    {
+        public int ProgramIndex;
+    }
+
     public struct MorrowindScriptLocalValue : IBufferElementData
     {
         public int IntValue;
@@ -125,6 +130,12 @@ namespace VVardenfell.Runtime.Components
     public struct MorrowindScriptPlayingSound : IBufferElementData
     {
         public ulong LoopKey;
+    }
+
+    public struct MorrowindScriptActiveSay : IBufferElementData
+    {
+        public Entity SourceEntity;
+        public uint SourcePlacedRefId;
     }
 
     public struct MorrowindScriptRefStateRequest : IBufferElementData
@@ -281,6 +292,29 @@ namespace VVardenfell.Runtime.Components
         public byte HasBlightDisease;
     }
 
+    public struct MorrowindScriptActorIdentitySnapshot
+    {
+        public Entity ActorEntity;
+        public uint PlacedRefId;
+        public FixedString64Bytes RaceName;
+    }
+
+    public struct MorrowindScriptActorAiSettingSnapshot
+    {
+        public Entity ActorEntity;
+        public uint PlacedRefId;
+        public int Hello;
+        public int Fight;
+        public int Flee;
+        public int Alarm;
+    }
+
+    public struct MorrowindScriptActiveSaySnapshot
+    {
+        public Entity SourceEntity;
+        public uint SourcePlacedRefId;
+    }
+
     public struct MorrowindScriptActorKnownSpellSnapshot
     {
         public Entity ActorEntity;
@@ -312,6 +346,7 @@ namespace VVardenfell.Runtime.Components
         PlayerMagic = 8,
         PlayerViewSwitch = 9,
         Rest = 10,
+        VanityMode = 11,
     }
 
     public struct MorrowindScriptShellRequest : IBufferElementData

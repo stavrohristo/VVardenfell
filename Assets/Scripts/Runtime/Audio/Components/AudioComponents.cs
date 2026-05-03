@@ -27,8 +27,10 @@ namespace VVardenfell.Runtime.Components
     public struct MusicState : IComponentData
     {
         public MusicTrackDefHandle ResolvedTrack;
+        public FixedString512Bytes DirectPath;
         public MusicTrackCategory Category;
         public byte Looping;
+        public byte Scripted;
     }
 
     public struct MusicPlaylistState : IComponentData
@@ -50,6 +52,12 @@ namespace VVardenfell.Runtime.Components
     public struct MusicPlaylistEntry : IBufferElementData
     {
         public MusicTrackDefHandle Track;
+    }
+
+    public struct MorrowindMusicRequest : IBufferElementData
+    {
+        public MusicTrackDefHandle Track;
+        public FixedString512Bytes DirectPath;
     }
 
     public struct InteriorAmbientState : IComponentData

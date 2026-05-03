@@ -22,6 +22,8 @@ namespace VVardenfell.Runtime.Components
         public byte ContainerOpen;
         public byte PauseMenuOpen;
         public byte ModalOpen;
+        public byte ModalButtonCount;
+        public byte ModalButtonPressedValid;
         public byte SaveLoadBrowserOpen;
         public byte OptionsOpen;
         public byte JournalOpen;
@@ -33,25 +35,42 @@ namespace VVardenfell.Runtime.Components
         public byte PlayerJumpingDisabled;
         public byte PlayerMagicDisabled;
         public byte PlayerViewSwitchDisabled;
+        public byte VanityModeDisabled;
         public byte RestDisabled;
         public byte TeleportingDisabled;
         public byte InventoryMenuDisabled;
         public byte StatsMenuDisabled;
         public byte MagicMenuDisabled;
         public byte MapMenuDisabled;
+        public byte NameMenuDisabled;
+        public byte RaceMenuDisabled;
+        public byte ClassMenuDisabled;
+        public byte BirthMenuDisabled;
         public float ScreenFadeAlpha;
         public float ScreenFadeStartAlpha;
         public float ScreenFadeTargetAlpha;
         public float ScreenFadeDuration;
         public float ScreenFadeElapsed;
+        public int ModalButtonPressed;
         public FixedString128Bytes ModalTitle;
         public FixedString512Bytes ModalBody;
+        public FixedString128Bytes ModalButton0;
+        public FixedString128Bytes ModalButton1;
+        public FixedString128Bytes ModalButton2;
+        public FixedString128Bytes ModalButton3;
+        public FixedString128Bytes ModalButton4;
+        public FixedString128Bytes ModalButton5;
+        public FixedString128Bytes ModalButton6;
+        public FixedString128Bytes ModalButton7;
+        public FixedString128Bytes ModalButton8;
+        public FixedString128Bytes ModalButton9;
     }
 
     public struct RuntimeShellActionRequest : IComponentData
     {
         public byte Pending;
         public byte DismissModal;
+        public int DismissModalButton;
         public byte CloseOptions;
         public byte CloseJournal;
         public byte CloseDialogue;
@@ -63,6 +82,42 @@ namespace VVardenfell.Runtime.Components
     public struct ShellMessageBoxRequest : IBufferElementData
     {
         public FixedString512Bytes Body;
+        public byte ButtonCount;
+        public byte ArgCount;
+        public byte Arg0Kind;
+        public byte Arg1Kind;
+        public byte Arg2Kind;
+        public byte Arg3Kind;
+        public byte Arg4Kind;
+        public byte Arg5Kind;
+        public byte Arg6Kind;
+        public byte Arg7Kind;
+        public int Arg0Int;
+        public int Arg1Int;
+        public int Arg2Int;
+        public int Arg3Int;
+        public int Arg4Int;
+        public int Arg5Int;
+        public int Arg6Int;
+        public int Arg7Int;
+        public float Arg0Float;
+        public float Arg1Float;
+        public float Arg2Float;
+        public float Arg3Float;
+        public float Arg4Float;
+        public float Arg5Float;
+        public float Arg6Float;
+        public float Arg7Float;
+        public FixedString128Bytes Button0;
+        public FixedString128Bytes Button1;
+        public FixedString128Bytes Button2;
+        public FixedString128Bytes Button3;
+        public FixedString128Bytes Button4;
+        public FixedString128Bytes Button5;
+        public FixedString128Bytes Button6;
+        public FixedString128Bytes Button7;
+        public FixedString128Bytes Button8;
+        public FixedString128Bytes Button9;
     }
 
     public struct GlobalMapRevealRequest : IBufferElementData

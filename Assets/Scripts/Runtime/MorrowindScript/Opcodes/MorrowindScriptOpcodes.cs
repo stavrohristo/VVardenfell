@@ -64,10 +64,16 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int ActorVitalCount;
         public MorrowindScriptActorDiseaseSnapshot* ActorDiseases;
         public int ActorDiseaseCount;
+        public MorrowindScriptActorIdentitySnapshot* ActorIdentities;
+        public int ActorIdentityCount;
+        public MorrowindScriptActorAiSettingSnapshot* ActorAiSettings;
+        public int ActorAiSettingCount;
         public MorrowindScriptActorKnownSpellSnapshot* ActorKnownSpellSnapshots;
         public int ActorKnownSpellSnapshotCount;
         public MorrowindScriptRunningProgramSnapshot* RunningPrograms;
         public int RunningProgramCount;
+        public MorrowindScriptActiveSaySnapshot* ActiveSays;
+        public int ActiveSayCount;
         public uint* RandomState;
         public FixedString512Bytes* Messages;
         public int MessageCount;
@@ -83,6 +89,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public Entity MovementRuntimeEntity;
         public Entity PlaceAtRuntimeEntity;
         public Entity StartScriptRuntimeEntity;
+        public Entity StopScriptRuntimeEntity;
         public Entity ActorVitalRuntimeEntity;
         public Entity ActorSpellRuntimeEntity;
         public Entity CastRuntimeEntity;
@@ -93,6 +100,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         public Entity PlayerFactionRuntimeEntity;
         public Entity ActorFactionRuntimeEntity;
         public Entity InventoryDropRuntimeEntity;
+        public Entity WeatherRuntimeEntity;
+        public Entity MusicRuntimeEntity;
         public Entity GlobalMapRevealRuntimeEntity;
         public Entity SayRuntimeEntity;
         public Entity OnDeathRuntimeEntity;
@@ -108,6 +117,9 @@ namespace VVardenfell.Runtime.MorrowindScript
         public byte CellChanged;
         public byte HasMenuMode;
         public byte MenuMode;
+        public byte HasModalButtonPressed;
+        public int ModalButtonPressed;
+        public byte* ModalButtonPressedRead;
         public byte HasPlayerSleeping;
         public byte PlayerSleeping;
         public byte HasPlayerCellName;
@@ -124,7 +136,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     [BurstCompile]
     public static unsafe class MorrowindScriptOpcodeTable
     {
-        const int OpcodeCount = 108;
+        const int OpcodeCount = 114;
 
         public static NativeArray<FunctionPointer<MorrowindScriptOpcodeDelegate>> CreateHandlers(Allocator allocator)
         {
@@ -241,6 +253,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             handlers[(int)MorrowindScriptOpcode.GetLocked] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetLocked);
             handlers[(int)MorrowindScriptOpcode.RequestLockState] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(RequestLockState);
             handlers[(int)MorrowindScriptOpcode.Drop] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(Drop);
+            handlers[(int)MorrowindScriptOpcode.GetRace] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetRace);
+            handlers[(int)MorrowindScriptOpcode.ChangeWeather] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(ChangeWeather);
+            handlers[(int)MorrowindScriptOpcode.StreamMusic] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(StreamMusic);
+            handlers[(int)MorrowindScriptOpcode.SayDone] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(SayDone);
+            handlers[(int)MorrowindScriptOpcode.GetActorAiSetting] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetActorAiSetting);
+            handlers[(int)MorrowindScriptOpcode.GetButtonPressed] = BurstCompiler.CompileFunctionPointer<MorrowindScriptOpcodeDelegate>(GetButtonPressed);
             return handlers;
         }
 
@@ -256,6 +274,22 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void StopScript(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
+            if (instruction->Operand0 != 0)
+            {
+                if (context->StopScriptRuntimeEntity == Entity.Null || instruction->Int0 < 0)
+                {
+                    context->Faulted = 1;
+                    return;
+                }
+
+                context->Ecb.AppendToBuffer(context->SortKey, context->StopScriptRuntimeEntity, new MorrowindScriptStopRequest
+                {
+                    ProgramIndex = instruction->Int0,
+                });
+                context->Halted = 1;
+                return;
+            }
+
             context->StopRequested = 1;
             context->Halted = 1;
         }
@@ -444,7 +478,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Volume = instruction->Float0 <= 0f ? 1f : instruction->Float0,
                 Pitch = instruction->Float1 <= 0f ? 1f : instruction->Float1,
                 Kind = instruction->Operand0,
-                Spatial = (byte)(kind == MorrowindScriptAudioKind.PlaySound ? 0 : 1),
+                Spatial = (byte)(kind != MorrowindScriptAudioKind.PlaySound && kind != MorrowindScriptAudioKind.StopSound ? 1 : 0),
                 Looping = (byte)(kind == MorrowindScriptAudioKind.PlayLoopSound3D || kind == MorrowindScriptAudioKind.PlayLoopSound3DVP ? 1 : 0),
             });
         }
@@ -626,6 +660,21 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 IntValue = context->MenuMode,
                 FloatValue = context->MenuMode,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        [BurstCompile]
+        static void GetButtonPressed(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            int value = context->HasModalButtonPressed != 0 ? context->ModalButtonPressed : -1;
+            if (context->ModalButtonPressedRead != null)
+                *context->ModalButtonPressedRead = 1;
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = value,
+                FloatValue = value,
                 ValueKind = (byte)MorrowindScriptValueKind.Integer,
             });
         }
@@ -850,6 +899,78 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         [BurstCompile]
+        static void ChangeWeather(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (context->WeatherRuntimeEntity == Entity.Null)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->WeatherRuntimeEntity, new MorrowindWeatherChangeRequest
+            {
+                RegionHandleValue = instruction->Int0,
+                Weather = instruction->Int1,
+            });
+        }
+
+        [BurstCompile]
+        static void StreamMusic(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (context->MusicRuntimeEntity == Entity.Null
+                || (instruction->Int0 <= 0
+                    && ((context->Messages == null && context->MessageCount > 0)
+                        || (uint)instruction->Int1 >= (uint)context->MessageCount)))
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->MusicRuntimeEntity, new MorrowindMusicRequest
+            {
+                Track = new MusicTrackDefHandle { Value = instruction->Int0 },
+                DirectPath = instruction->Int0 > 0 ? default : context->Messages[instruction->Int1],
+            });
+        }
+
+        [BurstCompile]
+        static void GetRace(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveActorTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if ((context->ActorIdentities == null && context->ActorIdentityCount > 0)
+                || context->ActorIdentityCount < 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            ulong expectedRaceHash = ((ulong)(uint)instruction->Int2 << 32) | (uint)instruction->Int1;
+            for (int i = 0; i < context->ActorIdentityCount; i++)
+            {
+                var identity = context->ActorIdentities[i];
+                bool matches = targetEntity != Entity.Null
+                    ? identity.ActorEntity == targetEntity
+                    : targetPlacedRefId != 0u && identity.PlacedRefId == targetPlacedRefId;
+                if (!matches)
+                    continue;
+
+                ulong actualRaceHash = HashFixedString64(identity.RaceName);
+                int result = actualRaceHash == expectedRaceHash ? 1 : 0;
+                Push(context, new MorrowindScriptStackValue
+                {
+                    IntValue = result,
+                    FloatValue = result,
+                    ValueKind = (byte)MorrowindScriptValueKind.Integer,
+                });
+                return;
+            }
+
+            context->Faulted = 1;
+        }
+
+        [BurstCompile]
         static void ScriptRunning(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
             if ((context->RunningPrograms == null && context->RunningProgramCount > 0) || context->RunningProgramCount < 0)
@@ -954,13 +1075,16 @@ namespace VVardenfell.Runtime.MorrowindScript
         static void Rotate(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
             float radians = math.radians(instruction->Float0 * context->SecondsPassed);
-            EmitTransformRequest(context, instruction, radians, 0);
+            EmitTransformRequest(context, instruction, radians, instruction->Int1 != 0 ? (byte)7 : (byte)0);
         }
 
         [BurstCompile]
         static void SetAngle(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
-            float radians = math.radians(instruction->Float0);
+            if (!Pop(context, out var angle))
+                return;
+
+            float radians = math.radians(ToFloat(angle));
             EmitTransformRequest(context, instruction, radians, 1);
         }
 
@@ -991,7 +1115,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             ulong interiorCellHash = ((ulong)(uint)instruction->Int2 << 32) | (uint)instruction->Int1;
-            if (targetPlacedRefId == 0u || interiorCellHash == 0UL || context->TransformRuntimeEntity == Entity.Null)
+            if (interiorCellHash == 0UL || context->TransformRuntimeEntity == Entity.Null)
             {
                 context->Faulted = 1;
                 return;
@@ -1268,6 +1392,57 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         [BurstCompile]
+        static void GetActorAiSetting(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveActorTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if ((context->ActorAiSettings == null && context->ActorAiSettingCount > 0)
+                || context->ActorAiSettingCount < 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            int matchCount = 0;
+            int value = 0;
+            for (int i = 0; i < context->ActorAiSettingCount; i++)
+            {
+                var snapshot = context->ActorAiSettings[i];
+                bool targetMatches = targetPlacedRefId != 0u
+                    ? snapshot.PlacedRefId == targetPlacedRefId
+                    : targetEntity != Entity.Null
+                        && snapshot.ActorEntity.Index == targetEntity.Index
+                        && snapshot.ActorEntity.Version == targetEntity.Version;
+                if (!targetMatches)
+                    continue;
+
+                matchCount++;
+                value = ((MorrowindScriptActorAiSettingKind)instruction->Operand1) switch
+                {
+                    MorrowindScriptActorAiSettingKind.Hello => snapshot.Hello,
+                    MorrowindScriptActorAiSettingKind.Fight => snapshot.Fight,
+                    MorrowindScriptActorAiSettingKind.Flee => snapshot.Flee,
+                    MorrowindScriptActorAiSettingKind.Alarm => snapshot.Alarm,
+                    _ => value,
+                };
+            }
+
+            if (matchCount != 1 || instruction->Operand1 < 1 || instruction->Operand1 > 4)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = value,
+                FloatValue = value,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        [BurstCompile]
         static void SetMovementFlag(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
             if (!TryResolveActorTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
@@ -1480,6 +1655,40 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetPlacedRefId = targetPlacedRefId,
                 VoicePath = context->Messages[instruction->Int1],
                 Subtitle = context->Messages[instruction->Int2],
+            });
+        }
+
+        [BurstCompile]
+        static void SayDone(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (!TryResolveActorTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+                return;
+
+            if ((context->ActiveSays == null && context->ActiveSayCount > 0) || context->ActiveSayCount < 0)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            int done = 1;
+            for (int i = 0; i < context->ActiveSayCount; i++)
+            {
+                var active = context->ActiveSays[i];
+                bool matches = targetPlacedRefId != 0u
+                    ? active.SourcePlacedRefId == targetPlacedRefId
+                    : active.SourceEntity == targetEntity;
+                if (!matches)
+                    continue;
+
+                done = 0;
+                break;
+            }
+
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = done,
+                FloatValue = done,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
             });
         }
 
@@ -2435,18 +2644,40 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void RequestMessageBox(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
+            int buttonCount = instruction->Operand0;
+            int argCount = instruction->Operand1;
             if (context->MessageBoxRuntimeEntity == Entity.Null
                 || (context->Messages == null && context->MessageCount > 0)
-                || (uint)instruction->Int0 >= (uint)context->MessageCount)
+                || (uint)instruction->Int0 >= (uint)context->MessageCount
+                || buttonCount < 0
+                || buttonCount > 10
+                || argCount < 0
+                || argCount > 8
+                || (buttonCount > 0 && ((uint)instruction->Int1 >= (uint)context->MessageCount
+                    || instruction->Int1 + buttonCount > context->MessageCount)))
             {
                 context->Faulted = 1;
                 return;
             }
 
-            context->Ecb.AppendToBuffer(context->SortKey, context->MessageBoxRuntimeEntity, new ShellMessageBoxRequest
+            var request = new ShellMessageBoxRequest
             {
                 Body = context->Messages[instruction->Int0],
-            });
+                ButtonCount = (byte)buttonCount,
+                ArgCount = (byte)argCount,
+            };
+
+            for (int i = argCount - 1; i >= 0; i--)
+            {
+                if (!Pop(context, out var value))
+                    return;
+                SetMessageBoxArg(ref request, i, value);
+            }
+
+            for (int i = 0; i < buttonCount; i++)
+                SetMessageBoxButton(ref request, i, context->Messages[instruction->Int1 + i]);
+
+            context->Ecb.AppendToBuffer(context->SortKey, context->MessageBoxRuntimeEntity, request);
         }
 
         [BurstCompile]
@@ -2660,6 +2891,92 @@ namespace VVardenfell.Runtime.MorrowindScript
             out Entity targetEntity)
             => TryResolveRefTarget(context, instruction->Operand0, instruction->Int0, out targetPlacedRefId, out targetEntity);
 
+        static void SetMessageBoxArg(ref ShellMessageBoxRequest request, int index, in MorrowindScriptStackValue value)
+        {
+            switch (index)
+            {
+                case 0:
+                    request.Arg0Kind = value.ValueKind;
+                    request.Arg0Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg0Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 1:
+                    request.Arg1Kind = value.ValueKind;
+                    request.Arg1Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg1Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 2:
+                    request.Arg2Kind = value.ValueKind;
+                    request.Arg2Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg2Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 3:
+                    request.Arg3Kind = value.ValueKind;
+                    request.Arg3Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg3Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 4:
+                    request.Arg4Kind = value.ValueKind;
+                    request.Arg4Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg4Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 5:
+                    request.Arg5Kind = value.ValueKind;
+                    request.Arg5Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg5Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 6:
+                    request.Arg6Kind = value.ValueKind;
+                    request.Arg6Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg6Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+                case 7:
+                    request.Arg7Kind = value.ValueKind;
+                    request.Arg7Int = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? (int)value.FloatValue : value.IntValue;
+                    request.Arg7Float = value.ValueKind == (byte)MorrowindScriptValueKind.Float ? value.FloatValue : value.IntValue;
+                    break;
+            }
+        }
+
+        static void SetMessageBoxButton(ref ShellMessageBoxRequest request, int index, FixedString512Bytes value)
+        {
+            FixedString128Bytes text = default;
+            text.Append(value);
+            switch (index)
+            {
+                case 0:
+                    request.Button0 = text;
+                    break;
+                case 1:
+                    request.Button1 = text;
+                    break;
+                case 2:
+                    request.Button2 = text;
+                    break;
+                case 3:
+                    request.Button3 = text;
+                    break;
+                case 4:
+                    request.Button4 = text;
+                    break;
+                case 5:
+                    request.Button5 = text;
+                    break;
+                case 6:
+                    request.Button6 = text;
+                    break;
+                case 7:
+                    request.Button7 = text;
+                    break;
+                case 8:
+                    request.Button8 = text;
+                    break;
+                case 9:
+                    request.Button9 = text;
+                    break;
+            }
+        }
+
         static bool TryResolveRefTarget(
             MorrowindScriptExecutionContext* context,
             byte targetMode,
@@ -2671,6 +2988,19 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 targetPlacedRefId = context->PlacedRefId;
                 targetEntity = context->Entity;
+                return true;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Player)
+            {
+                targetPlacedRefId = 0u;
+                targetEntity = context->PlayerEntity;
+                if (targetEntity == Entity.Null)
+                {
+                    context->Faulted = 1;
+                    return false;
+                }
+
                 return true;
             }
 
@@ -2957,6 +3287,24 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ulong hash = 14695981039346656037UL;
             for (int i = 0; i < length; i++)
+            {
+                byte c = value[i];
+                if (c >= (byte)'A' && c <= (byte)'Z')
+                    c = (byte)(c + 32);
+                hash ^= c;
+                hash *= 1099511628211UL;
+            }
+
+            return hash == 0UL ? 1UL : hash;
+        }
+
+        static ulong HashFixedString64(FixedString64Bytes value)
+        {
+            if (value.Length <= 0)
+                return 0UL;
+
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < value.Length; i++)
             {
                 byte c = value[i];
                 if (c >= (byte)'A' && c <= (byte)'Z')

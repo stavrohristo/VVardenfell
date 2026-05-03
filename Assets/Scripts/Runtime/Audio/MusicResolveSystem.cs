@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<MusicState>();
             RequireForUpdate<MusicPlaylistState>();
             RequireForUpdate<MusicPlaybackStatus>();
+            RequireForUpdate<MorrowindMusicRequest>();
         }
 
         protected override void OnUpdate()
@@ -42,6 +43,7 @@ namespace VVardenfell.Runtime.Audio
             ref var playlist = ref SystemAPI.GetSingletonRW<MusicPlaylistState>().ValueRW;
             var playback = SystemAPI.GetSingleton<MusicPlaybackStatus>();
             var trackPool = SystemAPI.GetSingletonBuffer<MusicPlaylistEntry>();
+            var scriptMusicRequests = SystemAPI.GetSingletonBuffer<MorrowindMusicRequest>();
 
             if (!ReferenceEquals(_lastPlaylistContentDb, contentDb))
             {
@@ -53,15 +55,24 @@ namespace VVardenfell.Runtime.Audio
             switch (context.Mode)
             {
                 case AudioPlaybackMode.Menu:
+                    scriptMusicRequests.Clear();
+                    music.Scripted = 0;
+                    music.DirectPath = default;
                     music.Looping = 1;
                     music.ResolvedTrack = ResolveMenuTrack(contentDb);
                     music.Category = music.ResolvedTrack.IsValid ? contentDb.Get(music.ResolvedTrack).Category : MusicTrackCategory.Special;
                     playlist.CurrentTrackValue = 0;
                     break;
                 case AudioPlaybackMode.World:
+                    if (ResolveScriptTrack(contentDb, ref music, ref playlist, playback, scriptMusicRequests))
+                        break;
+
                     ResolveWorldTrack(contentDb, ref music, ref playlist, playback, trackPool);
                     break;
                 default:
+                    scriptMusicRequests.Clear();
+                    music.Scripted = 0;
+                    music.DirectPath = default;
                     music.Looping = 0;
                     music.ResolvedTrack = default;
                     music.Category = MusicTrackCategory.Special;
@@ -141,6 +152,45 @@ namespace VVardenfell.Runtime.Audio
             return default;
         }
 
+        static bool ResolveScriptTrack(
+            RuntimeContentDatabase contentDb,
+            ref MusicState music,
+            ref MusicPlaylistState playlist,
+            in MusicPlaybackStatus playback,
+            DynamicBuffer<MorrowindMusicRequest> requests)
+        {
+            if (requests.Length > 0)
+            {
+                var request = requests[requests.Length - 1];
+                requests.Clear();
+                bool hasTrack = request.Track.IsValid;
+                if (hasTrack && (contentDb == null || request.Track.Index < 0 || request.Track.Index >= contentDb.MusicTrackCount))
+                    throw new InvalidOperationException("[VVardenfell][Audio] StreamMusic request references invalid music content.");
+                if (!hasTrack && request.DirectPath.IsEmpty)
+                    throw new InvalidOperationException("[VVardenfell][Audio] StreamMusic request has no music content.");
+
+                music.Looping = 0;
+                music.Scripted = 1;
+                music.ResolvedTrack = request.Track;
+                music.DirectPath = request.DirectPath;
+                music.Category = hasTrack ? contentDb.Get(request.Track).Category : MusicTrackCategory.Special;
+                playlist.CurrentTrackValue = request.Track.Value;
+                return true;
+            }
+
+            if (music.Scripted == 0)
+                return false;
+
+            bool currentTrackPendingOrPlaying = playback.HasPendingTrack != 0 || playback.IsPlaying != 0;
+            if ((music.ResolvedTrack.IsValid || !music.DirectPath.IsEmpty) && currentTrackPendingOrPlaying)
+                return true;
+
+            music.Scripted = 0;
+            music.DirectPath = default;
+            playlist.CurrentTrackValue = 0;
+            return false;
+        }
+
         static void ResolveWorldTrack(
             RuntimeContentDatabase contentDb,
             ref MusicState music,
@@ -149,6 +199,7 @@ namespace VVardenfell.Runtime.Audio
             DynamicBuffer<MusicPlaylistEntry> trackPool)
         {
             music.Looping = 0;
+            music.DirectPath = default;
             music.Category = MusicTrackCategory.Explore;
 
             if (contentDb == null)

@@ -90,8 +90,19 @@ namespace VVardenfell.Runtime.Shell
         public static void ClearModal(ref RuntimeShellState state)
         {
             state.ModalOpen = 0;
+            state.ModalButtonCount = 0;
             state.ModalTitle = default;
             state.ModalBody = default;
+            state.ModalButton0 = default;
+            state.ModalButton1 = default;
+            state.ModalButton2 = default;
+            state.ModalButton3 = default;
+            state.ModalButton4 = default;
+            state.ModalButton5 = default;
+            state.ModalButton6 = default;
+            state.ModalButton7 = default;
+            state.ModalButton8 = default;
+            state.ModalButton9 = default;
         }
 
         public static void CloseModal(ref RuntimeShellState state)
@@ -123,8 +134,37 @@ namespace VVardenfell.Runtime.Shell
             state.SaveLoadBrowserOpen = 0;
             state.OptionsOpen = 0;
             state.ModalOpen = 1;
+            state.ModalButtonPressedValid = 0;
+            state.ModalButtonPressed = -1;
             state.ModalTitle = default;
             state.ModalBody = body;
+            state.ModalButtonCount = 0;
+            state.ModalButton0 = default;
+            state.ModalButton1 = default;
+            state.ModalButton2 = default;
+            state.ModalButton3 = default;
+            state.ModalButton4 = default;
+            state.ModalButton5 = default;
+            state.ModalButton6 = default;
+            state.ModalButton7 = default;
+            state.ModalButton8 = default;
+            state.ModalButton9 = default;
+        }
+
+        public static void ShowMessageBox(ref RuntimeShellState state, in ShellMessageBoxRequest request, FixedString512Bytes body)
+        {
+            ShowMessageBox(ref state, body);
+            state.ModalButtonCount = request.ButtonCount;
+            state.ModalButton0 = request.Button0;
+            state.ModalButton1 = request.Button1;
+            state.ModalButton2 = request.Button2;
+            state.ModalButton3 = request.Button3;
+            state.ModalButton4 = request.Button4;
+            state.ModalButton5 = request.Button5;
+            state.ModalButton6 = request.Button6;
+            state.ModalButton7 = request.Button7;
+            state.ModalButton8 = request.Button8;
+            state.ModalButton9 = request.Button9;
         }
 
         public static void OpenSaveLoadBrowser(ref RuntimeShellState state, ref SaveLoadBrowserState browser, SaveLoadBrowserMode mode, string saveName)

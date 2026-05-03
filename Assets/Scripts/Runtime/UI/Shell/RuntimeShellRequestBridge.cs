@@ -27,12 +27,16 @@ namespace VVardenfell.Runtime.UI.Shell
         }
 
         public static bool TryDismissModal(out string error)
+            => TryDismissModal(-1, out error);
+
+        public static bool TryDismissModal(int buttonIndex, out string error)
         {
             return TryMutateRequest<RuntimeShellActionRequest>(
                 "Runtime shell request state",
-                static (ref RuntimeShellActionRequest request) =>
+                (ref RuntimeShellActionRequest request) =>
                 {
                     request.DismissModal = 1;
+                    request.DismissModalButton = buttonIndex;
                 },
                 out error);
         }

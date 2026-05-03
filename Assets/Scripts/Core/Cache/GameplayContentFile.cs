@@ -442,6 +442,12 @@ namespace VVardenfell.Core.Cache
         GetLocked = 105,
         RequestLockState = 106,
         Drop = 107,
+        GetRace = 108,
+        ChangeWeather = 109,
+        StreamMusic = 110,
+        SayDone = 111,
+        GetActorAiSetting = 112,
+        GetButtonPressed = 113,
     }
 
     public enum MorrowindScriptRefTargetMode : byte
@@ -473,6 +479,7 @@ namespace VVardenfell.Core.Cache
         PlayLoopSound3D = 3,
         PlayLoopSound3DVP = 4,
         PlaySound3DVP = 5,
+        StopSound = 6,
     }
 
     public struct MorrowindScriptProgramDef

@@ -200,7 +200,8 @@ namespace VVardenfell.Runtime.Shell
                 shell.OptionsOpen != 0,
                 shell.ScreenFadeAlpha,
                 ResolveModalTitle(shell.ModalOpen != 0, shell.ModalTitle),
-                ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody));
+                ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody),
+                ResolveModalButtons(shell.ModalOpen != 0, shell));
         }
 
         PlayerPresentationStats BuildPlayerPresentationStats()
@@ -306,5 +307,33 @@ namespace VVardenfell.Runtime.Shell
 
             return _cachedModalBody;
         }
+
+        static string[] ResolveModalButtons(bool modalOpen, in RuntimeShellState shell)
+        {
+            if (!modalOpen || shell.ModalButtonCount == 0)
+                return Array.Empty<string>();
+
+            int count = Math.Min((int)shell.ModalButtonCount, 10);
+            var buttons = new string[count];
+            for (int i = 0; i < count; i++)
+                buttons[i] = GetModalButton(shell, i).ToString();
+            return buttons;
+        }
+
+        static FixedString128Bytes GetModalButton(in RuntimeShellState shell, int index)
+            => index switch
+            {
+                0 => shell.ModalButton0,
+                1 => shell.ModalButton1,
+                2 => shell.ModalButton2,
+                3 => shell.ModalButton3,
+                4 => shell.ModalButton4,
+                5 => shell.ModalButton5,
+                6 => shell.ModalButton6,
+                7 => shell.ModalButton7,
+                8 => shell.ModalButton8,
+                9 => shell.ModalButton9,
+                _ => default,
+            };
     }
 }

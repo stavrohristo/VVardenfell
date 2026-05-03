@@ -28,8 +28,18 @@ namespace VVardenfell.Runtime.Shell
 
             if (request.DismissModal != 0)
             {
+                bool scriptMessageBox = state.ModalOpen != 0 && state.ModalTitle.IsEmpty;
+                if (request.DismissModalButton >= 0)
+                {
+                    state.ModalButtonPressedValid = 1;
+                    state.ModalButtonPressed = request.DismissModalButton;
+                }
+
                 request.DismissModal = 0;
+                request.DismissModalButton = -1;
                 RuntimeShellStateUtility.ClearModal(ref state);
+                if (scriptMessageBox)
+                    state.PauseMenuOpen = 0;
             }
 
             // MW_Window_Pinnable toggle — flips the Pinned byte on the selected

@@ -9,6 +9,7 @@ namespace VVardenfell.Runtime.UI.Shell
     sealed class RuntimeInventoryItemDragSource : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
     {
         Action<int, InventoryItemClickContext> _beginItemDrag;
+        Action<Vector2> _dragPositionChanged;
         Func<bool> _hasHeldItem;
         int _itemIndex;
         bool _dragStarted;
@@ -16,11 +17,13 @@ namespace VVardenfell.Runtime.UI.Shell
         public void Initialize(
             int itemIndex,
             Action<int, InventoryItemClickContext> beginItemDrag,
-            Func<bool> hasHeldItem)
+            Func<bool> hasHeldItem,
+            Action<Vector2> dragPositionChanged)
         {
             _itemIndex = itemIndex;
             _beginItemDrag = beginItemDrag;
             _hasHeldItem = hasHeldItem;
+            _dragPositionChanged = dragPositionChanged;
         }
 
         public void SetItemIndex(int itemIndex)
@@ -35,10 +38,12 @@ namespace VVardenfell.Runtime.UI.Shell
                 return;
 
             _beginItemDrag?.Invoke(_itemIndex, CaptureClickContext(eventData));
+            _dragPositionChanged?.Invoke(eventData.position);
         }
 
         public void OnDrag(PointerEventData eventData)
         {
+            _dragPositionChanged?.Invoke(eventData.position);
         }
 
         public void OnEndDrag(PointerEventData eventData)

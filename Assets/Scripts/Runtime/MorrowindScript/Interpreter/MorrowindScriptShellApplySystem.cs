@@ -84,6 +84,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.VanityMode)
+            {
+                shell.VanityModeDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
             if (request.Operation == (byte)MorrowindScriptShellRequestOperation.Rest)
             {
                 shell.RestDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
@@ -114,6 +120,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                         return;
                     case 4:
                         shell.MapMenuDisabled = disabled;
+                        return;
+                    case 5:
+                        shell.NameMenuDisabled = disabled;
+                        return;
+                    case 6:
+                        shell.RaceMenuDisabled = disabled;
+                        return;
+                    case 7:
+                        shell.ClassMenuDisabled = disabled;
+                        return;
+                    case 8:
+                        shell.BirthMenuDisabled = disabled;
                         return;
                     default:
                         throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell menu kind {request.MenuKind}.");

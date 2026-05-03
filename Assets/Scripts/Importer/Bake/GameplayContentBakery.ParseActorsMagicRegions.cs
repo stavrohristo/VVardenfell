@@ -994,6 +994,8 @@ namespace VVardenfell.Importer.Bake
                 data.Globals,
                 data.Dialogues,
                 data.DialogueInfos,
+                data.Regions,
+                data.MusicTracks,
                 explicitRefTargets,
                 ambiguousExplicitRefTargets,
                 out data.MorrowindScriptPrograms,

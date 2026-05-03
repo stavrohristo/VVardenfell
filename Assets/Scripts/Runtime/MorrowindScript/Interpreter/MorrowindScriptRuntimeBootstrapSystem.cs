@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -78,6 +79,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
             EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptActiveSay>(runtime);
             EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
             EntityManager.AddBuffer<PlacedRefLockRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
@@ -105,6 +107,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptPlaceAtRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptOnDeathConsumeRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
+            Debug.LogWarning($"Script runtime initialized");
         }
 
         static byte ResolveGlobalKind(in GenericRecordDef global)

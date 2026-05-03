@@ -115,11 +115,13 @@ namespace VVardenfell.Runtime.Audio
             ecb.Dispose();
             if (SystemAPI.TryGetSingletonEntity<MorrowindScriptRuntimeState>(out var runtimeEntity)
                 && EntityManager.HasBuffer<MorrowindScriptActiveSource>(runtimeEntity)
-                && EntityManager.HasBuffer<MorrowindScriptPlayingSound>(runtimeEntity))
+                && EntityManager.HasBuffer<MorrowindScriptPlayingSound>(runtimeEntity)
+                && EntityManager.HasBuffer<MorrowindScriptActiveSay>(runtimeEntity))
             {
                 var activeSources = EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
                 var playingSounds = EntityManager.GetBuffer<MorrowindScriptPlayingSound>(runtimeEntity);
-                _service.EndScriptAudioFrame(activeSources, playingSounds, keepActiveLoops);
+                var activeSays = EntityManager.GetBuffer<MorrowindScriptActiveSay>(runtimeEntity);
+                _service.EndScriptAudioFrame(activeSources, playingSounds, activeSays, keepActiveLoops);
             }
         }
     }

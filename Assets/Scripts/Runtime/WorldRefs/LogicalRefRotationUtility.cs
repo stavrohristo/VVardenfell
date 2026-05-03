@@ -34,6 +34,33 @@ namespace VVardenfell.Runtime.WorldRefs
             }
         }
 
+        public static void ApplyWorldDelta(EntityManager entityManager, Entity logicalEntity, quaternion delta)
+        {
+            RemoveStaticIfPresent(entityManager, logicalEntity);
+            RotateEntityWorld(entityManager, logicalEntity, delta);
+
+            if (!entityManager.HasBuffer<LogicalRefChild>(logicalEntity))
+                return;
+
+            var children = entityManager.GetBuffer<LogicalRefChild>(logicalEntity);
+            for (int i = 0; i < children.Length; i++)
+            {
+                Entity child = children[i].Value;
+                if (child == Entity.Null
+                    || child == logicalEntity
+                    || !entityManager.Exists(child)
+                    || entityManager.HasComponent<InteractionActivationProxyTag>(child)
+                    || entityManager.HasComponent<Parent>(child)
+                    || !entityManager.HasComponent<LocalTransform>(child))
+                {
+                    continue;
+                }
+
+                RemoveStaticIfPresent(entityManager, child);
+                RotateEntityWorld(entityManager, child, delta);
+            }
+        }
+
         public static void SetAngle(EntityManager entityManager, Entity logicalEntity, byte axis, float radians)
         {
             if (!entityManager.HasComponent<LocalTransform>(logicalEntity))
@@ -88,6 +115,24 @@ namespace VVardenfell.Runtime.WorldRefs
 
             var transform = entityManager.GetComponentData<LocalTransform>(entity);
             transform.Rotation = math.normalize(math.mul(delta, transform.Rotation));
+            entityManager.SetComponentData(entity, transform);
+
+            if (entityManager.HasComponent<LocalToWorld>(entity))
+            {
+                entityManager.SetComponentData(entity, new LocalToWorld
+                {
+                    Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
+                });
+            }
+        }
+
+        static void RotateEntityWorld(EntityManager entityManager, Entity entity, quaternion delta)
+        {
+            if (!entityManager.HasComponent<LocalTransform>(entity))
+                return;
+
+            var transform = entityManager.GetComponentData<LocalTransform>(entity);
+            transform.Rotation = math.normalize(math.mul(transform.Rotation, delta));
             entityManager.SetComponentData(entity, transform);
 
             if (entityManager.HasComponent<LocalToWorld>(entity))

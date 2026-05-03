@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -86,6 +87,8 @@ namespace VVardenfell.Runtime.UI.Shell
 
         RectTransform _pauseRoot;
         RectTransform _modalRoot;
+        RectTransform _modalDialogRect;
+        RectTransform _modalButtonRoot;
         BitmapTextGraphic _modalTitle;
         BitmapTextGraphic _modalBody;
         RectTransform _countRoot;
@@ -121,6 +124,7 @@ namespace VVardenfell.Runtime.UI.Shell
         InventoryWindowEntryViewModel _dragEntry;
 
         readonly List<PauseMenuButtonView> _buttons = new();
+        readonly List<MorrowindButtonView> _modalButtons = new();
 
         public static RuntimeHudShellView Create()
         {
@@ -175,6 +179,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RequestDropHeldToInventory,
                 RequestUseHeldOnAvatar,
                 HasManagedDrag,
+                SetDragIconScreenPosition,
                 RequestInventoryFilterText,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Inventory));
             _containerView = new ContainerWindowView(
@@ -186,6 +191,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 RequestContainerItemClicked,
                 RequestDropHeldToContainer,
                 HasManagedDrag,
+                SetDragIconScreenPosition,
                 RequestTakeAll,
                 RequestCloseContainer);
             _statsView = new StatsWindowView(
@@ -275,7 +281,8 @@ namespace VVardenfell.Runtime.UI.Shell
             bool optionsOpen,
             float screenFadeAlpha,
             string modalTitle,
-            string modalBody)
+            string modalBody,
+            string[] modalButtons)
         {
             if (_rootRect == null)
                 return;
@@ -370,6 +377,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 _modalBody.Text = string.IsNullOrWhiteSpace(modalBody)
                     ? "This action is not available in the current runtime shell slice."
                     : modalBody.Trim();
+                SyncModalButtons(modalButtons);
                 _eventSystem?.SetSelectedGameObject(null);
             }
             else if (pauseMenuOpen && (pauseOpened || modalClosed))
@@ -388,6 +396,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 ClearSelectionIfOwned();
 
             SyncScreenFade(screenFadeAlpha);
+            SyncDragIconPosition();
         }
 
         // Vanilla MW pause/main menu has no window chrome. The buttons float on a dim
@@ -499,19 +508,19 @@ namespace VVardenfell.Runtime.UI.Shell
             blockerButton.navigation = new Navigation { mode = Navigation.Mode.None };
             blockerButton.onClick.AddListener(RequestModalDismiss);
 
-            var rect = RuntimeUiFactory.CreateAnchoredRect(
+            _modalDialogRect = RuntimeUiFactory.CreateAnchoredRect(
                 "ModalDialog",
                 _modalRoot,
                 new Vector2(0.5f, 0.5f),
                 new Vector2(0.5f, 0.5f),
                 Vector2.zero,
                 RuntimeClassicUiMetrics.Ui(new Vector2(ModalWidth, ModalHeight)));
-            rect.pivot = new Vector2(0.5f, 0.5f);
+            _modalDialogRect.pivot = new Vector2(0.5f, 0.5f);
 
             // Thin MW_Box border (MW_Dialog equivalent) rather than the thick window frame.
             var frame = RuntimeUiFactory.CreateBorderFrame(
                 "ModalFrame",
-                rect,
+                _modalDialogRect,
                 RuntimeUiFactory.ResolveThinFrame(_theme),
                 new Color(0f, 0f, 0f, 0.94f));
             RuntimeUiFactory.Stretch(frame.Root);
@@ -548,6 +557,85 @@ namespace VVardenfell.Runtime.UI.Shell
             _modalBody.rectTransform.offsetMax = new Vector2(-RuntimeClassicUiMetrics.Ui(20f), -RuntimeClassicUiMetrics.Ui(40f));
             _modalBody.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             _modalBody.raycastTarget = false;
+
+            _modalButtonRoot = RuntimeUiFactory.CreateAnchoredRect(
+                "ModalButtons",
+                frame.Client,
+                new Vector2(0f, 0f),
+                new Vector2(1f, 0f),
+                RuntimeClassicUiMetrics.Ui(new Vector2(0f, 18f)),
+                RuntimeClassicUiMetrics.Ui(new Vector2(-32f, 78f)));
+            _modalButtonRoot.pivot = new Vector2(0.5f, 0f);
+            for (int i = 0; i < 10; i++)
+            {
+                var button = BuildModalButton(_modalButtonRoot, $"ModalButton{i}", i);
+                button.Root.gameObject.SetActive(false);
+                _modalButtons.Add(button);
+            }
+        }
+
+        MorrowindButtonView BuildModalButton(RectTransform parent, string name, int buttonIndex)
+        {
+            var rect = RuntimeUiFactory.CreateAnchoredRect(
+                $"{name}Rect",
+                parent,
+                new Vector2(0f, 1f),
+                new Vector2(0f, 1f),
+                Vector2.zero,
+                RuntimeClassicUiMetrics.Ui(new Vector2(120f, 24f)));
+            rect.pivot = new Vector2(0f, 1f);
+            var button = RuntimeUiFactory.CreateMorrowindButton(
+                name,
+                rect,
+                _theme,
+                string.Empty,
+                RuntimeClassicUiMetrics.WindowText(0.46f),
+                new Color(0.94f, 0.85f, 0.68f),
+                new Color(0.12f, 0.1f, 0.08f, 0.9f));
+            RuntimeUiFactory.Stretch(button.Root);
+            button.Button.onClick.AddListener(() => RequestModalButton(buttonIndex));
+            button.Root = rect;
+            return button;
+        }
+
+        void SyncModalButtons(string[] labels)
+        {
+            int count = Math.Min(labels?.Length ?? 0, _modalButtons.Count);
+            int columns = count <= 1 ? 1 : 2;
+            int rows = count <= 0 ? 0 : (count + columns - 1) / columns;
+            float width = count > 1 ? 520f : ModalWidth;
+            float height = ModalHeight + Math.Max(0, rows - 1) * 34f;
+            _modalDialogRect.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(width, height));
+            _modalBody.rectTransform.offsetMin = new Vector2(
+                RuntimeClassicUiMetrics.Ui(20f),
+                RuntimeClassicUiMetrics.Ui(count > 0 ? 44f + rows * 30f : 16f));
+
+            float gap = RuntimeClassicUiMetrics.Ui(8f);
+            float buttonHeight = RuntimeClassicUiMetrics.Ui(24f);
+            float rootWidth = RuntimeClassicUiMetrics.Ui(width - 48f);
+            float buttonWidth = columns == 1 ? Math.Min(RuntimeClassicUiMetrics.Ui(180f), rootWidth) : (rootWidth - gap) * 0.5f;
+            float totalWidth = columns == 1 ? buttonWidth : rootWidth;
+            _modalButtonRoot.sizeDelta = new Vector2(RuntimeClassicUiMetrics.Ui(-32f), RuntimeClassicUiMetrics.Ui(Math.Max(0, rows * 30f)));
+
+            for (int i = 0; i < _modalButtons.Count; i++)
+            {
+                var button = _modalButtons[i];
+                bool active = i < count;
+                SetActiveIfChanged(button.Root.gameObject, active);
+                if (!active)
+                    continue;
+
+                int row = i / columns;
+                int column = i % columns;
+                button.Label.Text = string.IsNullOrWhiteSpace(labels[i]) ? "OK" : labels[i].Trim();
+                button.Root.anchorMin = new Vector2(0.5f, 1f);
+                button.Root.anchorMax = new Vector2(0.5f, 1f);
+                button.Root.pivot = new Vector2(0f, 1f);
+                button.Root.sizeDelta = new Vector2(buttonWidth, buttonHeight);
+                button.Root.anchoredPosition = new Vector2(
+                    -totalWidth * 0.5f + column * (buttonWidth + gap),
+                    -row * RuntimeClassicUiMetrics.Ui(30f));
+            }
         }
 
         void BuildCountDialog()
@@ -658,6 +746,9 @@ namespace VVardenfell.Runtime.UI.Shell
             _dragIconRoot.pivot = new Vector2(0f, 1f);
             _dragIconRoot.gameObject.SetActive(false);
             _dragIconRoot.SetAsLastSibling();
+            var dragCanvas = _dragIconRoot.gameObject.AddComponent<Canvas>();
+            dragCanvas.overrideSorting = true;
+            dragCanvas.sortingOrder = short.MaxValue - 1;
 
             var frame = RuntimeUiFactory.CreateBorderFrame(
                 "Frame",
@@ -1238,6 +1329,12 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             if (!RuntimeShellRequestBridge.TryDismissModal(out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed dismissing runtime shell modal: {error}");
+        }
+
+        void RequestModalButton(int buttonIndex)
+        {
+            if (!RuntimeShellRequestBridge.TryDismissModal(buttonIndex, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed dismissing runtime shell modal button {buttonIndex}: {error}");
         }
 
         void RequestSaveLoadSelectSlot(string slotId)

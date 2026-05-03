@@ -12,7 +12,12 @@ namespace VVardenfell.Runtime.Audio
         protected override void OnCreate()
         {
             if (SystemAPI.HasSingleton<AudioContextState>())
+            {
+                Entity audioEntity = SystemAPI.GetSingletonEntity<AudioContextState>();
+                if (!EntityManager.HasBuffer<MorrowindMusicRequest>(audioEntity))
+                    EntityManager.AddBuffer<MorrowindMusicRequest>(audioEntity);
                 return;
+            }
 
             var tuningSettings = AudioTuningSettings.LoadRuntimeOrDefault(out var tuningLoadSource);
             AudioTuningState tuning = tuningSettings.BuildRuntimeState();
@@ -32,6 +37,7 @@ namespace VVardenfell.Runtime.Audio
             EntityManager.AddComponentData(entity, new MusicPlaylistState());
             EntityManager.AddComponentData(entity, new MusicPlaybackStatus());
             EntityManager.AddBuffer<MusicPlaylistEntry>(entity);
+            EntityManager.AddBuffer<MorrowindMusicRequest>(entity);
             EntityManager.AddComponentData(entity, new InteriorAmbientState
             {
                 Looping = 1,

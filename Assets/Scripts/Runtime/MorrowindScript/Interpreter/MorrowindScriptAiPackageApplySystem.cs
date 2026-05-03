@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
@@ -27,11 +28,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            var requestCopy = new NativeArray<MorrowindScriptAiPackageRequest>(requests.Length, Allocator.Temp);
             for (int i = 0; i < requests.Length; i++)
-                MorrowindScriptAiPackageUtility.TryApplyRequest(contentDb, EntityManager, requests[i], lookup);
-
+                requestCopy[i] = requests[i];
             requests.Clear();
+
+            var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            for (int i = 0; i < requestCopy.Length; i++)
+                MorrowindScriptAiPackageUtility.TryApplyRequest(contentDb, EntityManager, requestCopy[i], lookup);
+            requestCopy.Dispose();
         }
     }
 }

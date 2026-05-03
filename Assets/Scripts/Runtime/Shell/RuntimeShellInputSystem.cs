@@ -52,7 +52,12 @@ namespace VVardenfell.Runtime.Shell
             if (state.ModalOpen != 0)
             {
                 if (togglePausePressed || backPressed)
+                {
+                    bool scriptMessageBox = state.ModalTitle.IsEmpty;
                     RuntimeShellStateUtility.CloseModal(ref state);
+                    if (scriptMessageBox)
+                        state.PauseMenuOpen = 0;
+                }
             }
             else if (state.SaveLoadBrowserOpen != 0)
             {

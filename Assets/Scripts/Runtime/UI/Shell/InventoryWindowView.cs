@@ -154,6 +154,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Action _onBackgroundClicked;
         readonly Action _onAvatarClicked;
         readonly Func<bool> _hasHeldItem;
+        readonly Action<Vector2> _onDragPositionChanged;
         readonly Action<string> _onFilterChanged;
 
         readonly MorrowindWindowView _window;
@@ -192,6 +193,7 @@ namespace VVardenfell.Runtime.UI.Shell
             Action onBackgroundClicked,
             Action onAvatarClicked,
             Func<bool> hasHeldItem,
+            Action<Vector2> onDragPositionChanged,
             Action<string> onFilterChanged,
             Action onPinToggled = null)
         {
@@ -204,6 +206,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _onBackgroundClicked = onBackgroundClicked;
             _onAvatarClicked = onAvatarClicked;
             _hasHeldItem = hasHeldItem;
+            _onDragPositionChanged = onDragPositionChanged;
             _onFilterChanged = onFilterChanged;
 
             _window = RuntimeUiFactory.CreateMorrowindWindow(
@@ -850,7 +853,7 @@ namespace VVardenfell.Runtime.UI.Shell
             };
 
             cell.DragSource = root.gameObject.AddComponent<RuntimeInventoryItemDragSource>();
-            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem);
+            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem, _onDragPositionChanged);
             return cell;
         }
 

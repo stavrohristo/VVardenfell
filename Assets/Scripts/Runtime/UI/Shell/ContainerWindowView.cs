@@ -67,6 +67,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly Action<int, InventoryItemClickContext> _onItemClicked;
         readonly Action _onBackgroundClicked;
         readonly Func<bool> _hasHeldItem;
+        readonly Action<Vector2> _onDragPositionChanged;
         readonly Action _onTakeAll;
         readonly Action _onClose;
 
@@ -90,6 +91,7 @@ namespace VVardenfell.Runtime.UI.Shell
             Action<int, InventoryItemClickContext> onItemClicked,
             Action onBackgroundClicked,
             Func<bool> hasHeldItem,
+            Action<Vector2> onDragPositionChanged,
             Action onTakeAll,
             Action onClose)
         {
@@ -100,6 +102,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _onItemClicked = onItemClicked;
             _onBackgroundClicked = onBackgroundClicked;
             _hasHeldItem = hasHeldItem;
+            _onDragPositionChanged = onDragPositionChanged;
             _onTakeAll = onTakeAll;
             _onClose = onClose;
 
@@ -409,7 +412,7 @@ namespace VVardenfell.Runtime.UI.Shell
             };
 
             cell.DragSource = root.gameObject.AddComponent<RuntimeInventoryItemDragSource>();
-            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem);
+            cell.DragSource.Initialize(cell.InventoryIndex, _onItemClicked, _hasHeldItem, _onDragPositionChanged);
             return cell;
         }
 

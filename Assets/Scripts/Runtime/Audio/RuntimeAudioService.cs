@@ -87,12 +87,24 @@ namespace VVardenfell.Runtime.Audio
             public float Volume;
             public float Pitch;
             public uint EventSequence;
+            public Entity SourceEntity;
+            public uint SourcePlacedRefId;
             public Vector3 Position;
             public float MinDistance;
             public float MaxDistance;
             public bool Spatial;
+            public bool TrackSay;
             public UnityWebRequest Request;
             public UnityWebRequestAsyncOperation Operation;
+        }
+
+        sealed class ActiveSayPlayback
+        {
+            public Entity SourceEntity;
+            public uint SourcePlacedRefId;
+            public AudioSource Source;
+            public uint EventSequence;
+            public bool Loading;
         }
 
         readonly Dictionary<string, AudioClip> _clipCache = new(StringComparer.OrdinalIgnoreCase);
@@ -103,6 +115,7 @@ namespace VVardenfell.Runtime.Audio
         readonly Dictionary<ulong, ChannelState> _scriptLoopChannels = new();
         readonly HashSet<ulong> _scriptLoopTouched = new();
         readonly List<ulong> _scriptLoopRemovalKeys = new();
+        readonly List<ActiveSayPlayback> _activeSayPlaybacks = new();
 
         readonly GameObject _root;
         readonly ChannelState _music;
@@ -323,7 +336,9 @@ namespace VVardenfell.Runtime.Audio
 
         public void SyncMusic(RuntimeContentDatabase contentDb, MusicState state, in AudioTuningState tuning)
         {
-            string path = ResolveMusicPath(contentDb, state.ResolvedTrack);
+            string path = state.DirectPath.IsEmpty
+                ? ResolveMusicPath(contentDb, state.ResolvedTrack)
+                : ResolveDirectMusicPath(state.DirectPath.ToString());
             SyncChannel(_music, path, state.Looping != 0, ResolveMusicVolume(state, tuning));
         }
 
@@ -471,12 +486,19 @@ namespace VVardenfell.Runtime.Audio
 
         public void BeginScriptAudioFrame()
         {
+            PruneCompletedSayPlaybacks();
             _scriptLoopTouched.Clear();
         }
 
         public void QueueScriptAudioEvent(RuntimeContentDatabase contentDb, in MorrowindScriptAudioRequest request, in AudioTuningState tuning)
         {
             using var _ = k_QueueScriptEvent.Auto();
+
+            if ((MorrowindScriptAudioKind)request.Kind == MorrowindScriptAudioKind.StopSound)
+            {
+                RemoveScriptLoopChannel(BuildScriptLoopKey(request));
+                return;
+            }
 
             bool directPath = !request.DirectPath.IsEmpty;
             if (contentDb == null || (!request.Sound.IsValid && !directPath))
@@ -535,10 +557,11 @@ namespace VVardenfell.Runtime.Audio
             if (_clipCache.TryGetValue(path, out var cachedClip) && cachedClip != null)
             {
                 using var cacheHit = k_ClipCacheHit.Auto();
-                if (request.Spatial != 0)
-                    PlayInteractionEvent(cachedClip, volume, pitch, position, minDistance, maxDistance);
-                else
-                    PlayNonSpatialEffectEvent(cachedClip, volume, pitch);
+                AudioSource source = request.Spatial != 0
+                    ? PlayInteractionEvent(cachedClip, volume, pitch, position, minDistance, maxDistance)
+                    : PlayNonSpatialEffectEvent(cachedClip, volume, pitch);
+                if (directPath)
+                    TrackSayPlayback(request.SourceEntity, request.SourcePlacedRefId, request.Sequence, source, loading: false);
                 return;
             }
 
@@ -549,21 +572,29 @@ namespace VVardenfell.Runtime.Audio
                 Volume = volume,
                 Pitch = pitch,
                 EventSequence = request.Sequence,
+                SourceEntity = request.SourceEntity,
+                SourcePlacedRefId = request.SourcePlacedRefId,
                 Position = position,
                 MinDistance = minDistance,
                 MaxDistance = maxDistance,
                 Spatial = request.Spatial != 0,
+                TrackSay = directPath,
                 Request = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, GetAudioType(path)),
             };
             pendingRequest.Operation = pendingRequest.Request.SendWebRequest();
             _pendingEventRequests.Add(pendingRequest);
+            if (directPath)
+                TrackSayPlayback(request.SourceEntity, request.SourcePlacedRefId, request.Sequence, source: null, loading: true);
         }
 
         public void EndScriptAudioFrame(
             DynamicBuffer<MorrowindScriptActiveSource> activeSources,
             DynamicBuffer<MorrowindScriptPlayingSound> playingSounds,
+            DynamicBuffer<MorrowindScriptActiveSay> activeSays,
             bool keepActiveLoops)
         {
+            PruneCompletedSayPlaybacks();
+
             _scriptLoopRemovalKeys.Clear();
             foreach (var pair in _scriptLoopChannels)
             {
@@ -584,6 +615,20 @@ namespace VVardenfell.Runtime.Audio
                 {
                     if (IsScriptLoopAudibleOrLoading(pair.Value))
                         playingSounds.Add(new MorrowindScriptPlayingSound { LoopKey = pair.Key });
+                }
+            }
+
+            if (activeSays.IsCreated)
+            {
+                activeSays.Clear();
+                for (int i = 0; i < _activeSayPlaybacks.Count; i++)
+                {
+                    var say = _activeSayPlaybacks[i];
+                    activeSays.Add(new MorrowindScriptActiveSay
+                    {
+                        SourceEntity = say.SourceEntity,
+                        SourcePlacedRefId = say.SourcePlacedRefId,
+                    });
                 }
             }
         }
@@ -614,6 +659,20 @@ namespace VVardenfell.Runtime.Audio
                 return null;
 
             string path = Path.Combine(_installPath, "Data Files", "Music", track.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            return NormalizeExistingPath(path);
+        }
+
+        string ResolveDirectMusicPath(string rawPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath) || string.IsNullOrWhiteSpace(_installPath))
+                return null;
+
+            string relativePath = rawPath.Trim().Trim('"').Replace('\\', '/');
+            const string prefix = "Music/";
+            if (relativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                relativePath = relativePath.Substring(prefix.Length);
+
+            string path = Path.Combine(_installPath, "Data Files", "Music", relativePath.Replace('/', Path.DirectorySeparatorChar));
             return NormalizeExistingPath(path);
         }
 
@@ -876,6 +935,8 @@ namespace VVardenfell.Runtime.Audio
                 if (request.Request.result != UnityWebRequest.Result.Success)
                 {
                     WarnLoadFailure(request.Path, request.ChannelName, request.Request.error);
+                    if (request.TrackSay)
+                        StopTrackingSayPlayback(request.EventSequence);
                     DisposeOneShotRequest(request);
                     _pendingEventRequests.RemoveAt(i);
                     continue;
@@ -885,13 +946,17 @@ namespace VVardenfell.Runtime.Audio
                 if (clip == null)
                 {
                     WarnLoadFailure(request.Path, request.ChannelName, "request completed without an AudioClip.");
+                    if (request.TrackSay)
+                        StopTrackingSayPlayback(request.EventSequence);
                     DisposeOneShotRequest(request);
                     _pendingEventRequests.RemoveAt(i);
                     continue;
                 }
 
                 _clipCache[request.Path] = clip;
-                PlayOneShot(request, clip);
+                AudioSource source = PlayOneShot(request, clip);
+                if (request.TrackSay)
+                    TrackSayPlayback(request.SourceEntity, request.SourcePlacedRefId, request.EventSequence, source, loading: false);
                 DisposeOneShotRequest(request);
                 _pendingEventRequests.RemoveAt(i);
             }
@@ -999,34 +1064,33 @@ namespace VVardenfell.Runtime.Audio
             _pendingEventRequests.Add(pendingRequest);
         }
 
-        void PlayOneShot(OneShotRequest request, AudioClip clip)
+        AudioSource PlayOneShot(OneShotRequest request, AudioClip clip)
         {
             if (request == null)
-                return;
+                return null;
 
             if (string.Equals(request.ChannelName, RegionEventChannelName, StringComparison.Ordinal))
             {
                 PlayRegionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
-                return;
+                return null;
             }
 
             if (request.Spatial)
             {
-                PlayInteractionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch, request.Position, request.MinDistance, request.MaxDistance);
-                return;
+                return PlayInteractionEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch, request.Position, request.MinDistance, request.MaxDistance);
             }
 
-            PlayNonSpatialEffectEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
+            return PlayNonSpatialEffectEvent(clip, request.Volume, request.Pitch <= 0f ? 1f : request.Pitch);
         }
 
-        void PlayInteractionEvent(AudioClip clip, float volume, float pitch, Vector3 position, float minDistance, float maxDistance)
+        AudioSource PlayInteractionEvent(AudioClip clip, float volume, float pitch, Vector3 position, float minDistance, float maxDistance)
         {
             using var _ = k_PlayInteractionEvent.Auto();
 
             if (clip == null || _interactionEventSources.Length == 0)
-                return;
+                return null;
             if (IsBeyondSpatialMaxDistance(position, maxDistance))
-                return;
+                return null;
 
             if (!TryGetIdleInteractionEventSource(out var source))
             {
@@ -1037,7 +1101,7 @@ namespace VVardenfell.Runtime.Audio
                     _interactionEventPoolExhaustedWarningLogged = true;
                 }
 
-                return;
+                return null;
             }
 
             _interactionEventPoolExhaustedWarningLogged = false;
@@ -1050,14 +1114,15 @@ namespace VVardenfell.Runtime.Audio
             source.pitch = Mathf.Max(0.01f, pitch);
             source.clip = clip;
             source.Play();
+            return source;
         }
 
-        void PlayNonSpatialEffectEvent(AudioClip clip, float volume, float pitch)
+        AudioSource PlayNonSpatialEffectEvent(AudioClip clip, float volume, float pitch)
         {
             using var _ = k_PlayInteractionEvent.Auto();
 
             if (clip == null || _interactionEventSources.Length == 0)
-                return;
+                return null;
 
             if (!TryGetIdleInteractionEventSource(out var source))
             {
@@ -1068,7 +1133,7 @@ namespace VVardenfell.Runtime.Audio
                     _interactionEventPoolExhaustedWarningLogged = true;
                 }
 
-                return;
+                return null;
             }
 
             _interactionEventPoolExhaustedWarningLogged = false;
@@ -1077,6 +1142,7 @@ namespace VVardenfell.Runtime.Audio
             source.pitch = Mathf.Max(0.01f, pitch);
             source.clip = clip;
             source.Play();
+            return source;
         }
 
         static bool IsBeyondSpatialMaxDistance(Vector3 position, float maxDistance)
@@ -1154,6 +1220,63 @@ namespace VVardenfell.Runtime.Audio
             return channel.Source != null && (channel.Source.isPlaying || channel.Source.volume > 0.0001f);
         }
 
+        void TrackSayPlayback(Entity sourceEntity, uint sourcePlacedRefId, uint eventSequence, AudioSource source, bool loading)
+        {
+            if (sourceEntity == Entity.Null && sourcePlacedRefId == 0u)
+                return;
+
+            for (int i = 0; i < _activeSayPlaybacks.Count; i++)
+            {
+                var active = _activeSayPlaybacks[i];
+                if (active.EventSequence != eventSequence)
+                    continue;
+
+                if (!loading && source == null)
+                {
+                    _activeSayPlaybacks.RemoveAt(i);
+                    return;
+                }
+
+                active.Source = source;
+                active.Loading = loading;
+                return;
+            }
+
+            if (!loading && source == null)
+                return;
+
+            _activeSayPlaybacks.Add(new ActiveSayPlayback
+            {
+                SourceEntity = sourceEntity,
+                SourcePlacedRefId = sourcePlacedRefId,
+                Source = source,
+                EventSequence = eventSequence,
+                Loading = loading,
+            });
+        }
+
+        void StopTrackingSayPlayback(uint eventSequence)
+        {
+            for (int i = _activeSayPlaybacks.Count - 1; i >= 0; i--)
+            {
+                if (_activeSayPlaybacks[i].EventSequence == eventSequence)
+                    _activeSayPlaybacks.RemoveAt(i);
+            }
+        }
+
+        void PruneCompletedSayPlaybacks()
+        {
+            for (int i = _activeSayPlaybacks.Count - 1; i >= 0; i--)
+            {
+                var active = _activeSayPlaybacks[i];
+                if (active.Loading)
+                    continue;
+
+                if (active.Source == null || !active.Source.isPlaying)
+                    _activeSayPlaybacks.RemoveAt(i);
+            }
+        }
+
         void CancelLoad(ChannelState channel, bool disposeClip = false)
         {
             if (channel.Request != null)
@@ -1183,8 +1306,13 @@ namespace VVardenfell.Runtime.Audio
         void DisposePendingEvents()
         {
             for (int i = 0; i < _pendingEventRequests.Count; i++)
+            {
+                if (_pendingEventRequests[i].TrackSay)
+                    StopTrackingSayPlayback(_pendingEventRequests[i].EventSequence);
                 DisposeOneShotRequest(_pendingEventRequests[i]);
+            }
             _pendingEventRequests.Clear();
+            _activeSayPlaybacks.Clear();
         }
 
         void CancelPendingOneShots(bool spatial)
@@ -1194,6 +1322,8 @@ namespace VVardenfell.Runtime.Audio
                 if (_pendingEventRequests[i].Spatial != spatial)
                     continue;
 
+                if (_pendingEventRequests[i].TrackSay)
+                    StopTrackingSayPlayback(_pendingEventRequests[i].EventSequence);
                 DisposeOneShotRequest(_pendingEventRequests[i]);
                 _pendingEventRequests.RemoveAt(i);
             }

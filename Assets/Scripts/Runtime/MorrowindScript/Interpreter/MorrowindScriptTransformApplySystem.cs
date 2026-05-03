@@ -89,6 +89,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
+                if (request.Operation == 7)
+                {
+                    quaternion worldDelta = quaternion.AxisAngle(
+                        -LogicalRefRotationUtility.ResolveAxis(request.Axis),
+                        request.Radians);
+                    LogicalRefRotationUtility.ApplyWorldDelta(EntityManager, target, worldDelta);
+                    continue;
+                }
+
                 if (request.Operation == 1)
                 {
                     LogicalRefRotationUtility.SetAngle(EntityManager, target, request.Axis, request.Radians);
@@ -153,7 +162,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
+            bool active = !EntityManager.HasComponent<LogicalRefLocation>(target)
+                          || IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
             ProjectPositionCellTarget(target, active);
         }
 

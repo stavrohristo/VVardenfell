@@ -25,7 +25,10 @@ namespace VVardenfell.Runtime.Shell
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             for (int i = 0; i < requests.Length; i++)
-                RuntimeShellStateUtility.ShowMessageBox(ref shell, requests[i].Body);
+            {
+                var request = requests[i];
+                RuntimeShellStateUtility.ShowMessageBox(ref shell, request, ShellMessageBoxFormatUtility.Format(request));
+            }
 
             requests.Clear();
         }
