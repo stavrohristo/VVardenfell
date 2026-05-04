@@ -36,7 +36,8 @@ namespace VVardenfell.Importer.Bake
             TextureBakery textures,
             CollisionBakery collisions,
             ActorAnimationBakery.Assignment actorAnimation = default,
-            ModelObjectAnimationDef objectAnimation = null)
+            ModelObjectAnimationDef objectAnimation = null,
+            float effectControllerStopTime = 0f)
         {
             modelPath ??= string.Empty;
             if (_assignmentsByPath.TryGetValue(modelPath, out var existing))
@@ -46,7 +47,7 @@ namespace VVardenfell.Importer.Bake
                 ? collisions.AddOrGet(source.Collision)
                 : -1;
 
-            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisions, collisionIndex, actorAnimation, objectAnimation);
+            var record = BuildRecord(modelPath, source, meshes, materials, textures, collisions, collisionIndex, actorAnimation, objectAnimation, effectControllerStopTime);
             int index = _records.Count;
             _records.Add(record);
 
@@ -77,7 +78,8 @@ namespace VVardenfell.Importer.Bake
             CollisionBakery collisions,
             int collisionIndex,
             ActorAnimationBakery.Assignment actorAnimation,
-            ModelObjectAnimationDef objectAnimation)
+            ModelObjectAnimationDef objectAnimation,
+            float effectControllerStopTime)
         {
             if (source == null)
             {
@@ -91,6 +93,7 @@ namespace VVardenfell.Importer.Bake
                     ActorSkinMeshCount = actorAnimation.SkinMeshCount,
                     FirstActorClipIndex = actorAnimation.FirstClipIndex,
                     ActorClipCount = actorAnimation.ClipCount,
+                    EffectControllerStopTime = effectControllerStopTime,
                     ObjectAnimation = CloneObjectAnimation(objectAnimation),
                     Nodes = Array.Empty<ModelPrefabNodeDef>(),
                     ChildIndices = Array.Empty<int>(),
@@ -161,6 +164,7 @@ namespace VVardenfell.Importer.Bake
                 ActorSkinMeshCount = actorAnimation.SkinMeshCount,
                 FirstActorClipIndex = actorAnimation.FirstClipIndex,
                 ActorClipCount = actorAnimation.ClipCount,
+                EffectControllerStopTime = effectControllerStopTime,
                 ObjectAnimation = CloneObjectAnimation(objectAnimation),
                 Nodes = nodes,
                 ChildIndices = childIndices,
@@ -218,6 +222,7 @@ namespace VVardenfell.Importer.Bake
                 ActorSkinMeshCount = source?.ActorSkinMeshCount ?? 0,
                 FirstActorClipIndex = source?.FirstActorClipIndex ?? -1,
                 ActorClipCount = source?.ActorClipCount ?? 0,
+                EffectControllerStopTime = source?.EffectControllerStopTime ?? 0f,
                 ObjectAnimation = CloneObjectAnimation(source?.ObjectAnimation),
                 Nodes = clonedNodes,
                 ChildIndices = clonedChildIndices,

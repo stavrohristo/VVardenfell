@@ -330,6 +330,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Label = "Building deterministic content arrays";
             progress.Current = recordSourcePaths.Length + 1;
+            ApplyOpenMwFallbackGameSettings(state.GameSettings);
             GameplayContentData data = BuildContentData(state, config.InstallPath, recordSourcePaths);
             yield return null;
 
@@ -352,6 +353,51 @@ namespace VVardenfell.Importer.Bake
             progress.Current = recordSourcePaths.Length + 4;
             if (markDone)
                 progress.Done = true;
+        }
+
+
+        static void ApplyOpenMwFallbackGameSettings(Dictionary<string, GenericRecordDef> gameSettings)
+        {
+            if (gameSettings == null)
+                throw new InvalidOperationException("Cannot apply OpenMW fallback game settings without a GMST table.");
+
+            AddFallbackStringGameSetting(gameSettings, "Blood_Model_0", "BloodSplat.nif");
+            AddFallbackStringGameSetting(gameSettings, "Blood_Model_1", "BloodSplat2.nif");
+            AddFallbackStringGameSetting(gameSettings, "Blood_Model_2", "BloodSplat3.nif");
+            AddFallbackStringGameSetting(gameSettings, "Blood_Texture_0", "Tx_Blood.dds");
+            AddFallbackStringGameSetting(gameSettings, "Blood_Texture_1", "Tx_Blood_White.dds");
+            AddFallbackStringGameSetting(gameSettings, "Blood_Texture_2", "Tx_Blood_Gold.dds");
+        }
+
+
+        static void AddFallbackStringGameSetting(
+            Dictionary<string, GenericRecordDef> gameSettings,
+            string id,
+            string value)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                throw new InvalidOperationException("OpenMW fallback GMST id is empty.");
+            if (string.IsNullOrWhiteSpace(value))
+                throw new InvalidOperationException($"OpenMW fallback GMST '{id}' has no string value.");
+            if (gameSettings.TryGetValue(id, out var existing))
+            {
+                if (existing.ValueKind == GenericRecordValueKind.None && !string.IsNullOrWhiteSpace(existing.Text))
+                {
+                    existing.ValueKind = GenericRecordValueKind.String;
+                    gameSettings[id] = existing;
+                }
+
+                return;
+            }
+
+            gameSettings[id] = new GenericRecordDef
+            {
+                ContentId = ContentId.FromTagAndId(GmstTag, id),
+                RecordTag = GmstTag,
+                Id = id,
+                Text = value,
+                ValueKind = GenericRecordValueKind.String,
+            };
         }
 
 
@@ -722,16 +768,25 @@ namespace VVardenfell.Importer.Bake
                     def.Type = ReadInt16(bytes, 8);
                 if (bytes.Length >= 12)
                     def.Health = ReadInt16(bytes, 10);
+                if (bytes.Length >= 16)
+                    def.WeaponSpeed = ReadSingle(bytes, 12);
+                if (bytes.Length >= 20)
+                    def.WeaponReach = ReadSingle(bytes, 16);
                 if (bytes.Length >= 22)
                     def.EnchantCapacity = ReadInt16(bytes, 20);
                 if (bytes.Length >= 28)
                 {
-                    int chopMax = bytes[23];
-                    int slashMax = bytes[25];
-                    int thrustMax = bytes[27];
-                    def.DamageMax = Math.Max(chopMax, Math.Max(slashMax, thrustMax));
-                    def.DamageMin = Math.Min(bytes[22], Math.Min(bytes[24], bytes[26]));
+                    def.ChopMin = bytes[22];
+                    def.ChopMax = bytes[23];
+                    def.SlashMin = bytes[24];
+                    def.SlashMax = bytes[25];
+                    def.ThrustMin = bytes[26];
+                    def.ThrustMax = bytes[27];
+                    def.DamageMax = Math.Max(def.ChopMax, Math.Max(def.SlashMax, def.ThrustMax));
+                    def.DamageMin = Math.Min(def.ChopMin, Math.Min(def.SlashMin, def.ThrustMin));
                 }
+                if (bytes.Length >= 32)
+                    def.WeaponFlags = ReadUInt32(bytes, 28);
                 def.Slot = ItemEquipmentSlot.Weapon;
             }
 

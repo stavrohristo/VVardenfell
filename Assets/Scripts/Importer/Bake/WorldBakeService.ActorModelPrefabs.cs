@@ -26,6 +26,7 @@ namespace VVardenfell.Importer.Bake
             ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
             BakeProgress progress,
             ModelPrefabBakery modelPrefabs,
+            VfxEffectBakery vfxEffects,
             ActorAnimationBakery actorAnimations,
             ObjectAnimationBakery objectAnimations,
             MeshBakery meshes,
@@ -34,7 +35,8 @@ namespace VVardenfell.Importer.Bake
             CollisionBakery collisions,
             BsaArchive sharedBsa,
             Dictionary<string, BsaEntry> bsaByName,
-            GameplayContentData gameplayContent)
+            GameplayContentData gameplayContent,
+            ConcurrentDictionary<string, byte> requiredVfxModels)
         {
             var keys = new List<string>(modelCache.Keys);
             keys.Sort(StringComparer.OrdinalIgnoreCase);
@@ -112,6 +114,11 @@ namespace VVardenfell.Importer.Bake
                         }
 
                         var objectAnimation = objectAnimations.GetOrAddModel(source.ModelPath, source.Nif, source.Prefab);
+                        vfxEffects.GetOrAddModel(
+                            source.ModelPath,
+                            source.Nif,
+                            requiredVfxModels != null && requiredVfxModels.ContainsKey(NormalizeModelPath(source.ModelPath)),
+                            textures);
                         modelPrefabs.GetOrAdd(
                             source.ModelPath,
                             source.Prefab,
@@ -120,7 +127,8 @@ namespace VVardenfell.Importer.Bake
                             textures,
                             collisions,
                             actorAnimation,
-                            objectAnimation);
+                            objectAnimation,
+                            source.EffectControllerStopTime);
                     }
                 }
 

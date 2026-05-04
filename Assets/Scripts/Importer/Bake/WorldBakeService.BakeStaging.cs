@@ -114,9 +114,11 @@ namespace VVardenfell.Importer.Bake
             var bakeryCollisions = new CollisionBakery();
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
             var bakeryModelPrefabs = new ModelPrefabBakery();
+            var bakeryVfxEffects = new VfxEffectBakery();
             var bakeryActorAnimations = new ActorAnimationBakery();
             var bakeryObjectAnimations = new ObjectAnimationBakery(gameplayContent);
             var modelCache = new ConcurrentDictionary<string, Lazy<ModelSource>>(StringComparer.OrdinalIgnoreCase);
+            var requiredVfxModels = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
             progress.Current = 1;
             yield return null;
@@ -125,6 +127,7 @@ namespace VVardenfell.Importer.Bake
             foreach (var entry in sharedBsa.Entries)
                 bsaByName[entry.Name] = entry;
 
+            SeedRequiredVfxAssets(gameplayContent, sharedBsa, bsaByName, modelCache, bakeryTextures, requiredVfxModels);
             SeedRuntimeSpawnableModels(gameplayContent, sharedBsa, bsaByName, modelCache);
 
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
@@ -243,7 +246,7 @@ namespace VVardenfell.Importer.Bake
 
             yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
             bakeryActorAnimations.ConfigureCreatureAnimationSources(gameplayContent, bsaByName);
-            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent);
+            yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryVfxEffects, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent, requiredVfxModels);
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
             yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
             FlushDroppedBakeRefWarnings();
@@ -255,7 +258,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 12;
+            progress.Total = 13;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -282,14 +285,20 @@ namespace VVardenfell.Importer.Bake
             if (bakeryModelPrefabs.Modified || bakeryObjectAnimations.Modified || !File.Exists(CachePaths.ModelPrefabs))
                 ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
 
-            progress.Label = "actor_animations.bin";
+            progress.Label = "vfx_effects.bin";
             progress.Current = 4;
+            yield return null;
+            if (bakeryVfxEffects.Modified || !File.Exists(CachePaths.VfxEffects))
+                MorrowindVfxFile.Write(CachePaths.VfxEffects, bakeryVfxEffects.BuildCatalog());
+
+            progress.Label = "actor_animations.bin";
+            progress.Current = 5;
             yield return null;
             if (bakeryActorAnimations.Modified || !ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
                 ActorAnimationFile.Write(CachePaths.ActorAnimations, bakeryActorAnimations.BuildCatalog());
 
             progress.Label = "textures.bin";
-            progress.Current = 5;
+            progress.Current = 6;
             yield return null;
             if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
             {
@@ -298,13 +307,13 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 6;
+            progress.Current = 7;
             yield return null;
             if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers);
 
             progress.Label = "collisions.bin";
-            progress.Current = 7;
+            progress.Current = 8;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -313,26 +322,26 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 8;
+            progress.Current = 9;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 9;
-            yield return null;
-
-            progress.Label = "world_collision_validation.txt";
             progress.Current = 10;
             yield return null;
 
-            progress.Label = "ui.bin";
+            progress.Label = "world_collision_validation.txt";
             progress.Current = 11;
+            yield return null;
+
+            progress.Label = "ui.bin";
+            progress.Current = 12;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 12;
+            progress.Current = 13;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
@@ -402,6 +411,215 @@ namespace VVardenfell.Importer.Bake
         {
             if (!string.IsNullOrWhiteSpace(path))
                 textures.AddOrGet(path);
+        }
+
+
+        static void SeedRequiredVfxAssets(
+            GameplayContentData gameplayContent,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            TextureBakery textures,
+            ConcurrentDictionary<string, byte> requiredVfxModels)
+        {
+            if (gameplayContent == null)
+                return;
+
+            for (int i = 0; i <= 2; i++)
+            {
+                string model = "meshes/" + RequireGameplayGameSettingString(gameplayContent, $"Blood_Model_{i}");
+                EnsureRequiredModelSource(
+                    model,
+                    sharedBsa,
+                    bsaByName,
+                    modelCache,
+                    $"Blood VFX model seed Blood_Model_{i}");
+                MarkRequiredVfxModel(requiredVfxModels, model);
+            }
+
+            EnsureRequiredTexture(textures, RequireGameplayGameSettingString(gameplayContent, "Blood_Texture_0"), "Blood_Texture_0");
+            for (int i = 1; i <= 2; i++)
+            {
+                string texture = RequireGameplayGameSettingStringAllowEmpty(gameplayContent, $"Blood_Texture_{i}");
+                if (!string.IsNullOrWhiteSpace(texture))
+                    EnsureRequiredTexture(textures, texture, $"Blood_Texture_{i}");
+            }
+
+            SeedMagicVfxAssets(gameplayContent, sharedBsa, bsaByName, modelCache, requiredVfxModels);
+        }
+
+
+        static void SeedMagicVfxAssets(
+            GameplayContentData gameplayContent,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            ConcurrentDictionary<string, byte> requiredVfxModels)
+        {
+            var effects = gameplayContent.MagicEffects ?? Array.Empty<MagicEffectDef>();
+            for (int i = 0; i < effects.Length; i++)
+            {
+                SeedMagicVfxObject(gameplayContent, sharedBsa, bsaByName, modelCache, requiredVfxModels, effects[i].CastingObjectId, effects[i].Index, "CastingObjectId");
+                SeedMagicVfxObject(gameplayContent, sharedBsa, bsaByName, modelCache, requiredVfxModels, effects[i].HitObjectId, effects[i].Index, "HitObjectId");
+                SeedMagicVfxObject(gameplayContent, sharedBsa, bsaByName, modelCache, requiredVfxModels, effects[i].AreaObjectId, effects[i].Index, "AreaObjectId");
+                SeedMagicVfxObject(gameplayContent, sharedBsa, bsaByName, modelCache, requiredVfxModels, effects[i].BoltObjectId, effects[i].Index, "BoltObjectId");
+            }
+        }
+
+
+        static void SeedMagicVfxObject(
+            GameplayContentData gameplayContent,
+            BsaArchive sharedBsa,
+            Dictionary<string, BsaEntry> bsaByName,
+            ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            ConcurrentDictionary<string, byte> requiredVfxModels,
+            string objectId,
+            int effectIndex,
+            string fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(objectId))
+                return;
+
+            string model = ResolveRequiredVfxObjectModel(gameplayContent, objectId, $"Magic effect {effectIndex} {fieldName}");
+            EnsureRequiredModelSource(
+                model,
+                sharedBsa,
+                bsaByName,
+                modelCache,
+                $"Magic effect {effectIndex} {fieldName} '{objectId}'");
+            MarkRequiredVfxModel(requiredVfxModels, model);
+        }
+
+
+        static string ResolveRequiredVfxObjectModel(GameplayContentData gameplayContent, string objectId, string context)
+        {
+            if (TryResolveVfxModel(gameplayContent.Activators, objectId, out string model)
+                || TryResolveVfxModel(gameplayContent.Statics, objectId, out model)
+                || TryResolveVfxModel(gameplayContent.Lights, objectId, out model)
+                || TryResolveVfxModel(gameplayContent.Items, objectId, out model))
+            {
+                return model;
+            }
+
+            throw new InvalidOperationException($"Required VFX object '{objectId}' for {context} is missing or has no model.");
+        }
+
+
+        static bool TryResolveVfxModel(BaseDef[] records, string id, out string model)
+        {
+            model = null;
+            var values = records ?? Array.Empty<BaseDef>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (string.Equals(values[i].Id, id, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(values[i].Model))
+                {
+                    model = values[i].Model;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        static bool TryResolveVfxModel(GenericRecordDef[] records, string id, out string model)
+        {
+            model = null;
+            var values = records ?? Array.Empty<GenericRecordDef>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (string.Equals(values[i].Id, id, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(values[i].Model))
+                {
+                    model = values[i].Model;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        static bool TryResolveVfxModel(LightDef[] records, string id, out string model)
+        {
+            model = null;
+            var values = records ?? Array.Empty<LightDef>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (string.Equals(values[i].Id, id, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(values[i].Model))
+                {
+                    model = values[i].Model;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        static void MarkRequiredVfxModel(ConcurrentDictionary<string, byte> requiredVfxModels, string model)
+        {
+            if (requiredVfxModels == null)
+                return;
+
+            string normalized = NormalizeModelPath(model);
+            if (!string.IsNullOrWhiteSpace(normalized))
+                requiredVfxModels.TryAdd(normalized, 0);
+        }
+
+
+        static string RequireGameplayGameSettingString(GameplayContentData gameplayContent, string id)
+        {
+            if (TryGetGameplayGameSettingString(gameplayContent, id, out string value))
+                return value;
+
+            throw new InvalidOperationException($"Required GMST '{id}' is missing or not a string.");
+        }
+
+
+        static string RequireGameplayGameSettingStringAllowEmpty(GameplayContentData gameplayContent, string id)
+        {
+            var settings = gameplayContent?.GameSettings ?? Array.Empty<GenericRecordDef>();
+            for (int i = 0; i < settings.Length; i++)
+            {
+                if (!string.Equals(settings[i].Id, id, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (settings[i].ValueKind != GenericRecordValueKind.String)
+                    throw new InvalidOperationException($"Required GMST '{id}' is not a string.");
+                return settings[i].Text ?? string.Empty;
+            }
+
+            throw new InvalidOperationException($"Required GMST '{id}' is missing.");
+        }
+
+
+        static bool TryGetGameplayGameSettingString(GameplayContentData gameplayContent, string id, out string value)
+        {
+            var settings = gameplayContent?.GameSettings ?? Array.Empty<GenericRecordDef>();
+            for (int i = 0; i < settings.Length; i++)
+            {
+                if (string.Equals(settings[i].Id, id, StringComparison.OrdinalIgnoreCase)
+                    && settings[i].ValueKind == GenericRecordValueKind.String
+                    && !string.IsNullOrWhiteSpace(settings[i].Text))
+                {
+                    value = settings[i].Text;
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
+        }
+
+
+        static void EnsureRequiredTexture(TextureBakery textures, string path, string context)
+        {
+            if (textures == null)
+                throw new InvalidOperationException($"{context} cannot be seeded without a texture bakery.");
+            if (textures.AddOrGet(path) < 0)
+                throw new InvalidOperationException($"{context} required texture '{path}' is missing from the archive.");
         }
 
 
@@ -780,6 +998,7 @@ namespace VVardenfell.Importer.Bake
                 : default;
             bool hasObjectAnimation = NifObjectAnimationAnalysis.HasSupportedObjectAnimation(nif);
             bool hasUnsupportedObjectControllers = NifObjectAnimationAnalysis.HasUnsupportedObjectControllers(nif);
+            float effectControllerStopTime = NifEffectControllerAnalysis.ResolveMaxControllerStopTime(nif);
             return new ModelSource(
                 path,
                 nif,
@@ -789,7 +1008,8 @@ namespace VVardenfell.Importer.Bake
                 collisionResult.Source,
                 prefab,
                 hasObjectAnimation,
-                hasUnsupportedObjectControllers);
+                hasUnsupportedObjectControllers,
+                effectControllerStopTime);
         }
 
 

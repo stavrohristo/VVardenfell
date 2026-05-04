@@ -78,6 +78,32 @@ namespace VVardenfell.Importer.Nif
     }
 
 
+    /// <summary>Moves a node along a position path driven by a percent curve.</summary>
+    public class NiPathController : NiTimeController
+    {
+        public ushort PathFlags;
+        public int BankDirection;
+        public float MaxBankAngle;
+        public float Smoothing;
+        public ushort FollowAxis;
+        public int PathData;
+        public int PercentData;
+
+        public override void Read(NifStream s)
+        {
+            base.Read(s);
+            // Morrowind NIF 4.0.0.2 stores path flags in the high bits of NiTimeController.Flags.
+            PathFlags = (ushort)(Flags >> 4);
+            BankDirection = s.ReadInt32();
+            MaxBankAngle = s.ReadFloat();
+            Smoothing = s.ReadFloat();
+            FollowAxis = s.ReadUInt16();
+            PathData = s.ReadInt32();
+            PercentData = s.ReadInt32();
+        }
+    }
+
+
     /// <summary>Drives vertex morph animations (creature faces, bow draw, etc).</summary>
     public class NiGeomMorpherController : NiTimeController
     {

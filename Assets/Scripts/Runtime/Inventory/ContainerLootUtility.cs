@@ -159,11 +159,13 @@ namespace VVardenfell.Runtime.Inventory
             if (!content.IsValid || count <= 0)
                 return 0;
 
+            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 if (inventory[i].Content.Kind != content.Kind
                     || inventory[i].Content.HandleValue != content.HandleValue
-                    || !inventory[i].SoulId.Equals(soulId))
+                    || !inventory[i].SoulId.Equals(soulId)
+                    || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
                     continue;
                 }
@@ -180,6 +182,7 @@ namespace VVardenfell.Runtime.Inventory
                 SoulId = soulId,
                 SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
+                Condition = condition,
             });
             return count;
         }

@@ -100,6 +100,7 @@ namespace VVardenfell.Importer.Bake
             public readonly ModelPrefabSource Prefab;
             public readonly bool HasObjectAnimation;
             public readonly bool HasUnsupportedObjectControllers;
+            public readonly float EffectControllerStopTime;
 
             public ModelSource(
                 string modelPath,
@@ -110,7 +111,8 @@ namespace VVardenfell.Importer.Bake
                 CollisionExtractionSource collisionSource,
                 ModelPrefabSource prefab,
                 bool hasObjectAnimation,
-                bool hasUnsupportedObjectControllers)
+                bool hasUnsupportedObjectControllers,
+                float effectControllerStopTime)
             {
                 ModelPath = modelPath;
                 Nif = nif;
@@ -121,6 +123,7 @@ namespace VVardenfell.Importer.Bake
                 Prefab = prefab;
                 HasObjectAnimation = hasObjectAnimation;
                 HasUnsupportedObjectControllers = hasUnsupportedObjectControllers;
+                EffectControllerStopTime = effectControllerStopTime;
             }
         }
 

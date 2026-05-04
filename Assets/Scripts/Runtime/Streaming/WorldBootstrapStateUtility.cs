@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using VVardenfell.Core;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
@@ -148,6 +149,7 @@ namespace VVardenfell.Runtime.Streaming
             PopulateInitializationSpellbook(em.AddBuffer<ActorKnownSpell>(initEntity), knownSpells);
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
             em.AddBuffer<ActorActiveMagicEffect>(initEntity);
+            MorrowindCombatSettingsBridge.PublishPersisted(em);
         }
 
         public static void PublishSandboxStartRequest(EntityManager em)

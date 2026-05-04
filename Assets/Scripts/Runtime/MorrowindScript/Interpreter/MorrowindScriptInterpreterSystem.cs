@@ -11,6 +11,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -89,7 +90,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.RequireForUpdate<LoadedCellsMap>();
             state.RequireForUpdate<PlacedRefRuntimeStateLookup>();
             state.RequireForUpdate<ActiveExplicitRefLookup>();
-            state.RequireForUpdate<PhysicsWorldSingleton>();
+            state.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -232,7 +233,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             var actorIdentities = CopyActorIdentitySnapshots(state.EntityManager, playerEntity);
             var actorAiSettings = CopyActorAiSettingSnapshots(state.EntityManager, playerEntity);
             var actorDispositions = CopyActorDispositionSnapshots(state.EntityManager, playerEntity);
-            var actorLineOfSight = CopyActorLineOfSightSnapshots(state.EntityManager, playerEntity, SystemAPI.GetSingleton<PhysicsWorldSingleton>());
+            var actorLineOfSight = CopyActorLineOfSightSnapshots(state.EntityManager, playerEntity);
             var actorKnownSpellSnapshots = CopyActorKnownSpellSnapshots(state.EntityManager);
             var runningPrograms = CopyRunningProgramSnapshots(state.EntityManager);
 
@@ -1541,14 +1542,14 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         struct ScriptLineOfSightActor
         {
+            public Entity Entity;
             public uint PlacedRefId;
             public float3 EyePosition;
         }
 
         static NativeArray<MorrowindScriptActorLineOfSightSnapshot> CopyActorLineOfSightSnapshots(
             EntityManager entityManager,
-            Entity playerEntity,
-            PhysicsWorldSingleton physicsWorld)
+            Entity playerEntity)
         {
             var actors = new NativeList<ScriptLineOfSightActor>(Allocator.Temp);
             if (playerEntity != Entity.Null
@@ -1557,6 +1558,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 actors.Add(new ScriptLineOfSightActor
                 {
+                    Entity = playerEntity,
                     PlacedRefId = 0u,
                     EyePosition = GetActorEyePosition(entityManager.GetComponentData<LocalTransform>(playerEntity)),
                 });
@@ -1570,6 +1572,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if (!query.IsEmptyIgnoreFilter)
                 {
+                    using var entities = query.ToEntityArray(Allocator.Temp);
                     using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
                     using var runtimeStates = query.ToComponentDataArray<PlacedRefRuntimeState>(Allocator.Temp);
                     using var transforms = query.ToComponentDataArray<LocalTransform>(Allocator.Temp);
@@ -1580,6 +1583,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                         actors.Add(new ScriptLineOfSightActor
                         {
+                            Entity = entities[i],
                             PlacedRefId = placedRefs[i].Value,
                             EyePosition = GetActorEyePosition(transforms[i]),
                         });
@@ -1609,7 +1613,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     {
                         SourcePlacedRefId = source.PlacedRefId,
                         TargetPlacedRefId = target.PlacedRefId,
-                        HasLineOfSight = HasActorLineOfSight(physicsWorld, source.EyePosition, target.EyePosition) ? (byte)1 : (byte)0,
+                        HasLineOfSight = HasActorLineOfSight(
+                            entityManager,
+                            source.Entity,
+                            target.Entity,
+                            source.EyePosition,
+                            target.EyePosition) ? (byte)1 : (byte)0,
                     };
                 }
             }
@@ -1621,18 +1630,26 @@ namespace VVardenfell.Runtime.MorrowindScript
         static float3 GetActorEyePosition(in LocalTransform transform)
             => transform.Position + new float3(0f, 1.62f, 0f);
 
-        static bool HasActorLineOfSight(PhysicsWorldSingleton physicsWorld, float3 source, float3 target)
+        static bool HasActorLineOfSight(
+            EntityManager entityManager,
+            Entity sourceEntity,
+            Entity targetEntity,
+            float3 source,
+            float3 target)
         {
             if (math.distancesq(source, target) <= 0.0001f)
                 return true;
 
-            var input = new RaycastInput
-            {
-                Start = source,
-                End = target,
-                Filter = InteractionCollisionLayers.LineOfSightQueryFilter,
-            };
-            return !physicsWorld.CastRay(input);
+            return DeferredPhysicsQueryUtility.TryGetLineOfSightOrRequest(
+                       entityManager,
+                       sourceEntity,
+                       targetEntity,
+                       source,
+                       target,
+                       InteractionCollisionLayers.LineOfSightQueryFilter,
+                       DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
+                       out bool hasLineOfSight)
+                   && hasLineOfSight;
         }
 
         [BurstCompile]

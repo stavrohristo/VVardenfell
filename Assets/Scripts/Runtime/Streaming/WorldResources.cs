@@ -14,6 +14,7 @@ using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Rendering;
+using VVardenfell.Runtime.Vfx;
 using Collider = Unity.Physics.Collider;
 using Material = UnityEngine.Material;
 
@@ -65,6 +66,7 @@ namespace VVardenfell.Runtime.Streaming
         public static PathGridNavigationWorld PathGridNavigation;
         public static MorrowindScriptRuntimeCatalog MorrowindScriptCatalog;
         public static ActorGpuAnimationResources ActorGpuAnimation;
+        public static MorrowindVfxResources Vfx;
         public static ActorEntitiesGraphicsRenderResources ActorEntitiesGraphicsRenderer;
         public static float ActorShadowCasterDistance = 64f;
         public static float ActorShadowCasterPadding = 8f;
@@ -284,6 +286,8 @@ namespace VVardenfell.Runtime.Streaming
             if (TexBucketInfo.IsCreated) TexBucketInfo.Dispose();
             ActorGpuAnimation?.Dispose();
             ActorGpuAnimation = null;
+            Vfx?.Dispose();
+            Vfx = null;
             ActorShadowCasterDistance = 64f;
             ActorShadowCasterPadding = 8f;
             MaxActorShadowCasters = 128;

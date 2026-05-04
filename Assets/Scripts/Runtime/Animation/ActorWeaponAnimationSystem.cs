@@ -83,7 +83,10 @@ namespace VVardenfell.Runtime.Animation
                     break;
                 case ActorWeaponAnimationPhase.AttackRelease:
                     if (!IsUpperBodyOverlayActive(overlays))
+                    {
+                        QueueMeleeHit(ref state);
                         StartFollow(ref catalog, presentation, ref state, overlays);
+                    }
                     break;
                 case ActorWeaponAnimationPhase.AttackFollow:
                     if (!IsUpperBodyOverlayActive(overlays))
@@ -194,6 +197,7 @@ namespace VVardenfell.Runtime.Animation
                     out float startTime,
                     out float stopTime))
             {
+                QueueMeleeSwing(ref state);
                 state.Phase = ActorWeaponAnimationPhase.AttackRelease;
                 overlay = overlays[overlayIndex];
                 ActorAnimationPlaybackUtility.StartWindow(ref overlay.Playback, group, startTime, stopTime, holdAtStop: false);
@@ -204,7 +208,29 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
-            StartFollow(ref catalog, presentation, ref state, overlays);
+            throw new System.InvalidOperationException(
+                $"[VVardenfell][Combat] Weapon animation type={state.WeaponType} attack={state.AttackType} has no release-to-hit marker window.");
+        }
+
+        static void QueueMeleeSwing(ref ActorWeaponAnimationState state)
+        {
+            if (state.MeleeSwingPending != 0)
+                return;
+
+            state.MeleeSwingPending = 1;
+            state.MeleeSwingAttackStrength = state.AttackStrength;
+            state.MeleeSwingWeaponContent = state.WeaponContent;
+        }
+
+        static void QueueMeleeHit(ref ActorWeaponAnimationState state)
+        {
+            if (state.MeleeHitPending != 0)
+                return;
+
+            state.MeleeHitPending = 1;
+            state.MeleeHitAttackType = state.AttackType;
+            state.MeleeHitAttackStrength = state.AttackStrength;
+            state.MeleeHitWeaponContent = state.WeaponContent;
         }
 
         static void StartFollow(

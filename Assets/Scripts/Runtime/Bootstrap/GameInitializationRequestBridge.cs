@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Collections;
 using Unity.Mathematics;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
@@ -119,6 +120,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var em = world.EntityManager;
             if (!EnsureInitializationPayload(em, out error))
                 return false;
+            MorrowindCombatSettingsBridge.PublishPersisted(em);
 
             using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<T>());
             if (requestQuery.IsEmptyIgnoreFilter)
@@ -197,6 +199,7 @@ namespace VVardenfell.Runtime.Bootstrap
             using var payloadQuery = em.CreateEntityQuery(ComponentType.ReadOnly<GameInitializationSingleton>());
             if (!payloadQuery.IsEmptyIgnoreFilter)
             {
+                MorrowindCombatSettingsBridge.PublishPersisted(em);
                 error = null;
                 return true;
             }
@@ -226,6 +229,7 @@ namespace VVardenfell.Runtime.Bootstrap
             });
             PopulateInitializationSpellbook(em.AddBuffer<ActorKnownSpell>(initEntity), knownSpells);
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
+            MorrowindCombatSettingsBridge.PublishPersisted(em);
             error = null;
             return true;
         }

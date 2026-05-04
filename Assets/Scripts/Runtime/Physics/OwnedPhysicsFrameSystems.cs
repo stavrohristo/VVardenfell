@@ -144,10 +144,16 @@ namespace VVardenfell.Runtime.Physics
                     entitiesToDisable.Add(entity);
             }
 
-            for (int i = 0; i < entitiesToEnable.Length; i++)
-                RuntimeColliderPhysicsUtility.EnablePhysics(EntityManager, entitiesToEnable[i]);
-            for (int i = 0; i < entitiesToDisable.Length; i++)
-                RuntimeColliderPhysicsUtility.DisablePhysics(EntityManager, entitiesToDisable[i]);
+            if (entitiesToEnable.Length > 0 || entitiesToDisable.Length > 0)
+            {
+                Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(EntityManager);
+                var mutations = EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+                for (int i = 0; i < entitiesToEnable.Length; i++)
+                    RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entitiesToEnable[i]);
+                for (int i = 0; i < entitiesToDisable.Length; i++)
+                    RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entitiesToDisable[i]);
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(EntityManager, queueEntity);
+            }
 
             pendingLoads.Cells.Clear();
             pendingUnloads.Cells.Clear();

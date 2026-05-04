@@ -6,6 +6,7 @@ using System;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -25,7 +26,7 @@ namespace VVardenfell.Runtime.Player
                     ComponentType.ReadWrite<PlayerTag>(),
                     ComponentType.ReadWrite<LocalTransform>(),
                     ComponentType.ReadWrite<LocalToWorld>(),
-                    ComponentType.ReadWrite<PhysicsCollider>(),
+                    ComponentType.ReadOnly<PhysicsCollider>(),
                     ComponentType.ReadWrite<PlayerCharacterComponent>(),
                     ComponentType.ReadWrite<PlayerCharacterControl>(),
                     ComponentType.ReadWrite<PlayerCharacterState>(),
@@ -58,7 +59,7 @@ namespace VVardenfell.Runtime.Player
 
             var transformRef = _playerQuery.GetSingletonRW<LocalTransform>();
             var localToWorldRef = _playerQuery.GetSingletonRW<LocalToWorld>();
-            var colliderRef = _playerQuery.GetSingletonRW<PhysicsCollider>();
+            var currentCollider = _playerQuery.GetSingleton<PhysicsCollider>();
             var characterRef = _playerQuery.GetSingletonRW<PlayerCharacterComponent>();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
             var legacyStateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
@@ -97,7 +98,8 @@ namespace VVardenfell.Runtime.Player
             {
                 Value = crouched ? stanceColliders.Crouching : stanceColliders.Standing,
             };
-            colliderRef.ValueRW = activeCollider;
+            if (!currentCollider.Value.Equals(activeCollider.Value))
+                RuntimePhysicsMutationQueueUtility.EnqueueSetPhysicsCollider(EntityManager, playerEntity, activeCollider.Value);
 
             float eyeHeight = crouched
                 ? characterRef.ValueRO.CrouchingEyeHeight

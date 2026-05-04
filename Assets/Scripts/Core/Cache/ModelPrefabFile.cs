@@ -59,6 +59,7 @@ namespace VVardenfell.Core.Cache
         public int ActorSkinMeshCount;
         public int FirstActorClipIndex = -1;
         public int ActorClipCount;
+        public float EffectControllerStopTime;
         public ModelObjectAnimationDef ObjectAnimation;
         public ModelPrefabNodeDef[] Nodes = Array.Empty<ModelPrefabNodeDef>();
         public int[] ChildIndices = Array.Empty<int>();
@@ -72,7 +73,7 @@ namespace VVardenfell.Core.Cache
     public static class ModelPrefabFile
     {
         const uint Magic = 0x50464D44u; // 'DMFP'
-        const uint Version = 5u;
+        const uint Version = 6u;
 
         public static bool TryRead(string path, out ModelPrefabCatalogData data)
         {
@@ -159,6 +160,7 @@ namespace VVardenfell.Core.Cache
                 ActorSkinMeshCount = r.ReadInt32(),
                 FirstActorClipIndex = r.ReadInt32(),
                 ActorClipCount = r.ReadInt32(),
+                EffectControllerStopTime = r.ReadSingle(),
                 ObjectAnimation = ReadObjectAnimation(r),
                 Nodes = nodes,
                 ChildIndices = childIndices,
@@ -217,6 +219,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.ActorSkinMeshCount ?? 0);
             w.Write(value?.FirstActorClipIndex ?? -1);
             w.Write(value?.ActorClipCount ?? 0);
+            w.Write(value?.EffectControllerStopTime ?? 0f);
             WriteObjectAnimation(w, value?.ObjectAnimation);
         }
 

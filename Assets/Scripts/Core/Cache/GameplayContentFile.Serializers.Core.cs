@@ -44,6 +44,15 @@ namespace VVardenfell.Core.Cache
             w.Write(value.EnchantCapacity);
             w.Write(value.DamageMin);
             w.Write(value.DamageMax);
+            w.Write(value.ChopMin);
+            w.Write(value.ChopMax);
+            w.Write(value.SlashMin);
+            w.Write(value.SlashMax);
+            w.Write(value.ThrustMin);
+            w.Write(value.ThrustMax);
+            w.Write(value.WeaponSpeed);
+            w.Write(value.WeaponReach);
+            w.Write(value.WeaponFlags);
             w.Write(value.FirstBodyPartIndex);
             w.Write(value.BodyPartCount);
         }
@@ -64,6 +73,15 @@ namespace VVardenfell.Core.Cache
                 EnchantCapacity = r.ReadInt32(),
                 DamageMin = r.ReadInt32(),
                 DamageMax = r.ReadInt32(),
+                ChopMin = r.ReadInt32(),
+                ChopMax = r.ReadInt32(),
+                SlashMin = r.ReadInt32(),
+                SlashMax = r.ReadInt32(),
+                ThrustMin = r.ReadInt32(),
+                ThrustMax = r.ReadInt32(),
+                WeaponSpeed = r.ReadSingle(),
+                WeaponReach = r.ReadSingle(),
+                WeaponFlags = r.ReadUInt32(),
                 FirstBodyPartIndex = r.ReadInt32(),
                 BodyPartCount = r.ReadInt32(),
             };
@@ -101,6 +119,7 @@ namespace VVardenfell.Core.Cache
             WriteString(w, value.Icon);
             WriteString(w, value.ScriptId);
             WriteString(w, value.Text);
+            w.Write((byte)value.ValueKind);
             w.Write(value.Flags);
             w.Write(value.Int0);
             w.Write(value.Int1);
@@ -122,6 +141,7 @@ namespace VVardenfell.Core.Cache
                 Icon = ReadString(r),
                 ScriptId = ReadString(r),
                 Text = ReadString(r),
+                ValueKind = (GenericRecordValueKind)r.ReadByte(),
                 Flags = r.ReadUInt32(),
                 Int0 = r.ReadInt32(),
                 Int1 = r.ReadInt32(),

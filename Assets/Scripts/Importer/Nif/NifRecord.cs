@@ -776,6 +776,17 @@ namespace VVardenfell.Importer.Nif
 
     public class NiParticleSystemController : NiTimeController
     {
+        public struct InitialParticle
+        {
+            public Vector3 Velocity;
+            public Vector3 RotationAxis;
+            public float Age;
+            public float Lifespan;
+            public float LastUpdate;
+            public ushort SpawnGeneration;
+            public ushort Code;
+        }
+
         public float Speed, SpeedVariation, Declination, DeclinationVariation, PlanarAngle, PlanarAngleVariation;
         public Vector3 InitialNormal;
         public Vector4 InitialColor;
@@ -790,6 +801,8 @@ namespace VVardenfell.Importer.Nif
         public ushort SpawnMultiplier;
         public float SpawnSpeedChaos, SpawnDirChaos;
         public ushort NumParticles, NumValid;
+        public InitialParticle[] Particles = System.Array.Empty<InitialParticle>();
+        public int EmitterModifier;
         public int Modifier;
         public int Collider;
         public byte StaticTargetBound;
@@ -822,12 +835,21 @@ namespace VVardenfell.Importer.Nif
             SpawnDirChaos = s.ReadFloat();
             NumParticles = s.ReadUInt16();
             NumValid = s.ReadUInt16();
-            // Particle array: NumParticles × 40 bytes (vec3 velocity + vec3 rotAxis + 3 floats + 2 uint16)
+            Particles = new InitialParticle[NumParticles];
             for (int i = 0; i < NumParticles; i++)
             {
-                s.Skip(12 + 12 + 4 + 4 + 4 + 2 + 2); // 40 bytes
+                Particles[i] = new InitialParticle
+                {
+                    Velocity = s.ReadVec3(),
+                    RotationAxis = s.ReadVec3(),
+                    Age = s.ReadFloat(),
+                    Lifespan = s.ReadFloat(),
+                    LastUpdate = s.ReadFloat(),
+                    SpawnGeneration = s.ReadUInt16(),
+                    Code = s.ReadUInt16(),
+                };
             }
-            s.Skip(4); // NiEmitterModifier link
+            EmitterModifier = s.ReadInt32();
             Modifier = s.ReadInt32();
             Collider = s.ReadInt32();
             StaticTargetBound = s.ReadByte(); // >= 3.3.0.15 — always true for MW

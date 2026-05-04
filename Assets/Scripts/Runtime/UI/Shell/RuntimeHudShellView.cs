@@ -1748,7 +1748,7 @@ namespace VVardenfell.Runtime.UI.Shell
             // into the shared MorrowindConfig by the time we're called; the hooks
             // below just apply it so the change is visible before Close saves to
             // disk. Callbacks for settings with no live runtime (Footsteps/Voice
-            // volumes, Difficulty) are intentionally left null — the values still
+            // volumes) are intentionally left null — the values still
             // persist.
             return new OptionsWindowView.Callbacks
             {
@@ -1768,7 +1768,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 },
                 ShowSubtitles = v => HudUserPreferences.ShowSubtitles = v,
                 MenuTransparency = null,
-                Difficulty = null,
+                Difficulty = VVardenfell.Runtime.Combat.MorrowindCombatSettingsBridge.PublishDifficultyInDefaultWorld,
                 Fov = v =>
                 {
                     MainCameraUtility.GetRequiredCamera().fieldOfView = v;

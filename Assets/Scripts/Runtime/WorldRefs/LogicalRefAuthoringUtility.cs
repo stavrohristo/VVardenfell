@@ -48,6 +48,7 @@ namespace VVardenfell.Runtime.Components
                     ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
                     ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(actor));
                     QueueActorRuntimeComponents(
+                        entityManager,
                         ref ecb,
                         logicalEntity,
                         contentDb,
@@ -182,6 +183,7 @@ namespace VVardenfell.Runtime.Components
         }
 
         static void QueueActorRuntimeComponents(
+            EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             RuntimeContentDatabase contentDb,
@@ -209,6 +211,8 @@ namespace VVardenfell.Runtime.Components
                 Flee = actor.AiData.Flee,
                 Alarm = actor.AiData.Alarm,
             });
+            ecb.AddComponent(logicalEntity, new ActorScriptEventState());
+            ecb.AddComponent(logicalEntity, new ActorHitAftermathState());
             ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
@@ -224,8 +228,9 @@ namespace VVardenfell.Runtime.Components
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
             QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
 
-            QueueActorCollider(ref ecb, logicalEntity);
+            QueueActorCollider(entityManager, ref ecb, logicalEntity);
             QueueActorPickCollider(
+                entityManager,
                 ref ecb,
                 logicalEntity,
                 isInterior,
@@ -350,6 +355,7 @@ namespace VVardenfell.Runtime.Components
                 {
                     Content = content,
                     Count = authored.Count,
+                    Condition = InventoryConditionUtility.ResolveInitialCondition(contentDb, content),
                     AuthoredOrder = i,
                 });
 
@@ -376,22 +382,23 @@ namespace VVardenfell.Runtime.Components
             return ContainerLootUtility.TryResolveLooseLeveledCarryable(contentDb, listHandle, resolutionSeed, out content, out _);
         }
 
-        static void QueueActorCollider(ref EntityCommandBuffer ecb, Entity logicalEntity)
+        static void QueueActorCollider(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
         {
             var collider = EnsureActorCapsuleCollider();
             if (!collider.IsCreated)
                 return;
 
-            ecb.AddComponent(logicalEntity, new RuntimeColliderSource
-            {
-                Value = collider,
-                Kind = RuntimeColliderKind.Actor,
-            });
-            ecb.AddComponent(logicalEntity, new PhysicsCollider { Value = collider });
-            ecb.AddSharedComponent(logicalEntity, new PhysicsWorldIndex { Value = 0 });
+            RuntimeColliderAttachmentUtility.QueueAttachNewSource(
+                entityManager,
+                ref ecb,
+                logicalEntity,
+                collider,
+                RuntimeColliderKind.Actor,
+                active: true);
         }
 
         static void QueueActorPickCollider(
+            EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             bool isInterior,
@@ -414,6 +421,7 @@ namespace VVardenfell.Runtime.Components
             else
                 ecb.AddComponent(pickEntity, new CellLink { Value = exteriorCell });
             RuntimeColliderAttachmentUtility.QueueAttachNewSource(
+                entityManager,
                 ref ecb,
                 pickEntity,
                 collider,

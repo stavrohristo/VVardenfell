@@ -97,7 +97,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 ShowCrosshair = v => HudUserPreferences.ShowCrosshair = v,
                 ShowSubtitles = v => HudUserPreferences.ShowSubtitles = v,
                 MenuTransparency = null,
-                Difficulty = null,
+                Difficulty = VVardenfell.Runtime.Combat.MorrowindCombatSettingsBridge.PublishDifficultyInDefaultWorld,
                 Fov = v => { camera.fieldOfView = v; },
                 FogDistanceScale = RuntimeVideoSettingsUtility.ApplyFogDistanceScale,
                 Gamma = v => Screen.brightness = v,

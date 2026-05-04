@@ -14,6 +14,7 @@ namespace VVardenfell.Runtime.Components
         Player = 6,
         Actor = 7,
         InteractionPick = 8,
+        Projectile = 9,
     }
 
     public struct RuntimeColliderSource : IComponentData
@@ -67,6 +68,7 @@ namespace VVardenfell.Runtime.Components
         }
 
         public static void QueueAttachNewSource(
+            EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity entity,
             BlobAssetReference<Collider> collider,
@@ -75,6 +77,7 @@ namespace VVardenfell.Runtime.Components
             bool temporary = false)
         {
             VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.QueueAttachNewSource(
+                entityManager,
                 ref ecb,
                 entity,
                 collider,
@@ -106,7 +109,8 @@ namespace VVardenfell.Runtime.Components
 
         public static bool EnablePhysics(EntityManager entityManager, Entity entity)
         {
-            return VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(entityManager, entity);
+            VVardenfell.Runtime.Physics.RuntimePhysicsMutationQueueUtility.EnqueueEnable(entityManager, entity);
+            return true;
         }
 
         public static bool QueueEnablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)
@@ -116,7 +120,7 @@ namespace VVardenfell.Runtime.Components
 
         public static void DisablePhysics(EntityManager entityManager, Entity entity)
         {
-            VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(entityManager, entity);
+            VVardenfell.Runtime.Physics.RuntimePhysicsMutationQueueUtility.EnqueueDisable(entityManager, entity);
         }
 
         public static void QueueDisablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)

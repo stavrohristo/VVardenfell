@@ -19,6 +19,7 @@ namespace VVardenfell.Core.Cache
         public static string Materials => Path.Combine(Root, "materials.bin");
         public static string MeshNames => Path.Combine(Root, "meshnames.bin");
         public static string ModelPrefabs => Path.Combine(Root, "model_prefabs.bin");
+        public static string VfxEffects => Path.Combine(Root, "vfx_effects.bin");
         public static string ActorAnimations => Path.Combine(Root, "actor_animations.bin");
         public static string TexturesIndex => Path.Combine(Root, "textures.bin");
         public static string TerrainLayers => Path.Combine(Root, "terrain_layers.bin");

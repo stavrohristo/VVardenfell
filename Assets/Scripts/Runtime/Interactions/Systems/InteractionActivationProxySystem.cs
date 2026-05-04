@@ -112,6 +112,7 @@ namespace VVardenfell.Runtime.Interactions
                 Value = float4x4.TRS(worldBounds.Center, quaternion.identity, new float3(1f)),
             });
             RuntimeColliderAttachmentUtility.QueueAttachNewSource(
+                EntityManager,
                 ref ecb,
                 proxyEntity,
                 collider,

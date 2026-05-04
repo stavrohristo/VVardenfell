@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.WorldState
         public int[] ActorDeathCounts;
         public MorrowindTimeSavePayload Time;
         public MorrowindWeatherSavePayload Weather;
+        public MorrowindCombatSavePayload Combat;
     }
 
     public struct MorrowindQuestJournalSavePayload
@@ -116,6 +117,12 @@ namespace VVardenfell.Runtime.WorldState
         public byte Transitioning;
         public MorrowindRegionWeatherCacheSavePayload[] RegionWeather;
         public MorrowindRegionWeatherOverrideSavePayload[] RegionWeatherOverrides;
+    }
+
+    public struct MorrowindCombatSavePayload
+    {
+        public uint RandomState;
+        public byte Initialized;
     }
 
     public struct MorrowindRegionWeatherCacheSavePayload

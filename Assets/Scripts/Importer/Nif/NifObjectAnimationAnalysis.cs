@@ -27,7 +27,8 @@ namespace VVardenfell.Importer.Nif
             {
                 if (nif.Records[i] is NiTimeController
                     and not NiKeyframeController
-                    and not NiVisController)
+                    and not NiVisController
+                    && !NifVfxEffectExtractor.IsVfxSupportedObjectController(nif.Records[i]))
                 {
                     return true;
                 }

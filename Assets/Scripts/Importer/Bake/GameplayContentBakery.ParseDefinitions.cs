@@ -68,6 +68,8 @@ namespace VVardenfell.Importer.Bake
                         break;
                     case var tag when tag == StrvTag:
                         def.Text = esm.ReadSubrecordString();
+                        if (recordTag == GmstTag)
+                            def.ValueKind = GenericRecordValueKind.String;
                         break;
                     case var tag when tag == IndxTag:
                     {
@@ -89,6 +91,8 @@ namespace VVardenfell.Importer.Bake
                             def.Int0 = ReadInt16(bytes, 0);
                         else if (bytes.Length >= 1)
                             def.Int0 = bytes[0];
+                        if (recordTag == GmstTag)
+                            def.ValueKind = GenericRecordValueKind.Integer;
                         break;
                     }
                     case var tag when tag == FltvTag:
@@ -96,6 +100,8 @@ namespace VVardenfell.Importer.Bake
                         byte[] bytes = esm.ReadSubrecordBytes();
                         if (bytes.Length >= 4)
                             def.Float0 = ReadSingle(bytes, 0);
+                        if (recordTag == GmstTag)
+                            def.ValueKind = GenericRecordValueKind.Float;
                         break;
                     }
                     case var tag when tag == EsmFourCC.DATA && recordTag == SndgTag:

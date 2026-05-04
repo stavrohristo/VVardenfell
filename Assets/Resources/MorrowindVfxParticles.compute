@@ -1,0 +1,71 @@
+#pragma kernel SimulateParticles
+
+struct MorrowindVfxParticle
+{
+    float3 Position;
+    float Age;
+    float3 Velocity;
+    float Lifetime;
+    float4 Color;
+    float Size;
+    int Bucket;
+    int Slice;
+    int Alive;
+    int InstanceSlot;
+    float RotationAngle;
+    float RotationSpeed;
+};
+
+RWStructuredBuffer<MorrowindVfxParticle> _VfxParticles;
+StructuredBuffer<float3> _VfxInstanceDeltas;
+int _VfxParticleCount;
+int _VfxInstanceDeltaCount;
+float _VfxDeltaTime;
+
+[numthreads(128, 1, 1)]
+void SimulateParticles(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= (uint)_VfxParticleCount)
+        return;
+
+    MorrowindVfxParticle particle = _VfxParticles[index];
+    if (particle.Alive == 0)
+    {
+        _VfxParticles[index] = particle;
+        return;
+    }
+
+    if (particle.Age < 0.0)
+    {
+        particle.Age += _VfxDeltaTime;
+        if (particle.Age < 0.0)
+        {
+            _VfxParticles[index] = particle;
+            return;
+        }
+
+        particle.Age = 0.0;
+    }
+    else
+    {
+        particle.Age += _VfxDeltaTime;
+    }
+    if (particle.Lifetime > 0.0 && particle.Age >= particle.Lifetime)
+    {
+        particle.Alive = 0;
+        particle.Color.a = 0.0;
+        _VfxParticles[index] = particle;
+        return;
+    }
+
+    particle.Position += particle.Velocity * _VfxDeltaTime;
+    particle.RotationAngle += particle.RotationSpeed * _VfxDeltaTime;
+    if (particle.InstanceSlot >= 0 && particle.InstanceSlot < _VfxInstanceDeltaCount)
+        particle.Position += _VfxInstanceDeltas[particle.InstanceSlot];
+
+    if (particle.Lifetime > 0.0)
+        particle.Color.a = saturate(1.0 - (particle.Age / particle.Lifetime));
+
+    _VfxParticles[index] = particle;
+}

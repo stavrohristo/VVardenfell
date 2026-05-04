@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.Player
         {
             _playerQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<LocalPlayerPresentationState>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>());
 
             RequireForUpdate(_playerQuery);
@@ -28,6 +29,10 @@ namespace VVardenfell.Runtime.Player
         {
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
             Entity player = _playerQuery.GetSingletonEntity();
+            var presentation = _playerQuery.GetSingleton<LocalPlayerPresentationState>();
+            Entity activeVisual = presentation.Mode == PlayerViewMode.FirstPerson
+                ? presentation.FirstPersonVisual
+                : presentation.ThirdPersonVisual;
             var control = EntityManager.GetComponentData<PlayerCharacterControl>(player);
             byte readyWeaponTogglePressed = control.ReadyWeaponTogglePressed ? (byte)1 : (byte)0;
             byte attackPressed = control.AttackPressed ? (byte)1 : (byte)0;
@@ -42,12 +47,19 @@ namespace VVardenfell.Runtime.Player
                     continue;
 
                 ref var state = ref weaponState.ValueRW;
+                bool active = entity == activeVisual;
                 state.ReadyWeaponTogglePressed = readyWeaponTogglePressed;
-                state.AttackHeld = attackHeld;
-                state.AttackPressed = attackPressed;
-                state.AttackReleased = attackReleased;
+                state.AttackHeld = active ? attackHeld : (byte)0;
+                state.AttackPressed = active ? attackPressed : (byte)0;
+                state.AttackReleased = active ? attackReleased : (byte)0;
                 state.WeaponType = ActorWeaponAnimationUtility.NoWeaponType;
                 state.WeaponContent = default;
+                if (!active && state.MeleeHitPending != 0)
+                {
+                    state.MeleeHitPending = 0;
+                    state.MeleeHitAttackStrength = 0f;
+                    state.MeleeHitWeaponContent = default;
+                }
 
                 if (EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
                 {

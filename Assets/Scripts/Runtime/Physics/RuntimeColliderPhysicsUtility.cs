@@ -73,13 +73,14 @@ namespace VVardenfell.Runtime.Physics
             QueueAttachGeneratedBlobCleanup(entityManager, ref ecb, entity, collider, temporary);
 
             if (active)
-                return QueueEnablePhysics(entityManager, ref ecb, entity);
-
-            QueueDisablePhysics(entityManager, ref ecb, entity);
+                RuntimePhysicsMutationQueueUtility.QueueEnablePhysics(entityManager, ref ecb, entity);
+            else
+                RuntimePhysicsMutationQueueUtility.QueueDisablePhysics(entityManager, ref ecb, entity);
             return true;
         }
 
         public static void QueueAttachNewSource(
+            EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity entity,
             BlobAssetReference<Collider> collider,
@@ -107,10 +108,7 @@ namespace VVardenfell.Runtime.Physics
             }
 
             if (active)
-            {
-                ecb.AddComponent(entity, new PhysicsCollider { Value = collider });
-                ecb.AddSharedComponent(entity, new PhysicsWorldIndex { Value = 0 });
-            }
+                RuntimePhysicsMutationQueueUtility.QueueEnablePhysics(entityManager, ref ecb, entity);
         }
 
         public static void QueueAttachInstantiatedSource(
@@ -144,23 +142,10 @@ namespace VVardenfell.Runtime.Physics
 
             QueueAttachGeneratedBlobCleanup(entityManager, ref ecb, instance, collider, temporary);
 
-            var physicsCollider = new PhysicsCollider { Value = collider };
             if (active)
-            {
-                if (entityManager.HasComponent<PhysicsCollider>(prefab))
-                    ecb.SetComponent(instance, physicsCollider);
-                else
-                    ecb.AddComponent(instance, physicsCollider);
-
-                if (entityManager.HasComponent<PhysicsWorldIndex>(prefab))
-                    ecb.SetSharedComponent(instance, new PhysicsWorldIndex { Value = 0 });
-                else
-                    ecb.AddSharedComponent(instance, new PhysicsWorldIndex { Value = 0 });
-            }
+                RuntimePhysicsMutationQueueUtility.QueueEnablePhysics(entityManager, ref ecb, instance);
             else if (entityManager.HasComponent<PhysicsCollider>(prefab))
-            {
-                ecb.RemoveComponent<PhysicsCollider>(instance);
-            }
+                RuntimePhysicsMutationQueueUtility.QueueDisablePhysics(entityManager, ref ecb, instance);
         }
 
         public static bool EnablePhysics(EntityManager entityManager, Entity entity)
@@ -193,20 +178,7 @@ namespace VVardenfell.Runtime.Physics
             if (!entityManager.HasComponent<RuntimeColliderSource>(entity))
                 return false;
 
-            var source = entityManager.GetComponentData<RuntimeColliderSource>(entity);
-            if (!source.Value.IsCreated)
-                return false;
-
-            var collider = new PhysicsCollider { Value = source.Value };
-            if (entityManager.HasComponent<PhysicsCollider>(entity))
-                ecb.SetComponent(entity, collider);
-            else
-                ecb.AddComponent(entity, collider);
-
-            if (!entityManager.HasComponent<PhysicsWorldIndex>(entity))
-                ecb.AddSharedComponent(entity, new PhysicsWorldIndex { Value = 0 });
-
-            return true;
+            return RuntimePhysicsMutationQueueUtility.QueueEnablePhysics(entityManager, ref ecb, entity);
         }
 
         public static void DisablePhysics(EntityManager entityManager, Entity entity)
@@ -221,8 +193,7 @@ namespace VVardenfell.Runtime.Physics
         {
             if (entity == Entity.Null || !entityManager.Exists(entity))
                 return;
-            if (entityManager.HasComponent<PhysicsCollider>(entity))
-                ecb.RemoveComponent<PhysicsCollider>(entity);
+            RuntimePhysicsMutationQueueUtility.QueueDisablePhysics(entityManager, ref ecb, entity);
         }
 
         static void QueueReplacedTemporarySourceForDisposal(
@@ -345,6 +316,9 @@ namespace VVardenfell.Runtime.Physics
                     return true;
                 case RuntimeColliderKind.InteractionPick:
                     filter = InteractionCollisionLayers.InteractionPickFilter;
+                    return true;
+                case RuntimeColliderKind.Projectile:
+                    filter = InteractionCollisionLayers.ProjectileFilter;
                     return true;
                 case RuntimeColliderKind.Player:
                 case RuntimeColliderKind.Actor:

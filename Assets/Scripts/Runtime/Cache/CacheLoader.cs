@@ -51,6 +51,7 @@ namespace VVardenfell.Runtime.Cache
         public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
         public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
+        public MorrowindVfxCatalogData VfxCatalog { get; private set; }
         public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
@@ -103,6 +104,9 @@ namespace VVardenfell.Runtime.Cache
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
+                if (!MorrowindVfxFile.TryRead(CachePaths.VfxEffects, out var vfxCatalog) || vfxCatalog?.Effects == null)
+                    throw new InvalidDataException("vfx_effects.bin unreadable; rebake required.");
+                VfxCatalog = vfxCatalog;
                 actorAnimationCatalogTask = Task.Run(ReadActorAnimationCatalogOnWorker);
             }
             finally
@@ -230,21 +234,25 @@ namespace VVardenfell.Runtime.Cache
         public bool TryGetTextureByPath(string sourcePath, out Texture2D texture)
         {
             texture = null;
-            if (string.IsNullOrWhiteSpace(sourcePath) || _textureIndexByPath == null)
+            if (!TryGetTextureIndexByPath(sourcePath, out int index))
                 return false;
-
-            string normalized = NormalizeTexturePath(sourcePath);
-            if (!_textureIndexByPath.TryGetValue(normalized, out int index)
-                && !_textureIndexByPath.TryGetValue(ChangeExtension(normalized, ".dds"), out index))
-            {
-                return false;
-            }
 
             if ((uint)index >= (uint)(Textures?.Length ?? 0))
                 return false;
 
             texture = Textures[index];
             return texture != null;
+        }
+
+        public bool TryGetTextureIndexByPath(string sourcePath, out int index)
+        {
+            index = -1;
+            if (string.IsNullOrWhiteSpace(sourcePath) || _textureIndexByPath == null)
+                return false;
+
+            string normalized = NormalizeTexturePath(sourcePath);
+            return _textureIndexByPath.TryGetValue(normalized, out index)
+                   || _textureIndexByPath.TryGetValue(ChangeExtension(normalized, ".dds"), out index);
         }
 
         void BuildActorVisualLookup()

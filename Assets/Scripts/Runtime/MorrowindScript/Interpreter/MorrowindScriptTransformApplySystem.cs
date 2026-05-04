@@ -7,6 +7,7 @@ using Unity.Transforms;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
@@ -409,9 +410,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             if (active)
-                RuntimeColliderAttachmentUtility.EnablePhysics(EntityManager, entity);
+                RuntimePhysicsMutationQueueUtility.EnqueueEnable(EntityManager, entity);
             else
-                RuntimeColliderAttachmentUtility.DisablePhysics(EntityManager, entity);
+                RuntimePhysicsMutationQueueUtility.EnqueueDisable(EntityManager, entity);
         }
 
         Entity ResolveLiveTarget(in MorrowindScriptTransformRequest request, in LogicalRefLookup lookup)

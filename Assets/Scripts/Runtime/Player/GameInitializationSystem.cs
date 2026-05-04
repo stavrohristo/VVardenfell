@@ -174,6 +174,8 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, vitals);
             em.AddComponentData(player, effectModifiers);
             em.AddComponentData(player, derivedStats);
+            em.AddComponentData(player, new ActorScriptEventState());
+            em.AddComponentData(player, new ActorHitAftermathState());
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, init.PlayerCrime);
             PopulatePlayerFactions(em, initEntity, player);
@@ -330,6 +332,7 @@ namespace VVardenfell.Runtime.Player
                     SoulId = item.SoulId,
                     SoulActorHandleValue = item.SoulActorHandleValue,
                     Count = item.Count,
+                    Condition = item.Condition,
                     AuthoredOrder = i,
                 });
             }
@@ -396,6 +399,7 @@ namespace VVardenfell.Runtime.Player
                 {
                     Content = item.Content,
                     Count = item.Count,
+                    Condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, item.Content),
                 });
             }
         }

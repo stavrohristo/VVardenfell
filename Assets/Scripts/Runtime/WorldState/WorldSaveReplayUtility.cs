@@ -7,6 +7,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
@@ -742,7 +743,32 @@ namespace VVardenfell.Runtime.WorldState
 
             ApplyTimePayload(entityManager, payload.Time);
             ApplyWeatherPayload(entityManager, payload.Weather);
+            ApplyCombatPayload(entityManager, payload.Combat);
             return true;
+        }
+
+        static void ApplyCombatPayload(EntityManager entityManager, MorrowindCombatSavePayload payload)
+        {
+            if (payload.Initialized == 0)
+                return;
+
+            var state = new MorrowindCombatRuntimeState
+            {
+                RandomState = payload.RandomState == 0u ? 0x6E624EB7u : payload.RandomState,
+            };
+
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindCombatRuntimeState>(entityManager);
+            if (entity != Entity.Null)
+            {
+                entityManager.SetComponentData(entity, state);
+                return;
+            }
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            entity = ecb.CreateEntity();
+            ecb.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
+            ecb.AddComponent(entity, state);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
         }
 
         static void ClearQuestJournal(EntityManager entityManager, Entity questJournalEntity)

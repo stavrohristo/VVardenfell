@@ -1,0 +1,272 @@
+using System;
+using Unity.Entities;
+using Unity.Mathematics;
+using VVardenfell.Core;
+using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+
+namespace VVardenfell.Runtime.Combat
+{
+    static class MorrowindMeleeCombatMechanics
+    {
+        const uint WeaponFlagMagical = 0x01u;
+        const uint WeaponFlagSilver = 0x02u;
+
+        static readonly short SanctuaryEffectId = RequireEffectId("sEffectSanctuary");
+        static readonly short ChameleonEffectId = RequireEffectId("sEffectChameleon");
+        static readonly short InvisibilityEffectId = RequireEffectId("sEffectInvisibility");
+        static readonly short BlindEffectId = RequireEffectId("sEffectBlind");
+        static readonly short FortifyAttackEffectId = RequireEffectId("sEffectFortifyAttackBonus");
+        static readonly short ResistNormalWeaponsEffectId = RequireEffectId("sEffectResistNormalWeapons");
+        static readonly short WeaknessToNormalWeaponsEffectId = RequireEffectId("sEffectWeaknessToNormalWeapons");
+
+        public static void ResolveWeaponEquipment(
+            RuntimeContentDatabase contentDb,
+            in ContentReference weaponContent,
+            out bool hasWeapon,
+            out ItemDefHandle weaponHandle,
+            out ItemEquipmentDef weapon,
+            out bool weaponHasEnchantment)
+        {
+            RequireContentDb(contentDb);
+            hasWeapon = false;
+            weaponHandle = default;
+            weapon = default;
+            weaponHasEnchantment = false;
+
+            if (!weaponContent.IsValid)
+                return;
+
+            if (weaponContent.Kind != ContentReferenceKind.Item)
+                throw new InvalidOperationException($"[VVardenfell][Combat] Melee hit weapon content kind {weaponContent.Kind} is not an item.");
+
+            weaponHandle = new ItemDefHandle { Value = weaponContent.HandleValue };
+            if (!contentDb.TryGetItemEquipment(weaponHandle, out weapon) || weapon.Kind != ItemEquipmentKind.Weapon)
+                throw new InvalidOperationException($"[VVardenfell][Combat] Equipped weapon handle {weaponHandle.Value} does not resolve to WEAP equipment.");
+
+            ref readonly var item = ref contentDb.Get(weaponHandle);
+            weaponHasEnchantment = !string.IsNullOrWhiteSpace(item.EnchantId);
+            hasWeapon = true;
+        }
+
+        public static float ComputeMeleeReach(RuntimeContentDatabase contentDb, bool hasWeapon, in ItemEquipmentDef weapon)
+        {
+            RequireContentDb(contentDb);
+            float combatDistance = contentDb.RequireGameSettingFloat("fCombatDistance");
+            if (hasWeapon)
+                return combatDistance * math.max(0f, weapon.WeaponReach) * WorldScale.MwUnitsToMeters;
+
+            return combatDistance * contentDb.RequireGameSettingFloat("fHandToHandReach") * WorldScale.MwUnitsToMeters;
+        }
+
+        public static float ComputeFatigueTerm(RuntimeContentDatabase contentDb, in ActorVitalSet vitals)
+        {
+            RequireContentDb(contentDb);
+            float max = vitals.ModifiedFatigueBase;
+            float current = vitals.CurrentFatigue;
+            float normalized = math.floor(max) == 0f ? 1f : math.max(0f, current / max);
+            return contentDb.RequireGameSettingFloat("fFatigueBase")
+                   - contentDb.RequireGameSettingFloat("fFatigueMult") * (1f - normalized);
+        }
+
+        public static float ComputeHitChance(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attackerAttributes,
+            in ActorSkillSet attackerSkills,
+            in ActorVitalSet attackerVitals,
+            DynamicBuffer<ActorActiveMagicEffect> attackerEffects,
+            bool hasWeapon,
+            in ItemEquipmentDef weapon,
+            in ActorAttributeSet targetAttributes,
+            in ActorVitalSet targetVitals,
+            DynamicBuffer<ActorActiveMagicEffect> targetEffects,
+            bool targetInCombat)
+        {
+            RequireContentDb(contentDb);
+            float defenseTerm = 0f;
+            if (targetVitals.CurrentFatigue >= 0f)
+            {
+                if (targetInCombat)
+                    defenseTerm = ComputeEvasion(contentDb, targetAttributes, targetVitals, targetEffects);
+
+                float invisibilityMult = contentDb.RequireGameSettingFloat("fCombatInvisoMult");
+                defenseTerm += math.min(100f, invisibilityMult * SumEffectMagnitude(targetEffects, ChameleonEffectId));
+                defenseTerm += math.min(100f, invisibilityMult * SumEffectMagnitude(targetEffects, InvisibilityEffectId));
+            }
+
+            float skill = ResolveWeaponSkill(attackerSkills, hasWeapon ? weapon.Type : -1);
+            float attackTerm = skill
+                               + attackerAttributes.Agility / 5f
+                               + attackerAttributes.Luck / 10f;
+            attackTerm *= ComputeFatigueTerm(contentDb, attackerVitals);
+            attackTerm += SumEffectMagnitude(attackerEffects, FortifyAttackEffectId)
+                          - SumEffectMagnitude(attackerEffects, BlindEffectId);
+
+            return math.round(attackTerm - defenseTerm);
+        }
+
+        public static float ComputeAttackFatigueLoss(
+            RuntimeContentDatabase contentDb,
+            in ActorDerivedMovementStats derived,
+            bool hasWeapon,
+            in ItemEquipmentDef weapon,
+            float attackStrength)
+        {
+            RequireContentDb(contentDb);
+            float fatigueLoss = contentDb.RequireGameSettingFloat("fFatigueAttackBase")
+                                + derived.NormalizedEncumbrance * contentDb.RequireGameSettingFloat("fFatigueAttackMult");
+            if (hasWeapon)
+                fatigueLoss += weapon.Weight * attackStrength * contentDb.RequireGameSettingFloat("fWeaponFatigueMult");
+
+            return fatigueLoss;
+        }
+
+        public static float ComputeWeaponDamage(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attackerAttributes,
+            in ItemEquipmentDef weapon,
+            ActorWeaponAttackType attackType,
+            bool fullDamage)
+        {
+            RequireContentDb(contentDb);
+            GetWeaponAttackRange(weapon, attackType, out int min, out int max);
+            float damage = fullDamage ? max : min;
+            damage *= contentDb.RequireGameSettingFloat("fDamageStrengthBase")
+                      + attackerAttributes.Strength * contentDb.RequireGameSettingFloat("fDamageStrengthMult") * 0.1f;
+            return damage;
+        }
+
+        public static float ComputeHandToHandDamage(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attackerAttributes,
+            in ActorSkillSet attackerSkills,
+            bool fullDamage,
+            bool healthDamage)
+        {
+            RequireContentDb(contentDb);
+            float minStrike = contentDb.RequireGameSettingFloat("fMinHandToHandMult");
+            float maxStrike = contentDb.RequireGameSettingFloat("fMaxHandToHandMult");
+            float damage = attackerSkills.HandToHand * (fullDamage ? maxStrike : minStrike);
+            if (healthDamage)
+                damage *= contentDb.RequireGameSettingFloat("fHandtoHandHealthPer");
+            return damage;
+        }
+
+        public static float ApplyNormalWeaponResistance(
+            RuntimeContentDatabase contentDb,
+            in ItemEquipmentDef weapon,
+            bool hasEnchantment,
+            DynamicBuffer<ActorActiveMagicEffect> targetEffects,
+            float damage)
+        {
+            RequireContentDb(contentDb);
+            if (!IsNormalWeaponDamage(weapon, hasEnchantment))
+                return damage;
+
+            return ApplyNormalWeaponResistanceEffects(contentDb, targetEffects, damage);
+        }
+
+        public static float ApplyNormalWeaponResistanceEffects(
+            RuntimeContentDatabase contentDb,
+            DynamicBuffer<ActorActiveMagicEffect> targetEffects,
+            float damage)
+        {
+            RequireContentDb(contentDb);
+            float resistance = SumEffectMagnitude(targetEffects, ResistNormalWeaponsEffectId) / 100f;
+            float weakness = SumEffectMagnitude(targetEffects, WeaknessToNormalWeaponsEffectId) / 100f;
+            return damage * (1f - math.min(1f, resistance - weakness));
+        }
+
+        public static bool IsFullDamageHit(uint roll0To99, float hitChance)
+            => roll0To99 < hitChance;
+
+        public static float ResolveWeaponSkill(in ActorSkillSet skills, int weaponType)
+        {
+            return weaponType switch
+            {
+                -1 => skills.HandToHand,
+                0 => skills.ShortBlade,
+                1 => skills.LongBlade,
+                2 => skills.LongBlade,
+                3 => skills.BluntWeapon,
+                4 => skills.BluntWeapon,
+                5 => skills.Spear,
+                6 => skills.Axe,
+                7 => skills.BluntWeapon,
+                8 => skills.BluntWeapon,
+                _ => throw new InvalidOperationException($"[VVardenfell][Combat] Unsupported melee weapon type {weaponType}."),
+            };
+        }
+
+        public static float SumEffectMagnitude(DynamicBuffer<ActorActiveMagicEffect> effects, short effectId)
+        {
+            float total = 0f;
+            for (int i = 0; i < effects.Length; i++)
+            {
+                var effect = effects[i];
+                if (effect.EffectId != effectId || effect.Applied == 0)
+                    continue;
+                if (effect.DurationSeconds >= 0f && effect.TimeLeftSeconds <= 0f)
+                    continue;
+
+                total += math.max(0f, effect.Magnitude);
+            }
+
+            return total;
+        }
+
+        static float ComputeEvasion(
+            RuntimeContentDatabase contentDb,
+            in ActorAttributeSet attributes,
+            in ActorVitalSet vitals,
+            DynamicBuffer<ActorActiveMagicEffect> effects)
+        {
+            float evasion = attributes.Agility / 5f + attributes.Luck / 10f;
+            evasion *= ComputeFatigueTerm(contentDb, vitals);
+            evasion += math.min(100f, SumEffectMagnitude(effects, SanctuaryEffectId));
+            return evasion;
+        }
+
+        static void GetWeaponAttackRange(in ItemEquipmentDef weapon, ActorWeaponAttackType attackType, out int min, out int max)
+        {
+            switch (attackType)
+            {
+                case ActorWeaponAttackType.Chop:
+                    min = weapon.ChopMin;
+                    max = weapon.ChopMax;
+                    return;
+                case ActorWeaponAttackType.Slash:
+                    min = weapon.SlashMin;
+                    max = weapon.SlashMax;
+                    return;
+                case ActorWeaponAttackType.Thrust:
+                    min = weapon.ThrustMin;
+                    max = weapon.ThrustMax;
+                    return;
+                default:
+                    throw new InvalidOperationException($"[VVardenfell][Combat] Unknown attack type {attackType}.");
+            }
+        }
+
+        public static bool IsNormalWeaponDamage(in ItemEquipmentDef weapon, bool hasEnchantment)
+            => (weapon.WeaponFlags & WeaponFlagSilver) == 0
+               && (weapon.WeaponFlags & WeaponFlagMagical) == 0
+               && !hasEnchantment;
+
+        static short RequireEffectId(string gmstId)
+        {
+            if (!MorrowindMagicEffectTextUtility.TryResolveEffectId(gmstId, out short effectId))
+                throw new InvalidOperationException($"[VVardenfell][Combat] Unknown magic effect GMST id '{gmstId}'.");
+
+            return effectId;
+        }
+
+        static void RequireContentDb(RuntimeContentDatabase contentDb)
+        {
+            if (contentDb == null)
+                throw new InvalidOperationException("[VVardenfell][Combat] Runtime content database is not loaded.");
+        }
+    }
+}

@@ -224,7 +224,17 @@ namespace VVardenfell.Runtime.Animation
                     : 0f;
 
                 if (!CanStartLanding(movementState, jumpState))
+                {
+                    if (movementState.Grounded && jumpState.AirborneTime < MinimumJumpAirborneTime)
+                    {
+                        jumpState.Phase = JumpPhaseNone;
+                        jumpState.AirborneTime = 0f;
+                        jumpState.LandingGroundedTime = 0f;
+                        return false;
+                    }
+
                     return true;
+                }
 
                 if (moving)
                 {

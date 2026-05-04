@@ -83,6 +83,11 @@ namespace VVardenfell.Runtime.Systems
     {
     }
 
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup), OrderLast = true)]
+    public partial class MorrowindProjectileSystemGroup : MorrowindRuntimePauseGatedSystemGroup
+    {
+    }
+
     [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderLast = true)]
     [UpdateAfter(typeof(MorrowindPhysicsQuerySystemGroup))]
     public partial class MorrowindPhysicsPostQueryMutationSystemGroup : MorrowindRuntimePauseGatedSystemGroup

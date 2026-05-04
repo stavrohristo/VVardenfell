@@ -15,7 +15,7 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 48;
+        public const uint FormatVersion = 50;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
@@ -23,7 +23,7 @@ namespace VVardenfell.Core.Cache
         /// whether an existing cell file is still reusable.
         /// </summary>
         public const uint WorldBakePipelineVersion = 31;
-        public const uint GameplayContentVersion = 60;
+        public const uint GameplayContentVersion = 62;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized

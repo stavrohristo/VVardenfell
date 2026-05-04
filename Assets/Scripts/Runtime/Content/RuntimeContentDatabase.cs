@@ -198,11 +198,19 @@ namespace VVardenfell.Runtime.Content
             => _explicitRefTargetsById.TryGetValue(ContentId.NormalizeId(id ?? string.Empty), out placedRefId);
         public bool TryGetGameSettingFloat(string id, out float value)
         {
-            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsNumericGameSetting(id))
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
             {
                 ref readonly var gameSetting = ref GetGameSetting(handle);
-                value = IsIntegerGameSetting(id) ? gameSetting.Int0 : gameSetting.Float0;
-                return true;
+                if (gameSetting.ValueKind == GenericRecordValueKind.Float)
+                {
+                    value = gameSetting.Float0;
+                    return true;
+                }
+                if (gameSetting.ValueKind == GenericRecordValueKind.Integer)
+                {
+                    value = gameSetting.Int0;
+                    return true;
+                }
             }
 
             value = default;
@@ -211,11 +219,14 @@ namespace VVardenfell.Runtime.Content
 
         public bool TryGetGameSettingInt(string id, out int value)
         {
-            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsIntegerGameSetting(id))
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
             {
                 ref readonly var gameSetting = ref GetGameSetting(handle);
-                value = gameSetting.Int0;
-                return true;
+                if (gameSetting.ValueKind == GenericRecordValueKind.Integer)
+                {
+                    value = gameSetting.Int0;
+                    return true;
+                }
             }
 
             value = default;
@@ -224,36 +235,40 @@ namespace VVardenfell.Runtime.Content
 
         public float RequireGameSettingFloat(string id)
         {
-            if (!IsNumericGameSetting(id))
-                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a numeric game setting.");
-
             if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
 
             ref readonly var gameSetting = ref GetGameSetting(handle);
-            return IsIntegerGameSetting(id) ? gameSetting.Int0 : gameSetting.Float0;
+            if (gameSetting.ValueKind == GenericRecordValueKind.Float)
+                return gameSetting.Float0;
+            if (gameSetting.ValueKind == GenericRecordValueKind.Integer)
+                return gameSetting.Int0;
+
+            throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a numeric game setting.");
         }
 
         public int RequireGameSettingInt(string id)
         {
-            if (!IsIntegerGameSetting(id))
-                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not an integer game setting.");
-
             if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
 
-            return GetGameSetting(handle).Int0;
+            ref readonly var gameSetting = ref GetGameSetting(handle);
+            if (gameSetting.ValueKind != GenericRecordValueKind.Integer)
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not an integer game setting.");
+
+            return gameSetting.Int0;
         }
 
         public string RequireGameSettingString(string id)
         {
-            if (!IsStringGameSetting(id))
-                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a string game setting.");
-
             if (!TryGetGameSettingHandle(id, out var handle) || !handle.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Content] Missing GMST '{id}'.");
 
-            string value = GetGameSetting(handle).Text;
+            ref readonly var gameSetting = ref GetGameSetting(handle);
+            if (gameSetting.ValueKind != GenericRecordValueKind.String)
+                throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' is not a string game setting.");
+
+            string value = gameSetting.Text;
             if (string.IsNullOrWhiteSpace(value))
                 throw new InvalidOperationException($"[VVardenfell][Content] GMST '{id}' has no string value.");
 
@@ -262,27 +277,19 @@ namespace VVardenfell.Runtime.Content
 
         public bool TryGetGameSettingString(string id, out string value)
         {
-            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid && IsStringGameSetting(id))
+            if (TryGetGameSettingHandle(id, out var handle) && handle.IsValid)
             {
-                value = GetGameSetting(handle).Text;
-                return !string.IsNullOrWhiteSpace(value);
+                ref readonly var gameSetting = ref GetGameSetting(handle);
+                if (gameSetting.ValueKind == GenericRecordValueKind.String)
+                {
+                    value = gameSetting.Text;
+                    return !string.IsNullOrWhiteSpace(value);
+                }
             }
 
             value = default;
             return false;
         }
-
-        static bool IsIntegerGameSetting(string id)
-            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 'i';
-
-        static bool IsFloatGameSetting(string id)
-            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 'f';
-
-        static bool IsStringGameSetting(string id)
-            => !string.IsNullOrWhiteSpace(id) && char.ToLowerInvariant(id[0]) == 's';
-
-        static bool IsNumericGameSetting(string id)
-            => IsIntegerGameSetting(id) || IsFloatGameSetting(id);
 
         public bool IsValid(ContentReference contentRef)
         {

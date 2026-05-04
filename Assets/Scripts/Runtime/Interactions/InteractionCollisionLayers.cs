@@ -2,7 +2,7 @@ using Unity.Physics;
 
 namespace VVardenfell.Runtime.Interactions
 {
-    static class InteractionCollisionLayers
+    public static class InteractionCollisionLayers
     {
         public const uint Player = 1u << 1;
         public const uint ActivationProxy = 1u << 2;
@@ -13,6 +13,7 @@ namespace VVardenfell.Runtime.Interactions
         public const uint LineOfSightQuery = 1u << 7;
         public const uint InteractionPick = 1u << 8;
         public const uint InteractionPickQuery = 1u << 9;
+        public const uint Projectile = 1u << 10;
 
         public static CollisionFilter ActivationProxyFilter => new()
         {
@@ -66,7 +67,14 @@ namespace VVardenfell.Runtime.Interactions
         public static CollisionFilter DynamicRefFilter => new()
         {
             BelongsTo = DynamicRef,
-            CollidesWith = Player | SolidQuery | DynamicRef,
+            CollidesWith = Player | SolidQuery | DynamicRef | Projectile,
+            GroupIndex = 0,
+        };
+
+        public static CollisionFilter ProjectileFilter => new()
+        {
+            BelongsTo = Projectile,
+            CollidesWith = Geometry | DynamicRef | Player | Projectile,
             GroupIndex = 0,
         };
 

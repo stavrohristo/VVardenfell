@@ -29,91 +29,6 @@ namespace VVardenfell.Runtime.Interactions
     static class InteractionTargetResolver
     {
         public const float MaxInteractDistance = 2.25f;
-        const float MinUsableHitFraction = 0.001f;
-
-        public static PlayerInteractionRaycastHit CastFromViewRay(
-            in PhysicsWorldSingleton physicsWorld,
-            in PlayerPhysicsViewPose viewPose,
-            uint sequence)
-        {
-            float3 origin = viewPose.Position;
-            float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
-            return CastFromCameraRay(physicsWorld, origin, forward, MaxInteractDistance, 0f, sequence);
-        }
-
-        public static PlayerInteractionRaycastHit CastFromCameraRay(
-            in PhysicsWorldSingleton physicsWorld,
-            float3 origin,
-            float3 forward,
-            float queryDistance,
-            float reportedDistanceOffset,
-            uint sequence)
-        {
-            forward = math.normalizesafe(forward, new float3(0f, 0f, 1f));
-            queryDistance = math.max(0f, queryDistance);
-            reportedDistanceOffset = math.max(0f, reportedDistanceOffset);
-            var input = new RaycastInput
-            {
-                Start = origin,
-                End = origin + forward * queryDistance,
-                Filter = InteractionCollisionLayers.InteractionPickQueryFilter,
-            };
-
-            var hit = new PlayerInteractionRaycastHit
-            {
-                Sequence = sequence,
-                HitEntity = Entity.Null,
-                ProxyHitEntity = Entity.Null,
-                SolidHitEntity = Entity.Null,
-            };
-
-            if (queryDistance <= 0f || !TryCastNearestUsableHit(physicsWorld, input, out Unity.Physics.RaycastHit pickHit))
-                return hit;
-
-            SetPrimaryHit(
-                ref hit,
-                pickHit.Entity,
-                pickHit.Position,
-                pickHit.SurfaceNormal,
-                pickHit.Fraction,
-                math.max(0f, pickHit.Fraction * queryDistance - reportedDistanceOffset));
-
-            return hit;
-        }
-
-        static bool TryCastNearestUsableHit(
-            in PhysicsWorldSingleton physicsWorld,
-            in RaycastInput input,
-            out Unity.Physics.RaycastHit nearestHit)
-        {
-            nearestHit = default;
-            var hits = new NativeList<Unity.Physics.RaycastHit>(Allocator.Temp);
-            try
-            {
-                if (!physicsWorld.CastRay(input, ref hits))
-                    return false;
-
-                bool found = false;
-                float nearestFraction = float.PositiveInfinity;
-                for (int i = 0; i < hits.Length; i++)
-                {
-                    var hit = hits[i];
-                    if (hit.Fraction <= MinUsableHitFraction || hit.Fraction >= nearestFraction)
-                        continue;
-
-                    nearestHit = hit;
-                    nearestFraction = hit.Fraction;
-                    found = true;
-                }
-
-                return found;
-            }
-            finally
-            {
-                if (hits.IsCreated)
-                    hits.Dispose();
-            }
-        }
 
         static void SetPrimaryHit(ref PlayerInteractionRaycastHit hit, Entity entity, float3 position, float3 normal, float fraction, float distance)
         {
@@ -123,6 +38,32 @@ namespace VVardenfell.Runtime.Interactions
             hit.HitNormal = normal;
             hit.HitFraction = fraction;
             hit.HitDistance = distance;
+        }
+
+        public static PlayerInteractionRaycastHit FromDeferredResult(
+            in DeferredPhysicsQueryResult result,
+            float queryDistance,
+            float reportedDistanceOffset)
+        {
+            var hit = new PlayerInteractionRaycastHit
+            {
+                Sequence = result.Sequence,
+                HitEntity = Entity.Null,
+                ProxyHitEntity = Entity.Null,
+                SolidHitEntity = Entity.Null,
+            };
+
+            if (result.Status != DeferredPhysicsQueryStatus.Hit)
+                return hit;
+
+            SetPrimaryHit(
+                ref hit,
+                result.HitEntity,
+                result.Position,
+                result.Normal,
+                result.Fraction,
+                math.max(0f, result.Fraction * math.max(0f, queryDistance) - math.max(0f, reportedDistanceOffset)));
+            return hit;
         }
 
         public static bool TryResolveFromRaycastHit(
@@ -148,18 +89,6 @@ namespace VVardenfell.Runtime.Interactions
                 resolved.Kind,
                 hit.HitDistance);
             return true;
-        }
-
-        public static bool TryResolveFromViewRay(
-            EntityManager entityManager,
-            in PhysicsWorldSingleton physicsWorld,
-            in LogicalRefLookup logicalRefLookup,
-            in PlayerPhysicsViewPose viewPose,
-            out Entity hitEntity,
-            out ResolvedInteractionTarget resolved)
-        {
-            var hit = CastFromViewRay(physicsWorld, viewPose, 0u);
-            return TryResolveFromRaycastHit(entityManager, logicalRefLookup, hit, out hitEntity, out resolved);
         }
 
         public static bool TryResolveSupportedKind(EntityManager entityManager, Entity logicalEntity, out InteractableKind kind)
@@ -249,9 +178,21 @@ namespace VVardenfell.Runtime.Interactions
             if (!TryResolveLogicalEntity(entityManager, logicalRefLookup, hitEntity, out Entity logicalEntity))
                 return false;
 
+            if (entityManager.HasComponent<RuntimeColliderSource>(hitEntity)
+                && !entityManager.HasComponent<PhysicsCollider>(hitEntity))
+            {
+                return false;
+            }
+
             if (!entityManager.Exists(logicalEntity)
                 || !entityManager.HasComponent<LogicalRefTag>(logicalEntity)
                 || !entityManager.HasComponent<PlacedRefIdentity>(logicalEntity))
+            {
+                return false;
+            }
+
+            if (entityManager.HasComponent<PlacedRefRuntimeState>(logicalEntity)
+                && entityManager.GetComponentData<PlacedRefRuntimeState>(logicalEntity).Disabled != 0)
             {
                 return false;
             }
@@ -270,29 +211,65 @@ namespace VVardenfell.Runtime.Interactions
 
 
     [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateAfter(typeof(DeferredPhysicsQueryResolveSystem))]
     [UpdateAfter(typeof(PlayerPhysicsViewPoseSystem))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
     public partial class PlayerInteractionRaycastSystem : SystemBase
     {
         EntityQuery _viewPoseQuery;
         EntityQuery _raycastHitQuery;
+        EntityQuery _playerQuery;
 
         protected override void OnCreate()
         {
             _viewPoseQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
             _raycastHitQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
+            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             RequireForUpdate(_viewPoseQuery);
             RequireForUpdate(_raycastHitQuery);
-            RequireForUpdate<PhysicsWorldSingleton>();
+            RequireForUpdate(_playerQuery);
+            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
         }
 
         protected override void OnUpdate()
         {
-            var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
-            uint sequence = hitRef.ValueRO.Sequence + 1u;
-            hitRef.ValueRW = InteractionTargetResolver.CastFromViewRay(physicsWorld, viewPose, sequence);
+            uint fallbackSequence = hitRef.ValueRO.Sequence + 1u;
+
+            if (DeferredPhysicsQueryUtility.TryGetLatestResult(
+                    EntityManager,
+                    DeferredPhysicsQueryKind.InteractionPick,
+                    DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
+                    out var result))
+            {
+                hitRef.ValueRW = InteractionTargetResolver.FromDeferredResult(
+                    result,
+                    InteractionTargetResolver.MaxInteractDistance,
+                    0f);
+            }
+            else
+            {
+                hitRef.ValueRW = new PlayerInteractionRaycastHit
+                {
+                    Sequence = fallbackSequence,
+                    HitEntity = Entity.Null,
+                    ProxyHitEntity = Entity.Null,
+                    SolidHitEntity = Entity.Null,
+                };
+            }
+
+            float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
+            Entity player = _playerQuery.GetSingletonEntity();
+            DeferredPhysicsQueryUtility.EnqueueRay(
+                EntityManager,
+                DeferredPhysicsQueryKind.InteractionPick,
+                player,
+                Entity.Null,
+                player,
+                viewPose.Position,
+                viewPose.Position + forward * InteractionTargetResolver.MaxInteractDistance,
+                InteractionCollisionLayers.InteractionPickQueryFilter);
         }
     }
 

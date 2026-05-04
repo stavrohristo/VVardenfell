@@ -1,0 +1,158 @@
+using System;
+using Unity.Entities;
+using Unity.Mathematics;
+using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.MorrowindScript;
+using VVardenfell.Runtime.Systems;
+
+namespace VVardenfell.Runtime.Combat
+{
+    [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
+    [UpdateAfter(typeof(MorrowindDamageApplySystem))]
+    [UpdateBefore(typeof(MorrowindDamageFeedbackSystem))]
+    public partial class MorrowindHitAftermathStateSystem : SystemBase
+    {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<MorrowindDamageAppliedEvent>();
+            RequireForUpdate<MorrowindCombatRuntimeState>();
+        }
+
+        protected override void OnUpdate()
+        {
+            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
+                ?? throw new InvalidOperationException("[VVardenfell][Aftermath] Runtime content database is not loaded.");
+
+            float knockDownMult = contentDb.RequireGameSettingFloat("fKnockDownMult");
+            int knockDownOddsMult = contentDb.RequireGameSettingInt("iKnockDownOddsMult");
+            int knockDownOddsBase = contentDb.RequireGameSettingInt("iKnockDownOddsBase");
+            var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
+            var random = new Random(combatState.ValueRO.RandomState == 0u ? 0x6E624EB7u : combatState.ValueRO.RandomState);
+
+            foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
+            {
+                ApplyAftermath(
+                    damage.ValueRO,
+                    knockDownMult,
+                    knockDownOddsMult,
+                    knockDownOddsBase,
+                    ref random);
+            }
+
+            combatState.ValueRW.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
+        }
+
+        void ApplyAftermath(
+            in MorrowindDamageAppliedEvent damage,
+            float knockDownMult,
+            int knockDownOddsMult,
+            int knockDownOddsBase,
+            ref Random random)
+        {
+            Entity target = damage.Target;
+            RequireTargetAftermathComposition(target);
+
+            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
+            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+
+            if (vitals.CurrentHealth <= 0f)
+            {
+                if (aftermath.Dead == 0)
+                {
+                    aftermath.Dead = 1;
+                    aftermath.HitRecovery = 0;
+                    aftermath.KnockedDown = 0;
+                    aftermath.KnockedDownOneFrame = 0;
+                    aftermath.KnockedDownOverOneFrame = 0;
+                    aftermath.KnockedOut = 0;
+                    aftermath.DeathAnimationFinished = 0;
+                    aftermath.Sequence = NextSequence(aftermath.Sequence);
+                    StopCombatIfPresent(target);
+                }
+
+                EntityManager.SetComponentData(target, aftermath);
+                return;
+            }
+
+            if (aftermath.Dead != 0)
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} is marked dead but still has positive health.");
+
+            bool changed = false;
+            if (damage.Amount > 0f && damage.Attacker != Entity.Null)
+            {
+                if (damage.TargetVital == MorrowindDamageTargetVital.Fatigue
+                    && (vitals.CurrentFatigue < 0f || vitals.ModifiedFatigueBase <= 0f))
+                {
+                    aftermath.KnockedOut = 1;
+                    aftermath.KnockedDown = 1;
+                    aftermath.HitRecovery = 0;
+                    changed = true;
+                }
+                else if (damage.TargetVital == MorrowindDamageTargetVital.Health)
+                {
+                    var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
+                    float agility = math.max(0f, attributes.Agility);
+                    float agilityTerm = agility * knockDownMult;
+                    float knockdownTerm = agility * knockDownOddsMult * 0.01f + knockDownOddsBase;
+                    int roll = random.NextInt(100);
+
+                    if (agilityTerm <= damage.Amount && knockdownTerm <= roll)
+                    {
+                        aftermath.KnockedDown = 1;
+                        aftermath.HitRecovery = 0;
+                    }
+                    else
+                    {
+                        aftermath.HitRecovery = 1;
+                    }
+
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                aftermath.Sequence = NextSequence(aftermath.Sequence);
+                EntityManager.SetComponentData(target, aftermath);
+            }
+        }
+
+        void RequireTargetAftermathComposition(Entity target)
+        {
+            if (target == Entity.Null || !EntityManager.Exists(target))
+                throw new InvalidOperationException("[VVardenfell][Aftermath] Damage target entity is missing.");
+            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorVitalSet.");
+            if (!EntityManager.HasComponent<ActorAttributeSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorAttributeSet.");
+            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorHitAftermathState.");
+            if (!EntityManager.HasComponent<ActorScriptEventState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorScriptEventState.");
+        }
+
+        void StopCombatIfPresent(Entity actor)
+        {
+            if (EntityManager.HasComponent<ActorCombatTargetState>(actor))
+            {
+                var combat = EntityManager.GetComponentData<ActorCombatTargetState>(actor);
+                combat.Active = 0;
+                combat.TargetEntity = Entity.Null;
+                combat.TargetPlacedRefId = 0u;
+                EntityManager.SetComponentData(actor, combat);
+            }
+
+            MorrowindCombatTargetUtility.TryStopCombat(EntityManager, actor);
+        }
+
+        static uint NextSequence(uint sequence)
+            => sequence == uint.MaxValue ? 1u : sequence + 1u;
+
+        uint PlacedRefId(Entity entity)
+            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+                : 0u;
+    }
+}

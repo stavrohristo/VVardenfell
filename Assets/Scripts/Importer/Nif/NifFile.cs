@@ -116,6 +116,7 @@ namespace VVardenfell.Importer.Nif
             { "NiFlipController", () => new NiFlipController() },
             { "NiUVController", () => new NiUVController() },
             { "NiMaterialColorController", () => new NiMaterialColorController() },
+            { "NiPathController", () => new NiPathController() },
             { "NiGeomMorpherController", () => new NiGeomMorpherController() },
 
             // Animation data

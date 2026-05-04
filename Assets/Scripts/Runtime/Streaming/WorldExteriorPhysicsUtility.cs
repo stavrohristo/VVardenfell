@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Profiling;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Physics;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -23,7 +24,15 @@ namespace VVardenfell.Runtime.Streaming
             var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
                 .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
             var query = em.CreateEntityQuery(queryBuilder);
-            em.RemoveComponent<PhysicsCollider>(query);
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            if (entities.Length > 0)
+            {
+                Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
+                var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+                for (int i = 0; i < entities.Length; i++)
+                    RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entities[i]);
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
+            }
             query.Dispose();
             queryBuilder.Dispose();
         }
@@ -41,6 +50,9 @@ namespace VVardenfell.Runtime.Streaming
             if (!WorldResources.ExteriorCellEntities.TryGetValue(coord, out var entities))
                 return;
 
+            Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
+            var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+            bool queued = false;
             for (int i = entities.Count - 1; i >= 0; i--)
             {
                 Entity entity = entities[i];
@@ -54,14 +66,21 @@ namespace VVardenfell.Runtime.Streaming
                     continue;
 
                 if (active)
-                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(em, entity);
+                    RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
                 else
-                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(em, entity);
+                    RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
+                queued = true;
             }
+
+            if (queued)
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
         }
 
         static void SyncRegisteredExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
         {
+            Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
+            var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+            bool queued = false;
             foreach (var pair in WorldResources.ExteriorCellEntities)
             {
                 bool shouldBeActive = desired.Contains(pair.Key);
@@ -80,11 +99,20 @@ namespace VVardenfell.Runtime.Streaming
 
                     bool isActive = em.HasComponent<PhysicsCollider>(entity);
                     if (shouldBeActive && !isActive)
-                        VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(em, entity);
+                    {
+                        RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
+                        queued = true;
+                    }
                     else if (!shouldBeActive && isActive)
-                        VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(em, entity);
+                    {
+                        RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
+                        queued = true;
+                    }
                 }
             }
+
+            if (queued)
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
         }
 
         static void SyncLinkedExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
@@ -94,6 +122,9 @@ namespace VVardenfell.Runtime.Streaming
             var query = em.CreateEntityQuery(queryBuilder);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var links = query.ToComponentDataArray<CellLink>(Allocator.Temp);
+            Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
+            var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+            bool queued = false;
             for (int i = 0; i < entities.Length; i++)
             {
                 Entity entity = entities[i];
@@ -105,10 +136,19 @@ namespace VVardenfell.Runtime.Streaming
                 bool shouldBeActive = !disabled && desired.Contains(links[i].Value);
                 bool isActive = em.HasComponent<PhysicsCollider>(entity);
                 if (shouldBeActive && !isActive)
-                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(em, entity);
+                {
+                    RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
+                    queued = true;
+                }
                 else if (!shouldBeActive && isActive)
-                    VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(em, entity);
+                {
+                    RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
+                    queued = true;
+                }
             }
+
+            if (queued)
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
 
             query.Dispose();
             queryBuilder.Dispose();

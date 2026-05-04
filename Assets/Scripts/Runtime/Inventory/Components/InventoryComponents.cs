@@ -10,6 +10,7 @@ namespace VVardenfell.Runtime.Components
         public FixedString64Bytes SoulId;
         public int SoulActorHandleValue;
         public int Count;
+        public int Condition;
     }
 
     public struct ActorInventoryItem : IBufferElementData
@@ -18,6 +19,7 @@ namespace VVardenfell.Runtime.Components
         public FixedString64Bytes SoulId;
         public int SoulActorHandleValue;
         public int Count;
+        public int Condition;
         public int AuthoredOrder;
     }
 

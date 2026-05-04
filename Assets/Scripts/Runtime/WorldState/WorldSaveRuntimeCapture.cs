@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
@@ -61,6 +62,7 @@ namespace VVardenfell.Runtime.WorldState
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
             var timePayload = CaptureTimePayload(entityManager);
             var weatherPayload = CaptureWeatherPayload(entityManager);
+            var combatPayload = CaptureCombatPayload(entityManager);
 
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var journalEntries = new WorldJournalEntry[journal.Length];
@@ -125,8 +127,23 @@ namespace VVardenfell.Runtime.WorldState
                 GlobalMapOverlay = globalMapOverlay,
                 Time = timePayload,
                 Weather = weatherPayload,
+                Combat = combatPayload,
             };
             return true;
+        }
+
+        static MorrowindCombatSavePayload CaptureCombatPayload(EntityManager entityManager)
+        {
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindCombatRuntimeState>(entityManager);
+            if (entity == Entity.Null)
+                return default;
+
+            var state = entityManager.GetComponentData<MorrowindCombatRuntimeState>(entity);
+            return new MorrowindCombatSavePayload
+            {
+                RandomState = state.RandomState,
+                Initialized = 1,
+            };
         }
 
         static int[] CaptureActorDeathCounts(EntityManager entityManager, Entity scriptRuntimeEntity)

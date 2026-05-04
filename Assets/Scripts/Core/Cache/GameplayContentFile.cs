@@ -288,6 +288,15 @@ namespace VVardenfell.Core.Cache
         public int EnchantCapacity;
         public int DamageMin;
         public int DamageMax;
+        public int ChopMin;
+        public int ChopMax;
+        public int SlashMin;
+        public int SlashMax;
+        public int ThrustMin;
+        public int ThrustMax;
+        public float WeaponSpeed;
+        public float WeaponReach;
+        public uint WeaponFlags;
         public int FirstBodyPartIndex;
         public int BodyPartCount;
     }
@@ -310,12 +319,21 @@ namespace VVardenfell.Core.Cache
         public string Icon;
         public string ScriptId;
         public string Text;
+        public GenericRecordValueKind ValueKind;
         public uint Flags;
         public int Int0;
         public int Int1;
         public int Int2;
         public float Float0;
         public float Float1;
+    }
+
+    public enum GenericRecordValueKind : byte
+    {
+        None = 0,
+        Integer = 1,
+        Float = 2,
+        String = 3,
     }
 
     public enum MorrowindScriptProgramStatus : byte

@@ -162,6 +162,13 @@ namespace VVardenfell.Runtime.Animation
         public byte AttackPressed;
         public byte AttackReleased;
         public byte ReleaseQueued;
+        public byte MeleeHitPending;
+        public ActorWeaponAttackType MeleeHitAttackType;
+        public float MeleeHitAttackStrength;
+        public ContentReference MeleeHitWeaponContent;
+        public byte MeleeSwingPending;
+        public float MeleeSwingAttackStrength;
+        public ContentReference MeleeSwingWeaponContent;
     }
 
     public struct ActorAnimationOverlayState : IBufferElementData

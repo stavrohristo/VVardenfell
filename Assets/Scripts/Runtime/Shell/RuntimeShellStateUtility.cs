@@ -9,6 +9,11 @@ namespace VVardenfell.Runtime.Shell
 {
     static class RuntimeShellStateUtility
     {
+        const float SubtitleMinSeconds = 1.5f;
+        const float SubtitleMaxSeconds = 12f;
+        const float SubtitleLeadInSeconds = 0.6f;
+        const float SubtitleWordsPerSecond = 2.6f;
+
         public static void OpenPause(ref RuntimeShellState state)
         {
             state.InventoryOpen = 0;
@@ -244,6 +249,43 @@ namespace VVardenfell.Runtime.Shell
             state.Text = text;
             state.SecondsRemaining = math.max(0.1f, seconds);
             state.Visible = 1;
+        }
+
+        public static float EstimateSubtitleDurationSeconds(FixedString512Bytes text)
+        {
+            int wordCount = CountSubtitleWords(text.ToString());
+            if (wordCount == 0)
+                return 0f;
+
+            return math.clamp(
+                SubtitleLeadInSeconds + wordCount / SubtitleWordsPerSecond,
+                SubtitleMinSeconds,
+                SubtitleMaxSeconds);
+        }
+
+        static int CountSubtitleWords(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return 0;
+
+            int count = 0;
+            bool inWord = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (char.IsWhiteSpace(text[i]))
+                {
+                    inWord = false;
+                    continue;
+                }
+
+                if (inWord)
+                    continue;
+
+                count++;
+                inWord = true;
+            }
+
+            return count;
         }
 
         public static void OpenSaveLoadBrowser(ref RuntimeShellState state, ref SaveLoadBrowserState browser, SaveLoadBrowserMode mode, string saveName)

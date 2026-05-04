@@ -37,7 +37,7 @@ namespace VVardenfell.Runtime.AI
             RequireForUpdate<ActorAiGreetingState>();
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
-            RequireForUpdate<PhysicsWorldSingleton>();
+            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
         }
 
         protected override void OnUpdate()
@@ -53,7 +53,6 @@ namespace VVardenfell.Runtime.AI
             bool hasHelloDialogue = TryResolveHelloVoiceDialogue(contentDb, out int helloDialogueIndex);
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             var sayRequests = EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
-            var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
             Entity player = _playerQuery.GetSingletonEntity();
             var playerTransform = EntityManager.GetComponentData<LocalTransform>(player);
             var playerVitals = EntityManager.GetComponentData<ActorVitalSet>(player);
@@ -123,8 +122,10 @@ namespace VVardenfell.Runtime.AI
                     continue;
                 }
 
-                if (!ActorAiLineOfSightUtility.HasLineOfSight(
-                        physicsWorld,
+                if (!ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
+                        EntityManager,
+                        entity,
+                        player,
                         EyePosition(playerPosition),
                         EyePosition(actorPosition)))
                 {
@@ -176,10 +177,11 @@ namespace VVardenfell.Runtime.AI
                          && !string.IsNullOrWhiteSpace(info.Response)
                          && SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
                 {
+                    var subtitleText = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.Response);
                     RuntimeShellStateUtility.ShowSubtitle(
                         ref subtitle.ValueRW,
-                        RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.Response),
-                        math.max(1f, greetDuration));
+                        subtitleText,
+                        RuntimeShellStateUtility.EstimateSubtitleDurationSeconds(subtitleText));
                 }
 
                 greeting.Phase = (byte)ActorAiGreetingPhase.InProgress;

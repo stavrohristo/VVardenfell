@@ -17,8 +17,6 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class MorrowindScriptSayApplySystem : SystemBase
     {
-        const float SubtitleSeconds = 4f;
-
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindScriptRuntimeState>();
@@ -47,7 +45,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var request = requestCopy[i];
                 ApplyRequest(request, lookup, ref runtimeState);
                 if (showSubtitles && !request.Subtitle.IsEmpty && SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
-                    RuntimeShellStateUtility.ShowSubtitle(ref subtitle.ValueRW, request.Subtitle, SubtitleSeconds);
+                    RuntimeShellStateUtility.ShowSubtitle(
+                        ref subtitle.ValueRW,
+                        request.Subtitle,
+                        RuntimeShellStateUtility.EstimateSubtitleDurationSeconds(request.Subtitle));
             }
 
             requestCopy.Dispose();

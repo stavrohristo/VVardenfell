@@ -5,7 +5,9 @@ using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
 
@@ -14,7 +16,10 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 23;
+        const int PayloadVersion = 25;
+        const int InventoryConditionPayloadVersion = 25;
+        const int CombatPayloadVersion = 24;
+        const int PlayerCrimeSequencePayloadVersion = 23;
         const int RegionWeatherOverridePayloadVersion = 23;
         const int PlayerEquipmentPayloadVersion = 22;
         const int CapturedSoulInventoryPayloadVersion = 21;
@@ -39,6 +44,9 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != RegionWeatherOverridePayloadVersion
+                && version != InventoryConditionPayloadVersion
+                && version != CombatPayloadVersion
                 && version != PlayerEquipmentPayloadVersion
                 && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
@@ -145,6 +153,7 @@ namespace VVardenfell.Runtime.WorldState
             WriteActorDeathCounts(w, payload.ActorDeathCounts);
             WriteTimePayload(w, payload.Time);
             WriteWeatherPayload(w, payload.Weather);
+            WriteCombatPayload(w, payload.Combat);
         }
 
         static WorldSavePayload ReadPayload(BinaryReader r)
@@ -155,6 +164,9 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion
+                && version != RegionWeatherOverridePayloadVersion
+                && version != CombatPayloadVersion
+                && version != PlayerEquipmentPayloadVersion
                 && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
                 && version != PreviousPayloadVersion
@@ -267,7 +279,26 @@ namespace VVardenfell.Runtime.WorldState
                 payload.Weather = ToSavePayload(MorrowindTimeBootstrapSystem.CreateDefaultWeather());
             }
 
+            payload.Combat = version >= CombatPayloadVersion
+                ? ReadCombatPayload(r)
+                : default;
+
             return payload;
+        }
+
+        static void WriteCombatPayload(BinaryWriter w, in MorrowindCombatSavePayload value)
+        {
+            w.Write(value.RandomState);
+            w.Write(value.Initialized);
+        }
+
+        static MorrowindCombatSavePayload ReadCombatPayload(BinaryReader r)
+        {
+            return new MorrowindCombatSavePayload
+            {
+                RandomState = r.ReadUInt32(),
+                Initialized = r.ReadByte(),
+            };
         }
 
         static void WriteActorDeathCounts(BinaryWriter w, int[] counts)
@@ -497,6 +528,7 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.SoulId.ToString());
             w.Write(value.SoulActorHandleValue);
             w.Write(value.Count);
+            w.Write(value.Condition);
         }
 
         static PlayerInventoryItem ReadInventoryEntry(BinaryReader r, int version)
@@ -510,12 +542,18 @@ namespace VVardenfell.Runtime.WorldState
                 soulActorHandleValue = r.ReadInt32();
             }
 
+            int count = r.ReadInt32();
+            int condition = version >= InventoryConditionPayloadVersion
+                ? r.ReadInt32()
+                : InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+
             return new PlayerInventoryItem
             {
                 Content = content,
                 SoulId = soulId,
                 SoulActorHandleValue = soulActorHandleValue,
-                Count = r.ReadInt32(),
+                Count = count,
+                Condition = condition,
             };
         }
 
@@ -927,7 +965,7 @@ namespace VVardenfell.Runtime.WorldState
         {
             var value = PlayerCrimeState.Default;
             value.Bounty = Math.Max(0, r.ReadInt32());
-            if (version >= PayloadVersion)
+            if (version >= PlayerCrimeSequencePayloadVersion)
             {
                 value.CurrentCrimeId = r.ReadInt32();
                 value.PaidCrimeId = r.ReadInt32();

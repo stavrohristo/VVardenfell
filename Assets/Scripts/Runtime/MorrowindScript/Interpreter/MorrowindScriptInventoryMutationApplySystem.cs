@@ -2,6 +2,8 @@ using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldState;
@@ -101,10 +103,15 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static void AddPlayerItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, int count)
         {
+            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (!SameContent(inventory[i].Content, content) || !inventory[i].SoulId.IsEmpty)
+                if (!SameContent(inventory[i].Content, content)
+                    || !inventory[i].SoulId.IsEmpty
+                    || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
+                {
                     continue;
+                }
 
                 var entry = inventory[i];
                 entry.Count += count;
@@ -116,6 +123,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 Content = content,
                 Count = count,
+                Condition = condition,
             });
         }
 
@@ -163,10 +171,15 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static void AddActorItem(DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
         {
+            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (!SameContent(inventory[i].Content, content) || !inventory[i].SoulId.IsEmpty)
+                if (!SameContent(inventory[i].Content, content)
+                    || !inventory[i].SoulId.IsEmpty
+                    || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
+                {
                     continue;
+                }
 
                 var entry = inventory[i];
                 entry.Count += count;
@@ -178,6 +191,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 Content = content,
                 Count = count,
+                Condition = condition,
                 AuthoredOrder = inventory.Length,
             });
         }

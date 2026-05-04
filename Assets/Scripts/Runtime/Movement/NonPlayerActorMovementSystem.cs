@@ -32,7 +32,7 @@ namespace VVardenfell.Runtime.Movement
                     ComponentType.ReadOnly<PassiveActorPresence>(),
                     ComponentType.ReadWrite<LocalTransform>(),
                     ComponentType.ReadWrite<LocalToWorld>(),
-                    ComponentType.ReadWrite<PhysicsCollider>(),
+                    ComponentType.ReadOnly<PhysicsCollider>(),
                     ComponentType.ReadWrite<MorrowindMovementInput>(),
                     ComponentType.ReadWrite<MorrowindMovementState>(),
                     ComponentType.ReadOnly<MorrowindMovementSpeed>(),
@@ -47,7 +47,7 @@ namespace VVardenfell.Runtime.Movement
             _localToWorldHandle = state.GetComponentTypeHandle<LocalToWorld>(isReadOnly: false);
             _inputHandle = state.GetComponentTypeHandle<MorrowindMovementInput>(isReadOnly: false);
             _movementStateHandle = state.GetComponentTypeHandle<MorrowindMovementState>(isReadOnly: false);
-            _colliderHandle = state.GetComponentTypeHandle<PhysicsCollider>(isReadOnly: false);
+            _colliderHandle = state.GetComponentTypeHandle<PhysicsCollider>(isReadOnly: true);
             _speedHandle = state.GetComponentTypeHandle<MorrowindMovementSpeed>(isReadOnly: true);
 
             state.RequireForUpdate(_query);
@@ -93,7 +93,7 @@ namespace VVardenfell.Runtime.Movement
             public ComponentTypeHandle<LocalToWorld> LocalToWorldHandle;
             public ComponentTypeHandle<MorrowindMovementInput> InputHandle;
             public ComponentTypeHandle<MorrowindMovementState> MovementStateHandle;
-            public ComponentTypeHandle<PhysicsCollider> ColliderHandle;
+            [ReadOnly] public ComponentTypeHandle<PhysicsCollider> ColliderHandle;
             [ReadOnly] public ComponentTypeHandle<MorrowindMovementSpeed> SpeedHandle;
 
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
