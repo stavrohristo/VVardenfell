@@ -29,7 +29,7 @@ namespace VVardenfell.Runtime.Combat
             int knockDownOddsMult = contentDb.RequireGameSettingInt("iKnockDownOddsMult");
             int knockDownOddsBase = contentDb.RequireGameSettingInt("iKnockDownOddsBase");
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
-            var random = new Random(combatState.ValueRO.RandomState == 0u ? 0x6E624EB7u : combatState.ValueRO.RandomState);
+            var random = new Unity.Mathematics.Random(combatState.ValueRO.RandomState == 0u ? 0x6E624EB7u : combatState.ValueRO.RandomState);
 
             foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
             {
@@ -49,7 +49,7 @@ namespace VVardenfell.Runtime.Combat
             float knockDownMult,
             int knockDownOddsMult,
             int knockDownOddsBase,
-            ref Random random)
+            ref Unity.Mathematics.Random random)
         {
             Entity target = damage.Target;
             RequireTargetAftermathComposition(target);
@@ -57,30 +57,11 @@ namespace VVardenfell.Runtime.Combat
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
             var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
 
-            if (vitals.CurrentHealth <= 0f)
-            {
-                if (aftermath.Dead == 0)
-                {
-                    aftermath.Dead = 1;
-                    aftermath.HitRecovery = 0;
-                    aftermath.KnockedDown = 0;
-                    aftermath.KnockedDownOneFrame = 0;
-                    aftermath.KnockedDownOverOneFrame = 0;
-                    aftermath.KnockedOut = 0;
-                    aftermath.DeathAnimationFinished = 0;
-                    aftermath.Sequence = NextSequence(aftermath.Sequence);
-                    StopCombatIfPresent(target);
-                }
-
-                EntityManager.SetComponentData(target, aftermath);
-                return;
-            }
-
-            if (aftermath.Dead != 0)
+            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
                 throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} is marked dead but still has positive health.");
 
             bool changed = false;
-            if (damage.Amount > 0f && damage.Attacker != Entity.Null)
+            if (aftermath.Dead == 0 && damage.Amount > 0f && damage.Attacker != Entity.Null)
             {
                 if (damage.TargetVital == MorrowindDamageTargetVital.Fatigue
                     && (vitals.CurrentFatigue < 0f || vitals.ModifiedFatigueBase <= 0f))
@@ -110,6 +91,18 @@ namespace VVardenfell.Runtime.Combat
 
                     changed = true;
                 }
+            }
+
+            if (vitals.CurrentHealth <= 0f && aftermath.Dead == 0)
+            {
+                aftermath.Dead = 1;
+                aftermath.HitRecovery = 0;
+                aftermath.KnockedDownOneFrame = 0;
+                aftermath.KnockedDownOverOneFrame = 0;
+                aftermath.DeathAnimationFinished = 0;
+                aftermath.DeathAnimationGroup = default;
+                changed = true;
+                StopCombatIfPresent(target);
             }
 
             if (changed)

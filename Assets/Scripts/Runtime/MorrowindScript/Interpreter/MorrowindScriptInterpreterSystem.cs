@@ -1,3 +1,4 @@
+using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -856,11 +857,23 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (placedRefId == 0u)
                     continue;
 
+                byte died = entityManager.HasComponent<MorrowindActorDeathCounted>(entities[i]) ? (byte)1 : (byte)0;
+                if (entityManager.HasComponent<ActorHitAftermathState>(entities[i]))
+                {
+                    var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(entities[i]);
+                    if (aftermath.Dead != 0)
+                        died = 1;
+                }
+                else if (vitals[i].CurrentHealth <= 0f)
+                {
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] Actor ref={placedRefId} reached zero health without ActorHitAftermathState.");
+                }
+
                 snapshots.Add(new MorrowindScriptActorDeathSnapshot
                 {
                     Entity = entities[i],
                     PlacedRefId = placedRefId,
-                    Died = vitals[i].CurrentHealth <= 0f || entityManager.HasComponent<MorrowindActorDeathCounted>(entities[i]) ? (byte)1 : (byte)0,
+                    Died = died,
                     Consumed = entityManager.HasComponent<MorrowindActorOnDeathConsumed>(entities[i]) ? (byte)1 : (byte)0,
                 });
             }

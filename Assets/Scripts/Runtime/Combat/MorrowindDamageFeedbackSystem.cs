@@ -16,26 +16,17 @@ namespace VVardenfell.Runtime.Combat
     [UpdateAfter(typeof(MorrowindDamageApplySystem))]
     public partial class MorrowindDamageFeedbackSystem : SystemBase
     {
-        const int HitReactionOverlayPriority = 50;
-        const int MaxHitReactionVariants = 16;
-
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<ActorAnimationBlobCatalog>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
         }
 
         protected override void OnUpdate()
         {
-            var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
-            if (!catalogRef.IsCreated)
-                throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback has no actor animation catalog blob.");
-
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
             uint randomState = combatState.ValueRO.RandomState;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            ref var catalog = ref catalogRef.Value;
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
                 ?? throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback has no runtime content database.");
             bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
@@ -47,7 +38,6 @@ namespace VVardenfell.Runtime.Combat
                      SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>()
                          .WithEntityAccess())
             {
-                PlayHitReaction(ref catalog, ref randomState, damage.ValueRO);
                 EmitArmorImpactAudio(contentDb, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
                 EmitAppliedDamageAudio(contentDb, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
                 EmitBloodVfxRequest(contentDb, ref randomState, ref ecb, damage.ValueRO);
@@ -61,102 +51,11 @@ namespace VVardenfell.Runtime.Combat
             ecb.Dispose();
         }
 
-        void PlayHitReaction(
-            ref ActorAnimationCatalogBlob catalog,
-            ref uint randomState,
-            in MorrowindDamageAppliedEvent damage)
-        {
-            if (damage.Amount <= 0f || damage.Attacker == Entity.Null)
-                return;
-
-            Entity target = damage.Target;
-            if (target == Entity.Null || !EntityManager.Exists(target))
-                throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback target entity is missing.");
-            if (!EntityManager.HasComponent<ActorPresentation>(target))
-                throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback target has no ActorPresentation.");
-            if (!EntityManager.HasComponent<ActorAnimationState>(target))
-                throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback target has no ActorAnimationState.");
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
-                throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback target has no ActorAnimationOverlayState buffer.");
-
-            var presentation = EntityManager.GetComponentData<ActorPresentation>(target);
-            if (!TryResolveHitReactionGroup(ref catalog, presentation, ref randomState, out var group, out var groupName))
-                return;
-
-            var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(target);
-            RemoveExistingHitReaction(overlays);
-
-            ActorAnimationPlaybackState playback = default;
-            ActorAnimationPlaybackUtility.Start(ref playback, group, requestedLoopCount: 0u);
-            playback.Speed = 1f;
-
-            overlays.Add(new ActorAnimationOverlayState
-            {
-                Playback = playback,
-                Weight = 1f,
-                Priority = HitReactionOverlayPriority,
-                Mask = ActorAnimationBlendMask.All,
-            });
-        }
-
-        static bool TryResolveHitReactionGroup(
-            ref ActorAnimationCatalogBlob catalog,
-            in ActorPresentation presentation,
-            ref uint randomState,
-            out ActorAnimationGroupBlob group,
-            out FixedString64Bytes groupName)
-        {
-            Span<int> variants = stackalloc int[MaxHitReactionVariants];
-            int count = 0;
-            for (int variant = 1; variant <= MaxHitReactionVariants; variant++)
-            {
-                FixedString64Bytes candidate = default;
-                candidate.Append("hit");
-                candidate.Append(variant);
-                if (!ActorAnimationGroupLookupUtility.TryResolveGroup(
-                        ref catalog,
-                        presentation,
-                        ActorAnimationGroupHash.Hash(candidate),
-                        out _))
-                {
-                    continue;
-                }
-
-                variants[count++] = variant;
-            }
-
-            if (count == 0)
-            {
-                group = default;
-                groupName = default;
-                return false;
-            }
-
-            int selected = variants[(int)(NextRandom(ref randomState) % (uint)count)];
-            groupName = default;
-            groupName.Append("hit");
-            groupName.Append(selected);
-            return ActorAnimationGroupLookupUtility.TryResolveGroup(
-                ref catalog,
-                presentation,
-                ActorAnimationGroupHash.Hash(groupName),
-                out group);
-        }
-
         static uint NextRandom(ref uint state)
         {
             state = state == 0u ? 1u : state;
             state = (1664525u * state) + 1013904223u;
             return state;
-        }
-
-        static void RemoveExistingHitReaction(DynamicBuffer<ActorAnimationOverlayState> overlays)
-        {
-            for (int i = overlays.Length - 1; i >= 0; i--)
-            {
-                if (overlays[i].Priority == HitReactionOverlayPriority)
-                    overlays.RemoveAt(i);
-            }
         }
 
         void EmitArmorImpactAudio(
