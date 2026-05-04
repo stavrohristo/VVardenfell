@@ -73,8 +73,22 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 vitals.CurrentHealth -= healthDelta;
                 EntityManager.SetComponentData(entities[i], vitals);
+                if (vitals.CurrentHealth <= 0f)
+                {
+                    var aftermath = ActorHitAftermathStateUtility.Require(
+                        EntityManager,
+                        entities[i],
+                        $"[VVardenfell][MWScript] HurtStandingActor affected actor ref={PlacedRefId(entities[i])}");
+                    ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                    EntityManager.SetComponentData(entities[i], aftermath);
+                }
             }
         }
+
+        uint PlacedRefId(Entity entity)
+            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+                : 0u;
 
         bool IsGuiMode()
         {

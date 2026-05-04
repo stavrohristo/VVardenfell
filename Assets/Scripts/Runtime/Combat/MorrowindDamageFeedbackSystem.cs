@@ -12,8 +12,9 @@ using VVardenfell.Runtime.Vfx;
 
 namespace VVardenfell.Runtime.Combat
 {
-    [UpdateInGroup(typeof(MorrowindDamageSystemGroup), OrderLast = true)]
-    [UpdateAfter(typeof(MorrowindDamageApplySystem))]
+    [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
+    [UpdateAfter(typeof(MorrowindHitAftermathStateSystem))]
+    [UpdateBefore(typeof(MorrowindHitAftermathAnimationSystem))]
     public partial class MorrowindDamageFeedbackSystem : SystemBase
     {
         protected override void OnCreate()
@@ -38,6 +39,7 @@ namespace VVardenfell.Runtime.Combat
                      SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>()
                          .WithEntityAccess())
             {
+                EmitBlockImpactAudio(contentDb, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
                 EmitArmorImpactAudio(contentDb, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
                 EmitAppliedDamageAudio(contentDb, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
                 EmitBloodVfxRequest(contentDb, ref randomState, ref ecb, damage.ValueRO);
@@ -56,6 +58,45 @@ namespace VVardenfell.Runtime.Combat
             state = state == 0u ? 1u : state;
             state = (1664525u * state) + 1013904223u;
             return state;
+        }
+
+        void EmitBlockImpactAudio(
+            RuntimeContentDatabase contentDb,
+            ref InteractionAudioRequestState audioState,
+            bool hasAudioState,
+            ref EntityCommandBuffer ecb,
+            in MorrowindDamageAppliedEvent damage)
+        {
+            var impact = damage.BlockImpact;
+            if (impact.Blocked == 0)
+                return;
+
+            string soundId = impact.ShieldSkill switch
+            {
+                ActorSkillKind.LightArmor => "Light Armor Hit",
+                ActorSkillKind.MediumArmor => "Medium Armor Hit",
+                ActorSkillKind.HeavyArmor => "Heavy Armor Hit",
+                _ => throw new InvalidOperationException($"[VVardenfell][Damage] Block impact has invalid shield skill {impact.ShieldSkill}."),
+            };
+
+            if (impact.Target == Entity.Null || !EntityManager.Exists(impact.Target))
+                throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target entity is missing.");
+            if (impact.Target != damage.Target)
+                throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target does not match applied damage target.");
+            if (!EntityManager.HasComponent<LocalTransform>(impact.Target))
+                throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target has no LocalTransform.");
+
+            MorrowindCombatAudioUtility.EmitRequiredSound(
+                contentDb,
+                soundId,
+                impact.Target,
+                PlacedRefId(impact.Target),
+                EntityManager.GetComponentData<LocalTransform>(impact.Target).Position,
+                1f,
+                1f,
+                ref audioState,
+                hasAudioState,
+                ref ecb);
         }
 
         void EmitArmorImpactAudio(

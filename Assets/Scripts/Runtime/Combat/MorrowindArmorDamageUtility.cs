@@ -86,6 +86,55 @@ namespace VVardenfell.Runtime.Combat
             throw new InvalidOperationException($"[VVardenfell][Damage] Armor condition target entity={impact.Target.Index}:{impact.Target.Version} has no inventory buffer.");
         }
 
+        public static void ApplyShieldBlockConditionDamage(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity target,
+            in ContentReference shieldContent,
+            int conditionDamage)
+        {
+            RequireContentDb(contentDb);
+            if (conditionDamage <= 0)
+                return;
+            if (target == Entity.Null || !entityManager.Exists(target))
+                throw new InvalidOperationException("[VVardenfell][Damage] Shield block condition target entity is missing.");
+
+            if (!TryGetEquippedSlot(entityManager, target, ItemEquipmentSlot.Shield, shieldContent, out var equipped))
+                throw new InvalidOperationException($"[VVardenfell][Damage] Block shield is no longer equipped on target entity={target.Index}:{target.Version}.");
+            if (equipped.InventoryIndex < 0)
+                throw new InvalidOperationException($"[VVardenfell][Damage] Block shield has invalid inventory index {equipped.InventoryIndex}.");
+
+            if (entityManager.HasBuffer<PlayerInventoryItem>(target))
+            {
+                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(target);
+                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
+                    throw new InvalidOperationException($"[VVardenfell][Damage] Player block shield inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
+
+                var item = inventory[equipped.InventoryIndex];
+                ApplyConditionDamage(contentDb, ref item, shieldContent, conditionDamage);
+                inventory[equipped.InventoryIndex] = item;
+                if (item.Condition <= 0)
+                    RemoveEquippedSlot(entityManager, target, ItemEquipmentSlot.Shield, shieldContent);
+                return;
+            }
+
+            if (entityManager.HasBuffer<ActorInventoryItem>(target))
+            {
+                var inventory = entityManager.GetBuffer<ActorInventoryItem>(target);
+                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
+                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor block shield inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
+
+                var item = inventory[equipped.InventoryIndex];
+                ApplyConditionDamage(contentDb, ref item, shieldContent, conditionDamage);
+                inventory[equipped.InventoryIndex] = item;
+                if (item.Condition <= 0)
+                    RemoveEquippedSlot(entityManager, target, ItemEquipmentSlot.Shield, shieldContent);
+                return;
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][Damage] Shield block target entity={target.Index}:{target.Version} has no inventory buffer.");
+        }
+
         static float ComputeArmorRating(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
         {
             if (actor == Entity.Null || !entityManager.Exists(actor))
@@ -154,7 +203,7 @@ namespace VVardenfell.Runtime.Combat
             return armor.Armor * skill / contentDb.RequireGameSettingInt("iBaseArmorSkill") * conditionMult;
         }
 
-        static bool TryGetEquippedArmor(
+        public static bool TryGetEquippedArmor(
             RuntimeContentDatabase contentDb,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             ItemEquipmentSlot slot,

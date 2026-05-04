@@ -213,6 +213,7 @@ namespace VVardenfell.Runtime.Components
             });
             ecb.AddComponent(logicalEntity, new ActorScriptEventState());
             ecb.AddComponent(logicalEntity, new ActorHitAftermathState());
+            ecb.AddComponent(logicalEntity, new ActorBlockState());
             ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
@@ -221,6 +222,7 @@ namespace VVardenfell.Runtime.Components
                 statSeed.Vitals,
                 statSeed.EffectModifiers,
                 inventoryWeight: 0f);
+            ecb.AddComponent(logicalEntity, derivedMovement);
             var knownSpells = ecb.AddBuffer<ActorKnownSpell>(logicalEntity);
             var actorSpells = MorrowindActorMovementStats.BuildKnownSpellListFromActor(contentDb, actorHandle);
             for (int i = 0; i < actorSpells.Length; i++)

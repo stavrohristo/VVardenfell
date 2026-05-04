@@ -56,6 +56,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RectTransform _fatigueFillParent;
         readonly RectTransform _enemyHealthFillParent;
         readonly RectTransform _enemyHealthRow;
+        readonly CanvasGroup _enemyHealthCanvasGroup;
         readonly Image _weaponStatusFill;
         readonly Image _spellStatusFill;
         readonly RectTransform _weaponStatusFillParent;
@@ -119,6 +120,9 @@ namespace VVardenfell.Runtime.UI.Shell
             _magickaFillParent = (RectTransform)_magickaFill.transform.parent;
             _fatigueFillParent = (RectTransform)_fatigueFill.transform.parent;
             _enemyHealthFillParent = (RectTransform)_enemyHealthFill.transform.parent;
+            _enemyHealthCanvasGroup = _enemyHealthRow.gameObject.AddComponent<CanvasGroup>();
+            _enemyHealthCanvasGroup.interactable = false;
+            _enemyHealthCanvasGroup.blocksRaycasts = false;
             _weaponStatusFillParent = (RectTransform)_weaponStatusFill.transform.parent;
             _spellStatusFillParent = (RectTransform)_spellStatusFill.transform.parent;
             _focusAnchorGo = _focusText.transform.parent.gameObject;
@@ -180,7 +184,10 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiPopupUtility.SetTooltip(_spellSlotRoot.gameObject, model.SelectedSpellTooltip);
             SetActiveIfChanged(_enemyHealthRowGo, model.ShowEnemyHealth);
             if (model.ShowEnemyHealth)
+            {
+                _enemyHealthCanvasGroup.alpha = Mathf.Clamp01(model.EnemyHealthAlpha);
                 SetBarFill(_enemyHealthFill, _enemyHealthFillParent, model.EnemyHealthFillNormalized);
+            }
             SetActiveIfChanged(_sneakSlotRowGo, model.ShowSneakIndicator);
             SyncActiveEffects(model.ActiveEffects);
             _miniMapGrid.Sync(model.LocalMap);

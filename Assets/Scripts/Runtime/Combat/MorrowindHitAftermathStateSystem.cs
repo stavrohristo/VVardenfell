@@ -93,21 +93,19 @@ namespace VVardenfell.Runtime.Combat
                 }
             }
 
+            bool markedDead = false;
             if (vitals.CurrentHealth <= 0f && aftermath.Dead == 0)
             {
-                aftermath.Dead = 1;
-                aftermath.HitRecovery = 0;
-                aftermath.KnockedDownOneFrame = 0;
-                aftermath.KnockedDownOverOneFrame = 0;
-                aftermath.DeathAnimationFinished = 0;
-                aftermath.DeathAnimationGroup = default;
+                ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                markedDead = true;
                 changed = true;
                 StopCombatIfPresent(target);
             }
 
             if (changed)
             {
-                aftermath.Sequence = NextSequence(aftermath.Sequence);
+                if (!markedDead)
+                    ActorHitAftermathStateUtility.BumpSequence(ref aftermath);
                 EntityManager.SetComponentData(target, aftermath);
             }
         }
@@ -139,10 +137,6 @@ namespace VVardenfell.Runtime.Combat
 
             MorrowindCombatTargetUtility.TryStopCombat(EntityManager, actor);
         }
-
-        static uint NextSequence(uint sequence)
-            => sequence == uint.MaxValue ? 1u : sequence + 1u;
-
         uint PlacedRefId(Entity entity)
             => EntityManager.HasComponent<PlacedRefIdentity>(entity)
                 ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value

@@ -157,6 +157,8 @@ namespace VVardenfell.Runtime.Animation
         public ActorWeaponAnimationPhase Phase;
         public ActorWeaponAttackType AttackType;
         public float AttackStrength;
+        public float AttackMinTime;
+        public float AttackMaxTime;
         public byte ReadyWeaponTogglePressed;
         public byte AttackHeld;
         public byte AttackPressed;

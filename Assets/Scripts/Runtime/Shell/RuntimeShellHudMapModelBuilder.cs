@@ -5,6 +5,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.Shell
@@ -20,7 +21,8 @@ namespace VVardenfell.Runtime.Shell
             in InventoryWindowState inventoryState,
             DynamicBuffer<PlayerInventoryItem> inventory,
             in SpellWindowState spellState,
-            in RuntimeSubtitleState subtitle)
+            in RuntimeSubtitleState subtitle,
+            in RuntimeEnemyHealthBarState enemyHealth)
         {
             string itemLabel = ResolveSelectedInventoryLabel(contentDb, inventoryState, inventory);
             string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState, out string spellIconPath, out string spellTooltip);
@@ -47,8 +49,7 @@ namespace VVardenfell.Runtime.Shell
             _hudModel.SelectedSpellIconPath = spellIconPath;
             _hudModel.SelectedSpellTooltip = spellTooltip;
             _hudModel.ActiveEffects = BuildHudActiveEffectIcons(contentDb, playerStats);
-            _hudModel.ShowEnemyHealth = false;
-            _hudModel.EnemyHealthFillNormalized = 0f;
+            ResolveEnemyHealthBar(showHud, enemyHealth, out _hudModel.ShowEnemyHealth, out _hudModel.EnemyHealthFillNormalized, out _hudModel.EnemyHealthAlpha);
             _hudModel.ShowSneakIndicator = false;
             _hudModel.LocalMap = showHud ? LocalMapPresentationCache.FillViewModel(
                 _hudLocalMapModel,
@@ -58,6 +59,41 @@ namespace VVardenfell.Runtime.Shell
                 showShroud: true,
                 showMarkers: false) : null;
             return _hudModel;
+        }
+
+        void ResolveEnemyHealthBar(
+            bool showHud,
+            in RuntimeEnemyHealthBarState enemyHealth,
+            out bool show,
+            out float fill,
+            out float alpha)
+        {
+            show = false;
+            fill = 0f;
+            alpha = 1f;
+            if (!showHud
+                || enemyHealth.Visible == 0
+                || enemyHealth.SecondsRemaining <= 0f
+                || enemyHealth.Target == Entity.Null
+                || !EntityManager.Exists(enemyHealth.Target))
+            {
+                return;
+            }
+
+            if (EntityManager.HasComponent<PlayerTag>(enemyHealth.Target))
+                throw new InvalidOperationException("[VVardenfell][HUD] Enemy health target is the player.");
+            if (!EntityManager.HasComponent<ActorVitalSet>(enemyHealth.Target))
+                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={enemyHealth.TargetPlacedRefId} has no ActorVitalSet.");
+
+            var vitals = EntityManager.GetComponentData<ActorVitalSet>(enemyHealth.Target);
+            if (vitals.ModifiedHealthBase <= 0f)
+                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={enemyHealth.TargetPlacedRefId} has non-positive modified health base {vitals.ModifiedHealthBase}.");
+
+            show = true;
+            fill = vitals.CurrentHealth < 1f ? 0f : Mathf.Clamp01(vitals.CurrentHealth / vitals.ModifiedHealthBase);
+            alpha = enemyHealth.FadeSeconds > 0f
+                ? Mathf.Clamp01(enemyHealth.SecondsRemaining / enemyHealth.FadeSeconds)
+                : 1f;
         }
 
         static string ResolveSelectedInventoryLabel(

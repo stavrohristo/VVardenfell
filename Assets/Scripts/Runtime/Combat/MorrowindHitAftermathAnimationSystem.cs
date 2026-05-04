@@ -9,13 +9,12 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
-    [UpdateAfter(typeof(MorrowindHitAftermathStateSystem))]
-    [UpdateBefore(typeof(MorrowindDamageFeedbackSystem))]
+    [UpdateAfter(typeof(MorrowindDamageFeedbackSystem))]
     public partial class MorrowindHitAftermathAnimationSystem : SystemBase
     {
-        const int HitRecoveryOverlayPriority = 50;
-        const int KnockdownOverlayPriority = 90;
-        const int DeathOverlayPriority = 120;
+        public const int HitRecoveryOverlayPriority = 50;
+        public const int KnockdownOverlayPriority = 90;
+        public const int DeathOverlayPriority = 120;
         const int MaxHitReactionVariants = 16;
         const int MaxDeathVariants = 5;
         const uint InfiniteLoops = uint.MaxValue;
@@ -101,15 +100,16 @@ namespace VVardenfell.Runtime.Combat
             if (aftermath.ValueRO.KnockedDown != 0)
             {
                 int overlayIndex = FindAftermathOverlay(overlays, KnockdownOverlayPriority);
-                if (aftermath.ValueRO.AnimatedSequence == aftermath.ValueRO.Sequence
-                    && overlayIndex >= 0
-                    && IsPlaybackComplete(overlays[overlayIndex].Playback))
+                if (aftermath.ValueRO.AnimatedSequence == aftermath.ValueRO.Sequence)
                 {
-                    RemoveAftermathOverlays(overlays);
-                    aftermath.ValueRW.KnockedDown = 0;
-                    aftermath.ValueRW.KnockedDownOneFrame = 0;
-                    aftermath.ValueRW.KnockedDownOverOneFrame = 0;
-                    return;
+                    if (overlayIndex < 0 || IsPlaybackComplete(overlays[overlayIndex].Playback))
+                    {
+                        RemoveAftermathOverlays(overlays);
+                        aftermath.ValueRW.KnockedDown = 0;
+                        aftermath.ValueRW.KnockedDownOneFrame = 0;
+                        aftermath.ValueRW.KnockedDownOverOneFrame = 0;
+                        return;
+                    }
                 }
 
                 FixedString64Bytes groupName = default;
@@ -130,12 +130,15 @@ namespace VVardenfell.Runtime.Combat
             if (aftermath.ValueRO.HitRecovery != 0)
             {
                 int overlayIndex = FindAftermathOverlay(overlays, HitRecoveryOverlayPriority);
-                if (aftermath.ValueRO.AnimatedSequence == aftermath.ValueRO.Sequence
-                    && overlayIndex >= 0
-                    && IsPlaybackComplete(overlays[overlayIndex].Playback))
+                if (aftermath.ValueRO.AnimatedSequence == aftermath.ValueRO.Sequence)
                 {
-                    RemoveAftermathOverlays(overlays);
-                    aftermath.ValueRW.HitRecovery = 0;
+                    if (overlayIndex < 0 || IsPlaybackComplete(overlays[overlayIndex].Playback))
+                    {
+                        RemoveAftermathOverlays(overlays);
+                        aftermath.ValueRW.HitRecovery = 0;
+                        return;
+                    }
+
                     return;
                 }
 
@@ -342,7 +345,7 @@ namespace VVardenfell.Runtime.Combat
             return -1;
         }
 
-        static void RemoveAftermathOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays)
+        public static void RemoveAftermathOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays)
         {
             for (int i = overlays.Length - 1; i >= 0; i--)
             {

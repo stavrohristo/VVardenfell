@@ -50,5 +50,34 @@ namespace VVardenfell.Runtime.Animation
 
             return foundStart && foundStop && stop > start;
         }
+
+        public static bool TryResolveMarker(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorAnimationGroupBlob group,
+            FixedString64Bytes value,
+            out float time)
+        {
+            time = 0f;
+            if ((uint)group.ClipIndex >= (uint)catalog.Clips.Length)
+                return false;
+
+            var clip = catalog.Clips[group.ClipIndex];
+            if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
+                return false;
+
+            ulong valueHash = ActorAnimationGroupHash.Hash(value);
+            int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
+            for (int i = clip.FirstTextMarkerIndex; i < end; i++)
+            {
+                var marker = catalog.TextMarkers[i];
+                if (marker.GroupHash == group.GroupHash && marker.ValueHash == valueHash)
+                {
+                    time = marker.Time;
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }

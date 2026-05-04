@@ -12,8 +12,6 @@ namespace VVardenfell.Runtime.Animation
     [UpdateBefore(typeof(ActorRigidEquipmentVisibilitySystem))]
     public partial class ActorRigidEquipmentRenderOwnerSystem : SystemBase
     {
-        static int s_RigidEquipmentLogCount;
-
         protected override void OnCreate()
         {
             RequireForUpdate<ActorRigidEquipmentAttachment>();
@@ -22,7 +20,6 @@ namespace VVardenfell.Runtime.Animation
         protected override void OnUpdate()
         {
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
-            int attachmentCount = 0;
             int renderLeafCount = 0;
             int ownedLeafCount = 0;
             int addedOwnerCount = 0;
@@ -30,7 +27,7 @@ namespace VVardenfell.Runtime.Animation
                      SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
                          .WithEntityAccess())
             {
-                attachmentCount++;
+                Debug.Log($"Attach to {entity}");
                 Entity renderOwner = ResolveRenderOwner(attachment.ValueRO);
                 AssignOwner(ref ecb, entity, renderOwner, ref renderLeafCount, ref ownedLeafCount, ref addedOwnerCount);
                 if (!EntityManager.HasBuffer<LinkedEntityGroup>(entity))
@@ -47,13 +44,6 @@ namespace VVardenfell.Runtime.Animation
 
             ecb.Playback(EntityManager);
             ecb.Dispose();
-            if (attachmentCount > 0 && s_RigidEquipmentLogCount < 16)
-            {
-                s_RigidEquipmentLogCount++;
-                Debug.Log(
-                    $"[VVardenfell][EquipmentDiag] rigidEquipment attachments={attachmentCount} " +
-                    $"renderLeaves={renderLeafCount} ownedLeaves={ownedLeafCount} addedOwners={addedOwnerCount}");
-            }
         }
 
         Entity ResolveRenderOwner(in ActorRigidEquipmentAttachment attachment)

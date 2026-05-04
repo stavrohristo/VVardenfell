@@ -119,6 +119,8 @@ namespace VVardenfell.Runtime.Animation
             state.Drawn = draw ? (byte)1 : (byte)0;
             state.ReleaseQueued = 0;
             state.AttackStrength = 0f;
+            state.AttackMinTime = 0f;
+            state.AttackMaxTime = 0f;
 
             FixedString64Bytes start = draw ? Fixed64("equip start") : Fixed64("unequip start");
             FixedString64Bytes stop = draw ? Fixed64("equip stop") : Fixed64("unequip stop");
@@ -157,7 +159,21 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
+            if (!TryResolveWeaponMarker(
+                    ref catalog,
+                    presentation,
+                    state.WeaponType,
+                    AttackMarker(state.AttackType, AttackMarkerKind.MinAttack),
+                    out float minAttackTime)
+                || minAttackTime >= stopTime)
+            {
+                throw new System.InvalidOperationException(
+                    $"[VVardenfell][Combat] Weapon animation type={state.WeaponType} attack={state.AttackType} has no valid min-to-max attack marker window.");
+            }
+
             state.AttackStrength = 0f;
+            state.AttackMinTime = minAttackTime;
+            state.AttackMaxTime = stopTime;
             state.ReleaseQueued = state.AttackReleased;
             state.Phase = ActorWeaponAnimationPhase.AttackWindUp;
             StartUpperBodyOverlay(overlays, group, startTime, stopTime, holdAtStop: true);
@@ -179,12 +195,12 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
-            float span = overlay.Playback.StopTime - overlay.Playback.StartTime;
+            float span = state.AttackMaxTime - state.AttackMinTime;
             state.AttackStrength = span > 0.0001f
-                ? math.saturate((overlay.Playback.Time - overlay.Playback.StartTime) / span)
+                ? math.saturate((overlay.Playback.Time - state.AttackMinTime) / span)
                 : 1f;
 
-            if (state.ReleaseQueued == 0 || overlay.Playback.Time < overlay.Playback.StopTime)
+            if (state.ReleaseQueued == 0 || overlay.Playback.Time < state.AttackMinTime)
                 return;
 
             if (TryResolveWeaponWindow(
@@ -199,8 +215,16 @@ namespace VVardenfell.Runtime.Animation
             {
                 QueueMeleeSwing(ref state);
                 state.Phase = ActorWeaponAnimationPhase.AttackRelease;
+                float releaseStartTime = ResolveReleaseStartTime(
+                    ref catalog,
+                    presentation,
+                    state,
+                    startTime,
+                    stopTime);
                 overlay = overlays[overlayIndex];
                 ActorAnimationPlaybackUtility.StartWindow(ref overlay.Playback, group, startTime, stopTime, holdAtStop: false);
+                overlay.Playback.PreviousTime = releaseStartTime;
+                overlay.Playback.Time = releaseStartTime;
                 overlay.Weight = 1f;
                 overlay.Priority = CombatOverlayPriority;
                 overlay.Mask = ActorAnimationBlendMask.UpperBody;
@@ -266,6 +290,8 @@ namespace VVardenfell.Runtime.Animation
         {
             state.ReleaseQueued = 0;
             state.AttackStrength = 0f;
+            state.AttackMinTime = 0f;
+            state.AttackMaxTime = 0f;
             state.Phase = state.Drawn != 0
                 ? ActorWeaponAnimationPhase.Equipped
                 : ActorWeaponAnimationPhase.Hidden;
@@ -362,6 +388,64 @@ namespace VVardenfell.Runtime.Animation
             return ActorAnimationMarkerWindowUtility.TryResolveWindow(ref catalog, group, startValue, stopValue, out start, out stop);
         }
 
+        static bool TryResolveWeaponMarker(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            int weaponType,
+            FixedString64Bytes value,
+            out float time)
+        {
+            time = 0f;
+            if (!ActorWeaponAnimationUtility.TryResolveGroupHashes(weaponType, out ulong primaryHash, out ulong fallbackHash))
+                return false;
+
+            if (TryResolveGroupMarker(ref catalog, presentation, primaryHash, value, out time))
+                return true;
+
+            return fallbackHash != 0UL
+                   && TryResolveGroupMarker(ref catalog, presentation, fallbackHash, value, out time);
+        }
+
+        static bool TryResolveGroupMarker(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ulong groupHash,
+            FixedString64Bytes value,
+            out float time)
+        {
+            if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var group))
+            {
+                time = 0f;
+                return false;
+            }
+
+            return ActorAnimationMarkerWindowUtility.TryResolveMarker(ref catalog, group, value, out time);
+        }
+
+        static float ResolveReleaseStartTime(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            in ActorWeaponAnimationState state,
+            float releaseStartTime,
+            float hitTime)
+        {
+            float strength = math.saturate(state.AttackStrength);
+            float startPoint = 1f - strength;
+            if (TryResolveWeaponMarker(
+                    ref catalog,
+                    presentation,
+                    state.WeaponType,
+                    AttackMarker(state.AttackType, AttackMarkerKind.MinHit),
+                    out float minHitTime)
+                && releaseStartTime <= minHitTime
+                && minHitTime < hitTime)
+            {
+                startPoint *= (minHitTime - releaseStartTime) / (hitTime - releaseStartTime);
+            }
+
+            return math.lerp(releaseStartTime, hitTime, math.saturate(startPoint));
+        }
+
         static void StartUpperBodyOverlay(
             DynamicBuffer<ActorAnimationOverlayState> overlays,
             ActorAnimationGroupBlob group,
@@ -428,7 +512,9 @@ namespace VVardenfell.Runtime.Animation
         enum AttackMarkerKind : byte
         {
             Start,
+            MinAttack,
             MaxAttack,
+            MinHit,
             Hit,
         }
 
@@ -453,19 +539,25 @@ namespace VVardenfell.Runtime.Animation
                 ActorWeaponAttackType.Slash => kind switch
                 {
                     AttackMarkerKind.Start => Fixed64("slash start"),
+                    AttackMarkerKind.MinAttack => Fixed64("slash min attack"),
                     AttackMarkerKind.MaxAttack => Fixed64("slash max attack"),
+                    AttackMarkerKind.MinHit => Fixed64("slash min hit"),
                     _ => Fixed64("slash hit"),
                 },
                 ActorWeaponAttackType.Thrust => kind switch
                 {
                     AttackMarkerKind.Start => Fixed64("thrust start"),
+                    AttackMarkerKind.MinAttack => Fixed64("thrust min attack"),
                     AttackMarkerKind.MaxAttack => Fixed64("thrust max attack"),
+                    AttackMarkerKind.MinHit => Fixed64("thrust min hit"),
                     _ => Fixed64("thrust hit"),
                 },
                 _ => kind switch
                 {
                     AttackMarkerKind.Start => Fixed64("chop start"),
+                    AttackMarkerKind.MinAttack => Fixed64("chop min attack"),
                     AttackMarkerKind.MaxAttack => Fixed64("chop max attack"),
+                    AttackMarkerKind.MinHit => Fixed64("chop min hit"),
                     _ => Fixed64("chop hit"),
                 },
             };

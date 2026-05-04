@@ -10,9 +10,11 @@ namespace VVardenfell.Runtime.Combat
         public Entity Target;
         public ContentReference SourceContent;
         public float Amount;
+        public float AttackStrength;
         public MorrowindDamageTargetVital TargetVital;
         public MorrowindDamageSourceKind SourceKind;
         public byte FullDamage;
+        public MorrowindBlockImpact BlockImpact;
         public MorrowindArmorImpact ArmorImpact;
         public float3 HitPosition;
         public byte HasHitPosition;

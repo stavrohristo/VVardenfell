@@ -54,6 +54,7 @@ namespace VVardenfell.Runtime.UI.Shell
         // pipeline decides to surface it.
         public bool ShowEnemyHealth;
         public float EnemyHealthFillNormalized;
+        public float EnemyHealthAlpha = 1f;
         // Vanilla MW shows the sneak eye icon in the bottom-left quick-slot row only
         // while the player is sneaking (openmw_hud.layout "SneakBox"). Hidden otherwise.
         public bool ShowSneakIndicator;

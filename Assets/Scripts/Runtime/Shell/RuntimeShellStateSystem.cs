@@ -25,6 +25,8 @@ namespace VVardenfell.Runtime.Shell
             AdvanceScreenFade(ref state, SystemAPI.Time.DeltaTime);
             if (SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
                 AdvanceSubtitle(ref subtitle.ValueRW, SystemAPI.Time.DeltaTime);
+            if (SystemAPI.TryGetSingletonRW<RuntimeEnemyHealthBarState>(out var enemyHealth))
+                AdvanceEnemyHealthBar(ref enemyHealth.ValueRW, SystemAPI.Time.DeltaTime);
 
             if (state.PauseMenuOpen == 0 && state.SaveLoadBrowserOpen == 0 && state.ModalOpen != 0)
                 RuntimeShellStateUtility.ClearModal(ref state);
@@ -86,6 +88,21 @@ namespace VVardenfell.Runtime.Shell
 
             state.Visible = 0;
             state.Text = default;
+        }
+
+        static void AdvanceEnemyHealthBar(ref RuntimeEnemyHealthBarState state, float deltaTime)
+        {
+            if (state.Visible == 0)
+                return;
+
+            state.SecondsRemaining = math.max(0f, state.SecondsRemaining - math.max(0f, deltaTime));
+            if (state.SecondsRemaining > 0f)
+                return;
+
+            state.Visible = 0;
+            state.Target = Entity.Null;
+            state.TargetPlacedRefId = 0u;
+            state.LastKnownHealthFill = 0f;
         }
     }
 }

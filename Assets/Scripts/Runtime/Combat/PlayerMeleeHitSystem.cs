@@ -339,6 +339,7 @@ namespace VVardenfell.Runtime.Combat
             if (TryGetInteractionRayHitPosition(logicalRefLookup, target, out hitPosition))
             {
                 hasHitPosition = 1;
+                confirmationEnd = hitPosition;
             }
             else
             {
@@ -423,9 +424,9 @@ namespace VVardenfell.Runtime.Combat
                 nearestDistance = distanceToBounds;
                 target = entity;
                 targetPlacedRefId = placedRef.ValueRO.Value;
-                confirmationEnd = targetCenter;
                 hitPosition = ComputeActorBoundsHitPosition(playerPosition, targetBase, targetRadius, targetHeight);
                 hasHitPosition = 1;
+                confirmationEnd = hitPosition;
             }
 
             return target != Entity.Null;

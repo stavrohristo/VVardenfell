@@ -25,6 +25,7 @@ namespace VVardenfell.Runtime.Shell
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellActionRequest());
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeSubtitleState());
+            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeEnemyHealthBarState());
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserState
             {
                 DraftSaveName = new FixedString64Bytes("New Save"),

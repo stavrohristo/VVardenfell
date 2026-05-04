@@ -176,6 +176,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, new ActorScriptEventState());
             em.AddComponentData(player, new ActorHitAftermathState());
+            em.AddComponentData(player, new ActorBlockState());
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, init.PlayerCrime);
             PopulatePlayerFactions(em, initEntity, player);

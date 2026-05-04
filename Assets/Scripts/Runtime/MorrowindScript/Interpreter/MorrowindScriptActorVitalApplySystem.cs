@@ -1,5 +1,7 @@
 using System;
 using Unity.Entities;
+using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -51,6 +53,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case 0:
                 case (byte)MorrowindScriptActorVitalRequestKind.Health:
                     vitals.CurrentHealth = request.IsMod != 0 ? vitals.CurrentHealth + request.Value : request.Value;
+                    if (vitals.CurrentHealth <= 0f)
+                    {
+                        var aftermath = ActorHitAftermathStateUtility.Require(
+                            EntityManager,
+                            target,
+                            $"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId}");
+                        ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                        EntityManager.SetComponentData(target, aftermath);
+                    }
                     break;
                 case (byte)MorrowindScriptActorVitalRequestKind.Magicka:
                     vitals.CurrentMagicka = request.IsMod != 0 ? vitals.CurrentMagicka + request.Value : request.Value;
@@ -61,6 +72,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case (byte)MorrowindScriptActorVitalRequestKind.Resurrect:
                     if (vitals.CurrentHealth <= 0f)
                         vitals.CurrentHealth = vitals.ModifiedHealthBase > 0f ? vitals.ModifiedHealthBase : 1f;
+                    if (EntityManager.HasComponent<ActorHitAftermathState>(target))
+                    {
+                        var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+                        ActorHitAftermathStateUtility.Resurrect(ref aftermath);
+                        EntityManager.SetComponentData(target, aftermath);
+                    }
+                    if (EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
+                        MorrowindHitAftermathAnimationSystem.RemoveAftermathOverlays(EntityManager.GetBuffer<ActorAnimationOverlayState>(target));
                     if (EntityManager.HasComponent<MorrowindActorDeathCounted>(target))
                         EntityManager.RemoveComponent<MorrowindActorDeathCounted>(target);
                     break;

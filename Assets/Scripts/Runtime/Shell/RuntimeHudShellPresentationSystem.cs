@@ -117,6 +117,9 @@ namespace VVardenfell.Runtime.Shell
             var saveLoadState = SystemAPI.GetSingleton<SaveLoadBrowserState>();
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
             var containerItems = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
+            var enemyHealth = SystemAPI.TryGetSingleton<RuntimeEnemyHealthBarState>(out var enemyHealthState)
+                ? enemyHealthState
+                : default;
             var playerStats = BuildPlayerPresentationStats();
             var location = BuildLocationPresentation(RuntimeContentDatabase.Active);
             bool suiteOpen = shell.InventoryOpen != 0 && shell.ContainerOpen == 0;
@@ -153,7 +156,8 @@ namespace VVardenfell.Runtime.Shell
                 inventoryState,
                 inventory,
                 spellState,
-                subtitle);
+                subtitle,
+                enemyHealth);
             StatsWindowViewModel statsModel = statsVisible
                 ? BuildStatsModel(RuntimeContentDatabase.Active, EntityManager, statsState, playerStats)
                 : null;
