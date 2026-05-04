@@ -104,6 +104,7 @@ namespace VVardenfell.Runtime.UI.Shell
         Image _dragIcon;
         Image _dragIconShadow;
         Image _screenFade;
+        Image _hitOverlay;
         RectTransform _movieRoot;
         RawImage _movieImage;
         VideoPlayer _moviePlayer;
@@ -282,6 +283,7 @@ namespace VVardenfell.Runtime.UI.Shell
             BuildDragIcon();
             _popupLayer = new RuntimeUiPopupLayer(_rootRect, _theme, _iconService);
             BuildScreenFade();
+            BuildHitOverlay();
             BuildMoviePlayer();
             gameObject.SetActive(false);
         }
@@ -304,6 +306,7 @@ namespace VVardenfell.Runtime.UI.Shell
             bool modalOpen,
             bool optionsOpen,
             float screenFadeAlpha,
+            float hitOverlayAlpha,
             string modalTitle,
             string modalBody,
             string[] modalButtons)
@@ -425,6 +428,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 ClearSelectionIfOwned();
 
             SyncScreenFade(screenFadeAlpha);
+            SyncHitOverlay(hitOverlayAlpha);
             SyncDragIconPosition();
         }
 
@@ -821,6 +825,30 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _screenFade.color = new Color(0f, 0f, 0f, alpha);
             _screenFade.rectTransform.SetAsLastSibling();
+        }
+
+        void BuildHitOverlay()
+        {
+            _hitOverlay = RuntimeUiFactory.CreateImage("HitOverlay", _rootRect, Color.clear);
+            RuntimeUiFactory.Stretch(_hitOverlay.rectTransform);
+            _hitOverlay.raycastTarget = false;
+            _hitOverlay.gameObject.SetActive(false);
+            _hitOverlay.rectTransform.SetAsLastSibling();
+        }
+
+        void SyncHitOverlay(float alpha)
+        {
+            if (_hitOverlay == null)
+                return;
+
+            alpha = Mathf.Clamp01(alpha);
+            bool active = alpha > 0.0001f;
+            SetActiveIfChanged(_hitOverlay.gameObject, active);
+            if (!active)
+                return;
+
+            _hitOverlay.color = new Color(0f, 0f, 0f, alpha);
+            _hitOverlay.rectTransform.SetAsLastSibling();
         }
 
         void BuildMoviePlayer()

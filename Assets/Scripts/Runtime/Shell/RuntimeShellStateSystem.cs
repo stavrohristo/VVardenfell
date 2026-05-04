@@ -23,6 +23,7 @@ namespace VVardenfell.Runtime.Shell
                 state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
 
             AdvanceScreenFade(ref state, SystemAPI.Time.DeltaTime);
+            AdvanceHitOverlay(ref state, SystemAPI.Time.DeltaTime);
             if (SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
                 AdvanceSubtitle(ref subtitle.ValueRW, SystemAPI.Time.DeltaTime);
             if (SystemAPI.TryGetSingletonRW<RuntimeEnemyHealthBarState>(out var enemyHealth))
@@ -88,6 +89,19 @@ namespace VVardenfell.Runtime.Shell
 
             state.Visible = 0;
             state.Text = default;
+        }
+
+        static void AdvanceHitOverlay(ref RuntimeShellState state, float deltaTime)
+        {
+            if (state.HitOverlayDuration <= 0f || state.HitOverlayElapsed >= state.HitOverlayDuration)
+            {
+                state.HitOverlayAlpha = 0f;
+                return;
+            }
+
+            state.HitOverlayElapsed = math.min(state.HitOverlayDuration, state.HitOverlayElapsed + math.max(0f, deltaTime));
+            float t = math.saturate(state.HitOverlayElapsed / state.HitOverlayDuration);
+            state.HitOverlayAlpha = math.lerp(1f, 0f, t);
         }
 
         static void AdvanceEnemyHealthBar(ref RuntimeEnemyHealthBarState state, float deltaTime)

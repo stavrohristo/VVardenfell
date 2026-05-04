@@ -11,6 +11,11 @@ namespace VVardenfell.Runtime.Books
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class BookRuntimeBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<BookRuntimeBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<RuntimeShellState, PlayerInteractionFocus>(
@@ -25,7 +30,7 @@ namespace VVardenfell.Runtime.Books
 
             RuntimeBootstrapUtility.EnsureBuffer<BookReadHistoryEntry>(EntityManager, runtimeEntity);
 
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<BookRuntimeBootstrapRequest>(EntityManager);
         }
     }
 }

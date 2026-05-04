@@ -223,6 +223,7 @@ namespace VVardenfell.Runtime.Shell
                 shell.ModalOpen != 0,
                 shell.OptionsOpen != 0,
                 shell.ScreenFadeAlpha,
+                shell.HitOverlayAlpha,
                 ResolveModalTitle(shell.ModalOpen != 0, shell.ModalTitle),
                 ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody),
                 ResolveModalButtons(shell.ModalOpen != 0, shell));

@@ -4,6 +4,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldState;
@@ -61,6 +62,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     AddPlayerItem(inventory, request.Content, count);
                 else
                     RemovePlayerItem(inventory, request.Content, count);
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
                 return;
             }
 
@@ -88,6 +90,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
 
             RemovePlayerSoulGem(EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
         }
 
         Entity ResolveTarget(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)

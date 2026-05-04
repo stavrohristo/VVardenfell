@@ -204,7 +204,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            var playerInventoryItems = CopySingletonBuffer<PlayerInventoryItem>(state.EntityManager);
+            var playerInventoryItems = CopyPlayerInventoryItems(ref state);
             var actorKnownSpells = CopyEntityBuffer<ActorKnownSpell>(state.EntityManager, playerEntity);
             var playerFactions = CopyEntityBuffer<PlayerFactionMembership>(state.EntityManager, playerEntity);
             byte hasPlayerSkills = 0;
@@ -218,25 +218,27 @@ namespace VVardenfell.Runtime.MorrowindScript
             var playerCrime = PlayerCrimeState.Default;
             if (playerEntity != Entity.Null && state.EntityManager.HasComponent<PlayerCrimeState>(playerEntity))
                 playerCrime = state.EntityManager.GetComponentData<PlayerCrimeState>(playerEntity);
-            var externalActorLocals = CopyExternalActorLocals(state.EntityManager);
-            var actorAiStatuses = CopyActorAiStatusSnapshots(state.EntityManager);
-            var actorCombatTargets = CopyActorCombatTargetSnapshots(state.EntityManager);
-            var refTransforms = CopyRefTransformSnapshots(state.EntityManager);
-            var initialTransforms = CopyInitialTransformSnapshots(state.EntityManager);
-            var lockStates = CopyLockStateSnapshots(state.EntityManager);
-            var inventoryCounts = CopyInventoryCountSnapshots(state.EntityManager);
-            var actorDeaths = CopyActorDeathSnapshots(state.EntityManager);
-            var actorEvents = CopyActorEventSnapshots(state.EntityManager, playerEntity);
-            var actorVitals = CopyActorVitalSnapshots(state.EntityManager, playerEntity);
-            var actorAttributes = CopyActorAttributeSnapshots(state.EntityManager, playerEntity);
-            var actorActiveEffects = CopyActorActiveEffectSnapshots(RuntimeContentDatabase.Active, state.EntityManager, playerEntity);
-            var actorDiseases = CopyActorDiseaseSnapshots(RuntimeContentDatabase.Active, state.EntityManager, playerEntity);
-            var actorIdentities = CopyActorIdentitySnapshots(state.EntityManager, playerEntity);
-            var actorAiSettings = CopyActorAiSettingSnapshots(state.EntityManager, playerEntity);
-            var actorDispositions = CopyActorDispositionSnapshots(state.EntityManager, playerEntity);
-            var actorLineOfSight = CopyActorLineOfSightSnapshots(state.EntityManager, playerEntity);
-            var actorKnownSpellSnapshots = CopyActorKnownSpellSnapshots(state.EntityManager);
-            var runningPrograms = CopyRunningProgramSnapshots(state.EntityManager);
+            var externalActorLocals = CopyExternalActorLocals(ref state);
+            var actorAiStatuses = CopyActorAiStatusSnapshots(ref state);
+            var actorCombatTargets = CopyActorCombatTargetSnapshots(ref state, state.EntityManager);
+            var refTransforms = CopyRefTransformSnapshots(ref state);
+            var initialTransforms = CopyInitialTransformSnapshots(ref state);
+            var lockStates = CopyLockStateSnapshots(ref state);
+            var inventoryCounts = CopyInventoryCountSnapshots(ref state, state.EntityManager);
+            var actorDeaths = CopyActorDeathSnapshots(ref state, state.EntityManager);
+            var actorEvents = CopyActorEventSnapshots(ref state, state.EntityManager, playerEntity);
+            var actorVitals = CopyActorVitalSnapshots(ref state, state.EntityManager, playerEntity);
+            var actorAttributes = CopyActorAttributeSnapshots(ref state, state.EntityManager, playerEntity);
+            var actorActiveEffects = CopyActorActiveEffectSnapshots(ref state, RuntimeContentDatabase.Active, state.EntityManager, playerEntity);
+            var actorDiseases = CopyActorDiseaseSnapshots(ref state, RuntimeContentDatabase.Active, state.EntityManager, playerEntity);
+            var actorIdentities = CopyActorIdentitySnapshots(ref state, state.EntityManager, playerEntity);
+            var actorAiSettings = CopyActorAiSettingSnapshots(ref state, state.EntityManager, playerEntity);
+            var actorKnownSpellSnapshots = CopyActorKnownSpellSnapshots(ref state, state.EntityManager);
+            var runningPrograms = CopyRunningProgramSnapshots(ref state);
+            var actorDispositions = CopyActorDispositionSnapshots(ref state, state.EntityManager, playerEntity);
+            var actorLineOfSight = RunningProgramsNeedLineOfSight(catalog, runningPrograms)
+                ? CopyActorLineOfSightSnapshots(ref state, state.EntityManager, playerEntity)
+                : CreateEmptyTempJobArray<MorrowindScriptActorLineOfSightSnapshot>();
 
             byte hasMenuMode = 0;
             byte menuMode = 0;
@@ -480,18 +482,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                || shell.SaveLoadBrowserOpen != 0
                || shell.OptionsOpen != 0;
 
-        static NativeArray<T> CopySingletonBuffer<T>(EntityManager entityManager)
-            where T : unmanaged, IBufferElementData
+        NativeArray<PlayerInventoryItem> CopyPlayerInventoryItems(ref SystemState state)
         {
-            Entity owner = WorldStateEntityQueryUtility.GetSingletonBufferOwner<T>(entityManager);
-            if (owner == Entity.Null || !entityManager.HasBuffer<T>(owner))
-                return CreateEmptyTempJobArray<T>();
+            if (!SystemAPI.TryGetSingletonBuffer<PlayerInventoryItem>(out var buffer, true) || buffer.Length == 0)
+                return CreateEmptyTempJobArray<PlayerInventoryItem>();
 
-            var buffer = entityManager.GetBuffer<T>(owner, true);
-            if (buffer.Length == 0)
-                return CreateEmptyTempJobArray<T>();
-
-            var copy = new NativeArray<T>(buffer.Length, Allocator.TempJob);
+            var copy = new NativeArray<PlayerInventoryItem>(buffer.Length, Allocator.TempJob);
             for (int i = 0; i < buffer.Length; i++)
                 copy[i] = buffer[i];
             return copy;
@@ -513,85 +509,48 @@ namespace VVardenfell.Runtime.MorrowindScript
             return copy;
         }
 
-        static NativeArray<MorrowindScriptExternalActorLocalSnapshot> CopyExternalActorLocals(EntityManager entityManager)
+        NativeArray<MorrowindScriptExternalActorLocalSnapshot> CopyExternalActorLocals(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<ActorSpawnSource>(),
-                ComponentType.ReadOnly<MorrowindScriptLocalValue>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptExternalActorLocalSnapshot>();
-
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptExternalActorLocalSnapshot>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (locals, sourceRef) in SystemAPI.Query<DynamicBuffer<MorrowindScriptLocalValue>, RefRO<ActorSpawnSource>>())
             {
-                if (!sources[i].Definition.IsValid || !entityManager.HasBuffer<MorrowindScriptLocalValue>(entities[i]))
+                var source = sourceRef.ValueRO;
+                if (!source.Definition.IsValid)
                     continue;
 
-                var locals = entityManager.GetBuffer<MorrowindScriptLocalValue>(entities[i], true);
                 for (int local = 0; local < locals.Length; local++)
                 {
                     snapshots.Add(new MorrowindScriptExternalActorLocalSnapshot
                     {
-                        ActorHandleValue = sources[i].Definition.Value,
+                        ActorHandleValue = source.Definition.Value,
                         LocalIndex = local,
                         Value = locals[local],
                     });
                 }
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptExternalActorLocalSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptExternalActorLocalSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorAiStatusSnapshot> CopyActorAiStatusSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptActorAiStatusSnapshot> CopyActorAiStatusSnapshots(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorAiState>(),
-                ComponentType.ReadOnly<ActorAiPackageRuntime>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptActorAiStatusSnapshot>();
-
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var aiStates = query.ToComponentDataArray<ActorAiState>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptActorAiStatusSnapshot>(Allocator.Temp);
-            for (int i = 0; i < identities.Length; i++)
+            foreach (var (identityRef, aiStateRef, packages) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorAiState>, DynamicBuffer<ActorAiPackageRuntime>>())
             {
-                if (identities[i].Value == 0u)
+                var identity = identityRef.ValueRO;
+                if (identity.Value == 0u)
                     continue;
 
-                var packages = entityManager.GetBuffer<ActorAiPackageRuntime>(entities[i], true);
+                var aiState = aiStateRef.ValueRO;
                 snapshots.Add(new MorrowindScriptActorAiStatusSnapshot
                 {
-                    PlacedRefId = identities[i].Value,
-                    Status = aiStates[i].Status,
-                    CurrentPackageTypeId = ResolveCurrentAiPackageType(aiStates[i], packages),
+                    PlacedRefId = identity.Value,
+                    Status = aiState.Status,
+                    CurrentPackageTypeId = ResolveCurrentAiPackageType(aiState, packages),
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorAiStatusSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorAiStatusSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
         static int ResolveCurrentAiPackageType(in ActorAiState aiState, DynamicBuffer<ActorAiPackageRuntime> packages)
@@ -610,207 +569,128 @@ namespace VVardenfell.Runtime.MorrowindScript
             };
         }
 
-        static NativeArray<MorrowindScriptActorCombatTargetSnapshot> CopyActorCombatTargetSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptActorCombatTargetSnapshot> CopyActorCombatTargetSnapshots(ref SystemState state, EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<ActorCombatTargetState>(),
-                ComponentType.ReadOnly<ActorSpawnSource>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptActorCombatTargetSnapshot>();
-
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var states = query.ToComponentDataArray<ActorCombatTargetState>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptActorCombatTargetSnapshot>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (stateRef, entity) in SystemAPI.Query<RefRO<ActorCombatTargetState>>().WithAll<ActorSpawnSource>().WithEntityAccess())
             {
-                uint actorPlacedRefId = entityManager.HasComponent<PlacedRefIdentity>(entities[i])
-                    ? entityManager.GetComponentData<PlacedRefIdentity>(entities[i]).Value
+                uint actorPlacedRefId = entityManager.HasComponent<PlacedRefIdentity>(entity)
+                    ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                     : 0u;
 
-                var state = states[i];
-                uint targetPlacedRefId = state.TargetPlacedRefId;
+                var targetState = stateRef.ValueRO;
+                uint targetPlacedRefId = targetState.TargetPlacedRefId;
                 if (targetPlacedRefId == 0u
-                    && state.TargetEntity != Entity.Null
-                    && entityManager.Exists(state.TargetEntity)
-                    && entityManager.HasComponent<PlacedRefIdentity>(state.TargetEntity))
+                    && targetState.TargetEntity != Entity.Null
+                    && entityManager.Exists(targetState.TargetEntity)
+                    && entityManager.HasComponent<PlacedRefIdentity>(targetState.TargetEntity))
                 {
-                    targetPlacedRefId = entityManager.GetComponentData<PlacedRefIdentity>(state.TargetEntity).Value;
+                    targetPlacedRefId = entityManager.GetComponentData<PlacedRefIdentity>(targetState.TargetEntity).Value;
                 }
 
                 snapshots.Add(new MorrowindScriptActorCombatTargetSnapshot
                 {
-                    ActorEntity = entities[i],
+                    ActorEntity = entity,
                     ActorPlacedRefId = actorPlacedRefId,
-                    TargetEntity = state.TargetEntity,
+                    TargetEntity = targetState.TargetEntity,
                     TargetPlacedRefId = targetPlacedRefId,
-                    Active = state.Active,
+                    Active = targetState.Active,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorCombatTargetSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorCombatTargetSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptRefTransformSnapshot> CopyRefTransformSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptRefTransformSnapshot> CopyRefTransformSnapshots(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<LocalTransform>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptRefTransformSnapshot>();
-
-            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var transforms = query.ToComponentDataArray<LocalTransform>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptRefTransformSnapshot>(Allocator.Temp);
-            for (int i = 0; i < identities.Length; i++)
+            foreach (var (identityRef, transformRef) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<LocalTransform>>())
             {
-                if (identities[i].Value == 0u)
+                var identity = identityRef.ValueRO;
+                if (identity.Value == 0u)
                     continue;
 
+                var transform = transformRef.ValueRO;
                 snapshots.Add(new MorrowindScriptRefTransformSnapshot
                 {
-                    PlacedRefId = identities[i].Value,
-                    Position = transforms[i].Position,
-                    Rotation = transforms[i].Rotation,
+                    PlacedRefId = identity.Value,
+                    Position = transform.Position,
+                    Rotation = transform.Rotation,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptRefTransformSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptRefTransformSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptInitialTransformSnapshot> CopyInitialTransformSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptInitialTransformSnapshot> CopyInitialTransformSnapshots(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<PlacedRefInitialTransform>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptInitialTransformSnapshot>();
-
-            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var transforms = query.ToComponentDataArray<PlacedRefInitialTransform>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptInitialTransformSnapshot>(Allocator.Temp);
-            for (int i = 0; i < identities.Length; i++)
+            foreach (var (identityRef, transformRef) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<PlacedRefInitialTransform>>())
             {
-                if (identities[i].Value == 0u)
+                var identity = identityRef.ValueRO;
+                if (identity.Value == 0u)
                     continue;
 
+                var transform = transformRef.ValueRO;
                 snapshots.Add(new MorrowindScriptInitialTransformSnapshot
                 {
-                    PlacedRefId = identities[i].Value,
-                    Position = transforms[i].Position,
-                    Rotation = transforms[i].Rotation,
-                    Scale = transforms[i].Scale,
+                    PlacedRefId = identity.Value,
+                    Position = transform.Position,
+                    Rotation = transform.Rotation,
+                    Scale = transform.Scale,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptInitialTransformSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptInitialTransformSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptLockStateSnapshot> CopyLockStateSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptLockStateSnapshot> CopyLockStateSnapshots(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<PlacedRefLockState>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptLockStateSnapshot>();
-
-            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var lockStates = query.ToComponentDataArray<PlacedRefLockState>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptLockStateSnapshot>(Allocator.Temp);
-            for (int i = 0; i < identities.Length; i++)
+            foreach (var (identityRef, lockStateRef) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<PlacedRefLockState>>())
             {
-                if (identities[i].Value == 0u)
+                var identity = identityRef.ValueRO;
+                if (identity.Value == 0u)
                     continue;
 
+                var lockState = lockStateRef.ValueRO;
                 snapshots.Add(new MorrowindScriptLockStateSnapshot
                 {
-                    PlacedRefId = identities[i].Value,
-                    LockLevel = lockStates[i].LockLevel,
-                    Locked = lockStates[i].Locked,
+                    PlacedRefId = identity.Value,
+                    LockLevel = lockState.LockLevel,
+                    Locked = lockState.Locked,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptLockStateSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptLockStateSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptInventoryCountSnapshot> CopyInventoryCountSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptInventoryCountSnapshot> CopyInventoryCountSnapshots(ref SystemState state, EntityManager entityManager)
         {
             var snapshots = new NativeList<MorrowindScriptInventoryCountSnapshot>(Allocator.Temp);
-            using (var actorQuery = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorInventoryItem>()))
+            foreach (var (identityRef, inventory) in SystemAPI.Query<RefRO<PlacedRefIdentity>, DynamicBuffer<ActorInventoryItem>>())
             {
-                if (!actorQuery.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                for (int item = 0; item < inventory.Length; item++)
                 {
-                    using var entities = actorQuery.ToEntityArray(Allocator.Temp);
-                    using var identities = actorQuery.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
+                    var entry = inventory[item];
+                    if (!entry.Content.IsValid || entry.Count <= 0)
+                        continue;
+
+                    snapshots.Add(new MorrowindScriptInventoryCountSnapshot
                     {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u || !entityManager.HasBuffer<ActorInventoryItem>(entities[i]))
-                            continue;
-
-                        var inventory = entityManager.GetBuffer<ActorInventoryItem>(entities[i], true);
-                        for (int item = 0; item < inventory.Length; item++)
-                        {
-                            var entry = inventory[item];
-                            if (!entry.Content.IsValid || entry.Count <= 0)
-                                continue;
-
-                            snapshots.Add(new MorrowindScriptInventoryCountSnapshot
-                            {
-                                PlacedRefId = placedRefId,
-                                Content = entry.Content,
-                                Count = entry.Count,
-                            });
-                        }
-                    }
+                        PlacedRefId = placedRefId,
+                        Content = entry.Content,
+                        Count = entry.Count,
+                    });
                 }
             }
 
-            Entity containerOwner = WorldStateEntityQueryUtility.GetSingletonBufferOwner<ContainerSessionItem>(entityManager);
-            if (containerOwner != Entity.Null && entityManager.HasBuffer<ContainerSessionItem>(containerOwner))
+            if (SystemAPI.TryGetSingletonBuffer<ContainerSessionItem>(out var containerItems, true))
             {
-                var containerItems = entityManager.GetBuffer<ContainerSessionItem>(containerOwner, true);
                 for (int i = 0; i < containerItems.Length; i++)
                 {
                     var entry = containerItems[i];
@@ -826,136 +706,93 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptInventoryCountSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptInventoryCountSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorDeathSnapshot> CopyActorDeathSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptActorDeathSnapshot> CopyActorDeathSnapshots(ref SystemState state, EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorVitalSet>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptActorDeathSnapshot>();
-
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var vitals = query.ToComponentDataArray<ActorVitalSet>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptActorDeathSnapshot>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (identityRef, vitalRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorVitalSet>>().WithEntityAccess())
             {
-                uint placedRefId = identities[i].Value;
+                uint placedRefId = identityRef.ValueRO.Value;
                 if (placedRefId == 0u)
                     continue;
 
-                byte died = entityManager.HasComponent<MorrowindActorDeathCounted>(entities[i]) ? (byte)1 : (byte)0;
-                if (entityManager.HasComponent<ActorHitAftermathState>(entities[i]))
+                byte died = entityManager.HasComponent<MorrowindActorDeathCounted>(entity) ? (byte)1 : (byte)0;
+                if (entityManager.HasComponent<ActorHitAftermathState>(entity))
                 {
-                    var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(entities[i]);
+                    var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(entity);
                     if (aftermath.Dead != 0)
                         died = 1;
                 }
-                else if (vitals[i].CurrentHealth <= 0f)
+                else if (vitalRef.ValueRO.CurrentHealth <= 0f)
                 {
                     throw new InvalidOperationException($"[VVardenfell][MWScript] Actor ref={placedRefId} reached zero health without ActorHitAftermathState.");
                 }
 
                 snapshots.Add(new MorrowindScriptActorDeathSnapshot
                 {
-                    Entity = entities[i],
+                    Entity = entity,
                     PlacedRefId = placedRefId,
                     Died = died,
-                    Consumed = entityManager.HasComponent<MorrowindActorOnDeathConsumed>(entities[i]) ? (byte)1 : (byte)0,
+                    Consumed = entityManager.HasComponent<MorrowindActorOnDeathConsumed>(entity) ? (byte)1 : (byte)0,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorDeathSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorDeathSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorEventSnapshot> CopyActorEventSnapshots(EntityManager entityManager, Entity playerEntity)
+        NativeArray<MorrowindScriptActorEventSnapshot> CopyActorEventSnapshots(ref SystemState state, EntityManager entityManager, Entity playerEntity)
         {
             var snapshots = new NativeList<MorrowindScriptActorEventSnapshot>(Allocator.Temp);
             if (playerEntity != Entity.Null
                 && entityManager.Exists(playerEntity)
                 && entityManager.HasComponent<ActorVitalSet>(playerEntity))
             {
-                var state = entityManager.HasComponent<ActorScriptEventState>(playerEntity)
+                var eventState = entityManager.HasComponent<ActorScriptEventState>(playerEntity)
                     ? entityManager.GetComponentData<ActorScriptEventState>(playerEntity)
                     : default;
                 snapshots.Add(new MorrowindScriptActorEventSnapshot
                 {
                     Entity = playerEntity,
                     PlacedRefId = 0u,
-                    Murdered = state.Murdered,
-                    Attacked = state.Attacked,
-                    KnockedDownOneFrame = state.KnockedDownOneFrame,
-                    LastHitObject = state.LastHitObject,
+                    Murdered = eventState.Murdered,
+                    Attacked = eventState.Attacked,
+                    KnockedDownOneFrame = eventState.KnockedDownOneFrame,
+                    LastHitAttemptActor = eventState.LastHitAttemptActor,
+                    LastHitAttemptActorPlacedRefId = eventState.LastHitAttemptActorPlacedRefId,
+                    LastHitAttemptObject = eventState.LastHitAttemptObject,
+                    LastHitObject = eventState.LastHitObject,
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorVitalSet>()))
+            foreach (var (identityRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>>().WithAll<ActorVitalSet>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                var eventState = entityManager.HasComponent<ActorScriptEventState>(entity)
+                    ? entityManager.GetComponentData<ActorScriptEventState>(entity)
+                    : default;
+                snapshots.Add(new MorrowindScriptActorEventSnapshot
                 {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        var state = entityManager.HasComponent<ActorScriptEventState>(entities[i])
-                            ? entityManager.GetComponentData<ActorScriptEventState>(entities[i])
-                            : default;
-                        snapshots.Add(new MorrowindScriptActorEventSnapshot
-                        {
-                            Entity = entities[i],
-                            PlacedRefId = placedRefId,
-                            Murdered = state.Murdered,
-                            Attacked = state.Attacked,
-                            KnockedDownOneFrame = state.KnockedDownOneFrame,
-                            LastHitObject = state.LastHitObject,
-                        });
-                    }
-                }
+                    Entity = entity,
+                    PlacedRefId = placedRefId,
+                    Murdered = eventState.Murdered,
+                    Attacked = eventState.Attacked,
+                    KnockedDownOneFrame = eventState.KnockedDownOneFrame,
+                    LastHitAttemptActor = eventState.LastHitAttemptActor,
+                    LastHitAttemptActorPlacedRefId = eventState.LastHitAttemptActorPlacedRefId,
+                    LastHitAttemptObject = eventState.LastHitAttemptObject,
+                    LastHitObject = eventState.LastHitObject,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorEventSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorEventSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorVitalSnapshot> CopyActorVitalSnapshots(EntityManager entityManager, Entity playerEntity)
+        NativeArray<MorrowindScriptActorVitalSnapshot> CopyActorVitalSnapshots(ref SystemState state, EntityManager entityManager, Entity playerEntity)
         {
             var snapshots = new NativeList<MorrowindScriptActorVitalSnapshot>(Allocator.Temp);
             if (playerEntity != Entity.Null
@@ -972,45 +809,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorVitalSet>()))
+            foreach (var (identityRef, vitalRef) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorVitalSet>>())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                var vitals = vitalRef.ValueRO;
+                snapshots.Add(new MorrowindScriptActorVitalSnapshot
                 {
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var vitals = query.ToComponentDataArray<ActorVitalSet>(Allocator.Temp);
-                    for (int i = 0; i < identities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        snapshots.Add(new MorrowindScriptActorVitalSnapshot
-                        {
-                            PlacedRefId = placedRefId,
-                            Health = vitals[i].CurrentHealth,
-                            Magicka = vitals[i].CurrentMagicka,
-                            Fatigue = vitals[i].CurrentFatigue,
-                        });
-                    }
-                }
+                    PlacedRefId = placedRefId,
+                    Health = vitals.CurrentHealth,
+                    Magicka = vitals.CurrentMagicka,
+                    Fatigue = vitals.CurrentFatigue,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorVitalSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorVitalSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorAttributeSnapshot> CopyActorAttributeSnapshots(EntityManager entityManager, Entity playerEntity)
+        NativeArray<MorrowindScriptActorAttributeSnapshot> CopyActorAttributeSnapshots(ref SystemState state, EntityManager entityManager, Entity playerEntity)
         {
             var snapshots = new NativeList<MorrowindScriptActorAttributeSnapshot>(Allocator.Temp);
             if (playerEntity != Entity.Null
@@ -1024,43 +842,24 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorAttributeSet>()))
+            foreach (var (identityRef, attributeRef) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorAttributeSet>>())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptActorAttributeSnapshot
                 {
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var attributes = query.ToComponentDataArray<ActorAttributeSet>(Allocator.Temp);
-                    for (int i = 0; i < identities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        snapshots.Add(new MorrowindScriptActorAttributeSnapshot
-                        {
-                            PlacedRefId = placedRefId,
-                            Attributes = attributes[i],
-                        });
-                    }
-                }
+                    PlacedRefId = placedRefId,
+                    Attributes = attributeRef.ValueRO,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorAttributeSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorAttributeSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorActiveEffectSnapshot> CopyActorActiveEffectSnapshots(
+        NativeArray<MorrowindScriptActorActiveEffectSnapshot> CopyActorActiveEffectSnapshots(
+            ref SystemState state,
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             Entity playerEntity)
@@ -1068,36 +867,16 @@ namespace VVardenfell.Runtime.MorrowindScript
             var snapshots = new NativeList<MorrowindScriptActorActiveEffectSnapshot>(Allocator.Temp);
             AppendActiveEffectSnapshots(contentDb, entityManager, playerEntity, 0u, snapshots);
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorActiveMagicEffect>()))
+            foreach (var (identityRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>>().WithAll<ActorActiveMagicEffect>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
-                {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
 
-                        AppendActiveEffectSnapshots(contentDb, entityManager, entities[i], placedRefId, snapshots);
-                    }
-                }
+                AppendActiveEffectSnapshots(contentDb, entityManager, entity, placedRefId, snapshots);
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorActiveEffectSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorActiveEffectSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
         static void AppendActiveEffectSnapshots(
@@ -1126,10 +905,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
 
                 SpellDefHandle sourceSpell = default;
-                string sourceId = effect.SourceId.ToString();
-                if (!string.IsNullOrWhiteSpace(sourceId)
+                if (!effect.SourceId.IsEmpty
                     && contentDb != null
-                    && contentDb.TryGetSpellHandle(sourceId, out var resolvedSourceSpell)
+                    && contentDb.TryGetSpellHandle(effect.SourceId.ToString(), out var resolvedSourceSpell)
                     && resolvedSourceSpell.IsValid)
                 {
                     sourceSpell = resolvedSourceSpell;
@@ -1145,7 +923,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static NativeArray<MorrowindScriptActorDiseaseSnapshot> CopyActorDiseaseSnapshots(
+        NativeArray<MorrowindScriptActorDiseaseSnapshot> CopyActorDiseaseSnapshots(
+            ref SystemState state,
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             Entity playerEntity)
@@ -1162,45 +941,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorSpawnSource>()))
+            foreach (var (identityRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>>().WithAll<ActorSpawnSource>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                ResolveDiseaseFlags(contentDb, entityManager, entity, out byte commonDisease, out byte blightDisease);
+                snapshots.Add(new MorrowindScriptActorDiseaseSnapshot
                 {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        ResolveDiseaseFlags(contentDb, entityManager, entities[i], out byte commonDisease, out byte blightDisease);
-                        snapshots.Add(new MorrowindScriptActorDiseaseSnapshot
-                        {
-                            PlacedRefId = placedRefId,
-                            HasCommonDisease = commonDisease,
-                            HasBlightDisease = blightDisease,
-                        });
-                    }
-                }
+                    PlacedRefId = placedRefId,
+                    HasCommonDisease = commonDisease,
+                    HasBlightDisease = blightDisease,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorDiseaseSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorDiseaseSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorIdentitySnapshot> CopyActorIdentitySnapshots(
+        NativeArray<MorrowindScriptActorIdentitySnapshot> CopyActorIdentitySnapshots(
+            ref SystemState state,
             EntityManager entityManager,
             Entity playerEntity)
         {
@@ -1218,45 +978,25 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorIdentitySet>()))
+            foreach (var (placedRefRef, identityRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorIdentitySet>>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = placedRefRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptActorIdentitySnapshot
                 {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var identities = query.ToComponentDataArray<ActorIdentitySet>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                    {
-                        uint placedRefId = placedRefs[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        snapshots.Add(new MorrowindScriptActorIdentitySnapshot
-                        {
-                            ActorEntity = entities[i],
-                            PlacedRefId = placedRefId,
-                            RaceName = identities[i].RaceName,
-                        });
-                    }
-                }
+                    ActorEntity = entity,
+                    PlacedRefId = placedRefId,
+                    RaceName = identityRef.ValueRO.RaceName,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorIdentitySnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorIdentitySnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorAiSettingSnapshot> CopyActorAiSettingSnapshots(
+        NativeArray<MorrowindScriptActorAiSettingSnapshot> CopyActorAiSettingSnapshots(
+            ref SystemState state,
             EntityManager entityManager,
             Entity playerEntity)
         {
@@ -1277,65 +1017,35 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorAiSettingsState>()))
+            foreach (var (placedRefRef, settingsRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorAiSettingsState>>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
-                {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var settings = query.ToComponentDataArray<ActorAiSettingsState>(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                    {
-                        uint placedRefId = placedRefs[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        snapshots.Add(new MorrowindScriptActorAiSettingSnapshot
-                        {
-                            ActorEntity = entities[i],
-                            PlacedRefId = placedRefId,
-                            Hello = settings[i].Hello,
-                            Fight = settings[i].Fight,
-                            Flee = settings[i].Flee,
-                            Alarm = settings[i].Alarm,
-                        });
-                    }
-                }
-            }
-
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorAiSettingSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorAiSettingSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
-        }
-
-        static NativeArray<MorrowindScriptActorKnownSpellSnapshot> CopyActorKnownSpellSnapshots(EntityManager entityManager)
-        {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActorKnownSpell>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptActorKnownSpellSnapshot>();
-
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            var snapshots = new NativeList<MorrowindScriptActorKnownSpellSnapshot>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
-            {
-                Entity entity = entities[i];
-                if (!entityManager.HasBuffer<ActorKnownSpell>(entity))
+                uint placedRefId = placedRefRef.ValueRO.Value;
+                if (placedRefId == 0u)
                     continue;
 
+                var settings = settingsRef.ValueRO;
+                snapshots.Add(new MorrowindScriptActorAiSettingSnapshot
+                {
+                    ActorEntity = entity,
+                    PlacedRefId = placedRefId,
+                    Hello = settings.Hello,
+                    Fight = settings.Fight,
+                    Flee = settings.Flee,
+                    Alarm = settings.Alarm,
+                });
+            }
+
+            return MoveToTempJobArray(snapshots);
+        }
+
+        NativeArray<MorrowindScriptActorKnownSpellSnapshot> CopyActorKnownSpellSnapshots(ref SystemState state, EntityManager entityManager)
+        {
+            var snapshots = new NativeList<MorrowindScriptActorKnownSpellSnapshot>(Allocator.Temp);
+            foreach (var (knownSpells, entity) in SystemAPI.Query<DynamicBuffer<ActorKnownSpell>>().WithEntityAccess())
+            {
                 uint placedRefId = entityManager.HasComponent<PlacedRefIdentity>(entity)
                     ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                     : 0u;
-                var knownSpells = entityManager.GetBuffer<ActorKnownSpell>(entity, true);
                 for (int spellIndex = 0; spellIndex < knownSpells.Length; spellIndex++)
                 {
                     snapshots.Add(new MorrowindScriptActorKnownSpellSnapshot
@@ -1347,20 +1057,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorKnownSpellSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorKnownSpellSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptActorDispositionSnapshot> CopyActorDispositionSnapshots(EntityManager entityManager, Entity playerEntity)
+        NativeArray<MorrowindScriptActorDispositionSnapshot> CopyActorDispositionSnapshots(ref SystemState state, EntityManager entityManager, Entity playerEntity)
         {
             var snapshots = new NativeList<MorrowindScriptActorDispositionSnapshot>(Allocator.Temp);
             if (playerEntity != Entity.Null
@@ -1376,75 +1076,40 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<ActorDispositionState>()))
+            foreach (var (identityRef, dispositionRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<ActorDispositionState>>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
+                uint placedRefId = identityRef.ValueRO.Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                snapshots.Add(new MorrowindScriptActorDispositionSnapshot
                 {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var dispositions = query.ToComponentDataArray<ActorDispositionState>(Allocator.Temp);
-                    for (int i = 0; i < identities.Length; i++)
-                    {
-                        uint placedRefId = identities[i].Value;
-                        if (placedRefId == 0u)
-                            continue;
-
-                        snapshots.Add(new MorrowindScriptActorDispositionSnapshot
-                        {
-                            ActorEntity = entities[i],
-                            PlacedRefId = placedRefId,
-                            BaseDisposition = dispositions[i].BaseDisposition,
-                        });
-                    }
-                }
+                    ActorEntity = entity,
+                    PlacedRefId = placedRefId,
+                    BaseDisposition = dispositionRef.ValueRO.BaseDisposition,
+                });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptActorDispositionSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptActorDispositionSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
-        static NativeArray<MorrowindScriptRunningProgramSnapshot> CopyRunningProgramSnapshots(EntityManager entityManager)
+        NativeArray<MorrowindScriptRunningProgramSnapshot> CopyRunningProgramSnapshots(ref SystemState state)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindScriptInstance>());
-            if (query.IsEmptyIgnoreFilter)
-                return CreateEmptyTempJobArray<MorrowindScriptRunningProgramSnapshot>();
-
-            using var instances = query.ToComponentDataArray<MorrowindScriptInstance>(Allocator.Temp);
             var snapshots = new NativeList<MorrowindScriptRunningProgramSnapshot>(Allocator.Temp);
-            for (int i = 0; i < instances.Length; i++)
+            foreach (var instanceRef in SystemAPI.Query<RefRO<MorrowindScriptInstance>>())
             {
-                if (instances[i].Status != (byte)MorrowindScriptInstanceStatus.Running)
+                var instance = instanceRef.ValueRO;
+                if (instance.Status != (byte)MorrowindScriptInstanceStatus.Running)
                     continue;
 
                 snapshots.Add(new MorrowindScriptRunningProgramSnapshot
                 {
-                    ProgramIndex = instances[i].ProgramIndex,
+                    ProgramIndex = instance.ProgramIndex,
                     Running = 1,
                 });
             }
 
-            if (snapshots.Count == 0)
-            {
-                snapshots.Dispose();
-                return CreateEmptyTempJobArray<MorrowindScriptRunningProgramSnapshot>();
-            }
-
-            var result = new NativeArray<MorrowindScriptRunningProgramSnapshot>(snapshots.Count, Allocator.TempJob);
-            for (int i = 0; i < snapshots.Count; i++)
-                result[i] = snapshots[i];
-            snapshots.Dispose();
-            return result;
+            return MoveToTempJobArray(snapshots);
         }
 
         static void ResolveDiseaseFlags(
@@ -1471,9 +1136,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var activeEffects = entityManager.GetBuffer<ActorActiveMagicEffect>(actor, true);
                 for (int i = 0; i < activeEffects.Length; i++)
                 {
-                    string sourceId = activeEffects[i].SourceId.ToString();
-                    if (!string.IsNullOrWhiteSpace(sourceId)
-                        && contentDb.TryGetSpellHandle(sourceId, out var sourceSpell)
+                    if (!activeEffects[i].SourceId.IsEmpty
+                        && contentDb.TryGetSpellHandle(activeEffects[i].SourceId.ToString(), out var sourceSpell)
                         && sourceSpell.IsValid)
                     {
                         ResolveDiseaseSpell(contentDb, sourceSpell, ref commonDisease, ref blightDisease);
@@ -1501,6 +1165,22 @@ namespace VVardenfell.Runtime.MorrowindScript
         static NativeArray<T> CreateEmptyTempJobArray<T>()
             where T : unmanaged
             => new(0, Allocator.TempJob);
+
+        static NativeArray<T> MoveToTempJobArray<T>(NativeList<T> snapshots)
+            where T : unmanaged
+        {
+            if (snapshots.Length == 0)
+            {
+                snapshots.Dispose();
+                return CreateEmptyTempJobArray<T>();
+            }
+
+            var result = new NativeArray<T>(snapshots.Length, Allocator.TempJob);
+            for (int i = 0; i < snapshots.Length; i++)
+                result[i] = snapshots[i];
+            snapshots.Dispose();
+            return result;
+        }
 
         static bool TryResolveExteriorCellName(int2 exteriorCell, out FixedString128Bytes cellName)
         {
@@ -1560,7 +1240,47 @@ namespace VVardenfell.Runtime.MorrowindScript
             public float3 EyePosition;
         }
 
-        static NativeArray<MorrowindScriptActorLineOfSightSnapshot> CopyActorLineOfSightSnapshots(
+        static bool RunningProgramsNeedLineOfSight(
+            MorrowindScriptRuntimeCatalog catalog,
+            NativeArray<MorrowindScriptRunningProgramSnapshot> runningPrograms)
+        {
+            if (runningPrograms.Length == 0)
+                return false;
+
+            for (int i = 0; i < runningPrograms.Length; i++)
+            {
+                int programIndex = runningPrograms[i].ProgramIndex;
+                if ((uint)programIndex >= (uint)catalog.Programs.Length)
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] Running script program index {programIndex} is outside the runtime catalog.");
+
+                var program = catalog.Programs[programIndex];
+                if (program.InstructionCount <= 0)
+                    continue;
+
+                if (program.FirstInstructionIndex < 0
+                    || program.InstructionCount < 0
+                    || program.FirstInstructionIndex > catalog.Instructions.Length - program.InstructionCount)
+                {
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] Running script program index {programIndex} has an invalid instruction range.");
+                }
+
+                int end = program.FirstInstructionIndex + program.InstructionCount;
+                for (int instructionIndex = program.FirstInstructionIndex; instructionIndex < end; instructionIndex++)
+                {
+                    byte opcode = catalog.Instructions[instructionIndex].Opcode;
+                    if (opcode == (byte)MorrowindScriptOpcode.GetLOS
+                        || opcode == (byte)MorrowindScriptOpcode.GetDetected)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        NativeArray<MorrowindScriptActorLineOfSightSnapshot> CopyActorLineOfSightSnapshots(
+            ref SystemState state,
             EntityManager entityManager,
             Entity playerEntity)
         {
@@ -1577,31 +1297,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            using (var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlacedRefIdentity>(),
-                ComponentType.ReadOnly<PlacedRefRuntimeState>(),
-                ComponentType.ReadOnly<ActorIdentitySet>(),
-                ComponentType.ReadOnly<LocalTransform>()))
+            foreach (var (placedRefRef, runtimeStateRef, transformRef, entity) in SystemAPI.Query<RefRO<PlacedRefIdentity>, RefRO<PlacedRefRuntimeState>, RefRO<LocalTransform>>().WithAll<ActorIdentitySet>().WithEntityAccess())
             {
-                if (!query.IsEmptyIgnoreFilter)
-                {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-                    using var runtimeStates = query.ToComponentDataArray<PlacedRefRuntimeState>(Allocator.Temp);
-                    using var transforms = query.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-                    for (int i = 0; i < placedRefs.Length; i++)
-                    {
-                        if (placedRefs[i].Value == 0u || runtimeStates[i].Disabled != 0)
-                            continue;
+                var placedRef = placedRefRef.ValueRO;
+                if (placedRef.Value == 0u || runtimeStateRef.ValueRO.Disabled != 0)
+                    continue;
 
-                        actors.Add(new ScriptLineOfSightActor
-                        {
-                            Entity = entities[i],
-                            PlacedRefId = placedRefs[i].Value,
-                            EyePosition = GetActorEyePosition(transforms[i]),
-                        });
-                    }
-                }
+                actors.Add(new ScriptLineOfSightActor
+                {
+                    Entity = entity,
+                    PlacedRefId = placedRef.Value,
+                    EyePosition = GetActorEyePosition(transformRef.ValueRO),
+                });
             }
 
             if (actors.Length < 2)

@@ -213,10 +213,15 @@ namespace VVardenfell.Runtime.AI
     [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
     public partial class ActorAiNavigationAnchorSyncSystem : SystemBase
     {
+        EntityQuery _dirtyQuery;
+
         protected override void OnCreate()
         {
-            RequireForUpdate<ActorAiState>();
-            RequireForUpdate<ActorAiNavigationAnchor>();
+            _dirtyQuery = GetEntityQuery(
+                ComponentType.ReadWrite<ActorAiNavigationAnchor>(),
+                ComponentType.ReadOnly<ActorAiNavigationAnchorDirty>(),
+                ComponentType.ReadOnly<ActorAiState>());
+            RequireForUpdate(_dirtyQuery);
         }
 
         protected override void OnUpdate()
@@ -225,21 +230,32 @@ namespace VVardenfell.Runtime.AI
             if (contentDb == null)
                 return;
 
-            foreach (var (anchor, cellLink) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>, RefRO<CellLink>>())
+            foreach (var (anchor, entity) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>>()
+                         .WithAll<ActorAiState, ActorAiNavigationAnchorDirty>()
+                         .WithEntityAccess())
             {
-                SyncExteriorAnchor(contentDb, cellLink.ValueRO.Value, anchor);
-            }
-
-            foreach (var (anchor, location) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>, RefRO<LogicalRefLocation>>().WithNone<CellLink>())
-            {
-                if (location.ValueRO.IsInterior != 0)
+                if (EntityManager.HasComponent<CellLink>(entity))
                 {
-                    SyncInteriorAnchor(contentDb, location.ValueRO.InteriorCellHash, anchor);
+                    var cellLink = EntityManager.GetComponentData<CellLink>(entity);
+                    SyncExteriorAnchor(contentDb, cellLink.Value, anchor);
+                    EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
+                    continue;
+                }
+
+                if (!EntityManager.HasComponent<LogicalRefLocation>(entity))
+                    throw new System.InvalidOperationException($"[VVardenfell][AI] actor entity={entity.Index}:{entity.Version} has a dirty navigation anchor but no CellLink or LogicalRefLocation.");
+
+                var location = EntityManager.GetComponentData<LogicalRefLocation>(entity);
+                if (location.IsInterior != 0)
+                {
+                    SyncInteriorAnchor(contentDb, location.InteriorCellHash, anchor);
                 }
                 else
                 {
-                    SyncExteriorAnchor(contentDb, location.ValueRO.ExteriorCell, anchor);
+                    SyncExteriorAnchor(contentDb, location.ExteriorCell, anchor);
                 }
+
+                EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
             }
         }
 
@@ -719,7 +735,7 @@ namespace VVardenfell.Runtime.AI
         bool TryChooseWanderIdle(in ActorAiPackageRuntime package, ref uint randomSeed, out byte idleGroup)
         {
             idleGroup = 0;
-            var random = new Random(randomSeed == 0u ? 1u : randomSeed);
+            var random = new Unity.Mathematics.Random(randomSeed == 0u ? 1u : randomSeed);
             if (random.NextFloat() > IdleChanceMultiplier)
             {
                 randomSeed = random.state == 0u ? 1u : random.state;
@@ -826,7 +842,7 @@ namespace VVardenfell.Runtime.AI
             float searchRadius = math.max(0.25f, radius);
             float radiusSq = searchRadius * searchRadius;
             int startComponent = Navigation.Nodes[startNode].ComponentId;
-            var random = new Random(randomSeed == 0u ? 1u : randomSeed);
+            var random = new Unity.Mathematics.Random(randomSeed == 0u ? 1u : randomSeed);
 
             int attempts = math.min(32, pathGrid.NodeCount * 2);
             for (int i = 0; i < attempts; i++)

@@ -1,0 +1,307 @@
+using System;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
+using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Physics;
+using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Systems;
+
+namespace VVardenfell.Runtime.Combat
+{
+    [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
+    [UpdateAfter(typeof(PlayerMeleeHitSystem))]
+    [UpdateBefore(typeof(MorrowindMeleeDamageRollSystem))]
+    public partial class ActorMeleeHitSystem : SystemBase
+    {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<ActorCombatTargetState>();
+            RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
+        }
+
+        protected override void OnUpdate()
+        {
+            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
+                ?? throw new InvalidOperationException("[VVardenfell][ActorMelee] Runtime content database is not loaded.");
+
+            bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
+            var audioState = hasAudioState
+                ? EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
+                : default;
+            var audioEcb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
+            Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
+
+            foreach (var (combat, transform, actorBounds, weaponState, entity) in
+                     SystemAPI.Query<
+                             RefRO<ActorCombatTargetState>,
+                             RefRO<LocalTransform>,
+                             RefRO<ActorLocalBounds>,
+                             RefRW<ActorWeaponAnimationState>>()
+                         .WithNone<PlayerTag, LocalPlayerVisual>()
+                         .WithEntityAccess())
+            {
+                if (combat.ValueRO.Active == 0)
+                    continue;
+
+                ref var weapon = ref weaponState.ValueRW;
+                if (weapon.MeleeSwingPending != 0)
+                {
+                    EmitWeaponSwish(contentDb, entity, transform.ValueRO.Position, weapon, ref audioState, hasAudioState, ref audioEcb);
+                    weapon.MeleeSwingPending = 0;
+                    weapon.MeleeSwingAttackStrength = 0f;
+                    weapon.MeleeSwingWeaponContent = default;
+                }
+
+                if (weapon.MeleeHitPending == 0)
+                    continue;
+
+                Entity target = combat.ValueRO.TargetEntity;
+                if (TryQueueActorMeleeHit(
+                        contentDb,
+                        entity,
+                        transform.ValueRO,
+                        actorBounds.ValueRO,
+                        target,
+                        weapon,
+                        runtimeEntity))
+                {
+                    SpendAttackFatigue(contentDb, entity, weapon.MeleeHitWeaponContent, math.saturate(weapon.MeleeHitAttackStrength));
+                }
+
+                weapon.MeleeHitPending = 0;
+                weapon.MeleeHitAttackStrength = 0f;
+                weapon.MeleeHitWeaponContent = default;
+            }
+
+            if (hasAudioState)
+                EntityManager.SetComponentData(audioEntity, audioState);
+            audioEcb.Playback(EntityManager);
+            audioEcb.Dispose();
+        }
+
+        bool TryQueueActorMeleeHit(
+            RuntimeContentDatabase contentDb,
+            Entity attacker,
+            in LocalTransform attackerTransform,
+            in ActorLocalBounds attackerBounds,
+            Entity target,
+            in ActorWeaponAnimationState weaponState,
+            Entity runtimeEntity)
+        {
+            if (!ValidateAttacker(attacker))
+                return false;
+            if (!TryResolveTargetBounds(target, out uint targetPlacedRefId, out float3 targetBase, out float targetRadius, out float targetHeight, out float3 targetCenter))
+                return false;
+
+            MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
+                contentDb,
+                weaponState.MeleeHitWeaponContent,
+                out bool hasWeapon,
+                out _,
+                out var weapon,
+                out _);
+            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(contentDb, hasWeapon, weapon);
+            float attackerRadius = math.max(attackerBounds.Extents.x, attackerBounds.Extents.z) * math.max(0.01f, attackerTransform.Scale);
+            float distanceToBounds = math.max(0f, math.distance(ToHorizontal(attackerTransform.Position), ToHorizontal(targetBase)) - attackerRadius - targetRadius);
+            if (distanceToBounds > reach)
+                return false;
+            if (!PassesCombatCone(contentDb, attackerTransform, targetBase, targetHeight))
+                return false;
+
+            float3 source = math.transform(
+                float4x4.TRS(attackerTransform.Position, attackerTransform.Rotation, new float3(attackerTransform.Scale)),
+                attackerBounds.Center);
+            float3 hitPosition = ComputeHitPosition(attackerTransform.Position, targetBase, targetRadius, targetHeight);
+            uint sequence = DeferredPhysicsQueryUtility.EnqueueRay(
+                EntityManager,
+                DeferredPhysicsQueryKind.MeleeConfirmation,
+                attacker,
+                target,
+                attacker,
+                source,
+                targetCenter,
+                InteractionCollisionLayers.LineOfSightQueryFilter);
+            EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
+            {
+                QuerySequence = sequence,
+                RequestFixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick,
+                Attacker = attacker,
+                Target = target,
+                WeaponContent = weaponState.MeleeHitWeaponContent,
+                AttackType = weaponState.MeleeHitAttackType,
+                AttackStrength = math.saturate(weaponState.MeleeHitAttackStrength),
+                Reach = reach,
+                TargetPlacedRefId = targetPlacedRefId,
+                HitPosition = hitPosition,
+                HasHitPosition = 1,
+            });
+            return true;
+        }
+
+        bool ValidateAttacker(Entity attacker)
+        {
+            if (attacker == Entity.Null || !EntityManager.Exists(attacker))
+                return false;
+            if (!EntityManager.HasComponent<ActorVitalSet>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorVitalSet.");
+            if (!EntityManager.HasComponent<ActorHitAftermathState>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorHitAftermathState.");
+
+            var vitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(attacker);
+            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} is marked dead but still has positive health.");
+            return vitals.CurrentHealth > 0f && aftermath.Dead == 0;
+        }
+
+        bool TryResolveTargetBounds(
+            Entity target,
+            out uint targetPlacedRefId,
+            out float3 targetBase,
+            out float targetRadius,
+            out float targetHeight,
+            out float3 targetCenter)
+        {
+            targetPlacedRefId = 0u;
+            targetBase = default;
+            targetRadius = 0f;
+            targetHeight = 0f;
+            targetCenter = default;
+            if (target == Entity.Null || !EntityManager.Exists(target))
+                return false;
+            if (EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+            {
+                return false;
+            }
+            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorVitalSet.");
+            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorHitAftermathState.");
+            if (!EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no LocalTransform.");
+
+            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
+            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target ref={PlacedRefId(target)} is marked dead but still has positive health.");
+            if (vitals.CurrentHealth <= 0f || aftermath.Dead != 0)
+                return false;
+
+            var transform = EntityManager.GetComponentData<LocalTransform>(target);
+            targetBase = transform.Position;
+            if (EntityManager.HasComponent<ActorLocalBounds>(target))
+            {
+                var bounds = EntityManager.GetComponentData<ActorLocalBounds>(target);
+                float scale = math.max(0.01f, transform.Scale);
+                targetRadius = math.max(bounds.Extents.x, bounds.Extents.z) * scale;
+                targetHeight = math.max(0.01f, bounds.Extents.y * 2f * scale);
+                targetCenter = math.transform(float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)), bounds.Center);
+                if (EntityManager.HasComponent<PlacedRefIdentity>(target))
+                    targetPlacedRefId = EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+                return true;
+            }
+
+            if (EntityManager.HasComponent<PlayerCharacterComponent>(target))
+            {
+                var player = EntityManager.GetComponentData<PlayerCharacterComponent>(target);
+                targetRadius = math.max(0.01f, player.Radius);
+                targetHeight = math.max(0.01f, player.StandingHeight);
+                targetCenter = targetBase + new float3(0f, targetHeight * 0.5f, 0f);
+                return true;
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorLocalBounds or PlayerCharacterComponent.");
+        }
+
+        void SpendAttackFatigue(RuntimeContentDatabase contentDb, Entity attacker, in ContentReference weaponContent, float attackStrength)
+        {
+            if (!EntityManager.HasComponent<ActorVitalSet>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorVitalSet.");
+            if (!EntityManager.HasComponent<ActorDerivedMovementStats>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorDerivedMovementStats.");
+
+            MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
+                contentDb,
+                weaponContent,
+                out bool hasWeapon,
+                out _,
+                out var weapon,
+                out _);
+            var vitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var derived = EntityManager.GetComponentData<ActorDerivedMovementStats>(attacker);
+            vitals.CurrentFatigue -= MorrowindMeleeCombatMechanics.ComputeAttackFatigueLoss(contentDb, derived, hasWeapon, weapon, attackStrength);
+            EntityManager.SetComponentData(attacker, vitals);
+        }
+
+        void EmitWeaponSwish(
+            RuntimeContentDatabase contentDb,
+            Entity actor,
+            float3 actorPosition,
+            in ActorWeaponAnimationState weaponState,
+            ref InteractionAudioRequestState audioState,
+            bool hasAudioState,
+            ref EntityCommandBuffer ecb)
+        {
+            float strength = math.saturate(weaponState.MeleeSwingAttackStrength);
+            MorrowindCombatAudioUtility.EmitRequiredSound(
+                contentDb,
+                "Weapon Swish",
+                actor,
+                PlacedRefId(actor),
+                actorPosition,
+                0.98f + strength * 0.02f,
+                0.75f + strength * 0.4f,
+                ref audioState,
+                hasAudioState,
+                ref ecb);
+        }
+
+        static bool PassesCombatCone(RuntimeContentDatabase contentDb, in LocalTransform actorTransform, float3 targetBase, float targetHeight)
+        {
+            float combatAngleXY = contentDb.RequireGameSettingFloat("fCombatAngleXY") / 90f;
+            float combatAngleZ = contentDb.RequireGameSettingFloat("fCombatAngleZ") / 90f;
+            float3 forward = math.normalizesafe(math.rotate(actorTransform.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
+            float3 forwardXY = math.normalizesafe(new float3(forward.x, 0f, forward.z), new float3(0f, 0f, 1f));
+            float3 toTargetXY = math.normalizesafe(ToHorizontal(targetBase - actorTransform.Position), float3.zero);
+            if (math.lengthsq(toTargetXY) <= 0f)
+                return false;
+            if (math.dot(toTargetXY, forwardXY) <= 0f)
+                return false;
+            if (math.abs(toTargetXY.x * forwardXY.z - toTargetXY.z * forwardXY.x) > combatAngleXY)
+                return false;
+
+            float actorVerticalAngle = forward.y;
+            float3 toFeet = math.normalizesafe(targetBase - actorTransform.Position, float3.zero);
+            float3 toHead = math.normalizesafe(targetBase + new float3(0f, targetHeight, 0f) - actorTransform.Position, float3.zero);
+            return actorVerticalAngle - toHead.y <= combatAngleZ && actorVerticalAngle - toFeet.y >= -combatAngleZ;
+        }
+
+        static float3 ComputeHitPosition(float3 attackerPosition, float3 targetBase, float targetRadius, float targetHeight)
+        {
+            float3 directionToAttacker = math.normalizesafe(ToHorizontal(attackerPosition - targetBase), new float3(0f, 0f, 1f));
+            return targetBase
+                   + directionToAttacker * math.max(0.01f, targetRadius)
+                   + new float3(0f, targetHeight * 0.6f, 0f);
+        }
+
+        static float3 ToHorizontal(float3 value)
+            => new(value.x, 0f, value.z);
+
+        uint PlacedRefId(Entity entity)
+            => entity != Entity.Null
+               && EntityManager.Exists(entity)
+               && EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+                : 0u;
+    }
+}

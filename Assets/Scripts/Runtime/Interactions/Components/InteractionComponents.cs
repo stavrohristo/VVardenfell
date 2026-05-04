@@ -27,6 +27,10 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
+    public struct InteractionActivationProxyFollowTag : IComponentData
+    {
+    }
+
     public struct InteractionPickSurfaceTag : IComponentData
     {
     }

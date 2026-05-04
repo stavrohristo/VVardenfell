@@ -43,7 +43,10 @@ namespace VVardenfell.Runtime.WorldRefs
             }
 
             if (entityManager.Exists(logicalEntity))
+            {
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(entityManager);
                 ecb.DestroyEntity(logicalEntity);
+            }
         }
     }
 }

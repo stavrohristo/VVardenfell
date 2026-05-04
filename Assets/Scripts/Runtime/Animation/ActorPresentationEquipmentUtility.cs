@@ -1,3 +1,4 @@
+using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -5,6 +6,43 @@ namespace VVardenfell.Runtime.Animation
 {
     static class ActorPresentationEquipmentUtility
     {
+        public static void QueueEnsurePresentationEquipmentDirty(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity actor,
+            bool enabled)
+        {
+            if (entityManager.HasComponent<ActorPresentationEquipmentDirty>(actor))
+            {
+                ecb.SetComponentEnabled<ActorPresentationEquipmentDirty>(actor, enabled);
+                return;
+            }
+
+            if (!enabled)
+                return;
+
+            ecb.AddComponent<ActorPresentationEquipmentDirty>(actor);
+        }
+
+        public static ulong BuildEquipmentSignature(DynamicBuffer<ActorEquipmentSlot> equipment)
+        {
+            unchecked
+            {
+                ulong hash = 1469598103934665603ul;
+                for (int i = 0; i < equipment.Length; i++)
+                {
+                    var slot = equipment[i];
+                    hash = (hash ^ (byte)slot.Slot) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.Content.Kind) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.Content.HandleValue) * 1099511628211ul;
+                    hash = (hash ^ (uint)slot.InventoryIndex) * 1099511628211ul;
+                    hash = (hash ^ slot.VisualMode) * 1099511628211ul;
+                }
+
+                return hash;
+            }
+        }
+
         public static int ResolveRigidEquipmentAttachBone(
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,

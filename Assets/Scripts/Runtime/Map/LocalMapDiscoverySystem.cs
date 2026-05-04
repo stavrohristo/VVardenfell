@@ -55,7 +55,7 @@ namespace VVardenfell.Runtime.Map
             var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
             var stateEntity = SystemAPI.GetSingletonEntity<LocalMapDiscoveryState>();
             var state = EntityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
-            NormalizeState(ref state);
+            bool normalized = NormalizeState(ref state);
 
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             var playerCell = new int2(
@@ -64,17 +64,29 @@ namespace VVardenfell.Runtime.Map
             float localX = math.saturate((playerTransform.Position.x - playerCell.x * cellMeters) / cellMeters);
             float localY = math.saturate((playerTransform.Position.z - playerCell.y * cellMeters) / cellMeters);
 
-            bool anyChanged = false;
             int resolution = math.max(1, state.MaskResolution);
             float radius = math.max(0.001f, state.RevealRadiusFraction);
+            var playerSample = new int2(
+                math.clamp((int)math.floor(localX * resolution), 0, resolution - 1),
+                math.clamp((int)math.floor(localY * resolution), 0, resolution - 1));
+            if (!ShouldReveal(in state, playerCell, playerSample, resolution, radius))
+            {
+                if (normalized)
+                    EntityManager.SetComponentData(stateEntity, state);
+                return;
+            }
+
+            float centerLocalX = (playerSample.x + 0.5f) / resolution;
+            float centerLocalY = (playerSample.y + 0.5f) / resolution;
+            bool anyChanged = false;
             float radiusSq = radius * radius;
 
             for (int oy = -1; oy <= 1; oy++)
             {
                 for (int ox = -1; ox <= 1; ox++)
                 {
-                    float centerX = localX - ox;
-                    float centerY = localY - oy;
+                    float centerX = centerLocalX - ox;
+                    float centerY = centerLocalY - oy;
                     if (!CircleTouchesUnitSquare(centerX, centerY, radius))
                         continue;
 
@@ -93,6 +105,11 @@ namespace VVardenfell.Runtime.Map
 
             if (anyChanged)
                 state.Revision++;
+            state.LastRevealCell = playerCell;
+            state.LastRevealSample = playerSample;
+            state.LastRevealMaskResolution = resolution;
+            state.LastRevealRadiusFraction = radius;
+            state.HasLastRevealSample = 1;
 
             EntityManager.SetComponentData(stateEntity, state);
         }
@@ -184,14 +201,44 @@ namespace VVardenfell.Runtime.Map
             return dx * dx + dy * dy <= radius * radius;
         }
 
-        static void NormalizeState(ref LocalMapDiscoveryState state)
+        static bool ShouldReveal(
+            in LocalMapDiscoveryState state,
+            int2 playerCell,
+            int2 playerSample,
+            int resolution,
+            float radius)
         {
+            if (state.HasLastRevealSample == 0)
+                return true;
+            if (math.any(state.LastRevealCell != playerCell))
+                return true;
+            if (math.any(state.LastRevealSample != playerSample))
+                return true;
+            if (state.LastRevealMaskResolution != resolution)
+                return true;
+            return state.LastRevealRadiusFraction != radius;
+        }
+
+        static bool NormalizeState(ref LocalMapDiscoveryState state)
+        {
+            bool changed = false;
             if (state.MaskResolution <= 0)
+            {
                 state.MaskResolution = DefaultMaskResolution;
+                changed = true;
+            }
             if (state.RenderResolution <= 0)
+            {
                 state.RenderResolution = 256;
+                changed = true;
+            }
             if (state.RevealRadiusFraction <= 0f)
+            {
                 state.RevealRadiusFraction = DefaultRevealRadiusFraction;
+                changed = true;
+            }
+
+            return changed;
         }
     }
 }

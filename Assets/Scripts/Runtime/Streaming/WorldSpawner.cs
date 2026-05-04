@@ -11,6 +11,7 @@ using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.WorldRefs;
 using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Streaming
@@ -284,6 +285,7 @@ namespace VVardenfell.Runtime.Streaming
         public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
         {
             WorldInteriorSpawnUtility.SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
+            ActiveExplicitRefLookupLifecycleUtility.MarkDirty(world.EntityManager);
         }
 
         public static bool SpawnExteriorCell(
@@ -313,6 +315,7 @@ namespace VVardenfell.Runtime.Streaming
                 WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, staticBlob, active);
 
             var refs = data.Refs;
+            bool activeExplicitRefsDirty = false;
             if (!streamableAlreadySpawned && refs != null && refs.Length > 0)
             {
                 var spawnedRefEntities = new Entity[refs.Length];
@@ -334,6 +337,7 @@ namespace VVardenfell.Runtime.Streaming
                     ref logicalRefs,
                     null,
                     out _);
+                activeExplicitRefsDirty = true;
                 coordArray.Dispose();
                 refArray.Dispose();
 
@@ -351,9 +355,16 @@ namespace VVardenfell.Runtime.Streaming
                 loaded.Streamed.Add(coord);
             if (active && loaded.Active.IsCreated)
             {
-                loaded.Active.Add(coord);
+                if (loaded.Active.Add(coord))
+                {
+                    loaded.ActiveRevision++;
+                    activeExplicitRefsDirty = true;
+                }
                 WorldExteriorPhysicsUtility.SetCellPhysicsActive(em, coord, true);
             }
+
+            if (activeExplicitRefsDirty)
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(em);
 
             return true;
         }

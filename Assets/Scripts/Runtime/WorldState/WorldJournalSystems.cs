@@ -15,6 +15,11 @@ namespace VVardenfell.Runtime.WorldState
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class WorldJournalBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<WorldJournalBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -27,7 +32,7 @@ namespace VVardenfell.Runtime.WorldState
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new WorldJournalState(), ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<WorldJournalEntry>(EntityManager, runtimeEntity, ref ecb, created);
             WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<WorldJournalBootstrapRequest>(EntityManager);
         }
     }
 }

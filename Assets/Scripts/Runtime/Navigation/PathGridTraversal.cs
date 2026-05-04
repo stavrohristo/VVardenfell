@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -265,12 +266,21 @@ namespace VVardenfell.Runtime.Pathfinding
     {
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<PathGridTraversalSettingsBootstrapRequest>();
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
             if (SystemAPI.HasSingleton<PathGridTraversalSettings>())
+            {
+                RuntimeBootstrapRequestUtility.Consume<PathGridTraversalSettingsBootstrapRequest>(state.EntityManager);
                 return;
+            }
 
             Entity entity = state.EntityManager.CreateEntity();
             state.EntityManager.SetName(entity, "VVardenfell.PathGridTraversalSettings");
             state.EntityManager.AddComponentData(entity, PathGridTraversalSettings.Defaults);
+            RuntimeBootstrapRequestUtility.Consume<PathGridTraversalSettingsBootstrapRequest>(state.EntityManager);
         }
     }
 

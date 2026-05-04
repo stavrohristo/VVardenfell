@@ -64,6 +64,8 @@ namespace VVardenfell.Runtime.Combat
             if (aftermath.Dead == 0 && damage.Amount > 0f && damage.Attacker != Entity.Null)
             {
                 if (damage.TargetVital == MorrowindDamageTargetVital.Fatigue
+                    && aftermath.KnockedOut == 0
+                    && aftermath.KnockedDown == 0
                     && (vitals.CurrentFatigue < 0f || vitals.ModifiedFatigueBase <= 0f))
                 {
                     aftermath.KnockedOut = 1;
@@ -73,23 +75,26 @@ namespace VVardenfell.Runtime.Combat
                 }
                 else if (damage.TargetVital == MorrowindDamageTargetVital.Health)
                 {
-                    var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
-                    float agility = math.max(0f, attributes.Agility);
-                    float agilityTerm = agility * knockDownMult;
-                    float knockdownTerm = agility * knockDownOddsMult * 0.01f + knockDownOddsBase;
-                    int roll = random.NextInt(100);
-
-                    if (agilityTerm <= damage.Amount && knockdownTerm <= roll)
+                    if (aftermath.KnockedDown == 0 && aftermath.KnockedOut == 0)
                     {
-                        aftermath.KnockedDown = 1;
-                        aftermath.HitRecovery = 0;
-                    }
-                    else
-                    {
-                        aftermath.HitRecovery = 1;
-                    }
+                        var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
+                        float agility = math.max(0f, attributes.Agility);
+                        float agilityTerm = agility * knockDownMult;
+                        float knockdownTerm = agility * knockDownOddsMult * 0.01f + knockDownOddsBase;
+                        int roll = random.NextInt(100);
 
-                    changed = true;
+                        if (agilityTerm <= damage.Amount && knockdownTerm <= roll)
+                        {
+                            aftermath.KnockedDown = 1;
+                            aftermath.HitRecovery = 0;
+                        }
+                        else
+                        {
+                            aftermath.HitRecovery = 1;
+                        }
+
+                        changed = true;
+                    }
                 }
             }
 

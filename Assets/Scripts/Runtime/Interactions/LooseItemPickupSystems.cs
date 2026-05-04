@@ -89,7 +89,8 @@ namespace VVardenfell.Runtime.Interactions
                 : "item";
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
-            int stackCount = AddInventoryItem(inventory, content, target);
+            AddInventoryItem(inventory, content, target);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
             if (!isRuntimeSpawnedItem)
             {
                 pickedItems.Add(new PickedItemRecord

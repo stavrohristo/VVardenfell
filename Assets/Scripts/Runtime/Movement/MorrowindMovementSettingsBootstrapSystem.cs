@@ -1,5 +1,6 @@
 using Unity.Burst;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Movement
@@ -10,17 +11,21 @@ namespace VVardenfell.Runtime.Movement
     {
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<MorrowindMovementSettingsBootstrapRequest>();
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
             if (SystemAPI.HasSingleton<MorrowindMovementSettings>())
+            {
+                RuntimeBootstrapRequestUtility.Consume<MorrowindMovementSettingsBootstrapRequest>(state.EntityManager);
                 return;
+            }
 
             Entity entity = state.EntityManager.CreateEntity();
             state.EntityManager.SetName(entity, "VVardenfell.MovementSettings");
             state.EntityManager.AddComponentData(entity, MorrowindMovementSettings.OpenMwDefaults());
-        }
-
-        [BurstCompile]
-        public void OnUpdate(ref SystemState state)
-        {
+            RuntimeBootstrapRequestUtility.Consume<MorrowindMovementSettingsBootstrapRequest>(state.EntityManager);
         }
     }
 }

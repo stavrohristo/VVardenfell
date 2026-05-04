@@ -1,6 +1,5 @@
 #if !VVARDENFELL_OLD_ACTOR_ANIMATION
 using Unity.Entities;
-using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
@@ -12,34 +11,43 @@ namespace VVardenfell.Runtime.Animation
     [UpdateBefore(typeof(ActorRigidEquipmentVisibilitySystem))]
     public partial class ActorRigidEquipmentRenderOwnerSystem : SystemBase
     {
+        EntityQuery _dirtyQuery;
+
         protected override void OnCreate()
         {
-            RequireForUpdate<ActorRigidEquipmentAttachment>();
+            _dirtyQuery = GetEntityQuery(
+                ComponentType.ReadOnly<ActorRigidEquipmentAttachment>(),
+                ComponentType.ReadOnly<ActorRigidEquipmentRenderOwnerDirty>());
+            RequireForUpdate(_dirtyQuery);
         }
 
         protected override void OnUpdate()
         {
+
+            
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
-            int renderLeafCount = 0;
-            int ownedLeafCount = 0;
-            int addedOwnerCount = 0;
             foreach (var (attachment, entity) in
                      SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
+                         .WithAll<ActorRigidEquipmentRenderOwnerDirty>()
                          .WithEntityAccess())
             {
-                Debug.Log($"Attach to {entity}");
                 Entity renderOwner = ResolveRenderOwner(attachment.ValueRO);
-                AssignOwner(ref ecb, entity, renderOwner, ref renderLeafCount, ref ownedLeafCount, ref addedOwnerCount);
+                AssignOwner(ref ecb, entity, renderOwner);
                 if (!EntityManager.HasBuffer<LinkedEntityGroup>(entity))
+                {
+                    ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, false);
                     continue;
+                }
 
                 var linked = EntityManager.GetBuffer<LinkedEntityGroup>(entity);
                 for (int i = 0; i < linked.Length; i++)
                 {
                     Entity child = linked[i].Value;
                     if (child != entity)
-                        AssignOwner(ref ecb, child, renderOwner, ref renderLeafCount, ref ownedLeafCount, ref addedOwnerCount);
+                        AssignOwner(ref ecb, child, renderOwner);
                 }
+
+                ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, false);
             }
 
             ecb.Playback(EntityManager);
@@ -60,22 +68,14 @@ namespace VVardenfell.Runtime.Animation
         void AssignOwner(
             ref EntityCommandBuffer ecb,
             Entity entity,
-            Entity actor,
-            ref int renderLeafCount,
-            ref int ownedLeafCount,
-            ref int addedOwnerCount)
+            Entity actor)
         {
             if (entity == Entity.Null || !EntityManager.Exists(entity))
                 return;
 
-            if (EntityManager.HasComponent<ModelPrefabRenderLeaf>(entity))
-                renderLeafCount++;
-
             if (EntityManager.HasComponent<ActorRenderMeshInstance>(entity))
             {
                 var instance = EntityManager.GetComponentData<ActorRenderMeshInstance>(entity);
-                if (actor != Entity.Null)
-                    ownedLeafCount++;
                 if (instance.Actor == actor)
                     return;
 
@@ -92,9 +92,6 @@ namespace VVardenfell.Runtime.Animation
                 Actor = actor,
                 SkinMeshIndex = -1,
             });
-            addedOwnerCount++;
-            if (actor != Entity.Null)
-                ownedLeafCount++;
         }
     }
 }

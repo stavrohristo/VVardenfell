@@ -58,15 +58,20 @@ namespace VVardenfell.Runtime.Magic
             if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffect buffer.");
 
+            if (!EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
+                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffectDirty marker.");
+
             var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(target);
             if (request.Remove == 0)
             {
                 MorrowindActorMagicUtility.AddKnownSpell(knownSpells, request.Spell);
+                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
                 return;
             }
 
             var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target);
             MorrowindActorMagicUtility.RemoveKnownSpell(contentDb, knownSpells, activeEffects, request.Spell);
+            EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
         }
     }
 }

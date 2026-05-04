@@ -91,6 +91,9 @@ namespace VVardenfell.Runtime.Components
         public byte Murdered;
         public byte Attacked;
         public byte KnockedDownOneFrame;
+        public Entity LastHitAttemptActor;
+        public uint LastHitAttemptActorPlacedRefId;
+        public ContentReference LastHitAttemptObject;
         public ContentReference LastHitObject;
     }
 
@@ -249,6 +252,14 @@ namespace VVardenfell.Runtime.Components
         public FixedString512Bytes Subtitle;
     }
 
+    public struct MorrowindCombatHitVoiceSayRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public FixedString512Bytes VoicePath;
+        public FixedString512Bytes Subtitle;
+    }
+
     public struct MorrowindScriptActorLocalSetRequest : IBufferElementData
     {
         public int ActorHandleValue;
@@ -331,6 +342,9 @@ namespace VVardenfell.Runtime.Components
         public byte Murdered;
         public byte Attacked;
         public byte KnockedDownOneFrame;
+        public Entity LastHitAttemptActor;
+        public uint LastHitAttemptActorPlacedRefId;
+        public ContentReference LastHitAttemptObject;
         public ContentReference LastHitObject;
     }
 

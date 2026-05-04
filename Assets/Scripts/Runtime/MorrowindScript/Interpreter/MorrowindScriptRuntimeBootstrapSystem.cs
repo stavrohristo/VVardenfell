@@ -8,18 +8,27 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial class MorrowindScriptRuntimeBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<MorrowindScriptRuntimeBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<MorrowindScriptRuntimeState>())
             {
                 Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
                 RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(EntityManager, runtimeEntity);
+                ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
                 return;
             }
 
@@ -107,6 +116,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
             EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindCombatHitVoiceSayRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
             EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);
@@ -119,7 +129,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<MorrowindScriptActorEventConsumeRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
+            ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
             Debug.LogWarning($"Script runtime initialized");
+            RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
         }
 
         static byte ResolveGlobalKind(in GenericRecordDef global)

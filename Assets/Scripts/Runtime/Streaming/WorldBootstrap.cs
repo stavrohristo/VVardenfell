@@ -10,6 +10,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Streaming
@@ -56,6 +57,7 @@ namespace VVardenfell.Runtime.Streaming
             try
             {
                 WorldResources.RuntimeMode = options.Mode;
+                RuntimeBootstrapRequestUtility.PublishAll(em);
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;
 
@@ -119,6 +121,8 @@ namespace VVardenfell.Runtime.Streaming
                 var terrainSpawn = WorldSpawner.SpawnAllTerrainIncremental(world, loadedMap, progress);
                 while (terrainSpawn.MoveNext())
                     yield return terrainSpawn.Current;
+
+                EnsurePhysicsMutationQueueReadyForDirectCellSpawn(world, em);
 
                 var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);
@@ -208,6 +212,24 @@ namespace VVardenfell.Runtime.Streaming
             return new int2(
                 (int)math.floor(position.x / cellM),
                 (int)math.floor(position.z / cellM));
+        }
+
+        static void EnsurePhysicsMutationQueueReadyForDirectCellSpawn(World world, EntityManager em)
+        {
+            using var query = em.CreateEntityQuery(
+                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
+                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>());
+            if (!query.IsEmptyIgnoreFilter)
+                return;
+
+            RuntimeBootstrapRequestUtility.Publish<RuntimePhysicsMutationBootstrapRequest>(
+                em,
+                "VVardenfell.RuntimePhysicsMutationBootstrapRequest");
+            var bootstrapSystem = world.GetExistingSystemManaged<RuntimePhysicsMutationBootstrapSystem>()
+                                  ?? throw new System.InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation bootstrap system is unavailable.");
+            bootstrapSystem.Update();
+            if (query.IsEmptyIgnoreFilter)
+                throw new System.InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation bootstrap did not create the mutation queue.");
         }
 
         public static void Uninstall()

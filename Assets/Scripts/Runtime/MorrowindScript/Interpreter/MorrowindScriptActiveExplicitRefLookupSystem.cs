@@ -1,9 +1,11 @@
 using System;
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -12,7 +14,8 @@ namespace VVardenfell.Runtime.MorrowindScript
     public partial class MorrowindScriptActiveExplicitRefLookupSystem : SystemBase
     {
         EntityQuery _logicalRefQuery;
-        Entity _lookupEntity;
+        EntityQuery _dirtyQuery;
+        EntityQuery _sessionQuery;
 
         protected override void OnCreate()
         {
@@ -22,45 +25,39 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadOnly<LogicalRefLocation>());
 
-            _lookupEntity = EntityManager.CreateEntity(typeof(ActiveExplicitRefLookup));
-            EntityManager.SetName(_lookupEntity, "VVardenfell.ActiveExplicitRefs");
-            EntityManager.SetComponentData(_lookupEntity, new ActiveExplicitRefLookup
-            {
-                ByContentKey = new NativeParallelHashMap<int, ActiveExplicitRefTarget>(1024, Allocator.Persistent),
-                AllByContentKey = new NativeParallelHashMap<int, ActiveExplicitRefTarget>(1024, Allocator.Persistent),
-            });
+            _dirtyQuery = GetEntityQuery(
+                ComponentType.ReadOnly<ActiveExplicitRefLookup>(),
+                ComponentType.ReadOnly<ActiveExplicitRefLookupDirty>(),
+                ComponentType.ReadOnly<ActiveExplicitRefLookupBuildState>());
 
-            RequireForUpdate<ActiveExplicitRefLookup>();
-            RequireForUpdate<LoadedCellsMap>();
+            _sessionQuery = GetEntityQuery(
+                ComponentType.ReadOnly<ActiveExplicitRefLookup>(),
+                ComponentType.ReadOnly<SessionTeardown>());
+
+            RequireAnyForUpdate(_dirtyQuery, _sessionQuery);
         }
 
         protected override void OnDestroy()
         {
-            if (_lookupEntity != Entity.Null && EntityManager.Exists(_lookupEntity))
-            {
-                var lookup = EntityManager.GetComponentData<ActiveExplicitRefLookup>(_lookupEntity);
-                if (lookup.ByContentKey.IsCreated)
-                    lookup.ByContentKey.Dispose();
-                if (lookup.AllByContentKey.IsCreated)
-                    lookup.AllByContentKey.Dispose();
-            }
+            ActiveExplicitRefLookupLifecycleUtility.DisposeAll(EntityManager);
         }
 
         protected override void OnUpdate()
         {
-            var lookup = EntityManager.GetComponentData<ActiveExplicitRefLookup>(_lookupEntity);
-            if (!lookup.ByContentKey.IsCreated || !lookup.AllByContentKey.IsCreated)
-                throw new InvalidOperationException("[VVardenfell][MWScript] Active explicit reference lookup is not constructed.");
+            Entity lookupEntity = SystemAPI.GetSingletonEntity<ActiveExplicitRefLookup>();
+            if (SystemAPI.IsComponentEnabled<SessionTeardown>(lookupEntity))
+            {
+                ActiveExplicitRefLookupLifecycleUtility.Dispose(EntityManager, lookupEntity);
+                EntityManager.DestroyEntity(lookupEntity);
+                return;
+            }
+            if (!SystemAPI.IsComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity))
+                return;
 
-            int count = Math.Max(_logicalRefQuery.CalculateEntityCount(), 1024);
-            if (lookup.ByContentKey.Capacity < count)
-                lookup.ByContentKey.Capacity = count;
-            if (lookup.AllByContentKey.Capacity < count)
-                lookup.AllByContentKey.Capacity = count;
+            var lookup = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
+            if (!SystemAPI.TryGetSingleton<LoadedCellsMap>(out var loadedCells))
+                throw new InvalidOperationException("[VVardenfell][MWScript] Active explicit-ref lookup rebuild requires LoadedCellsMap.");
 
-            lookup.ByContentKey.Clear();
-            lookup.AllByContentKey.Clear();
-            var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0UL;
             if (SystemAPI.TryGetSingleton<InteriorTransitionState>(out var transition) && transition.InteriorActive != 0)
@@ -69,25 +66,45 @@ namespace VVardenfell.Runtime.MorrowindScript
                 activeInteriorCellHash = transition.ActiveInteriorCellHash;
             }
 
-            using var entities = _logicalRefQuery.ToEntityArray(Allocator.Temp);
-            using var contents = _logicalRefQuery.ToComponentDataArray<LogicalRefContent>(Allocator.Temp);
-            using var identities = _logicalRefQuery.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
-            using var locations = _logicalRefQuery.ToComponentDataArray<LogicalRefLocation>(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            int entityCount = _logicalRefQuery.CalculateEntityCount();
+            int orderVersion = _logicalRefQuery.GetCombinedComponentOrderVersion(includeEntityType: true);
+            int count = Math.Max(entityCount, 1024);
+            if (lookup.ByContentKey.Capacity < count)
+                lookup.ByContentKey.Capacity = count;
+            if (lookup.AllByContentKey.Capacity < count)
+                lookup.AllByContentKey.Capacity = count;
+
+            lookup.ByContentKey.Clear();
+            lookup.AllByContentKey.Clear();
+
+            foreach (var (content, identity, location, entity) in
+                     SystemAPI.Query<RefRO<LogicalRefContent>, RefRO<PlacedRefIdentity>, RefRO<LogicalRefLocation>>()
+                         .WithAll<LogicalRefTag>()
+                         .WithEntityAccess())
             {
-                uint placedRefId = identities[i].Value;
-                if (placedRefId == 0u || !contents[i].Value.IsValid)
+                uint placedRefId = identity.ValueRO.Value;
+                if (placedRefId == 0u || !content.ValueRO.Value.IsValid)
                     continue;
 
-                int key = ActiveExplicitRefLookupUtility.Pack(contents[i].Value);
-                AddExplicitRefTarget(lookup.AllByContentKey, key, entities[i], placedRefId);
-                if (!IsActive(locations[i], loadedCells, interiorActive, activeInteriorCellHash))
+                int key = ActiveExplicitRefLookupUtility.Pack(content.ValueRO.Value);
+                AddExplicitRefTarget(lookup.AllByContentKey, key, entity, placedRefId);
+                if (!IsActive(location.ValueRO, loadedCells, interiorActive, activeInteriorCellHash))
                     continue;
 
-                AddExplicitRefTarget(lookup.ByContentKey, key, entities[i], placedRefId);
+                AddExplicitRefTarget(lookup.ByContentKey, key, entity, placedRefId);
             }
 
-            EntityManager.SetComponentData(_lookupEntity, lookup);
+            EntityManager.SetComponentData(lookupEntity, lookup);
+            EntityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity, false);
+            EntityManager.SetComponentData(lookupEntity, new ActiveExplicitRefLookupBuildState
+            {
+                HasBuilt = 1,
+                LastActiveRevision = loadedCells.ActiveRevision,
+                LastActiveInteriorCellHash = activeInteriorCellHash,
+                LastEntityCount = entityCount,
+                LastOrderVersion = orderVersion,
+                LastInteriorActive = interiorActive,
+            });
         }
 
         static void AddExplicitRefTarget(

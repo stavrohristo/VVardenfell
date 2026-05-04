@@ -8,6 +8,7 @@ using Collider = Unity.Physics.Collider;
 using CapsuleCollider = Unity.Physics.CapsuleCollider;
 
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
@@ -176,6 +177,8 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, new ActorScriptEventState());
             em.AddComponentData(player, new ActorHitAftermathState());
+            em.AddComponentData(player, ActorCrimeState.Default);
+            em.AddComponentData(player, new ActorFriendlyHitState());
             em.AddComponentData(player, new ActorBlockState());
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, init.PlayerCrime);
@@ -200,6 +203,8 @@ namespace VVardenfell.Runtime.Player
                         activeEffects.Add(initEffects[i]);
                 }
             }
+            em.AddComponent<ActorActiveMagicEffectDirty>(player);
+            PlayerEncumbranceDirtyUtility.EnsureMarker(em, player, enabled: true);
             PopulatePlayerEquipment(em, initEntity, player);
             em.AddComponentData(player, new PlayerStanceColliders
             {
@@ -208,6 +213,9 @@ namespace VVardenfell.Runtime.Player
             });
             em.AddComponentData(player, new PhysicsCollider { Value = standingBlob });
             em.AddSharedComponent(player, new PhysicsWorldIndex { Value = 0 });
+            em.AddComponentData(player, new PhysicsVelocity());
+            em.AddComponentData(player, PhysicsTemporalCoherenceInfo.Default);
+            em.AddComponent<PhysicsTemporalCoherenceTag>(player);
 
             var viewEntity = em.CreateEntity();
             em.SetName(viewEntity, "VVardenfell.PlayerView");

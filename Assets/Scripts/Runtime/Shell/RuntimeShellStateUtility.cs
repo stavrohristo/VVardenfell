@@ -251,6 +251,13 @@ namespace VVardenfell.Runtime.Shell
             state.Visible = 1;
         }
 
+        public static void ActivateHitOverlay(ref RuntimeShellState state)
+        {
+            state.HitOverlayAlpha = 1f;
+            state.HitOverlayDuration = 0.5f;
+            state.HitOverlayElapsed = 0f;
+        }
+
         public static float EstimateSubtitleDurationSeconds(FixedString512Bytes text)
         {
             int wordCount = CountSubtitleWords(text.ToString());

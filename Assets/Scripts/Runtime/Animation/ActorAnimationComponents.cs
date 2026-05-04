@@ -26,6 +26,10 @@ namespace VVardenfell.Runtime.Animation
         public ulong Value;
     }
 
+    public struct ActorPresentationEquipmentDirty : IComponentData, IEnableableComponent
+    {
+    }
+
     public struct ActorSkeleton : IComponentData
     {
         public int SkeletonIndex;
@@ -164,6 +168,8 @@ namespace VVardenfell.Runtime.Animation
         public byte AttackPressed;
         public byte AttackReleased;
         public byte ReleaseQueued;
+        public byte AiAttackTypeOverride;
+        public ActorWeaponAttackType AiAttackType;
         public byte MeleeHitPending;
         public ActorWeaponAttackType MeleeHitAttackType;
         public float MeleeHitAttackStrength;
@@ -329,6 +335,10 @@ namespace VVardenfell.Runtime.Animation
         public float3 LocalPosition;
         public quaternion LocalRotation;
         public float LocalScale;
+    }
+
+    public struct ActorRigidEquipmentRenderOwnerDirty : IComponentData, IEnableableComponent
+    {
     }
 
 }

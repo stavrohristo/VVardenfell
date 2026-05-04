@@ -12,9 +12,17 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateBefore(typeof(InteractionActivationProxySystem))]
     public partial class InteractionActivationProxyFollowSystem : SystemBase
     {
+        EntityQuery _proxyQuery;
+
         protected override void OnCreate()
         {
-            Enabled = false;
+            _proxyQuery = GetEntityQuery(
+                ComponentType.ReadOnly<InteractionActivationProxyTag>(),
+                ComponentType.ReadOnly<InteractionActivationProxyFollowTag>(),
+                ComponentType.ReadOnly<LogicalRefParent>(),
+                ComponentType.ReadWrite<LocalTransform>(),
+                ComponentType.ReadWrite<LocalToWorld>());
+            RequireForUpdate(_proxyQuery);
         }
 
         protected override void OnUpdate()
@@ -24,7 +32,7 @@ namespace VVardenfell.Runtime.Interactions
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (parent, transform, localToWorld, entity) in
                      SystemAPI.Query<RefRO<LogicalRefParent>, RefRW<LocalTransform>, RefRW<LocalToWorld>>()
-                         .WithAll<InteractionActivationProxyTag>()
+                         .WithAll<InteractionActivationProxyTag, InteractionActivationProxyFollowTag>()
                          .WithEntityAccess())
             {
                 Entity target = parent.ValueRO.Value;

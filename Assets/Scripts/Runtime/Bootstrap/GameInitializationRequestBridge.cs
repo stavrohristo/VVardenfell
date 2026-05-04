@@ -120,6 +120,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var em = world.EntityManager;
             if (!EnsureInitializationPayload(em, out error))
                 return false;
+            RuntimeBootstrapRequestUtility.PublishAll(em);
             MorrowindCombatSettingsBridge.PublishPersisted(em);
 
             using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<T>());
@@ -152,6 +153,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var em = world.EntityManager;
             if (!EnsureInitializationPayload(em, out error))
                 return false;
+            RuntimeBootstrapRequestUtility.PublishAll(em);
 
             using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<LoadGameInitializationSingleton>());
             Entity entity = requestQuery.IsEmptyIgnoreFilter

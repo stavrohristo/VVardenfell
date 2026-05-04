@@ -48,6 +48,208 @@ namespace VVardenfell.Runtime.MorrowindScript
             return false;
         }
 
+        public static bool TryFindRandomMatchingVoicedInfo(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity speakerEntity,
+            ActorDefHandle speakerHandle,
+            int dialogueIndex,
+            int choice,
+            ref uint randomState,
+            Func<string, bool> isVoiceAvailable,
+            out int infoIndex,
+            out string unsupportedReason)
+        {
+            infoIndex = -1;
+            unsupportedReason = null;
+            if (contentDb == null
+                || !speakerHandle.IsValid
+                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            {
+                return false;
+            }
+
+            ref readonly var actor = ref contentDb.Get(speakerHandle);
+            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            int firstMatchingVoiceIndex = -1;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
+                if (!MatchesStaticFilters(contentDb, entityManager, speakerEntity, actor, info, out unsupportedReason))
+                    continue;
+
+                if (!MatchesSelectRules(contentDb, entityManager, speakerEntity, actor, info, choice, out unsupportedReason))
+                    continue;
+
+                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                    continue;
+
+                matchingVoiceCount++;
+                if (firstMatchingVoiceIndex < 0)
+                    firstMatchingVoiceIndex = i;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            if (matchingVoiceCount > 1)
+                return true;
+
+            if (firstMatchingVoiceIndex >= 0
+                && TryFindRandomSiblingVoiceInfo(contentDb, dialogueIndex, firstMatchingVoiceIndex, ref randomState, isVoiceAvailable, out infoIndex))
+            {
+                return true;
+            }
+
+            return TryFindRandomActorVoiceGroupInfo(contentDb, actor, dialogueIndex, ref randomState, isVoiceAvailable, out infoIndex);
+        }
+
+        static bool TryFindRandomSiblingVoiceInfo(
+            RuntimeContentDatabase contentDb,
+            int dialogueIndex,
+            int selectedInfoIndex,
+            ref uint randomState,
+            Func<string, bool> isVoiceAvailable,
+            out int infoIndex)
+        {
+            infoIndex = selectedInfoIndex;
+            ref readonly var selected = ref contentDb.Data.DialogueInfos[selectedInfoIndex];
+            if (!TrySplitVoiceVariationKey(selected.SoundFile, out string selectedDirectory, out string selectedStem))
+                return false;
+
+            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
+                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                    continue;
+
+                if (!TrySplitVoiceVariationKey(info.SoundFile, out string directory, out string stem))
+                    continue;
+                if (!string.Equals(directory, selectedDirectory, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(stem, selectedStem, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                matchingVoiceCount++;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            return matchingVoiceCount > 1;
+        }
+
+        static bool TryFindRandomActorVoiceGroupInfo(
+            RuntimeContentDatabase contentDb,
+            in ActorDef actor,
+            int dialogueIndex,
+            ref uint randomState,
+            Func<string, bool> isVoiceAvailable,
+            out int infoIndex)
+        {
+            infoIndex = -1;
+            if (actor.Kind != ActorDefKind.Npc || !TryResolveVoiceRaceFolder(actor.RaceId, out string raceFolder))
+                return false;
+
+            string genderFolder = (actor.Flags & 0x1u) != 0u ? "f" : "m";
+            string targetDirectory = $"vo/{raceFolder}/{genderFolder}";
+            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
+                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                    continue;
+
+                if (!TrySplitVoiceVariationKey(info.SoundFile, out string directory, out string stem))
+                    continue;
+                if (!string.Equals(directory, targetDirectory, StringComparison.OrdinalIgnoreCase)
+                    || !stem.StartsWith("hit_", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                matchingVoiceCount++;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            return infoIndex >= 0;
+        }
+
+        static bool IsVoiceCandidateAvailable(string soundFile, Func<string, bool> isVoiceAvailable)
+            => !string.IsNullOrWhiteSpace(soundFile)
+               && (isVoiceAvailable == null || isVoiceAvailable(soundFile));
+
+        static bool TrySplitVoiceVariationKey(string soundFile, out string directory, out string stem)
+        {
+            directory = null;
+            stem = null;
+            if (string.IsNullOrWhiteSpace(soundFile))
+                return false;
+
+            string normalized = soundFile.Trim().Trim('"').Replace('\\', '/');
+            int slashIndex = normalized.LastIndexOf('/');
+            string fileName = slashIndex >= 0 ? normalized.Substring(slashIndex + 1) : normalized;
+            int dotIndex = fileName.LastIndexOf('.');
+            string fileStem = dotIndex >= 0 ? fileName.Substring(0, dotIndex) : fileName;
+            int end = fileStem.Length;
+            while (end > 0 && char.IsDigit(fileStem[end - 1]))
+                end--;
+
+            if (end <= 0)
+                return false;
+
+            directory = slashIndex >= 0 ? normalized.Substring(0, slashIndex).ToLowerInvariant() : string.Empty;
+            stem = fileStem.Substring(0, end).ToLowerInvariant();
+            return !string.IsNullOrWhiteSpace(stem);
+        }
+
+        static bool TryResolveVoiceRaceFolder(string raceId, out string folder)
+        {
+            switch (ContentId.NormalizeId(raceId))
+            {
+                case "argonian":
+                    folder = "a";
+                    return true;
+                case "breton":
+                    folder = "b";
+                    return true;
+                case "dark elf":
+                    folder = "d";
+                    return true;
+                case "high elf":
+                    folder = "h";
+                    return true;
+                case "imperial":
+                    folder = "i";
+                    return true;
+                case "khajiit":
+                    folder = "k";
+                    return true;
+                case "nord":
+                    folder = "n";
+                    return true;
+                case "orc":
+                    folder = "o";
+                    return true;
+                case "redguard":
+                    folder = "r";
+                    return true;
+                case "wood elf":
+                    folder = "w";
+                    return true;
+                default:
+                    folder = null;
+                    return false;
+            }
+        }
+
         static bool MatchesStaticFilters(
             RuntimeContentDatabase contentDb,
             EntityManager entityManager,
@@ -432,6 +634,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             return false;
         }
 
+        static uint NextRandom(ref uint state)
+        {
+            state = state == 0u ? 1u : state;
+            state = (1664525u * state) + 1013904223u;
+            return state;
+        }
+
         static int ResolveAiSetting(
             EntityManager entityManager,
             Entity speakerEntity,
@@ -730,5 +939,6 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool IdEquals(string a, string b)
             => string.Equals(ContentId.NormalizeId(a), ContentId.NormalizeId(b), StringComparison.Ordinal);
+
     }
 }

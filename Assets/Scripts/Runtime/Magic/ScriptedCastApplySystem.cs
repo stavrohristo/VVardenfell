@@ -76,13 +76,16 @@ namespace VVardenfell.Runtime.Magic
 
             if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast target ref={request.TargetPlacedRefId} has no active magic effect state.");
+            if (!EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
+                throw new InvalidOperationException($"[VVardenfell][Magic] Cast target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffectDirty marker.");
 
             bool deferredToProjectile = EmitVisuals(contentDb, request.Spell, caster, target, ref ecb);
             if (deferredToProjectile)
                 return;
 
             var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target);
-            MorrowindActorMagicUtility.ApplyScriptedCast(contentDb, targetEffects, request.Spell);
+            if (MorrowindActorMagicUtility.ApplyScriptedCast(contentDb, targetEffects, request.Spell))
+                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
         }
 
         bool EmitVisuals(RuntimeContentDatabase contentDb, SpellDefHandle spellHandle, Entity caster, Entity target, ref EntityCommandBuffer ecb)

@@ -12,9 +12,16 @@ namespace VVardenfell.Runtime.Streaming
     {
         static readonly ProfilerMarker k_AnimateLights = new("VV.Lighting.AnimateInstances");
 
+        EntityQuery _animatedLightQuery;
+
         protected override void OnCreate()
         {
-            RequireForUpdate<StreamingConfig>();
+            _animatedLightQuery = GetEntityQuery(
+                ComponentType.ReadWrite<LightInstanceState>(),
+                ComponentType.ReadOnly<LightInstanceFlags>(),
+                ComponentType.ReadOnly<LightInstanceAnimated>());
+
+            RequireForUpdate(_animatedLightQuery);
         }
 
         protected override void OnUpdate()
@@ -22,7 +29,8 @@ namespace VVardenfell.Runtime.Streaming
             using var _ = k_AnimateLights.Auto();
 
             float deltaTime = SystemAPI.Time.DeltaTime;
-            foreach (var (stateRef, flagsRef) in SystemAPI.Query<RefRW<LightInstanceState>, RefRO<LightInstanceFlags>>())
+            foreach (var (stateRef, flagsRef) in SystemAPI.Query<RefRW<LightInstanceState>, RefRO<LightInstanceFlags>>()
+                         .WithAll<LightInstanceAnimated>())
             {
                 ref var state = ref stateRef.ValueRW;
                 ref readonly var flags = ref flagsRef.ValueRO;

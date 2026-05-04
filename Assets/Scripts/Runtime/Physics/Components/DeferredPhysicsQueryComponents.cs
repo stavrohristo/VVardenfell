@@ -25,6 +25,10 @@ namespace VVardenfell.Runtime.Components
     {
     }
 
+    public struct DeferredPhysicsQueryPending : IComponentData, IEnableableComponent
+    {
+    }
+
     public struct DeferredPhysicsQueryRuntime : IComponentData
     {
         public uint NextSequence;

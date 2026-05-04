@@ -231,6 +231,10 @@ namespace VVardenfell.Runtime.WorldState
                     }
                 }
             }
+            if (!entityManager.HasComponent<ActorActiveMagicEffectDirty>(playerEntity))
+                entityManager.AddComponent<ActorActiveMagicEffectDirty>(playerEntity);
+            entityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(playerEntity, true);
+            PlayerEncumbranceDirtyUtility.EnsureMarker(entityManager, playerEntity, enabled: true);
 
             var character = entityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
             var eyeOffset = new float3(0f, character.StandingEyeHeight, 0f);
@@ -641,6 +645,11 @@ namespace VVardenfell.Runtime.WorldState
                 state.RenderResolution = 256;
             if (state.RevealRadiusFraction <= 0f)
                 state.RevealRadiusFraction = 0.17f;
+            state.HasLastRevealSample = 0;
+            state.LastRevealCell = default;
+            state.LastRevealSample = default;
+            state.LastRevealMaskResolution = 0;
+            state.LastRevealRadiusFraction = 0f;
             state.Revision++;
             entityManager.SetComponentData(stateEntity, state);
         }

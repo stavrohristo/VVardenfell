@@ -161,14 +161,50 @@ namespace VVardenfell.Runtime.Physics
 
             var collider = new PhysicsCollider { Value = source.Value };
             if (entityManager.HasComponent<PhysicsCollider>(entity))
+            {
+                var current = entityManager.GetComponentData<PhysicsCollider>(entity);
+                if (current.Value.Equals(collider.Value)
+                    && entityManager.HasComponent<PhysicsWorldIndex>(entity))
+                {
+                    EnsureTemporalCoherence(entityManager, entity, resetInfo: false);
+                    EnsureMotionClassification(entityManager, entity, source.Kind);
+                    return true;
+                }
+
                 entityManager.SetComponentData(entity, collider);
+                EnsureTemporalCoherence(entityManager, entity, resetInfo: true);
+            }
             else
+            {
                 entityManager.AddComponentData(entity, collider);
+                EnsureTemporalCoherence(entityManager, entity, resetInfo: true);
+            }
 
             if (!entityManager.HasComponent<PhysicsWorldIndex>(entity))
                 entityManager.AddSharedComponent(entity, new PhysicsWorldIndex { Value = 0 });
+            EnsureTemporalCoherence(entityManager, entity, resetInfo: false);
+            EnsureMotionClassification(entityManager, entity, source.Kind);
 
             return true;
+        }
+
+        public static void EnsureTemporalCoherence(EntityManager entityManager, Entity entity, bool resetInfo)
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity))
+                return;
+
+            if (!entityManager.HasComponent<PhysicsTemporalCoherenceTag>(entity))
+                entityManager.AddComponent<PhysicsTemporalCoherenceTag>(entity);
+
+            if (entityManager.HasComponent<PhysicsTemporalCoherenceInfo>(entity))
+            {
+                if (resetInfo)
+                    entityManager.SetComponentData(entity, PhysicsTemporalCoherenceInfo.Default);
+            }
+            else
+            {
+                entityManager.AddComponentData(entity, PhysicsTemporalCoherenceInfo.Default);
+            }
         }
 
         public static bool QueueEnablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)
@@ -187,6 +223,8 @@ namespace VVardenfell.Runtime.Physics
                 return;
             if (entityManager.HasComponent<PhysicsCollider>(entity))
                 entityManager.RemoveComponent<PhysicsCollider>(entity);
+            if (entityManager.HasComponent<PhysicsVelocity>(entity))
+                entityManager.RemoveComponent<PhysicsVelocity>(entity);
         }
 
         public static void QueueDisablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)
@@ -332,5 +370,33 @@ namespace VVardenfell.Runtime.Physics
 
         static bool RequiresKindSpecificColliderBlob(RuntimeColliderKind kind)
             => kind == RuntimeColliderKind.RuntimeSpawn;
+
+        static void EnsureMotionClassification(EntityManager entityManager, Entity entity, RuntimeColliderKind kind)
+        {
+            if (!RequiresDynamicKinematicBody(entityManager, entity, kind))
+                return;
+
+            if (entityManager.HasComponent<Unity.Transforms.Static>(entity))
+                entityManager.RemoveComponent<Unity.Transforms.Static>(entity);
+            if (!entityManager.HasComponent<PhysicsVelocity>(entity))
+                entityManager.AddComponentData(entity, new PhysicsVelocity());
+        }
+
+        static bool RequiresDynamicKinematicBody(EntityManager entityManager, Entity entity, RuntimeColliderKind kind)
+        {
+            switch (kind)
+            {
+                case RuntimeColliderKind.Actor:
+                case RuntimeColliderKind.Player:
+                case RuntimeColliderKind.ActivationProxy:
+                case RuntimeColliderKind.Projectile:
+                    return true;
+                case RuntimeColliderKind.InteractionPick:
+                    return entityManager.HasComponent<InteractionActorPickSurfaceTag>(entity)
+                           || entityManager.HasComponent<InteractionActivationProxyTag>(entity);
+                default:
+                    return false;
+            }
+        }
     }
 }

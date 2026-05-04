@@ -11,6 +11,11 @@ namespace VVardenfell.Runtime.WorldState
     [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
     public partial class RuntimeSpawnBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimeSpawnBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -28,7 +33,7 @@ namespace VVardenfell.Runtime.WorldState
             RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnRequest>(EntityManager, runtimeEntity, ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnedRef>(EntityManager, runtimeEntity, ref ecb, created);
             WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<RuntimeSpawnBootstrapRequest>(EntityManager);
         }
     }
 }

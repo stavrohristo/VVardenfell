@@ -9,6 +9,11 @@ namespace VVardenfell.Runtime.Components
         public int RenderResolution;
         public float RevealRadiusFraction;
         public uint Revision;
+        public int2 LastRevealCell;
+        public int2 LastRevealSample;
+        public int LastRevealMaskResolution;
+        public float LastRevealRadiusFraction;
+        public byte HasLastRevealSample;
     }
 
     public struct ExteriorMapDiscoveryTile : IComponentData

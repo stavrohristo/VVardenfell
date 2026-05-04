@@ -7,6 +7,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.WorldState
 {
@@ -45,11 +46,14 @@ namespace VVardenfell.Runtime.WorldState
 
             Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
             var logicalLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
+            Entity loadedEntity = SystemAPI.GetSingletonEntity<LoadedCellsMap>();
             Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
             var interiorTransition = SystemAPI.GetSingleton<InteriorTransitionState>();
             var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
+            uint startActiveRevision = loaded.ActiveRevision;
             var available = SystemAPI.GetSingleton<AvailableCells>();
             var config = SystemAPI.GetSingleton<StreamingConfig>();
+            bool activeExplicitRefsDirty = false;
 
             for (int i = 0; i < requestSnapshot.Length; i++)
             {
@@ -61,16 +65,20 @@ namespace VVardenfell.Runtime.WorldState
                     ref spawnResult,
                     ref logicalLookup,
                     transitionEntity,
-                    loaded,
+                    ref loaded,
                     available,
                     config,
                     interiorTransition,
+                    ref activeExplicitRefsDirty,
                     request);
             }
 
             EntityManager.SetComponentData(spawnEntity, spawnState);
             EntityManager.SetComponentData(spawnEntity, spawnResult);
             EntityManager.SetComponentData(lookupEntity, logicalLookup);
+            EntityManager.SetComponentData(loadedEntity, loaded);
+            if (activeExplicitRefsDirty || loaded.ActiveRevision != startActiveRevision)
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(EntityManager);
         }
 
         void ProcessRequest(
@@ -80,10 +88,11 @@ namespace VVardenfell.Runtime.WorldState
             ref RuntimeSpawnResult spawnResult,
             ref LogicalRefLookup logicalLookup,
             Entity transitionEntity,
-            LoadedCellsMap loaded,
+            ref LoadedCellsMap loaded,
             AvailableCells available,
             StreamingConfig config,
             InteriorTransitionState interiorTransition,
+            ref bool activeExplicitRefsDirty,
             in RuntimeSpawnRequest request)
         {
             spawnResult = new RuntimeSpawnResult
@@ -142,7 +151,13 @@ namespace VVardenfell.Runtime.WorldState
             uint runtimeRefId = RuntimeSpawnRegistryUtility.ComposeRuntimeRefId(spawnState.NextRuntimeRefId);
             bool exteriorActive = request.IsInterior != 0 || IsExteriorCellActiveNow(config, request.ExteriorCell);
             if (request.IsInterior == 0 && exteriorActive)
-                loaded.Active.Add(request.ExteriorCell);
+            {
+                if (loaded.Active.Add(request.ExteriorCell))
+                {
+                    loaded.ActiveRevision++;
+                    activeExplicitRefsDirty = true;
+                }
+            }
 
             var createEcb = new EntityCommandBuffer(Allocator.Temp);
             bool queued = actorSpawn
@@ -226,6 +241,7 @@ namespace VVardenfell.Runtime.WorldState
             spawnResult.LogicalEntity = logicalEntity;
             spawnResult.Status = (byte)RuntimeSpawnResultStatus.Success;
             spawnResult.Message = new FixedString128Bytes($"Spawned runtime ref 0x{runtimeRefId:X8}.");
+            activeExplicitRefsDirty = true;
         }
 
         static bool IsExteriorCellActiveNow(in StreamingConfig config, int2 exteriorCell)

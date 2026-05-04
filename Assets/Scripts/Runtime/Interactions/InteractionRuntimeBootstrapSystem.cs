@@ -9,6 +9,11 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial class InteractionRuntimeBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<InteractionRuntimeBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -50,7 +55,7 @@ namespace VVardenfell.Runtime.Interactions
             RuntimeBootstrapUtility.EnsureBuffer<PickedItemRecord>(EntityManager, runtimeEntity, ref ecb, created);
             ecb.Playback(EntityManager);
             ecb.Dispose();
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<InteractionRuntimeBootstrapRequest>(EntityManager);
         }
     }
 }

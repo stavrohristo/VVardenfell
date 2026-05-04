@@ -210,10 +210,34 @@ namespace VVardenfell.Runtime.Combat
 
         bool IsCarriedLeftVisibleForBlock(Entity target)
         {
+            if (EntityManager.HasComponent<PlayerTag>(target))
+                return IsPlayerCarriedLeftVisibleForBlock(target);
+
             if (!EntityManager.HasComponent<ActorWeaponAnimationState>(target))
                 return true;
 
             var weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(target);
+            if (weaponState.Drawn == 0 && weaponState.Phase != ActorWeaponAnimationPhase.Equipping)
+                return true;
+
+            return !IsTwoHandedPresentedWeaponType(weaponState.WeaponType);
+        }
+
+        bool IsPlayerCarriedLeftVisibleForBlock(Entity player)
+        {
+            if (!EntityManager.HasComponent<LocalPlayerPresentationState>(player))
+                throw new InvalidOperationException("[VVardenfell][Block] Player target has no LocalPlayerPresentationState.");
+
+            var presentation = EntityManager.GetComponentData<LocalPlayerPresentationState>(player);
+            Entity visual = presentation.Mode == PlayerViewMode.FirstPerson
+                ? presentation.FirstPersonVisual
+                : presentation.ThirdPersonVisual;
+            if (visual == Entity.Null || !EntityManager.Exists(visual))
+                throw new InvalidOperationException("[VVardenfell][Block] Player target active visual is missing.");
+            if (!EntityManager.HasComponent<ActorWeaponAnimationState>(visual))
+                throw new InvalidOperationException("[VVardenfell][Block] Player target active visual has no ActorWeaponAnimationState.");
+
+            var weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(visual);
             if (weaponState.Drawn == 0 && weaponState.Phase != ActorWeaponAnimationPhase.Equipping)
                 return true;
 

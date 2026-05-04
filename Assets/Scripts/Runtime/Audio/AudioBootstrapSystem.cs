@@ -11,11 +11,17 @@ namespace VVardenfell.Runtime.Audio
     {
         protected override void OnCreate()
         {
+            RequireForUpdate<AudioBootstrapRequest>();
+        }
+
+        protected override void OnUpdate()
+        {
             if (SystemAPI.HasSingleton<AudioContextState>())
             {
                 Entity audioEntity = SystemAPI.GetSingletonEntity<AudioContextState>();
                 if (!EntityManager.HasBuffer<MorrowindMusicRequest>(audioEntity))
                     EntityManager.AddBuffer<MorrowindMusicRequest>(audioEntity);
+                RuntimeBootstrapRequestUtility.Consume<AudioBootstrapRequest>(EntityManager);
                 return;
             }
 
@@ -56,10 +62,7 @@ namespace VVardenfell.Runtime.Audio
             EntityManager.AddComponentData(entity, new InteractionAudioRequestState());
             EntityManager.AddBuffer<InteractionAudioRequest>(entity);
 
-        }
-
-        protected override void OnUpdate()
-        {
+            RuntimeBootstrapRequestUtility.Consume<AudioBootstrapRequest>(EntityManager);
         }
     }
 }

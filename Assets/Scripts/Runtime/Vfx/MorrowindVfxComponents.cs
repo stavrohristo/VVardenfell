@@ -26,4 +26,8 @@ namespace VVardenfell.Runtime.Vfx
         public Entity Owner;
         public uint EffectId;
     }
+
+    public struct MorrowindVfxRuntimeState : IComponentData
+    {
+    }
 }

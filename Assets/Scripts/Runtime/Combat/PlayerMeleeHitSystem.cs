@@ -1,5 +1,4 @@
 using System;
-using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
@@ -9,7 +8,6 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
-using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
@@ -17,23 +15,11 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup), OrderFirst = true)]
+    [UpdateAfter(typeof(MorrowindMeleeHitConfirmationSystem))]
     public partial class PlayerMeleeHitSystem : SystemBase
     {
-        const byte MeleeConfirmationMaxResultAgeTicks = 4;
         EntityQuery _playerQuery;
         EntityQuery _viewPoseQuery;
-
-        struct ResolvedPendingMeleeHitConfirmation
-        {
-            public Entity Attacker;
-            public Entity Target;
-            public ContentReference WeaponContent;
-            public ActorWeaponAttackType AttackType;
-            public float AttackStrength;
-            public uint TargetPlacedRefId;
-            public float3 HitPosition;
-            public byte HasHitPosition;
-        }
 
         protected override void OnCreate()
         {
@@ -64,7 +50,6 @@ namespace VVardenfell.Runtime.Combat
 
             Entity player = _playerQuery.GetSingletonEntity();
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
-            ProcessPendingMeleeConfirmations(contentDb, player, runtimeEntity);
 
             Entity visualEntity = ResolveActivePlayerVisual(player, out var weaponState);
             bool stateChanged = false;
@@ -138,77 +123,6 @@ namespace VVardenfell.Runtime.Combat
             EntityManager.SetComponentData(visualEntity, weaponState);
         }
 
-        void ProcessPendingMeleeConfirmations(RuntimeContentDatabase contentDb, Entity player, Entity runtimeEntity)
-        {
-            var pending = EntityManager.GetBuffer<PendingPlayerMeleeHitConfirmation>(runtimeEntity);
-            if (pending.Length == 0)
-                return;
-
-            using var resolvedHits = new NativeList<ResolvedPendingMeleeHitConfirmation>(Allocator.Temp);
-            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
-            for (int i = pending.Length - 1; i >= 0; i--)
-            {
-                var request = pending[i];
-                if (!DeferredPhysicsQueryUtility.TryGetResultBySequence(
-                        EntityManager,
-                        DeferredPhysicsQueryKind.MeleeConfirmation,
-                        request.QuerySequence,
-                        MeleeConfirmationMaxResultAgeTicks,
-                        out var result))
-                {
-                    if (fixedTick <= request.RequestFixedTick + MeleeConfirmationMaxResultAgeTicks)
-                        continue;
-
-                    pending.RemoveAt(i);
-                    continue;
-                }
-
-                if (result.Status != DeferredPhysicsQueryStatus.Miss)
-                {
-                    pending.RemoveAt(i);
-                    continue;
-                }
-
-                if (TryResolveMeleeConfirmation(
-                        player,
-                        request,
-                        out Entity target,
-                        out uint targetPlacedRefId,
-                        out float3 hitPosition,
-                        out byte hasHitPosition))
-                {
-                    resolvedHits.Add(new ResolvedPendingMeleeHitConfirmation
-                    {
-                        Attacker = request.Attacker,
-                        Target = target,
-                        WeaponContent = request.WeaponContent,
-                        AttackType = request.AttackType,
-                        AttackStrength = request.AttackStrength,
-                        TargetPlacedRefId = targetPlacedRefId,
-                        HitPosition = hitPosition,
-                        HasHitPosition = hasHitPosition,
-                    });
-                }
-
-                pending.RemoveAt(i);
-            }
-
-            for (int i = 0; i < resolvedHits.Length; i++)
-            {
-                var hit = resolvedHits[i];
-                MarkAttackContact(contentDb, player, hit.Target, hit.TargetPlacedRefId);
-                EmitMeleeHitEvent(
-                    hit.Attacker,
-                    hit.Target,
-                    hit.WeaponContent,
-                    hit.AttackType,
-                    hit.AttackStrength,
-                    hit.HitPosition,
-                    hit.HasHitPosition);
-            }
-
-        }
-
         bool TryQueueMeleeConfirmation(
             RuntimeContentDatabase contentDb,
             in LogicalRefLookup logicalRefLookup,
@@ -252,7 +166,7 @@ namespace VVardenfell.Runtime.Combat
                 viewPose.Position,
                 confirmationEnd,
                 InteractionCollisionLayers.LineOfSightQueryFilter);
-            EntityManager.GetBuffer<PendingPlayerMeleeHitConfirmation>(runtimeEntity).Add(new PendingPlayerMeleeHitConfirmation
+            EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
             {
                 QuerySequence = querySequence,
                 RequestFixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick,
@@ -432,34 +346,6 @@ namespace VVardenfell.Runtime.Combat
             return target != Entity.Null;
         }
 
-        bool TryResolveMeleeConfirmation(
-            Entity player,
-            in PendingPlayerMeleeHitConfirmation request,
-            out Entity target,
-            out uint targetPlacedRefId,
-            out float3 hitPosition,
-            out byte hasHitPosition)
-        {
-            target = Entity.Null;
-            targetPlacedRefId = 0u;
-            hitPosition = default;
-            hasHitPosition = 0;
-
-            Entity logicalEntity = request.Target;
-            if (!ValidateActorMeleeTarget(player, request.Attacker, logicalEntity, out uint placedRefId))
-                return false;
-            if (request.TargetPlacedRefId != 0u && placedRefId != request.TargetPlacedRefId)
-                throw new InvalidOperationException($"[VVardenfell][Combat] Pending melee target entity={logicalEntity.Index}:{logicalEntity.Version} changed placed ref id from {request.TargetPlacedRefId} to {placedRefId}.");
-            if (request.Reach <= 0f)
-                return false;
-
-            target = logicalEntity;
-            targetPlacedRefId = placedRefId;
-            hitPosition = request.HitPosition;
-            hasHitPosition = request.HasHitPosition;
-            return true;
-        }
-
         bool ValidateActorMeleeTarget(Entity player, Entity attacker, Entity logicalEntity, out uint placedRefId)
         {
             placedRefId = 0u;
@@ -593,55 +479,6 @@ namespace VVardenfell.Runtime.Combat
                 weapon,
                 attackStrength);
             playerVitals.CurrentFatigue -= fatigueLoss;
-        }
-
-        void MarkAttackContact(RuntimeContentDatabase contentDb, Entity player, Entity target, uint targetPlacedRefId)
-        {
-            if (!EntityManager.HasComponent<ActorScriptEventState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Combat] Target ref={targetPlacedRefId} has no ActorScriptEventState.");
-            if (!EntityManager.HasComponent<ActorSpawnSource>(target))
-                throw new InvalidOperationException($"[VVardenfell][Combat] Target ref={targetPlacedRefId} has no ActorSpawnSource.");
-
-            var state = EntityManager.GetComponentData<ActorScriptEventState>(target);
-            state.Attacked = 1;
-            EntityManager.SetComponentData(target, state);
-
-            uint actorPlacedRefId = EntityManager.HasComponent<PlacedRefIdentity>(target)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(target).Value
-                : targetPlacedRefId;
-            if (!MorrowindCombatTargetUtility.TryStartCombat(
-                    contentDb,
-                    EntityManager,
-                    target,
-                    actorPlacedRefId,
-                    player,
-                    0u))
-            {
-                throw new InvalidOperationException($"[VVardenfell][Combat] Failed to start combat for target ref={targetPlacedRefId}.");
-            }
-        }
-
-        void EmitMeleeHitEvent(
-            Entity attacker,
-            Entity target,
-            in ContentReference weaponContent,
-            ActorWeaponAttackType attackType,
-            float attackStrength,
-            float3 hitPosition,
-            byte hasHitPosition)
-        {
-            Entity entity = EntityManager.CreateEntity(typeof(MorrowindMeleeHitEvent));
-            EntityManager.SetName(entity, "VVardenfell.MorrowindMeleeHitEvent");
-            EntityManager.SetComponentData(entity, new MorrowindMeleeHitEvent
-            {
-                Attacker = attacker,
-                Target = target,
-                WeaponContent = weaponContent,
-                AttackType = attackType,
-                AttackStrength = attackStrength,
-                HitPosition = hitPosition,
-                HasHitPosition = hasHitPosition,
-            });
         }
 
     }

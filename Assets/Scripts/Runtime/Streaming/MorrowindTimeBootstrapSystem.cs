@@ -1,6 +1,7 @@
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
@@ -11,6 +12,11 @@ namespace VVardenfell.Runtime.Streaming
     public partial class MorrowindTimeBootstrapSystem : SystemBase
     {
         protected override void OnCreate()
+        {
+            RequireForUpdate<MorrowindTimeBootstrapRequest>();
+        }
+
+        protected override void OnUpdate()
         {
             if (!SystemAPI.HasSingleton<MorrowindTimeState>())
             {
@@ -51,10 +57,8 @@ namespace VVardenfell.Runtime.Streaming
                 if (!EntityManager.HasBuffer<MorrowindRegionWeatherOverrideRequest>(entity))
                     EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
             }
-        }
 
-        protected override void OnUpdate()
-        {
+            RuntimeBootstrapRequestUtility.Consume<MorrowindTimeBootstrapRequest>(EntityManager);
         }
 
         public static MorrowindTimeState CreateDefaultTime()

@@ -12,7 +12,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
-    [UpdateAfter(typeof(PlayerMeleeHitSystem))]
+    [UpdateAfter(typeof(ActorMeleeHitSystem))]
     [UpdateBefore(typeof(MorrowindNormalWeaponResistanceSystem))]
     public partial class MorrowindMeleeDamageRollSystem : SystemBase
     {
@@ -99,6 +99,19 @@ namespace VVardenfell.Runtime.Combat
                     weapon,
                     hit.AttackType,
                     fullDamage);
+                amount *= MorrowindWeaponConditionUtility.ResolveEquippedConditionMultiplier(
+                    contentDb,
+                    EntityManager,
+                    attacker,
+                    hit.WeaponContent,
+                    weapon);
+                MorrowindWeaponConditionUtility.ApplyWeaponConditionDamage(
+                    contentDb,
+                    EntityManager,
+                    attacker,
+                    hit.WeaponContent,
+                    weapon,
+                    amount);
                 return new MorrowindPendingDamageEvent
                 {
                     Attacker = attacker,

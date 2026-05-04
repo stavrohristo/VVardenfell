@@ -23,9 +23,14 @@ namespace VVardenfell.Runtime.Physics
 
         protected override void OnUpdate()
         {
+            Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            if (!EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
+                throw new System.InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
+            if (!SystemAPI.IsComponentEnabled<DeferredPhysicsQueryPending>(queueEntity))
+                return;
+
             CompleteDependency();
 
-            Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             var requests = EntityManager.GetBuffer<DeferredPhysicsQueryRequest>(queueEntity);
             var results = EntityManager.GetBuffer<DeferredPhysicsQueryResult>(queueEntity);
 
@@ -36,7 +41,10 @@ namespace VVardenfell.Runtime.Physics
             PruneExpiredResults(results, frame.FixedTick);
 
             if (requests.Length == 0)
+            {
+                EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, false);
                 return;
+            }
 
             var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
             using var hits = new NativeList<Unity.Physics.RaycastHit>(Allocator.Temp);
@@ -45,6 +53,7 @@ namespace VVardenfell.Runtime.Physics
                 ResolveRequest(physicsWorld, requests[i], runtime.LastResolvedBuildSequence, hits, colliderHits, results);
 
             requests.Clear();
+            EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, false);
         }
 
         static void PruneExpiredResults(DynamicBuffer<DeferredPhysicsQueryResult> results, uint fixedTick)

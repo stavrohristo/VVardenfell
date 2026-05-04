@@ -1,8 +1,10 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Physics;
 using Unity.Physics.Systems;
 using UnityEngine;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
@@ -13,6 +15,11 @@ namespace VVardenfell.Runtime.Physics
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
     public partial class MorrowindOwnedPhysicsBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<MorrowindOwnedPhysicsBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<MorrowindPhysicsFrameState>())
@@ -29,6 +36,7 @@ namespace VVardenfell.Runtime.Physics
             bool autoDisabled = physicsGroup != null;
             if (physicsGroup != null)
                 physicsGroup.Enabled = false;
+            EnsurePhysicsStep();
 
             ref var frameState = ref SystemAPI.GetSingletonRW<MorrowindPhysicsFrameState>().ValueRW;
             frameState.AutoPhysicsDisabled = (byte)(autoDisabled ? 1 : 0);
@@ -37,7 +45,21 @@ namespace VVardenfell.Runtime.Physics
                 frameState.BootLogged = 1;
             }
 
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<MorrowindOwnedPhysicsBootstrapRequest>(EntityManager);
+        }
+
+        void EnsurePhysicsStep()
+        {
+            var step = SystemAPI.HasSingleton<PhysicsStep>()
+                ? SystemAPI.GetSingleton<PhysicsStep>()
+                : PhysicsStep.Default;
+            step.IncrementalStaticBroadphase = true;
+            step.IncrementalDynamicBroadphase = true;
+
+            if (SystemAPI.HasSingleton<PhysicsStep>())
+                SystemAPI.SetSingleton(step);
+            else
+                EntityManager.CreateSingleton(step, "VVardenfell.PhysicsStep");
         }
     }
 

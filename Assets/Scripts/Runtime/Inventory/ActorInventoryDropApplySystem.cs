@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
@@ -61,7 +62,10 @@ namespace VVardenfell.Runtime.Inventory
                 if (!IsActorTarget(target))
                     continue;
 
-                RemoveAvailableItems(target, request.Content, request.Count);
+                bool equipmentChanged = RemoveAvailableItems(target, request.Content, request.Count);
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, target);
+                if (equipmentChanged)
+                    MarkActorPresentationEquipmentDirty(target);
                 EnqueueDropSpawns(target, request, spawnRequests, ref spawnState);
             }
 
@@ -88,7 +92,7 @@ namespace VVardenfell.Runtime.Inventory
             => EntityManager.HasComponent<ActorSpawnSource>(target)
                || EntityManager.HasComponent<PlayerTag>(target);
 
-        void RemoveAvailableItems(Entity target, ContentReference content, int count)
+        bool RemoveAvailableItems(Entity target, ContentReference content, int count)
         {
             if (EntityManager.HasBuffer<ActorInventoryItem>(target))
             {
@@ -96,8 +100,14 @@ namespace VVardenfell.Runtime.Inventory
                 DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
                     : default;
+                ulong previousSignature = equipment.IsCreated
+                    ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                    : 0ul;
                 RemoveActorItems(inventory, equipment, content, count);
-                return;
+                ulong currentSignature = equipment.IsCreated
+                    ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                    : 0ul;
+                return previousSignature != currentSignature;
             }
 
             if (EntityManager.HasBuffer<PlayerInventoryItem>(target))
@@ -106,8 +116,44 @@ namespace VVardenfell.Runtime.Inventory
                 DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
                     : default;
+                ulong previousSignature = equipment.IsCreated
+                    ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                    : 0ul;
                 RemovePlayerItems(inventory, equipment, content, count);
+                ulong currentSignature = equipment.IsCreated
+                    ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                    : 0ul;
+                return previousSignature != currentSignature;
             }
+
+            return false;
+        }
+
+        void MarkActorPresentationEquipmentDirty(Entity actor)
+        {
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                EntityManager,
+                ref ecb,
+                actor,
+                enabled: true);
+
+            foreach (var (visual, entity) in
+                     SystemAPI.Query<RefRO<LocalPlayerVisual>>()
+                         .WithEntityAccess())
+            {
+                if (visual.ValueRO.Player == actor)
+                {
+                    ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                        EntityManager,
+                        ref ecb,
+                        entity,
+                        enabled: true);
+                }
+            }
+
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         void EnqueueDropSpawns(

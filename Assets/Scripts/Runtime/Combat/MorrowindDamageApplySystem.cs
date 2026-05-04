@@ -62,12 +62,9 @@ namespace VVardenfell.Runtime.Combat
             var eventState = EntityManager.GetComponentData<ActorScriptEventState>(target);
             float amount = math.max(0f, damage.Amount);
 
-            if (damage.SourceKind == MorrowindDamageSourceKind.Weapon)
-            {
-                if (!damage.SourceContent.IsValid || damage.SourceContent.Kind != ContentReferenceKind.Item)
-                    throw new InvalidOperationException("[VVardenfell][Damage] Weapon damage is missing item source content.");
-                eventState.LastHitObject = damage.SourceContent;
-            }
+            if (damage.SourceKind == MorrowindDamageSourceKind.Weapon
+                && (!damage.SourceContent.IsValid || damage.SourceContent.Kind != ContentReferenceKind.Item))
+                throw new InvalidOperationException("[VVardenfell][Damage] Weapon damage is missing item source content.");
 
             switch (damage.TargetVital)
             {

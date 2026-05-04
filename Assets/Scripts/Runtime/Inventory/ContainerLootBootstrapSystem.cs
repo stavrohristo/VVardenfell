@@ -12,6 +12,11 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class ContainerLootBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<ContainerLootBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus>(EntityManager);
@@ -30,7 +35,7 @@ namespace VVardenfell.Runtime.Inventory
                 SelectedItemIndex = -1,
             });
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new ContainerWindowRequest());
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<ContainerLootBootstrapRequest>(EntityManager);
         }
     }
 }

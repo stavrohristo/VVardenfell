@@ -11,30 +11,43 @@ namespace VVardenfell.Runtime.Animation
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
     public partial class ActorPresentationEquipmentRefreshSystem : SystemBase
     {
+        EntityQuery _dirtyQuery;
+
         protected override void OnCreate()
         {
-            RequireForUpdate<ActorPresentationEquipmentSignature>();
+            _dirtyQuery = GetEntityQuery(
+                ComponentType.ReadOnly<ActorPresentationEquipmentSignature>(),
+                ComponentType.ReadOnly<ActorEquipmentSlot>(),
+                ComponentType.ReadOnly<ActorPresentation>(),
+                ComponentType.ReadOnly<ActorSpawnSource>(),
+                ComponentType.ReadOnly<ActorPresentationEquipmentDirty>());
+            RequireForUpdate(_dirtyQuery);
         }
 
         protected override void OnUpdate()
         {
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             bool queuedRefresh = false;
+            bool touchedDirty = false;
 
             foreach (var (signature, equipment, entity) in
                      SystemAPI.Query<RefRO<ActorPresentationEquipmentSignature>, DynamicBuffer<ActorEquipmentSlot>>()
-                         .WithAll<ActorPresentation, ActorSpawnSource>()
+                         .WithAll<ActorPresentation, ActorSpawnSource, ActorPresentationEquipmentDirty>()
                          .WithEntityAccess())
             {
-                ulong current = BuildEquipmentSignature(equipment);
+                touchedDirty = true;
+                ulong current = ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment);
                 if (signature.ValueRO.Value == current)
+                {
+                    ecb.SetComponentEnabled<ActorPresentationEquipmentDirty>(entity, false);
                     continue;
+                }
 
                 QueuePresentationRefresh(ref ecb, entity);
                 queuedRefresh = true;
             }
 
-            if (queuedRefresh)
+            if (queuedRefresh || touchedDirty)
                 ecb.Playback(EntityManager);
 
             ecb.Dispose();
@@ -91,23 +104,5 @@ namespace VVardenfell.Runtime.Animation
                 ecb.RemoveComponent<T>(entity);
         }
 
-        static ulong BuildEquipmentSignature(DynamicBuffer<ActorEquipmentSlot> equipment)
-        {
-            unchecked
-            {
-                ulong hash = 1469598103934665603ul;
-                for (int i = 0; i < equipment.Length; i++)
-                {
-                    var slot = equipment[i];
-                    hash = (hash ^ (byte)slot.Slot) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.Content.Kind) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.Content.HandleValue) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.InventoryIndex) * 1099511628211ul;
-                    hash = (hash ^ slot.VisualMode) * 1099511628211ul;
-                }
-
-                return hash;
-            }
-        }
     }
 }

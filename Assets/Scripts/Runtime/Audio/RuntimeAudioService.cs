@@ -524,10 +524,7 @@ namespace VVardenfell.Runtime.Audio
             if (string.IsNullOrWhiteSpace(path))
             {
                 if (directPath)
-                {
-                    WarnMissing(BuildLooseSoundPath(SoundPathResolver.Correct(request.DirectPath.ToString())), "say");
-                    return;
-                }
+                    throw new InvalidOperationException($"[VVardenfell][Audio] Missing direct say audio file '{request.DirectPath}'.");
 
                 ref readonly var sound = ref contentDb.Get(request.Sound);
                 throw new InvalidOperationException($"[VVardenfell][Audio] Missing audio file for sound '{sound.Id}'.");

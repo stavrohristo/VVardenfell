@@ -62,7 +62,7 @@ namespace VVardenfell.Runtime.Shell
             return math.max(0f, hours - remainingTime * effectiveTimeScale / 3600f);
         }
 
-        public static void AdvanceTimedActiveMagicEffects(
+        public static bool AdvanceTimedActiveMagicEffects(
             DynamicBuffer<ActorActiveMagicEffect> activeEffects,
             float gameHours,
             float timeScale)
@@ -72,8 +72,9 @@ namespace VVardenfell.Runtime.Shell
                 durationSeconds /= timeScale;
 
             if (durationSeconds <= 0f)
-                return;
+                return false;
 
+            bool changed = false;
             for (int i = 0; i < activeEffects.Length; i++)
             {
                 var effect = activeEffects[i];
@@ -85,7 +86,10 @@ namespace VVardenfell.Runtime.Shell
                     effect.Applied = 0;
 
                 activeEffects[i] = effect;
+                changed = true;
             }
+
+            return changed;
         }
 
         public static int ComputeUntilHealedHours(

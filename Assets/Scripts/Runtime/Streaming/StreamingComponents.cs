@@ -50,6 +50,9 @@ namespace VVardenfell.Runtime.Streaming
 
         /// <summary>Subset of <see cref="Map"/>: cells whose entities are currently rendering.</summary>
         public NativeHashSet<int2> Active;
+
+        /// <summary>Incremented whenever <see cref="Active"/> membership changes.</summary>
+        public uint ActiveRevision;
     }
 
     /// <summary>

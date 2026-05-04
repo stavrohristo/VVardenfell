@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Rendering;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -54,6 +55,8 @@ namespace VVardenfell.Runtime.Streaming
 
             var cfg = _singletonQuery.GetSingleton<StreamingConfig>();
             var loaded = _singletonQuery.GetSingleton<LoadedCellsMap>();
+            var loadedEntity = _singletonQuery.GetSingletonEntity();
+            uint startActiveRevision = loaded.ActiveRevision;
             var logicalRefs = _singletonQuery.GetSingleton<LogicalRefLookup>();
             var pendingPhysicsLoad = _singletonQuery.GetSingleton<PendingCellPhysicsLoad>();
 
@@ -99,7 +102,14 @@ namespace VVardenfell.Runtime.Streaming
                 }.Run(_refsOnlyQuery);
 
                 QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
-                loaded.Active.Add(coord);
+                if (loaded.Active.Add(coord))
+                    loaded.ActiveRevision++;
+            }
+
+            if (loaded.ActiveRevision != startActiveRevision)
+            {
+                state.EntityManager.SetComponentData(loadedEntity, loaded);
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(state.EntityManager);
             }
         }
 

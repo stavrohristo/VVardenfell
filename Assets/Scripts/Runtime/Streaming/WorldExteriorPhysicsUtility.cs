@@ -65,10 +65,21 @@ namespace VVardenfell.Runtime.Streaming
                 if (!em.HasComponent<RuntimeColliderSource>(entity))
                     continue;
 
+                bool isActive = em.HasComponent<PhysicsCollider>(entity);
                 if (active)
+                {
+                    if (isActive)
+                        continue;
+
                     RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
+                }
                 else
+                {
+                    if (!isActive)
+                        continue;
+
                     RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
+                }
                 queued = true;
             }
 

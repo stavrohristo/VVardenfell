@@ -8,6 +8,7 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
@@ -117,8 +118,11 @@ namespace VVardenfell.Runtime.Components
                     ref readonly var def = ref contentDb.Get(handle);
                     ecb.AddComponent(logicalEntity, new LightSourceAuthoring { Definition = handle });
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    ecb.AddComponent(logicalEntity, BuildLightInstanceFlags(def.Flags));
+                    var flags = BuildLightInstanceFlags(def.Flags);
+                    ecb.AddComponent(logicalEntity, flags);
                     ecb.AddComponent(logicalEntity, BuildLightInstanceState(def));
+                    if (IsAnimatedLight(flags))
+                        ecb.AddComponent<LightInstanceAnimated>(logicalEntity);
                     ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, null);
                     return true;
@@ -213,7 +217,10 @@ namespace VVardenfell.Runtime.Components
             });
             ecb.AddComponent(logicalEntity, new ActorScriptEventState());
             ecb.AddComponent(logicalEntity, new ActorHitAftermathState());
+            ecb.AddComponent(logicalEntity, ActorCrimeState.Default);
+            ecb.AddComponent(logicalEntity, new ActorFriendlyHitState());
             ecb.AddComponent(logicalEntity, new ActorBlockState());
+            ecb.AddComponent(logicalEntity, new ActorMeleeCombatAiState());
             ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 contentDb,
@@ -228,6 +235,7 @@ namespace VVardenfell.Runtime.Components
             for (int i = 0; i < actorSpells.Length; i++)
                 knownSpells.Add(actorSpells[i]);
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
+            ecb.AddComponent<ActorActiveMagicEffectDirty>(logicalEntity);
             QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
 
             QueueActorCollider(entityManager, ref ecb, logicalEntity);
@@ -250,6 +258,8 @@ namespace VVardenfell.Runtime.Components
                     Status = (byte)ActorAiPlannerStatus.Idle,
                 });
                 ecb.AddComponent(logicalEntity, anchor);
+                ecb.AddComponent<ActorAiNavigationAnchorDirty>(logicalEntity);
+                ecb.SetComponentEnabled<ActorAiNavigationAnchorDirty>(logicalEntity, false);
                 var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
                 ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
                 if (packages.Length > 0)
@@ -531,6 +541,12 @@ namespace VVardenfell.Runtime.Components
                 OffDefault = (byte)((flags & OffDefault) != 0 ? 1 : 0),
             };
         }
+
+        static bool IsAnimatedLight(in LightInstanceFlags flags)
+            => flags.Flicker != 0
+               || flags.FlickerSlow != 0
+               || flags.Pulse != 0
+               || flags.PulseSlow != 0;
 
         static LightInstanceState BuildLightInstanceState(in LightDef def)
         {

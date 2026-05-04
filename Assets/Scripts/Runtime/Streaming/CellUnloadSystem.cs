@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Rendering;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -51,6 +52,7 @@ namespace VVardenfell.Runtime.Streaming
         public void OnUpdate(ref SystemState state)
         {
             var loaded = _singletonQuery.GetSingleton<LoadedCellsMap>();
+            var loadedEntity = _singletonQuery.GetSingletonEntity();
             var unload = _singletonQuery.GetSingleton<UnloadList>();
             var pendingPhysicsUnload = _singletonQuery.GetSingleton<PendingCellPhysicsUnload>();
             if (unload.PendingEntityDestroy.Length == 0) return;
@@ -58,6 +60,7 @@ namespace VVardenfell.Runtime.Streaming
             state.EntityManager.CompleteDependencyBeforeRW<MaterialMeshInfo>();
             _cellLinkHandle.Update(ref state);
             _mmiHandle.Update(ref state);
+            bool activeChanged = false;
             for (int i = 0; i < unload.PendingEntityDestroy.Length; i++)
             {
                 var coord = unload.PendingEntityDestroy[i];
@@ -71,11 +74,20 @@ namespace VVardenfell.Runtime.Streaming
                 }.Run(_refsOnlyQuery);
 
                 QueuePhysicsCell(ref pendingPhysicsUnload.Cells, coord);
-                loaded.Active.Remove(coord);
+                if (loaded.Active.Remove(coord))
+                {
+                    loaded.ActiveRevision++;
+                    activeChanged = true;
+                }
                 // Managed resources (terrain Mesh/Texture/Material) stay alive across
                 // enable/disable cycles — we only toggle render/physics state.
             }
 
+            if (activeChanged)
+            {
+                state.EntityManager.SetComponentData(loadedEntity, loaded);
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(state.EntityManager);
+            }
             unload.PendingEntityDestroy.Clear();
         }
 

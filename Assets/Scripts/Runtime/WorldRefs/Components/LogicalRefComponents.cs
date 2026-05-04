@@ -126,6 +126,20 @@ namespace VVardenfell.Runtime.Components
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllByContentKey;
     }
 
+    public struct ActiveExplicitRefLookupDirty : IComponentData, IEnableableComponent
+    {
+    }
+
+    public struct ActiveExplicitRefLookupBuildState : IComponentData
+    {
+        public uint LastActiveRevision;
+        public ulong LastActiveInteriorCellHash;
+        public int LastEntityCount;
+        public int LastOrderVersion;
+        public byte LastInteriorActive;
+        public byte HasBuilt;
+    }
+
     public struct DoorAuthoring : IComponentData
     {
         public DoorDefHandle Definition;

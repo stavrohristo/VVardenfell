@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
@@ -8,11 +9,16 @@ namespace VVardenfell.Runtime.Physics
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
     public partial class RuntimePhysicsMutationBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimePhysicsMutationBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<RuntimePhysicsMutationQueueTag>())
             {
-                Enabled = false;
+                RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(EntityManager);
                 return;
             }
 
@@ -20,7 +26,7 @@ namespace VVardenfell.Runtime.Physics
             EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.RuntimePhysicsMutationQueue"));
             EntityManager.AddBuffer<RuntimePhysicsMutationRequest>(entity);
             EntityManager.SetComponentData(entity, new PhysicsFlushRequested());
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(EntityManager);
         }
     }
 }

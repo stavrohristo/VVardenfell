@@ -1845,9 +1845,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
 
                 var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity);
-                return add
+                bool changed = add
                     ? InventoryMutationUtility.TryAddPlayerItem(contentDb, inventory, itemId, count)
                     : InventoryMutationUtility.TryRemovePlayerItem(contentDb, inventory, itemId, count);
+                if (changed)
+                    PlayerEncumbranceDirtyUtility.MarkPlayerDirty(entityManager);
+                return changed;
             }
 
             if (string.IsNullOrWhiteSpace(target))

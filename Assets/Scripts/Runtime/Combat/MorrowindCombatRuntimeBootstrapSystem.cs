@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
@@ -8,10 +9,18 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial class MorrowindCombatRuntimeBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<MorrowindCombatRuntimeBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<MorrowindCombatRuntimeState>())
+            {
+                RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(EntityManager);
                 return;
+            }
 
             if (RuntimeContentDatabase.Active == null)
                 return;
@@ -22,7 +31,8 @@ namespace VVardenfell.Runtime.Combat
             {
                 RandomState = 0x6E624EB7u,
             });
-            EntityManager.AddBuffer<PendingPlayerMeleeHitConfirmation>(entity);
+            EntityManager.AddBuffer<PendingMeleeHitConfirmation>(entity);
+            RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(EntityManager);
         }
     }
 }

@@ -10,7 +10,7 @@ namespace VVardenfell.Runtime.Combat
         public uint RandomState;
     }
 
-    public struct PendingPlayerMeleeHitConfirmation : IBufferElementData
+    public struct PendingMeleeHitConfirmation : IBufferElementData
     {
         public uint QuerySequence;
         public uint RequestFixedTick;
@@ -23,5 +23,13 @@ namespace VVardenfell.Runtime.Combat
         public uint TargetPlacedRefId;
         public float3 HitPosition;
         public byte HasHitPosition;
+    }
+
+    public struct ActorMeleeCombatAiState : IComponentData
+    {
+        public float CooldownSeconds;
+        public float DesiredAttackStrength;
+        public ActorWeaponAttackType DesiredAttackType;
+        public byte AttackInProgress;
     }
 }

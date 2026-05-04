@@ -115,6 +115,12 @@ namespace VVardenfell.Runtime.Interactions
                 return true;
             }
 
+            if (ActorCorpseLootUtility.IsDeadLootableActor(entityManager, logicalEntity))
+            {
+                kind = InteractableKind.Container;
+                return true;
+            }
+
             if (entityManager.HasComponent<ActivatorAuthoring>(logicalEntity))
             {
                 kind = InteractableKind.Activator;

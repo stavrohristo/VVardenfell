@@ -12,6 +12,11 @@ namespace VVardenfell.Runtime.Shell
     [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
     public partial class RuntimeShellBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimeShellBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus, RuntimeShellState>(
@@ -117,7 +122,7 @@ namespace VVardenfell.Runtime.Shell
                 RenderResolution = 256,
                 RevealRadiusFraction = 0.17f,
             });
-            Enabled = false;
+            RuntimeBootstrapRequestUtility.Consume<RuntimeShellBootstrapRequest>(EntityManager);
         }
     }
 }

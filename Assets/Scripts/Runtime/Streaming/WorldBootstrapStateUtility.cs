@@ -10,6 +10,7 @@ using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.WorldState;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -123,6 +124,7 @@ namespace VVardenfell.Runtime.Streaming
 
         public static void PublishGameInitialization(EntityManager em, WorldBootstrapOptions options)
         {
+            RuntimeBootstrapRequestUtility.PublishAll(em);
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
             ResolveInitialPlayerData(
                 RuntimeContentDatabase.Active,
@@ -154,6 +156,7 @@ namespace VVardenfell.Runtime.Streaming
 
         public static void PublishSandboxStartRequest(EntityManager em)
         {
+            RuntimeBootstrapRequestUtility.PublishAll(em);
             using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<NewGameInitializationSingleton>());
             if (!requestQuery.IsEmptyIgnoreFilter)
                 return;
@@ -284,6 +287,8 @@ namespace VVardenfell.Runtime.Streaming
                 if (lookup.DisabledByPlacedRef.IsCreated)
                     lookup.DisabledByPlacedRef.Dispose();
             }
+
+            ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
 
             foreach (var e in em.CreateEntityQuery(typeof(LoadQueue)).ToEntityArray(Allocator.Temp))
                 em.GetComponentData<LoadQueue>(e).Queue.Dispose();

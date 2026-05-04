@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
 using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Physics;
@@ -352,12 +353,25 @@ namespace VVardenfell.Runtime.MorrowindScript
                     InteriorCellHash = cellHash,
                     IsInterior = 1,
                 });
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(EntityManager);
+                MarkActorAiNavigationAnchorDirty(entity);
             }
 
             if (!EntityManager.HasComponent<InteriorCellMember>(entity))
                 EntityManager.AddComponent<InteriorCellMember>(entity);
             if (EntityManager.HasComponent<CellLink>(entity))
                 EntityManager.RemoveComponent<CellLink>(entity);
+        }
+
+        void MarkActorAiNavigationAnchorDirty(Entity entity)
+        {
+            if (!EntityManager.HasComponent<ActorAiNavigationAnchor>(entity))
+                return;
+
+            if (!EntityManager.HasComponent<ActorAiNavigationAnchorDirty>(entity))
+                throw new InvalidOperationException($"[VVardenfell][AI] actor entity={entity.Index}:{entity.Version} has ActorAiNavigationAnchor without ActorAiNavigationAnchorDirty.");
+
+            EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, true);
         }
 
         bool IsPositionCellTargetActive(Entity target, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)

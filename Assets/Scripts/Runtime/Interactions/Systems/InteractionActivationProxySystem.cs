@@ -15,21 +15,23 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
     public partial class InteractionActivationProxySystem : SystemBase
     {
+        EntityQuery _pendingQuery;
+
         protected override void OnCreate()
         {
-            Enabled = false;
+            _pendingQuery = GetEntityQuery(
+                ComponentType.ReadOnly<InteractionActivationProxyBuildPending>(),
+                ComponentType.ReadOnly<LogicalRefTag>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
             RequireForUpdate<LoadedCellsMap>();
+            RequireForUpdate(_pendingQuery);
         }
 
         protected override void OnUpdate()
         {
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
-            var pendingQuery = GetEntityQuery(
-                ComponentType.ReadOnly<InteractionActivationProxyBuildPending>(),
-                ComponentType.ReadOnly<LogicalRefTag>(),
-                ComponentType.ReadOnly<PlacedRefIdentity>());
-            using (var pending = pendingQuery.ToEntityArray(Allocator.Temp))
+            using (var pending = _pendingQuery.ToEntityArray(Allocator.Temp))
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 for (int i = 0; i < pending.Length; i++)
@@ -121,7 +123,9 @@ namespace VVardenfell.Runtime.Interactions
                 temporary: true);
             ecb.AddComponent(proxyEntity, new LogicalRefParent { Value = logicalEntity });
             ecb.AddComponent<InteractionActivationProxyTag>(proxyEntity);
-            if (!followsActor)
+            if (followsActor)
+                ecb.AddComponent<InteractionActivationProxyFollowTag>(proxyEntity);
+            else
                 ecb.AddComponent<Unity.Transforms.Static>(proxyEntity);
 
             if (EntityManager.HasComponent<CellLink>(logicalEntity))

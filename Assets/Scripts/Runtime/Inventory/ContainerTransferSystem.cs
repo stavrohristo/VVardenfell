@@ -4,7 +4,9 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldState;
@@ -63,6 +65,7 @@ namespace VVardenfell.Runtime.Inventory
                     if (entry.PlacedRefId != placedRefId || entry.Count <= 0)
                         continue;
 
+                    RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
                     WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
                     ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                     items.RemoveAt(i);
@@ -80,6 +83,7 @@ namespace VVardenfell.Runtime.Inventory
                     var entry = items[selectedIndex];
                     if (entry.PlacedRefId == placedRefId && entry.Count > 0)
                     {
+                        RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
                         WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
                         ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                         items.RemoveAt(selectedIndex);
@@ -92,8 +96,54 @@ namespace VVardenfell.Runtime.Inventory
 
             if (transferredStacks > 0)
             {
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
                 TryQueueInteractionAudio(state.OpenTargetEntity, InteractionAudioKind.Container, "container");
             }
+        }
+
+        void RemoveCorpseBackingInventory(Entity target, uint placedRefId, in ContainerSessionItem entry, int count)
+        {
+            if (!ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target))
+                return;
+
+            if (!EntityManager.HasBuffer<ActorInventoryItem>(target))
+                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} has visible loot but no ActorInventoryItem buffer.");
+
+            var actorInventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
+            DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
+                ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
+                : default;
+            ulong previousSignature = equipment.IsCreated
+                ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                : 0UL;
+
+            int removed = ActorInventoryBufferMutationUtility.RemoveActorItems(
+                actorInventory,
+                equipment,
+                entry.Content,
+                entry.SoulId,
+                entry.SoulActorHandleValue,
+                count);
+            if (removed != count)
+                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} inventory could remove {removed} of requested {count} for content {entry.Content.Kind}:{entry.Content.HandleValue}.");
+
+            ulong currentSignature = equipment.IsCreated
+                ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                : 0UL;
+            if (previousSignature != currentSignature)
+                MarkActorPresentationEquipmentDirty(target);
+        }
+
+        void MarkActorPresentationEquipmentDirty(Entity actor)
+        {
+            var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
+            ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                EntityManager,
+                ref ecb,
+                actor,
+                enabled: true);
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)

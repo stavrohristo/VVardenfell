@@ -1,4 +1,3 @@
-using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
@@ -26,26 +25,25 @@ namespace VVardenfell.Runtime.Player
             _actorQuery = GetEntityQuery(
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
-                ComponentType.ReadWrite<ActorEffectStatModifiers>());
+                ComponentType.ReadWrite<ActorEffectStatModifiers>(),
+                ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
             RequireForUpdate(_actorQuery);
         }
 
         protected override void OnUpdate()
         {
-            if (_actorQuery.IsEmptyIgnoreFilter)
-                return;
-
-            using var entities = _actorQuery.ToEntityArray(Allocator.Temp);
-            for (int i = 0; i < entities.Length; i++)
+            foreach (var (knownSpells, activeEffects, modifiers, entity) in
+                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, RefRW<ActorEffectStatModifiers>>()
+                         .WithAll<ActorActiveMagicEffectDirty>()
+                         .WithEntityAccess())
             {
-                Entity entity = entities[i];
-                var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(entity, true);
-                var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(entity);
                 RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeEffects);
                 InjectDebugActiveEffects(activeEffects);
 
-                EntityManager.SetComponentData(entity, BuildSupportedModifiers(activeEffects));
+                modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, entity);
+                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
             }
         }
 
@@ -180,7 +178,8 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorAttributeSet>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>(),
-                ComponentType.ReadWrite<ActorDerivedMovementStats>());
+                ComponentType.ReadWrite<ActorDerivedMovementStats>(),
+                ComponentType.ReadOnly<PlayerEncumbranceDirty>());
 
             RequireForUpdate(_playerQuery);
             RequireForUpdate<PlayerInventoryItem>();
@@ -191,24 +190,29 @@ namespace VVardenfell.Runtime.Player
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
-            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
-            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
-            ref var derived = ref _playerQuery.GetSingletonRW<ActorDerivedMovementStats>().ValueRW;
+            var contentDb = RuntimeContentDatabase.Active;
+            if (contentDb == null)
+                return;
 
-            float inventoryWeight = SumInventoryWeight(RuntimeContentDatabase.Active, inventory);
-            derived.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(RuntimeContentDatabase.Active, attributes);
+            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            float inventoryWeight = SumInventoryWeight(contentDb, inventory);
+            Entity player = SystemAPI.GetSingletonEntity<PlayerTag>();
+            var attributes = SystemAPI.GetComponent<ActorAttributeSet>(player);
+            var effectModifiers = SystemAPI.GetComponent<ActorEffectStatModifiers>(player);
+            var derived = SystemAPI.GetComponent<ActorDerivedMovementStats>(player);
+
+            derived.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(contentDb, attributes);
             derived.Encumbrance = MorrowindActorMovementStats.ComputeEncumbrance(effectModifiers, inventoryWeight);
             derived.NormalizedEncumbrance = MorrowindActorMovementStats.ComputeNormalizedEncumbrance(
                 derived.Encumbrance,
                 derived.CarryCapacity);
+
+            SystemAPI.SetComponent(player, derived);
+            EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(player, false);
         }
 
         static float SumInventoryWeight(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory)
         {
-            if (contentDb == null)
-                return 0f;
-
             float totalWeight = 0f;
             for (int i = 0; i < inventory.Length; i++)
             {

@@ -56,8 +56,9 @@ namespace VVardenfell.Runtime.Inventory
             result.PendingNotification = 0;
             result.NotificationText = default;
 
-            if (!EntityManager.Exists(target)
-                || !EntityManager.HasComponent<ContainerAuthoring>(target)
+            bool isAuthoredContainer = EntityManager.Exists(target) && EntityManager.HasComponent<ContainerAuthoring>(target);
+            bool isCorpse = EntityManager.Exists(target) && ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target);
+            if ((!isAuthoredContainer && !isCorpse)
                 || !EntityManager.HasComponent<PlacedRefIdentity>(target))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] container activation request resolved to a missing or non-container logical entity.");
@@ -65,12 +66,25 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
-            var authoring = EntityManager.GetComponentData<ContainerAuthoring>(target);
             var contentDb = RuntimeContentDatabase.Active;
             var headers = SystemAPI.GetSingletonBuffer<ContainerSessionHeader>();
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var journal = SystemAPI.GetSingletonBuffer<WorldJournalEntry>();
-            EnsureContainerSessionInitialized(contentDb, journal, headers, items, placedRefId, authoring.Definition);
+            ContainerDefHandle definition = default;
+            string title;
+            if (isCorpse)
+            {
+                ActorCorpseLootUtility.RequireDeadLootableActor(EntityManager, target, placedRefId);
+                ActorCorpseLootUtility.EnsureSessionInitialized(EntityManager, journal, headers, items, target, placedRefId);
+                title = ActorCorpseLootUtility.ResolveTitle(contentDb, EntityManager, target);
+            }
+            else
+            {
+                var authoring = EntityManager.GetComponentData<ContainerAuthoring>(target);
+                definition = authoring.Definition;
+                EnsureContainerSessionInitialized(contentDb, journal, headers, items, placedRefId, definition);
+                title = ContainerLootUtility.ResolveContainerTitle(contentDb, definition);
+            }
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var windowState = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
@@ -79,8 +93,8 @@ namespace VVardenfell.Runtime.Inventory
                 ref windowState,
                 target,
                 placedRefId,
-                authoring.Definition,
-                ContainerLootUtility.ResolveContainerTitle(contentDb, authoring.Definition));
+                definition,
+                title);
             windowState.SelectedItemIndex = ContainerLootUtility.FindFirstItemIndex(items, placedRefId);
 
             var requestState = SystemAPI.GetSingletonRW<ContainerWindowRequest>();

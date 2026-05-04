@@ -21,7 +21,11 @@ namespace VVardenfell.Runtime.Physics
             if (query.IsEmptyIgnoreFilter)
                 throw new InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue has not been created.");
 
-            return query.GetSingletonEntity();
+            Entity queueEntity = query.GetSingletonEntity();
+            if (!entityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
+                throw new InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
+
+            return queueEntity;
         }
 
         public static uint EnqueueRay(
@@ -61,6 +65,7 @@ namespace VVardenfell.Runtime.Physics
                 Filter = filter,
                 RequestFixedTick = fixedTick,
             });
+            entityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, true);
             return runtime.NextSequence;
         }
 
@@ -105,6 +110,7 @@ namespace VVardenfell.Runtime.Physics
                 Rotation = rotation,
                 RequestFixedTick = fixedTick,
             });
+            entityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, true);
             return runtime.NextSequence;
         }
 
@@ -192,14 +198,6 @@ namespace VVardenfell.Runtime.Physics
                 if (!IsResultFresh(entityManager, result, maxAgeTicks))
                     break;
 
-                QueueLineOfSightRequestIfMissing(
-                    entityManager,
-                    queueEntity,
-                    sourceEntity,
-                    targetEntity,
-                    source,
-                    target,
-                    filter);
                 hasLineOfSight = result.Status == DeferredPhysicsQueryStatus.Miss;
                 return true;
             }

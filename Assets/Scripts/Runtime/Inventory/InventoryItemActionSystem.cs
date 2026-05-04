@@ -1,8 +1,10 @@
+using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
@@ -42,8 +44,12 @@ namespace VVardenfell.Runtime.Inventory
             CompleteDependency();
 
             var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            ulong previousInventorySignature = BuildInventoryWeightSignature(inventory);
             DynamicBuffer<ActorEquipmentSlot> equipment = default;
-            bool hasEquipment = TryGetPlayerEquipment(out equipment);
+            bool hasEquipment = TryGetPlayerEquipment(out equipment, out Entity playerEquipmentEntity);
+            ulong previousEquipmentSignature = hasEquipment
+                ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
+                : 0ul;
             ref var held = ref SystemAPI.GetSingletonRW<InventoryHeldItemState>().ValueRW;
 
             if (processQueue)
@@ -54,7 +60,11 @@ namespace VVardenfell.Runtime.Inventory
             }
 
             if (request.Pending == 0)
+            {
+                MarkPlayerEncumbranceDirtyIfChanged(inventory, previousInventorySignature);
+                MarkPlayerPresentationEquipmentDirtyIfChanged(hasEquipment, playerEquipmentEntity, equipment, previousEquipmentSignature);
                 return;
+            }
 
             var componentRequest = new InventoryItemActionRequestElement
             {
@@ -72,6 +82,8 @@ namespace VVardenfell.Runtime.Inventory
             };
             request = default;
             ProcessAction(componentRequest, inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+            MarkPlayerEncumbranceDirtyIfChanged(inventory, previousInventorySignature);
+            MarkPlayerPresentationEquipmentDirtyIfChanged(hasEquipment, playerEquipmentEntity, equipment, previousEquipmentSignature);
         }
 
         void ProcessAction(
@@ -110,7 +122,7 @@ namespace VVardenfell.Runtime.Inventory
             }
         }
 
-        bool TryGetPlayerEquipment(out DynamicBuffer<ActorEquipmentSlot> equipment)
+        bool TryGetPlayerEquipment(out DynamicBuffer<ActorEquipmentSlot> equipment, out Entity player)
         {
             using var query = EntityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
@@ -118,11 +130,86 @@ namespace VVardenfell.Runtime.Inventory
             if (query.CalculateEntityCount() != 1)
             {
                 equipment = default;
+                player = Entity.Null;
                 return false;
             }
 
-            equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(query.GetSingletonEntity());
+            player = query.GetSingletonEntity();
+            equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player);
             return true;
+        }
+
+        void MarkPlayerEncumbranceDirtyIfChanged(
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            ulong previousInventorySignature)
+        {
+            if (previousInventorySignature == BuildInventoryWeightSignature(inventory))
+                return;
+
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+        }
+
+        static ulong BuildInventoryWeightSignature(DynamicBuffer<PlayerInventoryItem> inventory)
+        {
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offset;
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                var entry = inventory[i];
+                if (entry.Count <= 0 || !entry.Content.IsValid)
+                    continue;
+
+                Mix(ref hash, (uint)entry.Content.Kind);
+                Mix(ref hash, unchecked((uint)entry.Content.HandleValue));
+                Mix(ref hash, unchecked((uint)entry.Count));
+            }
+
+            return hash;
+
+            void Mix(ref ulong hash, ulong value)
+            {
+                hash ^= value;
+                hash *= prime;
+            }
+        }
+
+        void MarkPlayerPresentationEquipmentDirtyIfChanged(
+            bool hasEquipment,
+            Entity player,
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            ulong previousEquipmentSignature)
+        {
+            if (!hasEquipment || player == Entity.Null)
+                return;
+
+            ulong currentEquipmentSignature = ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment);
+            if (previousEquipmentSignature == currentEquipmentSignature)
+                return;
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                EntityManager,
+                ref ecb,
+                player,
+                enabled: true);
+
+            foreach (var (visual, entity) in
+                     SystemAPI.Query<RefRO<LocalPlayerVisual>>()
+                         .WithEntityAccess())
+            {
+                if (visual.ValueRO.Player == player)
+                {
+                    ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                        EntityManager,
+                        ref ecb,
+                        entity,
+                        enabled: true);
+                }
+            }
+
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         void BeginDrag(
@@ -199,6 +286,7 @@ namespace VVardenfell.Runtime.Inventory
                     return;
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
+                RemoveCorpseBackingInventory(sourcePlacedRefId, entry, count);
                 WorldJournalUtility.AppendContainerDelta(EntityManager, sourcePlacedRefId, entry.Content, -count);
                 RemoveContainerCountAt(items, sourceIndex, count);
                 ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
@@ -213,6 +301,7 @@ namespace VVardenfell.Runtime.Inventory
                 int count = math.clamp(requestedCount, 1, entry.Count);
                 UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
+                AddCorpseBackingInventory(targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
                 RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             }
@@ -237,6 +326,7 @@ namespace VVardenfell.Runtime.Inventory
             int count = math.clamp(held.Count, 1, entry.Count);
             UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
+            AddCorpseBackingInventory(targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
             WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
             RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             ClearHeld(ref held);
@@ -421,6 +511,84 @@ namespace VVardenfell.Runtime.Inventory
 
             entry.Count -= count;
             items[index] = entry;
+        }
+
+        void RemoveCorpseBackingInventory(uint placedRefId, in ContainerSessionItem entry, int count)
+        {
+            Entity target = ResolveOpenContainerTarget(placedRefId);
+            if (!ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target))
+                return;
+
+            if (!EntityManager.HasBuffer<ActorInventoryItem>(target))
+                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} has visible loot but no ActorInventoryItem buffer.");
+
+            var actorInventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
+            DynamicBuffer<ActorEquipmentSlot> actorEquipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
+                ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
+                : default;
+            ulong previousSignature = actorEquipment.IsCreated
+                ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(actorEquipment)
+                : 0UL;
+
+            int removed = ActorInventoryBufferMutationUtility.RemoveActorItems(
+                actorInventory,
+                actorEquipment,
+                entry.Content,
+                entry.SoulId,
+                entry.SoulActorHandleValue,
+                count);
+            if (removed != count)
+                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} inventory could remove {removed} of requested {count} for content {entry.Content.Kind}:{entry.Content.HandleValue}.");
+
+            ulong currentSignature = actorEquipment.IsCreated
+                ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(actorEquipment)
+                : 0UL;
+            if (previousSignature != currentSignature)
+                MarkActorPresentationEquipmentDirty(target);
+        }
+
+        void AddCorpseBackingInventory(
+            uint placedRefId,
+            ContentReference content,
+            FixedString64Bytes soulId,
+            int soulActorHandleValue,
+            int count)
+        {
+            Entity target = ResolveOpenContainerTarget(placedRefId);
+            if (!ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target))
+                return;
+
+            if (!EntityManager.HasBuffer<ActorInventoryItem>(target))
+                EntityManager.AddBuffer<ActorInventoryItem>(target);
+
+            ActorInventoryBufferMutationUtility.AddActorItems(
+                RuntimeContentDatabase.Active,
+                EntityManager.GetBuffer<ActorInventoryItem>(target),
+                content,
+                soulId,
+                soulActorHandleValue,
+                count);
+        }
+
+        Entity ResolveOpenContainerTarget(uint placedRefId)
+        {
+            if (placedRefId == 0u || !SystemAPI.HasSingleton<ContainerWindowState>())
+                return Entity.Null;
+
+            var container = SystemAPI.GetSingleton<ContainerWindowState>();
+            return container.OpenPlacedRefId == placedRefId ? container.OpenTargetEntity : Entity.Null;
+        }
+
+        void MarkActorPresentationEquipmentDirty(Entity actor)
+        {
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                EntityManager,
+                ref ecb,
+                actor,
+                enabled: true);
+            ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
 
         static void RemovePlayerCountAt(

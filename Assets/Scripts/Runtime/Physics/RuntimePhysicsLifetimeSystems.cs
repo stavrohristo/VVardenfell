@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Physics;
 using UnityEngine;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
@@ -58,6 +59,11 @@ namespace VVardenfell.Runtime.Physics
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
     public partial class RuntimePhysicsLifetimeBootstrapSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<RuntimePhysicsLifetimeBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             Entity entity;
@@ -74,6 +80,7 @@ namespace VVardenfell.Runtime.Physics
 
             if (!EntityManager.HasBuffer<DeferredRuntimeColliderBlobDisposal>(entity))
                 EntityManager.AddBuffer<DeferredRuntimeColliderBlobDisposal>(entity);
+            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsLifetimeBootstrapRequest>(EntityManager);
         }
     }
 
@@ -128,8 +135,6 @@ namespace VVardenfell.Runtime.Physics
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
     public partial struct RuntimeColliderBlobDisposalSystem : ISystem
     {
-        EntityQuery _query;
-
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<DeferredRuntimeColliderBlobDisposal>();
@@ -158,6 +163,8 @@ namespace VVardenfell.Runtime.Physics
         [BurstCompile]
         public void OnDestroy(ref SystemState state)
         {
+            if (!SystemAPI.HasSingleton<DeferredRuntimeColliderBlobDisposal>())
+                return;
 
             var buffer = SystemAPI.GetSingletonBuffer<DeferredRuntimeColliderBlobDisposal>();
             for (int i = 0; i < buffer.Length; i++)

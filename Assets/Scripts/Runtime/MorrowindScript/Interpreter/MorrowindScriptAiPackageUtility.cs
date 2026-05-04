@@ -163,6 +163,9 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (!entityManager.HasComponent<ActorAiNavigationAnchor>(actor))
                 entityManager.AddComponentData(actor, BuildAnchor(contentDb, entityManager, actor));
+            if (!entityManager.HasComponent<ActorAiNavigationAnchorDirty>(actor))
+                entityManager.AddComponent<ActorAiNavigationAnchorDirty>(actor);
+            entityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(actor, false);
 
             EnsureMovementComponents(contentDb, entityManager, actor);
         }

@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -8,10 +9,18 @@ namespace VVardenfell.Runtime.Animation
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup), OrderFirst = true)]
     public partial class ActorAnimationBlobCatalogSystem : SystemBase
     {
+        protected override void OnCreate()
+        {
+            RequireForUpdate<ActorAnimationBlobCatalogBootstrapRequest>();
+        }
+
         protected override void OnUpdate()
         {
             if (SystemAPI.HasSingleton<ActorAnimationBlobCatalog>())
+            {
+                RuntimeBootstrapRequestUtility.Consume<ActorAnimationBlobCatalogBootstrapRequest>(EntityManager);
                 return;
+            }
 
             var catalog = WorldResources.Cache?.ActorAnimationCatalog;
             if (catalog == null)
@@ -23,6 +32,7 @@ namespace VVardenfell.Runtime.Animation
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new ActorAnimationBlobCatalog { Blob = blob });
             ecb.Playback(EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<ActorAnimationBlobCatalogBootstrapRequest>(EntityManager);
         }
 
         protected override void OnDestroy()

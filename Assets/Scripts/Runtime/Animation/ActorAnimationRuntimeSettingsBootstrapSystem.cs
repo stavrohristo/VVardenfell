@@ -1,4 +1,5 @@
 using Unity.Entities;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -8,8 +9,16 @@ namespace VVardenfell.Runtime.Animation
     {
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<ActorAnimationRuntimeSettingsBootstrapRequest>();
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
             if (SystemAPI.HasSingleton<ActorAnimationRuntimeSettings>())
+            {
+                RuntimeBootstrapRequestUtility.Consume<ActorAnimationRuntimeSettingsBootstrapRequest>(state.EntityManager);
                 return;
+            }
 
             Entity settingsEntity = state.EntityManager.CreateEntity();
             state.EntityManager.SetName(settingsEntity, "VVardenfell.ActorAnimationRuntimeSettings");
@@ -19,6 +28,7 @@ namespace VVardenfell.Runtime.Animation
                 ValidationEnabled = 0,
                 ValidationActorIndex = 0,
             });
+            RuntimeBootstrapRequestUtility.Consume<ActorAnimationRuntimeSettingsBootstrapRequest>(state.EntityManager);
         }
     }
 }

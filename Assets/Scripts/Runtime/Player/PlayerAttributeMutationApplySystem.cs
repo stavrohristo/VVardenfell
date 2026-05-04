@@ -55,6 +55,8 @@ namespace VVardenfell.Runtime.Player
             };
             SetAttribute(ref attributes, (ActorAttributeKind)request.Attribute, value);
             EntityManager.SetComponentData(target, attributes);
+            if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.Strength)
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, target);
         }
 
         static float GetAttribute(in ActorAttributeSet attributes, ActorAttributeKind attribute)

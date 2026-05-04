@@ -32,6 +32,10 @@ namespace VVardenfell.Runtime.Components
         public float AnimationTime;
     }
 
+    public struct LightInstanceAnimated : IComponentData
+    {
+    }
+
     public struct LightPresentationLink : IComponentData
     {
         public int Slot;

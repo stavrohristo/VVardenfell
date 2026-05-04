@@ -67,6 +67,9 @@ namespace VVardenfell.Runtime.Components
         public float ScreenFadeTargetAlpha;
         public float ScreenFadeDuration;
         public float ScreenFadeElapsed;
+        public float HitOverlayAlpha;
+        public float HitOverlayDuration;
+        public float HitOverlayElapsed;
         public int ModalButtonPressed;
         public int RestMenuSelectedHours;
         public int RestMenuProgressHours;

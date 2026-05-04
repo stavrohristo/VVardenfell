@@ -88,6 +88,14 @@ namespace VVardenfell.Runtime.Animation
                     },
                 });
                 ecb.AddComponent(entity, new ActorJumpAnimationState());
+                if (!EntityManager.HasComponent<ActorWeaponAnimationState>(entity))
+                {
+                    ecb.AddComponent(entity, new ActorWeaponAnimationState
+                    {
+                        WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
+                        Phase = ActorWeaponAnimationPhase.Hidden,
+                    });
+                }
                 ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
                 ecb.AddBuffer<ActorAnimationOverlayState>(entity);
                 ecb.AddBuffer<ActorAnimationEvent>(entity);
@@ -187,6 +195,11 @@ namespace VVardenfell.Runtime.Animation
                 {
                     Value = BuildEquipmentSignature(hasEquipment, equipmentBuffer),
                 });
+                ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
+                    EntityManager,
+                    ref ecb,
+                    entity,
+                    enabled: false);
                 ecb.AddComponent(entity, actorBounds);
             }
 
@@ -713,6 +726,7 @@ namespace VVardenfell.Runtime.Animation
                     LocalRotation = quaternion.identity,
                     LocalScale = 1f,
                 });
+                ecb.AddComponent<ActorRigidEquipmentRenderOwnerDirty>(equipmentRoot);
 
                 if (EntityManager.HasComponent<InteriorCellMember>(actorEntity))
                     ecb.AddComponent<InteriorCellMember>(equipmentRoot);
@@ -731,21 +745,7 @@ namespace VVardenfell.Runtime.Animation
             if (!hasEquipment || !equipment.IsCreated)
                 return 0ul;
 
-            unchecked
-            {
-                ulong hash = 1469598103934665603ul;
-                for (int i = 0; i < equipment.Length; i++)
-                {
-                    var slot = equipment[i];
-                    hash = (hash ^ (byte)slot.Slot) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.Content.Kind) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.Content.HandleValue) * 1099511628211ul;
-                    hash = (hash ^ (uint)slot.InventoryIndex) * 1099511628211ul;
-                    hash = (hash ^ slot.VisualMode) * 1099511628211ul;
-                }
-
-                return hash;
-            }
+            return ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment);
         }
 
     }

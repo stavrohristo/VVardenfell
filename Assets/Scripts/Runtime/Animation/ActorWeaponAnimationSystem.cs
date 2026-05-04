@@ -26,17 +26,50 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ref var catalog = ref catalogRef.Value;
-            foreach (var (presentation, movementState, weaponState, overlays) in
-                     SystemAPI.Query<RefRO<ActorPresentation>, RefRO<MorrowindMovementState>, RefRW<ActorWeaponAnimationState>, DynamicBuffer<ActorAnimationOverlayState>>())
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            bool markedRenderOwnersDirty = false;
+            foreach (var (presentation, movementState, weaponState, overlays, entity) in
+                     SystemAPI.Query<RefRO<ActorPresentation>, RefRO<MorrowindMovementState>, RefRW<ActorWeaponAnimationState>, DynamicBuffer<ActorAnimationOverlayState>>()
+                         .WithEntityAccess())
             {
+                bool hadRenderOwner = HasRigidEquipmentRenderOwner(weaponState.ValueRO);
                 UpdateWeaponAnimation(
                     ref catalog,
                     presentation.ValueRO,
                     movementState.ValueRO,
                     ref weaponState.ValueRW,
                     overlays);
+                if (hadRenderOwner != HasRigidEquipmentRenderOwner(weaponState.ValueRO))
+                    markedRenderOwnersDirty |= MarkRigidEquipmentRenderOwnersDirty(ref ecb, entity);
             }
+
+            if (markedRenderOwnersDirty)
+                ecb.Playback(EntityManager);
+            ecb.Dispose();
         }
+
+        bool MarkRigidEquipmentRenderOwnersDirty(ref EntityCommandBuffer ecb, Entity actor)
+        {
+            bool marked = false;
+            foreach (var (attachment, entity) in
+                     SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
+                         .WithEntityAccess())
+            {
+                if (attachment.ValueRO.Actor != actor)
+                    continue;
+
+                if (EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerDirty>(entity))
+                    ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, true);
+                else
+                    ecb.AddComponent<ActorRigidEquipmentRenderOwnerDirty>(entity);
+                marked = true;
+            }
+
+            return marked;
+        }
+
+        static bool HasRigidEquipmentRenderOwner(in ActorWeaponAnimationState state)
+            => state.Drawn != 0 || state.Phase == ActorWeaponAnimationPhase.Equipping;
 
         internal static void UpdateWeaponAnimation(
             ref ActorAnimationCatalogBlob catalog,
@@ -145,7 +178,10 @@ namespace VVardenfell.Runtime.Animation
             ref ActorWeaponAnimationState state,
             DynamicBuffer<ActorAnimationOverlayState> overlays)
         {
-            state.AttackType = ResolveAttackType(movementState.LocalMove);
+            state.AttackType = state.AiAttackTypeOverride != 0
+                ? state.AiAttackType
+                : ResolveAttackType(movementState.LocalMove);
+            state.AiAttackTypeOverride = 0;
             if (!TryResolveWeaponWindow(
                     ref catalog,
                     presentation,

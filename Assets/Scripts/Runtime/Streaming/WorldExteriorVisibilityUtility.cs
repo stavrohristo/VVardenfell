@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Rendering;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -25,7 +26,12 @@ namespace VVardenfell.Runtime.Streaming
             query.Dispose();
             queryBuilder.Dispose();
             WorldExteriorPhysicsUtility.DisableExteriorPhysics(em);
-            loaded.Active.Clear();
+            if (loaded.Active.Count > 0)
+            {
+                loaded.Active.Clear();
+                loaded.ActiveRevision++;
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(em);
+            }
         }
 
         public static void SyncExteriorVisibility(
@@ -80,10 +86,33 @@ namespace VVardenfell.Runtime.Streaming
             SyncRegisteredRenderState(em, desired, config.GateTerrainByRadius);
 
             WorldExteriorPhysicsUtility.SyncExteriorPhysics(em, desired);
+            bool changed = loaded.Active.Count != desired.Count;
+            if (!changed)
+            {
+                var activeEnumerator = loaded.Active.GetEnumerator();
+                while (activeEnumerator.MoveNext())
+                {
+                    if (!desired.Contains(activeEnumerator.Current))
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
             loaded.Active.Clear();
             var desiredEnumerator = desired.GetEnumerator();
             while (desiredEnumerator.MoveNext())
                 loaded.Active.Add(desiredEnumerator.Current);
+            if (changed)
+            {
+                loaded.ActiveRevision++;
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(em);
+            }
+            else if (spawnedMissingCells)
+            {
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(em);
+            }
             desired.Dispose();
         }
 

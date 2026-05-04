@@ -3,6 +3,7 @@ using Unity.Mathematics;
 using VVardenfell.Core;
 using VVardenfell.Core.Config;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
@@ -13,6 +14,11 @@ namespace VVardenfell.Runtime.Streaming
     public partial class LightingBootstrapSystem : SystemBase
     {
         protected override void OnCreate()
+        {
+            RequireForUpdate<LightingBootstrapRequest>();
+        }
+
+        protected override void OnUpdate()
         {
             if (!SystemAPI.HasSingleton<ActiveEnvironmentState>())
             {
@@ -41,10 +47,8 @@ namespace VVardenfell.Runtime.Streaming
                 EntityManager.SetName(entity, "VVardenfell.RuntimeVideoSettings");
                 EntityManager.AddComponentData(entity, ResolveRuntimeVideoSettings());
             }
-        }
 
-        protected override void OnUpdate()
-        {
+            RuntimeBootstrapRequestUtility.Consume<LightingBootstrapRequest>(EntityManager);
         }
 
         internal static ActiveEnvironmentState CreateFallbackEnvironment(bool isInterior)

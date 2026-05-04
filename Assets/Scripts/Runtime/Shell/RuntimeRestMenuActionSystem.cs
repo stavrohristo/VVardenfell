@@ -25,7 +25,8 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<ActorEffectStatModifiers>(),
                 ComponentType.ReadOnly<ActorDerivedMovementStats>(),
                 ComponentType.ReadOnly<MorrowindMovementSpeed>(),
-                ComponentType.ReadWrite<ActorActiveMagicEffect>());
+                ComponentType.ReadWrite<ActorActiveMagicEffect>(),
+                ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<RuntimeShellActionRequest>();
@@ -169,7 +170,8 @@ namespace VVardenfell.Runtime.Shell
                 }
             }
 
-            RuntimeRestUtility.AdvanceTimedActiveMagicEffects(activeEffects, 1f, time.TimeScale);
+            if (RuntimeRestUtility.AdvanceTimedActiveMagicEffects(activeEffects, 1f, time.TimeScale))
+                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(_playerQuery.GetSingletonEntity(), true);
 
             vitals.CurrentHealth = math.clamp(vitals.CurrentHealth, 0f, math.max(0f, vitals.ModifiedHealthBase));
             vitals.CurrentMagicka = math.clamp(vitals.CurrentMagicka, 0f, math.max(0f, vitals.ModifiedMagickaBase));

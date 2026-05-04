@@ -69,12 +69,21 @@ namespace VVardenfell.Runtime.Physics
 
             var physicsCollider = new PhysicsCollider { Value = collider };
             if (EntityManager.HasComponent<PhysicsCollider>(entity))
+            {
                 EntityManager.SetComponentData(entity, physicsCollider);
+                RuntimeColliderPhysicsUtility.EnsureTemporalCoherence(EntityManager, entity, resetInfo: true);
+            }
             else
+            {
                 EntityManager.AddComponentData(entity, physicsCollider);
+                RuntimeColliderPhysicsUtility.EnsureTemporalCoherence(EntityManager, entity, resetInfo: true);
+            }
 
             if (!EntityManager.HasComponent<PhysicsWorldIndex>(entity))
                 EntityManager.AddSharedComponent(entity, new PhysicsWorldIndex { Value = 0 });
+            RuntimeColliderPhysicsUtility.EnsureTemporalCoherence(EntityManager, entity, resetInfo: false);
+            if (!EntityManager.HasComponent<PhysicsVelocity>(entity))
+                EntityManager.AddComponentData(entity, new PhysicsVelocity());
         }
     }
 }

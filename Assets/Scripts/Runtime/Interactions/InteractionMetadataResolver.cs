@@ -5,6 +5,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Interactions
@@ -23,7 +24,9 @@ namespace VVardenfell.Runtime.Interactions
             {
                 InteractableKind.Door => ResolveDoorName(contentDb, entityManager, entity),
                 InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Container => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Container => ActorCorpseLootUtility.IsDeadLootableActor(entityManager, entity)
+                    ? ActorCorpseLootUtility.ResolveTitle(contentDb, entityManager, entity)
+                    : ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
                 _ => null,
@@ -49,7 +52,9 @@ namespace VVardenfell.Runtime.Interactions
             {
                 InteractableKind.Door => ResolveDoorPromptName(contentDb, entityManager, entity),
                 InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Container => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Container => ActorCorpseLootUtility.IsDeadLootableActor(entityManager, entity)
+                    ? ActorCorpseLootUtility.ResolveTitle(contentDb, entityManager, entity)
+                    : ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
                 InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
                 _ => null,
