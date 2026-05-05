@@ -52,17 +52,17 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ref var program = ref RuntimeContentBlobUtility.Get(ref contentBlob, request.Program);
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] StartScript requested disabled script '{program.Id.ToString()}': {program.DisabledReason.ToString()}");
+                throw new InvalidOperationException($"[VVardenfell][MWScript] StartScript requested disabled script hash {program.IdHash}: {RuntimeFixedStringUtility.ToFixed128OrDefault(ref program.DisabledReason)}");
 
             Entity existing = FindGlobalScriptEntity(request.ProgramIndex);
             if (existing != Entity.Null)
             {
-                RestartExisting(ref contentBlob, existing, program.Id.ToString(), request);
+                RestartExisting(ref contentBlob, existing, request);
                 return;
             }
 
             Entity entity = EntityManager.CreateEntity();
-            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{program.Id.ToString()}");
+            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
             EntityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetEntity = request.TargetEntity,
@@ -81,7 +81,6 @@ namespace VVardenfell.Runtime.MorrowindScript
         void RestartExisting(
             ref RuntimeContentBlob contentBlob,
             Entity entity,
-            string scriptId,
             in MorrowindScriptStartRequest request)
         {
             MorrowindScriptRuntimeAuthoringUtility.EnsureRuntimeScriptBuffers(EntityManager, entity, ref contentBlob, request.Program);
@@ -101,7 +100,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             instance.Status = (byte)MorrowindScriptInstanceStatus.Running;
             instance.DisabledReason = default;
             EntityManager.SetComponentData(entity, instance);
-            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{scriptId}");
+            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
         }
 
         Entity FindGlobalScriptEntity(int programIndex)

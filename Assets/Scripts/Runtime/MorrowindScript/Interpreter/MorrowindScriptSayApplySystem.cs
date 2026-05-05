@@ -59,7 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             in LogicalRefLookup lookup,
             ref MorrowindScriptRuntimeState runtimeState)
         {
-            if (string.IsNullOrWhiteSpace(request.VoicePath.ToString()))
+            if (request.VoicePath.IsEmpty)
                 throw new InvalidOperationException("[VVardenfell][MWScript] Say requires a non-empty voice path.");
 
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 using Unity.Collections;
 using Unity.Mathematics;
@@ -198,18 +197,18 @@ namespace VVardenfell.Runtime.Movement
 
         public static ActorIdentitySet CreateIdentityFromActor(ref RuntimeActorDefBlob actor)
         {
-            string id = actor.Id.ToString();
-            string name = actor.Name.ToString();
-            string characterName = string.IsNullOrWhiteSpace(name)
-                ? (string.Equals(id, "player", StringComparison.OrdinalIgnoreCase) ? "Player" : id)
-                : name;
+            FixedString64Bytes characterName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref actor.Name);
+            if (characterName.IsEmpty)
+                characterName = actor.IdHash == RuntimeContentKnownHashes.player
+                    ? new FixedString64Bytes("Player")
+                    : RuntimeFixedStringUtility.ToFixed64OrDefault(ref actor.Id);
 
             return new ActorIdentitySet
             {
-                CharacterName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(characterName),
+                CharacterName = characterName,
                 Level = math.max(1, actor.Level),
-                RaceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(actor.RaceId.ToString()),
-                ClassName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(actor.ClassId.ToString()),
+                RaceName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref actor.RaceId),
+                ClassName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref actor.ClassId),
                 BirthSignName = default,
                 Reputation = actor.Reputation,
             };
@@ -237,52 +236,54 @@ namespace VVardenfell.Runtime.Movement
             if (actor.SpellCount == 0 && !hasRacePowers)
                 return Array.Empty<ActorKnownSpell>();
 
-            var results = new List<ActorKnownSpell>(actor.SpellCount + (hasRacePowers ? RuntimeContentBlobUtility.GetRace(ref content, raceHandle).PowerSpellIdCount : 0));
+            int maxSpellCount = actor.SpellCount + (hasRacePowers ? RuntimeContentBlobUtility.GetRace(ref content, raceHandle).PowerSpellIdCount : 0);
+            var results = new ActorKnownSpell[maxSpellCount];
+            int resultCount = 0;
             for (int i = 0; i < actor.SpellCount; i++)
-                AddKnownSpell(ref content, content.ActorSpells[actor.FirstSpellIndex + i].SpellIdHash, results);
+                AddKnownSpell(ref content, content.ActorSpells[actor.FirstSpellIndex + i].SpellIdHash, results, ref resultCount);
 
             if (hasRacePowers)
             {
                 ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref content, raceHandle);
                 for (int i = 0; i < race.PowerSpellIdCount; i++)
-                    AddKnownSpell(ref content, content.RacePowerSpellIds[race.FirstPowerSpellIdIndex + i].Value.ToString(), results);
+                {
+                    FixedString128Bytes spellId = RuntimeFixedStringUtility.ToFixed128OrDefault(ref content.RacePowerSpellIds[race.FirstPowerSpellIdIndex + i].Value);
+                    AddKnownSpell(ref content, RuntimeContentStableHash.HashId(spellId), results, ref resultCount);
+                }
             }
 
-            return results.ToArray();
+            if (resultCount == results.Length)
+                return results;
+
+            var compact = new ActorKnownSpell[resultCount];
+            if (resultCount > 0)
+                Array.Copy(results, compact, resultCount);
+            return compact;
         }
 
-        static void AddKnownSpell(ref RuntimeContentBlob content, string spellId, List<ActorKnownSpell> results)
-        {
-            if (string.IsNullOrWhiteSpace(spellId)
-                || !TryResolveKnownSpell(ref content, RuntimeContentStableHash.HashId(spellId), out SpellDefHandle spellHandle)
-                || !spellHandle.IsValid)
-            {
-                return;
-            }
-
-            AddKnownSpell(results, spellHandle);
-        }
-
-        static void AddKnownSpell(ref RuntimeContentBlob content, ulong spellIdHash, List<ActorKnownSpell> results)
+        static void AddKnownSpell(ref RuntimeContentBlob content, ulong spellIdHash, ActorKnownSpell[] results, ref int resultCount)
         {
             if (spellIdHash == 0UL || !TryResolveKnownSpell(ref content, spellIdHash, out SpellDefHandle spellHandle) || !spellHandle.IsValid)
                 return;
 
-            AddKnownSpell(results, spellHandle);
+            AddKnownSpell(results, ref resultCount, spellHandle);
         }
 
         static bool TryResolveKnownSpell(ref RuntimeContentBlob content, ulong spellIdHash, out SpellDefHandle spellHandle)
             => RuntimeContentBlobUtility.TryGetSpellHandleByIdHash(ref content, spellIdHash, out spellHandle);
 
-        static void AddKnownSpell(List<ActorKnownSpell> results, SpellDefHandle spellHandle)
+        static void AddKnownSpell(ActorKnownSpell[] results, ref int resultCount, SpellDefHandle spellHandle)
         {
-            for (int i = 0; i < results.Count; i++)
+            for (int i = 0; i < resultCount; i++)
             {
                 if (results[i].Spell.Value == spellHandle.Value)
                     return;
             }
 
-            results.Add(new ActorKnownSpell { Spell = spellHandle });
+            if ((uint)resultCount >= (uint)results.Length)
+                throw new InvalidOperationException("[VVardenfell][Movement] known spell result buffer overflow.");
+
+            results[resultCount++] = new ActorKnownSpell { Spell = spellHandle };
         }
 
         public static bool TryCreatePlayerSeedFromContent(
@@ -324,25 +325,32 @@ namespace VVardenfell.Runtime.Movement
             if (actor.InventoryCount == 0)
                 return Array.Empty<PlayerInitialInventoryItem>();
 
-            var results = new List<PlayerInitialInventoryItem>(actor.InventoryCount);
+            var results = new PlayerInitialInventoryItem[actor.InventoryCount];
+            int resultCount = 0;
             for (int i = 0; i < actor.InventoryCount; i++)
             {
                 ref RuntimeContainerItemDefBlob item = ref content.ActorInventoryItems[actor.FirstInventoryIndex + i];
                 if (item.Count <= 0)
                     continue;
                 if (item.ItemIdHash == 0UL)
-                    throw new InvalidOperationException($"[VVardenfell][Player] actor '{actor.Id.ToString()}' has an authored inventory item with no id at offset {i}.");
+                    throw new InvalidOperationException($"[VVardenfell][Player] actor hash {actor.IdHash} has an authored inventory item with no id at offset {i}.");
                 if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, item.ItemIdHash, out ContentReference contentRef) || !contentRef.IsValid)
-                    throw new InvalidOperationException($"[VVardenfell][Player] actor '{actor.Id.ToString()}' references unresolved inventory item '{item.ItemId.ToString()}'.");
+                    throw new InvalidOperationException($"[VVardenfell][Player] actor hash {actor.IdHash} references unresolved inventory item hash {item.ItemIdHash}.");
 
-                results.Add(new PlayerInitialInventoryItem
+                results[resultCount++] = new PlayerInitialInventoryItem
                 {
                     Content = contentRef,
                     Count = item.Count,
-                });
+                };
             }
 
-            return results.ToArray();
+            if (resultCount == results.Length)
+                return results;
+
+            var compact = new PlayerInitialInventoryItem[resultCount];
+            if (resultCount > 0)
+                Array.Copy(results, compact, resultCount);
+            return compact;
         }
 
         static bool HasManualActorStats(ref RuntimeActorDefBlob actor)

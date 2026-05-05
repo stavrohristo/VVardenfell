@@ -79,6 +79,7 @@ namespace VVardenfell.Core.Cache
         public const ulong sMagicContractDisease = 0x0D0777BDC796B133UL;
         public const ulong sMagicInsufficientSP = 0xD4B4405755FB41B5UL;
         public const ulong sMagicSkillFail = 0x4C065CE1CB3CA062UL;
+        public const ulong sDefaultCellname = 0x2604D6BE27CF6F38UL;
         public const ulong sPowerAlreadyUsed = 0xB82B029420048F78UL;
         public const ulong timescale = 0xE1AB79E51DA14A1EUL;
         public const ulong year = 0x7C64634977425EDCUL;

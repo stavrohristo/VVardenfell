@@ -125,7 +125,7 @@ namespace VVardenfell.Runtime.Combat
                 addedDisease = true;
 
                 if (victimIsPlayer)
-                    QueueContractDiseaseMessage(messageBoxes, contractDiseaseMessage, ref spell);
+                    ShellDiseaseMessageBoxUtility.QueueContractDiseaseMessage(messageBoxes, contractDiseaseMessage, ref spell);
             }
 
             if (addedDisease)
@@ -190,31 +190,6 @@ namespace VVardenfell.Runtime.Combat
             }
 
             return magnitude;
-        }
-
-        static void QueueContractDiseaseMessage(
-            DynamicBuffer<ShellMessageBoxRequest> messageBoxes,
-            string contractDiseaseMessage,
-            ref RuntimeSpellDefBlob spell)
-        {
-            string spellId = spell.Id.ToString();
-            string blobName = spell.Name.ToString();
-            string spellName = string.IsNullOrWhiteSpace(blobName) ? spellId : blobName.Trim();
-            messageBoxes.Add(new ShellMessageBoxRequest
-            {
-                Body = RuntimeFixedStringUtility.ToFixed512OrDefault(FormatDiseaseMessage(contractDiseaseMessage, spellName)),
-            });
-        }
-
-        static string FormatDiseaseMessage(string message, string spellName)
-        {
-            if (string.IsNullOrEmpty(message))
-                return spellName;
-
-            int placeholder = message.IndexOf("%s", StringComparison.Ordinal);
-            return placeholder >= 0
-                ? message.Substring(0, placeholder) + spellName + message.Substring(placeholder + 2)
-                : message + " " + spellName;
         }
 
         static bool IsMeleeContact(MorrowindDamageSourceKind sourceKind)

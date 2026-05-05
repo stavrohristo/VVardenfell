@@ -1305,31 +1305,32 @@ namespace VVardenfell.Runtime.MorrowindScript
                 && regionHandle.IsValid)
             {
                 ref var region = ref RuntimeContentBlobUtility.Get(ref contentBlob, regionHandle);
-                string regionName = region.Name.ToString();
-                cellName = RuntimeFixedStringUtility.ToFixed128OrDefault(!string.IsNullOrWhiteSpace(regionName) ? regionName : region.Id.ToString());
+                cellName = RuntimeFixedStringUtility.ToFixed128OrDefault(ref region.Name);
+                if (cellName.IsEmpty)
+                    cellName = RuntimeFixedStringUtility.ToFixed128OrDefault(ref region.Id);
                 return !cellName.IsEmpty;
             }
 
-            if (TryGetGameSettingString(ref contentBlob, "sDefaultCellname", out string defaultCellName))
+            if (TryGetGameSettingString(ref contentBlob, RuntimeContentKnownHashes.sDefaultCellname, out FixedString128Bytes defaultCellName))
             {
-                cellName = RuntimeFixedStringUtility.ToFixed128OrDefault(defaultCellName);
+                cellName = defaultCellName;
                 return !cellName.IsEmpty;
             }
 
             return false;
         }
 
-        static bool TryGetGameSettingString(ref RuntimeContentBlob contentBlob, string id, out string value)
+        static bool TryGetGameSettingString(ref RuntimeContentBlob contentBlob, ulong idHash, out FixedString128Bytes value)
         {
-            value = string.Empty;
-            if (!RuntimeContentBlobUtility.TryGetGameSettingHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(id), out var handle) || !handle.IsValid)
+            value = default;
+            if (!RuntimeContentBlobUtility.TryGetGameSettingHandleByIdHash(ref contentBlob, idHash, out var handle) || !handle.IsValid)
                 return false;
 
             ref var gameSetting = ref RuntimeContentBlobUtility.GetGameSetting(ref contentBlob, handle);
             if (gameSetting.ValueKind != GenericRecordValueKind.String)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] GMST '{id}' is not a string.");
+                throw new InvalidOperationException($"[VVardenfell][MWScript] GMST hash {idHash} is not a string.");
 
-            value = gameSetting.Text.ToString();
+            value = RuntimeFixedStringUtility.ToFixed128OrDefault(ref gameSetting.Text);
             return true;
         }
 

@@ -172,8 +172,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static byte ResolveGlobalKind(ref RuntimeGenericRecordDefBlob global)
         {
-            string name = global.Name.ToString();
-            if (!string.IsNullOrWhiteSpace(name) && name[0] == 'f')
+            FixedString64Bytes name = RuntimeFixedStringUtility.ToFixed64OrDefault(ref global.Name);
+            if (!name.IsEmpty && name[0] == (byte)'f')
                 return (byte)MorrowindScriptValueKind.Float;
 
             return (byte)MorrowindScriptValueKind.Integer;

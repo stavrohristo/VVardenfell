@@ -26,11 +26,22 @@ namespace VVardenfell.Runtime.Interactions
 
         public static bool TryBuild(ref RuntimeContentBlob content, string scriptId, out DoorMotionState state)
         {
-            state = default;
             if (string.IsNullOrWhiteSpace(scriptId))
+            {
+                state = default;
+                return false;
+            }
+
+            return TryBuildByScriptIdHash(ref content, RuntimeContentStableHash.HashId(scriptId), out state);
+        }
+
+        public static bool TryBuildByScriptIdHash(ref RuntimeContentBlob content, ulong scriptIdHash, out DoorMotionState state)
+        {
+            state = default;
+            if (scriptIdHash == 0UL)
                 return false;
 
-            if (!RuntimeContentBlobUtility.TryGetScriptHandleByIdHash(ref content, RuntimeContentStableHash.HashId(scriptId), out GenericRecordDefHandle scriptHandle) || !scriptHandle.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetScriptHandleByIdHash(ref content, scriptIdHash, out GenericRecordDefHandle scriptHandle) || !scriptHandle.IsValid)
                 return false;
 
             string text = RuntimeContentBlobUtility.GetScript(ref content, scriptHandle).Text.ToString();

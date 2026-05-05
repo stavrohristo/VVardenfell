@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -72,8 +73,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             int sourceDialogueIndex)
         {
-            string sourceName = ResolveJournalQuestName(ref contentBlob, sourceDialogueIndex);
-            if (string.IsNullOrWhiteSpace(sourceName))
+            ulong sourceNameHash = ResolveJournalQuestNameHash(ref contentBlob, sourceDialogueIndex);
+            if (sourceNameHash == 0UL)
                 return;
 
             int count = math.min(questStates.Length, contentBlob.Dialogues.Length);
@@ -86,8 +87,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (quest.Finished == 0)
                     continue;
 
-                string questName = ResolveJournalQuestName(ref contentBlob, i);
-                if (!string.Equals(sourceName, questName, System.StringComparison.OrdinalIgnoreCase))
+                ulong questNameHash = ResolveJournalQuestNameHash(ref contentBlob, i);
+                if (questNameHash != sourceNameHash)
                     continue;
 
                 quest.Finished = 0;
@@ -95,14 +96,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static string ResolveJournalQuestName(ref RuntimeContentBlob contentBlob, int dialogueIndex)
+        static ulong ResolveJournalQuestNameHash(ref RuntimeContentBlob contentBlob, int dialogueIndex)
         {
             if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
-                return string.Empty;
+                return 0UL;
 
             ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             if (dialogue.Type != DialogueDefType.Journal)
-                return string.Empty;
+                return 0UL;
 
             int start = math.max(0, dialogue.FirstInfoIndex);
             int end = math.min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
@@ -112,11 +113,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (info.QuestStatus != QuestStatusName)
                     continue;
 
-                string response = info.Response.ToString();
-                return string.IsNullOrWhiteSpace(response) ? string.Empty : response.Trim();
+                FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
+                return RuntimeContentStableHash.HashId(response);
             }
 
-            return string.Empty;
+            return 0UL;
         }
 
         static bool ContainsEntry(

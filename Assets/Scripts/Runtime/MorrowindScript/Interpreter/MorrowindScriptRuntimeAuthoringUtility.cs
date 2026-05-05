@@ -17,7 +17,19 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (string.IsNullOrWhiteSpace(scriptId))
                 return false;
 
-            if (!RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref content, RuntimeContentStableHash.HashId(scriptId), out var programHandle) || !programHandle.IsValid)
+            return TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, RuntimeContentStableHash.HashId(scriptId));
+        }
+
+        public static bool TryQueueObjectScriptByIdHash(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ulong scriptIdHash)
+        {
+            if (scriptIdHash == 0UL)
+                return false;
+
+            if (!RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref content, scriptIdHash, out var programHandle) || !programHandle.IsValid)
                 return false;
 
             ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
@@ -32,7 +44,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     : (byte)MorrowindScriptInstanceStatus.Disabled,
                 DisabledReason = status == MorrowindScriptProgramStatus.Compiled
                     ? default
-                    : RuntimeFixedStringUtility.ToFixed128OrDefault(program.DisabledReason.ToString()),
+                    : RuntimeFixedStringUtility.ToFixed128OrDefault(ref program.DisabledReason),
             };
 
             ecb.AddComponent(logicalEntity, instance);

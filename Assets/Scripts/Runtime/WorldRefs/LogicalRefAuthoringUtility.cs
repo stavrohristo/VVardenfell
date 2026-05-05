@@ -63,7 +63,7 @@ namespace VVardenfell.Runtime.Components
                         exteriorCell,
                         interiorCellId,
                         placedRefId);
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, actor.ScriptId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, actor.ScriptIdHash);
                     return true;
                 }
 
@@ -72,9 +72,9 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
-                    TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
+                    TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, def.AuxSoundIdHash);
                     return true;
                 }
 
@@ -83,11 +83,11 @@ namespace VVardenfell.Runtime.Components
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
-                    bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
                     if (!hasScriptedDoorMotion && attachDoorInteractable && doorInteractable.IsTeleport == 0)
                         QueueDoorMotion(ref ecb, logicalEntity, DoorMotionAuthoringUtility.BuildOpenMwDoorMotion());
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, def.AuxSoundIdHash);
                     if (attachDoorInteractable)
                         ecb.AddComponent(logicalEntity, doorInteractable);
                     return true;
@@ -98,8 +98,8 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ContainerDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ContainerAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, def.AuxSoundIdHash);
                     return true;
                 }
 
@@ -108,10 +108,10 @@ namespace VVardenfell.Runtime.Components
                     var handle = new ItemDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ItemPickupAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
                     if (def.RecordTag == BookRecordTag)
                         ecb.AddComponent<BookTag>(logicalEntity);
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, def.AuxSoundIdHash);
                     return true;
                 }
 
@@ -120,7 +120,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new LightDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeLightDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new LightSourceAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
                     var flags = BuildLightInstanceFlags(def.Flags);
                     ecb.AddComponent(logicalEntity, flags);
                     ecb.AddComponent(logicalEntity, BuildLightInstanceState(ref def));
@@ -129,7 +129,7 @@ namespace VVardenfell.Runtime.Components
                     if (LightPresentationOffsetUtility.TryResolveAttachLightOffset(ref content, handle, out float3 lightOffset))
                         ecb.AddComponent(logicalEntity, new LightPresentationOffset { LocalPosition = lightOffset });
                     ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), null);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, 0UL);
                     return true;
                 }
 
@@ -138,7 +138,7 @@ namespace VVardenfell.Runtime.Components
                     var handle = new GenericRecordDefHandle { Value = contentReference.HandleValue };
                     ref RuntimeGenericRecordDefBlob def = ref RuntimeContentBlobUtility.GetStatic(ref content, handle);
                     ecb.AddComponent(logicalEntity, new StaticRefAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
                     return true;
                 }
 
@@ -165,9 +165,9 @@ namespace VVardenfell.Runtime.Components
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             ref RuntimeContentBlob content,
-            string scriptId)
+            ulong scriptIdHash)
         {
-            if (!DoorMotionAuthoringUtility.TryBuild(ref content, scriptId, out DoorMotionState motion))
+            if (!DoorMotionAuthoringUtility.TryBuildByScriptIdHash(ref content, scriptIdHash, out DoorMotionState motion))
                 return false;
 
             QueueDoorMotion(ref ecb, logicalEntity, motion);
@@ -295,12 +295,11 @@ namespace VVardenfell.Runtime.Components
             ref RuntimeContentBlob content,
             ref RuntimeActorDefBlob actor)
         {
-            string factionId = actor.FactionId.ToString();
-            if (string.IsNullOrWhiteSpace(factionId))
+            if (actor.FactionIdHash == 0UL)
                 return;
 
-            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, RuntimeContentStableHash.HashId(factionId), out var factionHandle) || !factionHandle.IsValid)
-                throw new InvalidOperationException($"Actor '{actor.Id.ToString()}' references unknown faction '{factionId}'.");
+            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, actor.FactionIdHash, out var factionHandle) || !factionHandle.IsValid)
+                throw new InvalidOperationException($"Actor hash {actor.IdHash} references unknown faction hash {actor.FactionIdHash}.");
 
             var factions = ecb.AddBuffer<ActorFactionMembership>(logicalEntity);
             factions.Add(new ActorFactionMembership
@@ -369,10 +368,10 @@ namespace VVardenfell.Runtime.Components
                 if (authored.Count <= 0)
                     continue;
                 if (authored.ItemIdHash == 0UL)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor '{actor.Id.ToString()}' has an authored inventory item with no id at offset {i}.");
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} has an authored inventory item with no id at offset {i}.");
 
                 if (!TryResolveActorInventoryContent(ref content, authored.ItemIdHash, resolutionSeed, out var itemContent) || !itemContent.IsValid)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor '{actor.Id.ToString()}' references unresolved inventory item '{authored.ItemId.ToString()}'.");
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} references unresolved inventory item hash {authored.ItemIdHash}.");
 
                 inventory.Add(new ActorInventoryItem
                 {
@@ -480,7 +479,7 @@ namespace VVardenfell.Runtime.Components
                 int candidateIndex = NextRandomIndex(ref seed, candidateCount);
                 ref RuntimeItemLeveledListEntryDefBlob selected = ref contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + candidateEntryOffsets[candidateIndex]];
                 if (selected.ItemIdHash == 0UL)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] leveled-list '{list.Id.ToString()}' has an entry with no item id.");
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] leveled-list hash {list.IdHash} has an entry with no item id.");
 
                 if (RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, selected.ItemIdHash, out content)
                     && (content.Kind == ContentReferenceKind.Item || content.Kind == ContentReferenceKind.Light))
@@ -489,7 +488,7 @@ namespace VVardenfell.Runtime.Components
                 }
 
                 if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, selected.ItemIdHash, out ItemLeveledListDefHandle nestedHandle))
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] missing leveled-list target '{selected.ItemId.ToString()}' referenced by '{list.Id.ToString()}'.");
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] missing leveled-list target hash {selected.ItemIdHash} referenced by list hash {list.IdHash}.");
 
                 seed = math.hash(new uint2(seed, (uint)candidateIndex + 1u));
                 return TryResolveLooseLeveledCarryable(ref contentBlob, nestedHandle, seed, depth + 1, ref visited, out content);
@@ -703,11 +702,11 @@ namespace VVardenfell.Runtime.Components
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             ref RuntimeContentBlob content,
-            string primarySoundId,
-            string secondarySoundId)
+            ulong primarySoundIdHash,
+            ulong secondarySoundIdHash)
         {
-            TryGetSoundHandle(ref content, primarySoundId, out SoundDefHandle primarySound);
-            TryGetSoundHandle(ref content, secondarySoundId, out SoundDefHandle secondarySound);
+            TryGetSoundHandle(ref content, primarySoundIdHash, out SoundDefHandle primarySound);
+            TryGetSoundHandle(ref content, secondarySoundIdHash, out SoundDefHandle secondarySound);
             if (!primarySound.IsValid && !secondarySound.IsValid)
                 return;
 
@@ -718,11 +717,11 @@ namespace VVardenfell.Runtime.Components
             });
         }
 
-        static bool TryGetSoundHandle(ref RuntimeContentBlob content, string soundId, out SoundDefHandle handle)
+        static bool TryGetSoundHandle(ref RuntimeContentBlob content, ulong soundIdHash, out SoundDefHandle handle)
         {
             handle = default;
-            return !string.IsNullOrWhiteSpace(soundId)
-                   && RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref content, RuntimeContentStableHash.HashId(soundId), out handle)
+            return soundIdHash != 0UL
+                   && RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref content, soundIdHash, out handle)
                    && handle.IsValid;
         }
 

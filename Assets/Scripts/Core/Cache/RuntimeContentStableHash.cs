@@ -17,6 +17,9 @@ namespace VVardenfell.Core.Cache
         public static ulong HashId(FixedString64Bytes value)
             => HashNormalized(value);
 
+        public static ulong HashId(FixedString512Bytes value)
+            => HashNormalized(value);
+
         public static ulong HashInteriorCellId(string value)
         {
             if (string.IsNullOrEmpty(value))
@@ -78,6 +81,27 @@ namespace VVardenfell.Core.Cache
         }
 
         public static ulong HashNormalized(FixedString64Bytes value)
+        {
+            if (value.Length == 0)
+                return 0UL;
+
+            int start = 0;
+            int end = value.Length - 1;
+            while (start <= end && IsAsciiWhiteSpace(value[start]))
+                start++;
+            while (end >= start && IsAsciiWhiteSpace(value[end]))
+                end--;
+            if (start > end)
+                return 0UL;
+
+            ulong hash = Offset;
+            for (int i = start; i <= end; i++)
+                AppendNormalizedByte(ref hash, value[i]);
+
+            return hash == 0UL ? 1UL : hash;
+        }
+
+        public static ulong HashNormalized(FixedString512Bytes value)
         {
             if (value.Length == 0)
                 return 0UL;

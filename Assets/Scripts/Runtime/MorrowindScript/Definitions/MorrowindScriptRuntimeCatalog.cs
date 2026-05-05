@@ -97,7 +97,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 ref RuntimeMorrowindScriptProgramDefBlob source = ref data.MorrowindScriptPrograms[i];
                 ValidateProgram(ref data, i, ref source);
-                catalog.ProgramIds[i] = RuntimeFixedStringUtility.ToFixed128OrDefault(source.Id.ToString());
+                catalog.ProgramIds[i] = RuntimeFixedStringUtility.ToFixed128OrDefault(ref source.Id);
                 catalog.Programs[i] = new MorrowindScriptProgramRuntime
                 {
                     Status = source.Status,
@@ -137,7 +137,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             for (int i = 0; i < catalog.Messages.Length; i++)
-                catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(data.MorrowindScriptMessages[i].Text.ToString());
+                catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(ref data.MorrowindScriptMessages[i].Text);
 
             for (int i = 0; i < catalog.Programs.Length; i++)
             {
@@ -247,8 +247,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static void ValidateProgram(ref RuntimeContentBlob data, int programIndex, ref RuntimeMorrowindScriptProgramDefBlob program)
         {
-            string programId = program.Id.ToString();
-            if (string.IsNullOrWhiteSpace(programId))
+            if (program.IdHash == 0UL)
                 throw new InvalidOperationException($"[VVardenfell][MWScript][Validation] script program {programIndex} has no id.");
 
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled
@@ -256,11 +255,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 && program.Status != (byte)MorrowindScriptProgramStatus.FailedInvalid)
             {
                 throw new InvalidOperationException(
-                    $"[VVardenfell][MWScript][Validation] script '{program.Id}' has invalid status {program.Status}.");
+                    $"[VVardenfell][MWScript][Validation] script hash {program.IdHash} has invalid status {program.Status}.");
             }
 
             if (program.MaxStack < 0)
-                throw new InvalidOperationException($"[VVardenfell][MWScript][Validation] script '{program.Id}' has negative max stack {program.MaxStack}.");
+                throw new InvalidOperationException($"[VVardenfell][MWScript][Validation] script hash {program.IdHash} has negative max stack {program.MaxStack}.");
 
             int localCount = data.MorrowindScriptLocals.Length;
             if (program.LocalCount < 0
@@ -269,7 +268,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 || (program.LocalCount > 0 && (program.FirstLocalIndex < 0 || program.FirstLocalIndex + program.LocalCount > localCount)))
             {
                 throw new InvalidOperationException(
-                    $"[VVardenfell][MWScript][Validation] script '{program.Id}' has invalid local range first={program.FirstLocalIndex} count={program.LocalCount} total={localCount}.");
+                    $"[VVardenfell][MWScript][Validation] script hash {program.IdHash} has invalid local range first={program.FirstLocalIndex} count={program.LocalCount} total={localCount}.");
             }
 
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled)
@@ -282,7 +281,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return;
 
                 throw new InvalidOperationException(
-                    $"[VVardenfell][MWScript][Validation] script '{program.Id}' has invalid empty instruction range first={program.FirstInstructionIndex} count=0.");
+                    $"[VVardenfell][MWScript][Validation] script hash {program.IdHash} has invalid empty instruction range first={program.FirstInstructionIndex} count=0.");
             }
 
             if (program.FirstInstructionIndex < 0
@@ -290,7 +289,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 || program.FirstInstructionIndex + program.InstructionCount > instructionCount)
             {
                 throw new InvalidOperationException(
-                    $"[VVardenfell][MWScript][Validation] script '{program.Id}' has invalid instruction range first={program.FirstInstructionIndex} count={program.InstructionCount} total={instructionCount}.");
+                    $"[VVardenfell][MWScript][Validation] script hash {program.IdHash} has invalid instruction range first={program.FirstInstructionIndex} count={program.InstructionCount} total={instructionCount}.");
             }
         }
 

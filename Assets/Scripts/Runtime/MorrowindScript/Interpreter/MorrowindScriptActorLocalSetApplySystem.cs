@@ -42,15 +42,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity target = ResolveUniqueActor(request.ActorHandleValue);
             if (target == Entity.Null)
             {
-                string actorId = ResolveActorId(ref contentBlob, request.ActorHandleValue);
-                throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target '{actorId}' is not exactly one loaded actor.");
+                ulong actorIdHash = ResolveActorIdHash(ref contentBlob, request.ActorHandleValue);
+                throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target hash {actorIdHash} is not exactly one loaded actor.");
             }
 
             var locals = EntityManager.GetBuffer<MorrowindScriptLocalValue>(target);
             if ((uint)request.LocalIndex >= (uint)locals.Length)
             {
-                string actorId = ResolveActorId(ref contentBlob, request.ActorHandleValue);
-                throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target '{actorId}' local index {request.LocalIndex} is outside the runtime local buffer.");
+                ulong actorIdHash = ResolveActorIdHash(ref contentBlob, request.ActorHandleValue);
+                throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target hash {actorIdHash} local index {request.LocalIndex} is outside the runtime local buffer.");
             }
 
             locals[request.LocalIndex] = request.Value;
@@ -76,14 +76,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             return count == 1 ? match : Entity.Null;
         }
 
-        static string ResolveActorId(ref RuntimeContentBlob contentBlob, int actorHandleValue)
+        static ulong ResolveActorIdHash(ref RuntimeContentBlob contentBlob, int actorHandleValue)
         {
             var handle = new ActorDefHandle { Value = actorHandleValue };
             if ( !handle.IsValid || (uint)handle.Index >= (uint)contentBlob.Actors.Length)
-                return actorHandleValue.ToString();
+                return actorHandleValue > 0 ? (ulong)actorHandleValue : 0UL;
 
             ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
-            return string.IsNullOrWhiteSpace(actor.OriginalId.ToString()) ? actor.Id.ToString() : actor.OriginalId.ToString();
+            return actor.OriginalIdHash != 0UL ? actor.OriginalIdHash : actor.IdHash;
         }
     }
 }

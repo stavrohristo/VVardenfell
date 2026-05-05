@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -81,7 +81,7 @@ namespace VVardenfell.Runtime.WorldState
         public static void RebuildPickedItemProjection(DynamicBuffer<WorldJournalEntry> journal, DynamicBuffer<PickedItemRecord> pickedItems)
         {
             pickedItems.Clear();
-            var seen = new HashSet<uint>();
+            using var seen = new NativeHashSet<uint>(journal.Length, Allocator.Temp);
             for (int i = 0; i < journal.Length; i++)
             {
                 var entry = journal[i];

@@ -38,10 +38,11 @@ namespace VVardenfell.Runtime.WorldRefs
             if (string.IsNullOrWhiteSpace(target))
                 return false;
 
-            if (RuntimeContentBlobUtility.TryGetExplicitRefTargetByIdHash(ref content, RuntimeContentStableHash.HashId(target), out targetPlacedRefId) && targetPlacedRefId != 0u)
+            ulong targetHash = RuntimeContentStableHash.HashId(target);
+            if (RuntimeContentBlobUtility.TryGetExplicitRefTargetByIdHash(ref content, targetHash, out targetPlacedRefId) && targetPlacedRefId != 0u)
                 return true;
 
-            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, RuntimeContentStableHash.HashId(target), out var contentRef) || !RuntimeContentBlobUtility.IsValid(ref content, contentRef))
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, targetHash, out var contentRef) || !RuntimeContentBlobUtility.IsValid(ref content, contentRef))
                 return false;
 
             if (!activeExplicitRefs.ByContentKey.IsCreated)
@@ -145,8 +146,8 @@ namespace VVardenfell.Runtime.WorldRefs
         {
             targetEntity = Entity.Null;
             targetPlacedRefId = 0u;
-            string normalizedTarget = ContentId.NormalizeId(target);
-            if (string.IsNullOrEmpty(normalizedTarget))
+            ulong targetHash = RuntimeContentStableHash.HashId(target);
+            if (targetHash == 0UL)
                 return false;
 
             Entity matchEntity = Entity.Null;
@@ -165,7 +166,7 @@ namespace VVardenfell.Runtime.WorldRefs
                     continue;
 
                 ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
-                if (!ActorIdMatches(ref actor, normalizedTarget))
+                if (!ActorIdMatches(ref actor, targetHash))
                     continue;
 
                 matchCount++;
@@ -183,8 +184,7 @@ namespace VVardenfell.Runtime.WorldRefs
             return true;
         }
 
-        static bool ActorIdMatches(ref RuntimeActorDefBlob actor, string normalizedTarget)
-            => string.Equals(ContentId.NormalizeId(actor.Id.ToString()), normalizedTarget, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(ContentId.NormalizeId(actor.OriginalId.ToString()), normalizedTarget, StringComparison.OrdinalIgnoreCase);
+        static bool ActorIdMatches(ref RuntimeActorDefBlob actor, ulong targetHash)
+            => actor.IdHash == targetHash || actor.OriginalIdHash == targetHash;
     }
 }

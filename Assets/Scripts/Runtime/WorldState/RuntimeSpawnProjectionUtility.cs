@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -126,56 +125,65 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            var rebuilt = new List<RuntimeSpawnedRef>();
-            var indices = new Dictionary<uint, int>();
-
-            for (int i = 0; i < journal.Length; i++)
+            var rebuilt = new NativeList<RuntimeSpawnedRef>(journal.Length, Allocator.Temp);
+            var indices = new NativeParallelHashMap<uint, int>(journal.Length, Allocator.Temp);
+            try
             {
-                var entry = journal[i];
-                if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeSpawned)
+                for (int i = 0; i < journal.Length; i++)
                 {
-                    var spawned = new RuntimeSpawnedRef
+                    var entry = journal[i];
+                    if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeSpawned)
                     {
-                        RuntimeRefId = entry.RuntimeRefId,
-                        Content = entry.Content,
-                        Position = entry.Position,
-                        Rotation = entry.Rotation,
-                        Scale = math.max(0.0001f, entry.Scale),
-                        ExteriorCell = entry.ExteriorCell,
-                        InteriorCellId = entry.InteriorCellId,
-                        InteriorCellHash = entry.InteriorCellHash != 0UL
-                            ? entry.InteriorCellHash
-                            : InteriorCellIdHash.Hash(entry.InteriorCellId),
-                        LogicalEntity = Entity.Null,
-                        IsInterior = entry.IsInterior,
-                        PersistencePolicy = entry.PersistencePolicy,
-                        Alive = 1,
-                    };
+                        var spawned = new RuntimeSpawnedRef
+                        {
+                            RuntimeRefId = entry.RuntimeRefId,
+                            Content = entry.Content,
+                            Position = entry.Position,
+                            Rotation = entry.Rotation,
+                            Scale = math.max(0.0001f, entry.Scale),
+                            ExteriorCell = entry.ExteriorCell,
+                            InteriorCellId = entry.InteriorCellId,
+                            InteriorCellHash = entry.InteriorCellHash != 0UL
+                                ? entry.InteriorCellHash
+                                : InteriorCellIdHash.Hash(entry.InteriorCellId),
+                            LogicalEntity = Entity.Null,
+                            IsInterior = entry.IsInterior,
+                            PersistencePolicy = entry.PersistencePolicy,
+                            Alive = 1,
+                        };
 
-                    if (indices.TryGetValue(spawned.RuntimeRefId, out int existingIndex))
-                    {
-                        rebuilt[existingIndex] = spawned;
+                        if (indices.TryGetValue(spawned.RuntimeRefId, out int existingIndex))
+                        {
+                            rebuilt[existingIndex] = spawned;
+                        }
+                        else
+                        {
+                            indices.Add(spawned.RuntimeRefId, rebuilt.Length);
+                            rebuilt.Add(spawned);
+                        }
                     }
-                    else
+                    else if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeDestroyed
+                             && indices.TryGetValue(entry.RuntimeRefId, out int existingIndex))
                     {
-                        indices.Add(spawned.RuntimeRefId, rebuilt.Count);
-                        rebuilt.Add(spawned);
+                        var destroyed = rebuilt[existingIndex];
+                        destroyed.Alive = 0;
+                        destroyed.LogicalEntity = Entity.Null;
+                        rebuilt[existingIndex] = destroyed;
                     }
                 }
-                else if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeDestroyed
-                         && indices.TryGetValue(entry.RuntimeRefId, out int existingIndex))
-                {
-                    var destroyed = rebuilt[existingIndex];
-                    destroyed.Alive = 0;
-                    destroyed.LogicalEntity = Entity.Null;
-                    rebuilt[existingIndex] = destroyed;
-                }
+
+                var registry = entityManager.GetBuffer<RuntimeSpawnedRef>(registryEntity);
+                registry.Clear();
+                for (int i = 0; i < rebuilt.Length; i++)
+                    registry.Add(rebuilt[i]);
             }
-
-            var registry = entityManager.GetBuffer<RuntimeSpawnedRef>(registryEntity);
-            registry.Clear();
-            for (int i = 0; i < rebuilt.Count; i++)
-                registry.Add(rebuilt[i]);
+            finally
+            {
+                if (indices.IsCreated)
+                    indices.Dispose();
+                if (rebuilt.IsCreated)
+                    rebuilt.Dispose();
+            }
         }
 
         public static bool TryQueueRestoreAliveRefsCreatePhase(
@@ -205,7 +213,8 @@ namespace VVardenfell.Runtime.WorldState
                 snapshot[i] = registry[i];
 
             bool changedAvailable = false;
-            var materializations = new List<RestoreAliveRefMaterialization>();
+            var materializations = new RestoreAliveRefMaterialization[snapshot.Length];
+            int materializationCount = 0;
             for (int i = 0; i < snapshot.Length; i++)
             {
                 var entry = snapshot[i];
@@ -292,23 +301,26 @@ namespace VVardenfell.Runtime.WorldState
                 if (!queued)
                     continue;
 
-                materializations.Add(new RestoreAliveRefMaterialization
+                materializations[materializationCount++] = new RestoreAliveRefMaterialization
                 {
                     SnapshotIndex = i,
                     RuntimeRefId = entry.RuntimeRefId,
                     IsInterior = entry.IsInterior != 0,
                     ExteriorCell = entry.ExteriorCell,
                     ExteriorActive = exteriorActive,
-                });
+                };
             }
 
+            var compactMaterializations = new RestoreAliveRefMaterialization[materializationCount];
+            if (materializationCount > 0)
+                System.Array.Copy(materializations, compactMaterializations, materializationCount);
             projection = new RestoreAliveRefsProjection
             {
                 StreamingEntity = streamingEntity,
                 TransitionEntity = transitionEntity,
                 RegistryEntity = registryEntity,
                 Snapshot = snapshot,
-                Materializations = materializations.ToArray(),
+                Materializations = compactMaterializations,
                 LogicalLookup = logicalLookup,
                 Available = available,
                 ChangedAvailable = changedAvailable,
