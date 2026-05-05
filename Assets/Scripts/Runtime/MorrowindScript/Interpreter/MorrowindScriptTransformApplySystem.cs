@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate(_runtimeQuery);
             RequireForUpdate<LogicalRefLookup>();
             RequireForUpdate<LoadedCellsMap>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -41,6 +43,10 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] script transform requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0UL;
             if (SystemAPI.TryGetSingleton<InteriorTransitionState>(out var interiorTransition) && interiorTransition.InteriorActive != 0)
@@ -63,7 +69,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (request.Operation == 2)
                 {
-                    ApplyPositionCell(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    ApplyPositionCell(target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
@@ -119,13 +125,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
+            ref RuntimeWorldCellBlob worldCells,
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!WorldResources.TryGetInteriorCell(request.InteriorCellHash, out var cell))
-                throw new InvalidOperationException($"PositionCell target interior cell hash 0x{request.InteriorCellHash:X16} is not loaded in world resources.");
+            if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, request.InteriorCellHash, out int cellIndex))
+                throw new InvalidOperationException($"PositionCell target interior cell hash 0x{request.InteriorCellHash:X16} is missing from the world cell blob.");
 
-            FixedString128Bytes cellId = RuntimeFixedStringUtility.ToFixed128OrDefault(cell.CellId);
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            FixedString128Bytes cellId = !cell.InteriorCellId.IsEmpty ? cell.InteriorCellId : cell.CellId;
             if (cellId.IsEmpty)
                 throw new InvalidOperationException($"PositionCell target interior cell 0x{request.InteriorCellHash:X16} has no cell id.");
 

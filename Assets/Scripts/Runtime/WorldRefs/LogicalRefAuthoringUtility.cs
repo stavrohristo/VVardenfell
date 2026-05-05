@@ -9,7 +9,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Combat;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.MorrowindScript;
@@ -23,11 +22,15 @@ namespace VVardenfell.Runtime.Components
 {
     public static class LogicalRefAuthoringUtility
     {
+        const int MaxLeveledResolutionDepth = 16;
+        const int ItemLeveledAllLevelsFlag = 0x02;
+        static readonly uint BookRecordTag = MakeTag('B', 'O', 'O', 'K');
+
         public static bool QueueAttach(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ContentReference contentReference,
             float3 worldPosition = default,
             bool isInterior = false,
@@ -37,7 +40,7 @@ namespace VVardenfell.Runtime.Components
             bool attachDoorInteractable = false,
             DoorInteractable doorInteractable = default)
         {
-            if (contentDb == null || !contentDb.IsValid(contentReference))
+            if (!RuntimeContentBlobUtility.IsValid(ref content, contentReference))
                 return false;
 
             switch (contentReference.Kind)
@@ -45,46 +48,46 @@ namespace VVardenfell.Runtime.Components
                 case ContentReferenceKind.Actor:
                 {
                     var handle = new ActorDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var actor = ref contentDb.Get(handle);
+                    ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
-                    ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(actor));
+                    ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(ref actor));
                     QueueActorRuntimeComponents(
                         entityManager,
                         ref ecb,
                         logicalEntity,
-                        contentDb,
+                        ref content,
                         handle,
-                        actor,
+                        ref actor,
                         worldPosition,
                         isInterior,
                         exteriorCell,
                         interiorCellId,
                         placedRefId);
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, actor.ScriptId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, actor.ScriptId.ToString());
                     return true;
                 }
 
                 case ContentReferenceKind.Activator:
                 {
                     var handle = new ActivatorDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.Get(handle);
+                    ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ActivatorAuthoring { Definition = handle });
-                    TryQueueScriptedDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
                     return true;
                 }
 
                 case ContentReferenceKind.Door:
                 {
                     var handle = new DoorDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.Get(handle);
+                    ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
-                    bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
                     if (!hasScriptedDoorMotion && attachDoorInteractable && doorInteractable.IsTeleport == 0)
                         QueueDoorMotion(ref ecb, logicalEntity, DoorMotionAuthoringUtility.BuildOpenMwDoorMotion());
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
                     if (attachDoorInteractable)
                         ecb.AddComponent(logicalEntity, doorInteractable);
                     return true;
@@ -93,49 +96,49 @@ namespace VVardenfell.Runtime.Components
                 case ContentReferenceKind.Container:
                 {
                     var handle = new ContainerDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.Get(handle);
+                    ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ContainerAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
                     return true;
                 }
 
                 case ContentReferenceKind.Item:
                 {
                     var handle = new ItemDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.Get(handle);
+                    ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ItemPickupAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
-                    if (RuntimeContentMetadataResolver.IsBook(def))
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
+                    if (def.RecordTag == BookRecordTag)
                         ecb.AddComponent<BookTag>(logicalEntity);
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, def.AuxSoundId);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), def.AuxSoundId.ToString());
                     return true;
                 }
 
                 case ContentReferenceKind.Light:
                 {
                     var handle = new LightDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.Get(handle);
+                    ref RuntimeLightDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new LightSourceAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
                     var flags = BuildLightInstanceFlags(def.Flags);
                     ecb.AddComponent(logicalEntity, flags);
-                    ecb.AddComponent(logicalEntity, BuildLightInstanceState(def));
+                    ecb.AddComponent(logicalEntity, BuildLightInstanceState(ref def));
                     if (IsAnimatedLight(flags))
                         ecb.AddComponent<LightInstanceAnimated>(logicalEntity);
-                    if (LightPresentationOffsetUtility.TryResolveAttachLightOffset(contentDb, handle, out float3 lightOffset))
+                    if (LightPresentationOffsetUtility.TryResolveAttachLightOffset(ref content, handle, out float3 lightOffset))
                         ecb.AddComponent(logicalEntity, new LightPresentationOffset { LocalPosition = lightOffset });
                     ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
-                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, null);
+                    TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundId.ToString(), null);
                     return true;
                 }
 
                 case ContentReferenceKind.Static:
                 {
                     var handle = new GenericRecordDefHandle { Value = contentReference.HandleValue };
-                    ref readonly var def = ref contentDb.GetStatic(handle);
+                    ref RuntimeGenericRecordDefBlob def = ref RuntimeContentBlobUtility.GetStatic(ref content, handle);
                     ecb.AddComponent(logicalEntity, new StaticRefAuthoring { Definition = handle });
-                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, contentDb, def.ScriptId);
+                    MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScript(ref ecb, logicalEntity, ref content, def.ScriptId.ToString());
                     return true;
                 }
 
@@ -161,10 +164,10 @@ namespace VVardenfell.Runtime.Components
         static bool TryQueueScriptedDoorMotion(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             string scriptId)
         {
-            if (!DoorMotionAuthoringUtility.TryBuild(contentDb, scriptId, out DoorMotionState motion))
+            if (!DoorMotionAuthoringUtility.TryBuild(ref content, scriptId, out DoorMotionState motion))
                 return false;
 
             QueueDoorMotion(ref ecb, logicalEntity, motion);
@@ -178,7 +181,7 @@ namespace VVardenfell.Runtime.Components
             ecb.SetComponentEnabled<DoorActivated>(logicalEntity, false);
         }
 
-        static PassiveActorPresence BuildPassiveActorPresence(in ActorDef actor)
+        static PassiveActorPresence BuildPassiveActorPresence(ref RuntimeActorDefBlob actor)
         {
             bool canTalk = actor.Kind == ActorDefKind.Npc;
             return new PassiveActorPresence
@@ -192,16 +195,16 @@ namespace VVardenfell.Runtime.Components
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
-            in ActorDef actor,
+            ref RuntimeActorDefBlob actor,
             float3 worldPosition,
             bool isInterior,
             int2 exteriorCell,
             FixedString128Bytes interiorCellId,
             uint placedRefId)
         {
-            var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(contentDb, actor);
+            var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(ref content, ref actor);
             ecb.AddComponent(logicalEntity, statSeed.Attributes);
             ecb.AddComponent(logicalEntity, statSeed.Skills);
             ecb.AddComponent(logicalEntity, statSeed.Vitals);
@@ -225,7 +228,7 @@ namespace VVardenfell.Runtime.Components
             ecb.AddComponent(logicalEntity, new ActorMeleeCombatAiState());
             ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
-                contentDb,
+                ref content,
                 statSeed.Attributes,
                 statSeed.Skills,
                 statSeed.Vitals,
@@ -233,7 +236,7 @@ namespace VVardenfell.Runtime.Components
                 inventoryWeight: 0f);
             ecb.AddComponent(logicalEntity, derivedMovement);
             var knownSpells = ecb.AddBuffer<ActorKnownSpell>(logicalEntity);
-            var actorSpells = MorrowindActorMovementStats.BuildKnownSpellListFromActor(contentDb, actorHandle);
+            var actorSpells = MorrowindActorMovementStats.BuildKnownSpellListFromActor(ref content, actorHandle);
             for (int i = 0; i < actorSpells.Length; i++)
                 knownSpells.Add(actorSpells[i]);
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
@@ -241,7 +244,7 @@ namespace VVardenfell.Runtime.Components
             ecb.AddBuffer<ActorUsedPower>(logicalEntity);
             ecb.AddComponent(logicalEntity, new ActorMagicCastState());
             ecb.AddComponent<ActorActiveMagicEffectDirty>(logicalEntity);
-            QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
+            QueueActorFactionMembership(ref ecb, logicalEntity, ref content, ref actor);
 
             QueueActorCollider(entityManager, ref ecb, logicalEntity);
             QueueActorPickCollider(
@@ -251,9 +254,9 @@ namespace VVardenfell.Runtime.Components
                 isInterior,
                 exteriorCell);
 
-            if (ActorAiRuntimeAuthoringUtility.HasPackage(contentDb, actorHandle))
+            if (ActorAiRuntimeAuthoringUtility.HasPackage(ref content, actorHandle))
             {
-                var anchor = BuildActorAiAnchor(contentDb, isInterior, exteriorCell, interiorCellId);
+                var anchor = BuildActorAiAnchor(ref content, isInterior, exteriorCell, interiorCellId);
                 ecb.AddComponent(logicalEntity, new ActorAiState
                 {
                     HomePosition = worldPosition,
@@ -266,14 +269,14 @@ namespace VVardenfell.Runtime.Components
                 ecb.AddComponent<ActorAiNavigationAnchorDirty>(logicalEntity);
                 ecb.SetComponentEnabled<ActorAiNavigationAnchorDirty>(logicalEntity, false);
                 var packages = ecb.AddBuffer<ActorAiPackageRuntime>(logicalEntity);
-                ActorAiRuntimeAuthoringUtility.HydratePackages(contentDb, actorHandle, anchor, packages);
+                ActorAiRuntimeAuthoringUtility.HydratePackages(ref content, actorHandle, anchor, packages);
                 if (packages.Length > 0)
                 {
                     ActorMovementAuthoringUtility.QueueEnsureMovableActor(
-                        ref ecb,
-                        logicalEntity,
-                        MorrowindActorMovementStats.BuildMovementSpeed(
-                            contentDb,
+                            ref ecb,
+                            logicalEntity,
+                            MorrowindActorMovementStats.BuildMovementSpeed(
+                            ref content,
                             actor.Kind,
                             statSeed.Attributes,
                             statSeed.Skills,
@@ -283,20 +286,21 @@ namespace VVardenfell.Runtime.Components
                 }
             }
 
-            QueueActorInventoryAndEquipment(ref ecb, logicalEntity, contentDb, actorHandle, placedRefId);
+            QueueActorInventoryAndEquipment(ref ecb, logicalEntity, ref content, actorHandle, placedRefId);
         }
 
         static void QueueActorFactionMembership(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor)
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor)
         {
-            if (string.IsNullOrWhiteSpace(actor.FactionId))
+            string factionId = actor.FactionId.ToString();
+            if (string.IsNullOrWhiteSpace(factionId))
                 return;
 
-            if (!contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle) || !factionHandle.IsValid)
-                throw new InvalidOperationException($"Actor '{actor.Id}' references unknown faction '{actor.FactionId}'.");
+            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, RuntimeContentStableHash.HashId(factionId), out var factionHandle) || !factionHandle.IsValid)
+                throw new InvalidOperationException($"Actor '{actor.Id.ToString()}' references unknown faction '{factionId}'.");
 
             var factions = ecb.AddBuffer<ActorFactionMembership>(logicalEntity);
             factions.Add(new ActorFactionMembership
@@ -310,7 +314,7 @@ namespace VVardenfell.Runtime.Components
         static void QueueActorInventoryAndEquipment(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
             uint placedRefId)
         {
@@ -318,7 +322,7 @@ namespace VVardenfell.Runtime.Components
             var equipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
             try
             {
-                HydrateActorInventoryAndEquipment(contentDb, actorHandle, placedRefId, ref inventory, ref equipment);
+                HydrateActorInventoryAndEquipment(ref content, actorHandle, placedRefId, ref inventory, ref equipment);
 
                 if (inventory.Length > 0)
                 {
@@ -344,59 +348,171 @@ namespace VVardenfell.Runtime.Components
         }
 
         static void HydrateActorInventoryAndEquipment(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
             uint placedRefId,
             ref NativeList<ActorInventoryItem> inventory,
             ref NativeList<ActorEquipmentSlot> equipment)
         {
-            if (contentDb == null || !actorHandle.IsValid)
+            if (!actorHandle.IsValid)
                 return;
 
-            ReadOnlySpan<ContainerItemDef> authoredItems = contentDb.GetActorInventoryItems(actorHandle);
-            if (authoredItems.Length == 0)
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+            RuntimeContentBlobUtility.RequireRange(actor.FirstInventoryIndex, actor.InventoryCount, content.ActorInventoryItems.Length, "actor inventory");
+            if (actor.InventoryCount == 0)
                 return;
 
             uint resolutionSeed = placedRefId != 0u ? placedRefId : (uint)actorHandle.Value;
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            for (int i = 0; i < authoredItems.Length; i++)
+            for (int i = 0; i < actor.InventoryCount; i++)
             {
-                var authored = authoredItems[i];
-                if (authored.Count <= 0 || string.IsNullOrWhiteSpace(authored.ItemId))
+                ref RuntimeContainerItemDefBlob authored = ref content.ActorInventoryItems[actor.FirstInventoryIndex + i];
+                if (authored.Count <= 0)
                     continue;
+                if (authored.ItemIdHash == 0UL)
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor '{actor.Id.ToString()}' has an authored inventory item with no id at offset {i}.");
 
-                if (!TryResolveActorInventoryContent(contentDb, authored.ItemId, resolutionSeed, out var content) || !content.IsValid)
-                    continue;
+                if (!TryResolveActorInventoryContent(ref content, authored.ItemIdHash, resolutionSeed, out var itemContent) || !itemContent.IsValid)
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor '{actor.Id.ToString()}' references unresolved inventory item '{authored.ItemId.ToString()}'.");
 
                 inventory.Add(new ActorInventoryItem
                 {
-                    Content = content,
+                    Content = itemContent,
                     Count = authored.Count,
-                    Condition = InventoryConditionUtility.ResolveInitialCondition(contentDb, content),
+                    Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
                     AuthoredOrder = i,
                 });
 
-                if (content.Kind != ContentReferenceKind.Item)
+                if (itemContent.Kind != ContentReferenceKind.Item)
                     continue;
             }
 
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(contentDb, actor, inventory.AsArray(), equipment);
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(ref content, ref actor, inventory.AsArray(), equipment);
         }
 
         static bool TryResolveActorInventoryContent(
-            RuntimeContentDatabase contentDb,
-            string itemId,
+            ref RuntimeContentBlob contentBlob,
+            ulong itemIdHash,
             uint resolutionSeed,
             out ContentReference content)
         {
             content = default;
-            if (ContainerLootUtility.TryResolveDirectCarryable(contentDb, itemId, out content, out _))
+            if (RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, itemIdHash, out content)
+                && (content.Kind == ContentReferenceKind.Item
+                    || content.Kind == ContentReferenceKind.Light
+                    || content.Kind == ContentReferenceKind.LeveledItem))
+            {
                 return true;
+            }
 
-            if (!contentDb.TryGetItemLeveledListHandle(itemId, out var listHandle))
+            if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, itemIdHash, out var listHandle))
                 return false;
 
-            return ContainerLootUtility.TryResolveLooseLeveledCarryable(contentDb, listHandle, resolutionSeed, out content, out _);
+            var visited = new NativeList<int>(Allocator.Temp);
+            try
+            {
+                return TryResolveLooseLeveledCarryable(ref contentBlob, listHandle, resolutionSeed, 0, ref visited, out content);
+            }
+            finally
+            {
+                if (visited.IsCreated)
+                    visited.Dispose();
+            }
+        }
+
+        static bool TryResolveLooseLeveledCarryable(
+            ref RuntimeContentBlob contentBlob,
+            ItemLeveledListDefHandle listHandle,
+            uint seed,
+            int depth,
+            ref NativeList<int> visited,
+            out ContentReference content)
+        {
+            content = default;
+            if (!listHandle.IsValid)
+                return false;
+            if (depth >= MaxLeveledResolutionDepth)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] item leveled-list recursion cap reached at depth {MaxLeveledResolutionDepth}.");
+
+            for (int i = 0; i < visited.Length; i++)
+            {
+                if (visited[i] == listHandle.Value)
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] item leveled-list cycle detected at handle {listHandle.Value}.");
+            }
+
+            visited.Add(listHandle.Value);
+            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
+            RuntimeContentBlobUtility.RequireRange(list.FirstEntryIndex, list.EntryCount, contentBlob.ItemLeveledListEntries.Length, "item leveled-list entry");
+            try
+            {
+                if (RollPercent(seed) < list.ChanceNone || list.EntryCount == 0)
+                    return false;
+
+                bool allLevels = (list.Flags & ItemLeveledAllLevelsFlag) != 0;
+                int highestEligibleLevel = 0;
+                bool hasEligible = false;
+                for (int i = 0; i < list.EntryCount; i++)
+                {
+                    int level = contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + i].Level;
+                    if (level > highestEligibleLevel && level <= ContainerLootUtility.FixedLeveledLootPlayerLevel)
+                    {
+                        highestEligibleLevel = level;
+                        hasEligible = true;
+                    }
+                }
+
+                if (!hasEligible)
+                    return false;
+
+                Span<int> candidateEntryOffsets = stackalloc int[list.EntryCount];
+                int candidateCount = 0;
+                for (int i = 0; i < list.EntryCount; i++)
+                {
+                    int level = contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + i].Level;
+                    if (level > ContainerLootUtility.FixedLeveledLootPlayerLevel)
+                        continue;
+                    if (allLevels || level == highestEligibleLevel)
+                        candidateEntryOffsets[candidateCount++] = i;
+                }
+
+                if (candidateCount == 0)
+                    return false;
+
+                int candidateIndex = NextRandomIndex(ref seed, candidateCount);
+                ref RuntimeItemLeveledListEntryDefBlob selected = ref contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + candidateEntryOffsets[candidateIndex]];
+                if (selected.ItemIdHash == 0UL)
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] leveled-list '{list.Id.ToString()}' has an entry with no item id.");
+
+                if (RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, selected.ItemIdHash, out content)
+                    && (content.Kind == ContentReferenceKind.Item || content.Kind == ContentReferenceKind.Light))
+                {
+                    return true;
+                }
+
+                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, selected.ItemIdHash, out ItemLeveledListDefHandle nestedHandle))
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] missing leveled-list target '{selected.ItemId.ToString()}' referenced by '{list.Id.ToString()}'.");
+
+                seed = math.hash(new uint2(seed, (uint)candidateIndex + 1u));
+                return TryResolveLooseLeveledCarryable(ref contentBlob, nestedHandle, seed, depth + 1, ref visited, out content);
+            }
+            finally
+            {
+                if (visited.Length > 0)
+                    visited.RemoveAt(visited.Length - 1);
+            }
+        }
+
+        static int RollPercent(uint seed)
+        {
+            uint state = seed == 0u ? 0xA341316Cu : seed;
+            state = state * 1664525u + 1013904223u;
+            return (int)(state % 100u);
+        }
+
+        static int NextRandomIndex(ref uint seed, int count)
+        {
+            seed = seed == 0u ? 0xC8013EA4u : seed;
+            seed = seed * 1664525u + 1013904223u;
+            return count <= 1 ? 0 : (int)(seed % (uint)count);
         }
 
         static void QueueActorCollider(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
@@ -483,7 +599,7 @@ namespace VVardenfell.Runtime.Components
         }
 
         static ActorAiNavigationAnchor BuildActorAiAnchor(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             bool isInterior,
             int2 exteriorCell,
             FixedString128Bytes interiorCellId)
@@ -500,13 +616,13 @@ namespace VVardenfell.Runtime.Components
             {
                 ulong interiorCellHash = InteriorCellIdHash.Hash(interiorCellId);
                 anchor.InteriorCellHash = interiorCellHash;
-                if (contentDb.TryGetInteriorPathGridHandle(interiorCellHash, out var handle) && handle.IsValid)
+                if (RuntimeContentBlobUtility.TryGetInteriorPathGridHandleByCellHash(ref content, interiorCellHash, out var handle) && handle.IsValid)
                 {
                     anchor.PathGridIndex = handle.Index;
                     anchor.IsResolved = 1;
                 }
             }
-            else if (contentDb.TryGetExteriorPathGridHandle(exteriorCell.x, exteriorCell.y, out var handle) && handle.IsValid)
+            else if (RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, exteriorCell.x, exteriorCell.y, out var handle) && handle.IsValid)
             {
                 anchor.PathGridIndex = handle.Index;
                 anchor.IsResolved = 1;
@@ -524,6 +640,9 @@ namespace VVardenfell.Runtime.Components
                 isInterior ? 1u : 0u));
             return seed == 0u ? 1u : seed;
         }
+
+        static uint MakeTag(char a, char b, char c, char d)
+            => (uint)a | ((uint)b << 8) | ((uint)c << 16) | ((uint)d << 24);
 
         static LightInstanceFlags BuildLightInstanceFlags(int flags)
         {
@@ -553,7 +672,7 @@ namespace VVardenfell.Runtime.Components
                || flags.Pulse != 0
                || flags.PulseSlow != 0;
 
-        static LightInstanceState BuildLightInstanceState(in LightDef def)
+        static LightInstanceState BuildLightInstanceState(ref RuntimeLightDefBlob def)
         {
             float3 color = DecodeRgb(def.ColorRgba);
             float rangeMeters = math.max(0.25f, def.Radius * WorldScale.MwUnitsToMeters);
@@ -583,12 +702,12 @@ namespace VVardenfell.Runtime.Components
         static void TryQueueAudioEmitterAuthoring(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             string primarySoundId,
             string secondarySoundId)
         {
-            contentDb.TryGetSoundHandle(primarySoundId, out SoundDefHandle primarySound);
-            contentDb.TryGetSoundHandle(secondarySoundId, out SoundDefHandle secondarySound);
+            TryGetSoundHandle(ref content, primarySoundId, out SoundDefHandle primarySound);
+            TryGetSoundHandle(ref content, secondarySoundId, out SoundDefHandle secondarySound);
             if (!primarySound.IsValid && !secondarySound.IsValid)
                 return;
 
@@ -597,6 +716,14 @@ namespace VVardenfell.Runtime.Components
                 PrimarySound = primarySound,
                 SecondarySound = secondarySound,
             });
+        }
+
+        static bool TryGetSoundHandle(ref RuntimeContentBlob content, string soundId, out SoundDefHandle handle)
+        {
+            handle = default;
+            return !string.IsNullOrWhiteSpace(soundId)
+                   && RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref content, RuntimeContentStableHash.HashId(soundId), out handle)
+                   && handle.IsValid;
         }
 
     }

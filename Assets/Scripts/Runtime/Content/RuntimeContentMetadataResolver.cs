@@ -218,12 +218,12 @@ namespace VVardenfell.Runtime.Content
         };
 
         public static bool TryResolveCarryable(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob blob,
             ContentReference content,
             out CarryableMetadata metadata)
         {
             metadata = default;
-            if (contentDb == null || !content.IsValid)
+            if (!content.IsValid)
                 return false;
 
             switch (content.Kind)
@@ -234,15 +234,15 @@ namespace VVardenfell.Runtime.Content
                     if (!handle.IsValid)
                         return false;
 
-                    ref readonly var item = ref contentDb.Get(handle);
+                    ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref blob, handle);
                     metadata = new CarryableMetadata(
                         ContentReferenceKind.Item,
                         item.RecordTag,
-                        ResolveDisplayName(item, "Unknown item"),
-                        item.Icon ?? string.Empty,
+                        ResolveDisplayName(ref item, "Unknown item"),
+                        item.Icon.ToString(),
                         item.Float0 > 0f ? item.Float0 : -1f,
                         item.Int0 > 0 ? item.Int0 : -1,
-                        HasMagicCategory(item));
+                        HasMagicCategory(ref item));
                     return true;
                 }
                 case ContentReferenceKind.Light:
@@ -251,12 +251,12 @@ namespace VVardenfell.Runtime.Content
                     if (!handle.IsValid)
                         return false;
 
-                    ref readonly var light = ref contentDb.Get(handle);
+                    ref RuntimeLightDefBlob light = ref RuntimeContentBlobUtility.Get(ref blob, handle);
                     metadata = new CarryableMetadata(
                         ContentReferenceKind.Light,
                         light.RecordTag,
-                        ResolveDisplayName(light),
-                        light.Icon ?? string.Empty,
+                        ResolveDisplayName(ref light),
+                        light.Icon.ToString(),
                         light.Weight > 0f ? light.Weight : -1f,
                         light.Value > 0 ? light.Value : -1,
                         false);
@@ -268,32 +268,32 @@ namespace VVardenfell.Runtime.Content
         }
 
         public static bool TryResolveBook(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob blob,
             ContentReference content,
             out BookContentMetadata metadata)
         {
             metadata = default;
-            if (contentDb == null || content.Kind != ContentReferenceKind.Item || content.HandleValue <= 0)
+            if (content.Kind != ContentReferenceKind.Item || content.HandleValue <= 0)
                 return false;
 
             var handle = new ItemDefHandle { Value = content.HandleValue };
             if (!handle.IsValid)
                 return false;
 
-            ref readonly var item = ref contentDb.Get(handle);
-            if (!IsBook(item))
+            ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref blob, handle);
+            if (!IsBook(ref item))
                 return false;
 
             metadata = new BookContentMetadata(
                 content,
-                ResolveDisplayName(item, "Unknown book"),
+                ResolveDisplayName(ref item, "Unknown book"),
                 false,
                 -1,
                 0);
             return true;
         }
 
-        public static bool IsBook(in BaseDef item) => item.RecordTag == BookRecordTag;
+        public static bool IsBook(ref RuntimeBaseDefBlob item) => item.RecordTag == BookRecordTag;
 
         public static bool MatchesCategory(in CarryableMetadata metadata, InventoryWindowCategory category)
         {
@@ -322,100 +322,111 @@ namespace VVardenfell.Runtime.Content
             return $"{metadata.DisplayName}{countLabel}   wt {weightLabel}   val {valueLabel}";
         }
 
-        public static string ResolveDisplayName(in BaseDef item, string fallback)
+        public static string ResolveDisplayName(ref RuntimeBaseDefBlob item, string fallback)
         {
-            if (!string.IsNullOrWhiteSpace(item.Name))
-                return item.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(item.Id))
-                return item.Id.Trim();
+            string name = item.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+            string id = item.Id.ToString();
+            if (!string.IsNullOrWhiteSpace(id))
+                return id.Trim();
             return fallback;
         }
 
-        public static string ResolveDisplayName(in LightDef light)
+        public static string ResolveDisplayName(ref RuntimeLightDefBlob light)
         {
-            if (!string.IsNullOrWhiteSpace(light.Name))
-                return light.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(light.Id))
-                return light.Id.Trim();
+            string name = light.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+            string id = light.Id.ToString();
+            if (!string.IsNullOrWhiteSpace(id))
+                return id.Trim();
             return "Unknown light";
         }
 
-        public static string ResolveDoorDisplayName(RuntimeContentDatabase contentDb, DoorDefHandle handle, string fallback = "door")
-            => contentDb != null && handle.IsValid ? ResolveDisplayName(contentDb.Get(handle), fallback) : fallback;
+        public static string ResolveDoorDisplayName(ref RuntimeContentBlob blob, DoorDefHandle handle, string fallback = "door")
+            => handle.IsValid ? ResolveDisplayName(ref RuntimeContentBlobUtility.Get(ref blob, handle), fallback) : fallback;
 
-        public static string ResolveItemDisplayName(RuntimeContentDatabase contentDb, ItemDefHandle handle, string fallback = "item")
-            => contentDb != null && handle.IsValid ? ResolveDisplayName(contentDb.Get(handle), fallback) : fallback;
+        public static string ResolveItemDisplayName(ref RuntimeContentBlob blob, ItemDefHandle handle, string fallback = "item")
+            => handle.IsValid ? ResolveDisplayName(ref RuntimeContentBlobUtility.Get(ref blob, handle), fallback) : fallback;
 
-        public static string ResolveContainerDisplayName(RuntimeContentDatabase contentDb, ContainerDefHandle handle, string fallback = "container")
-            => contentDb != null && handle.IsValid ? ResolveDisplayName(contentDb.Get(handle), fallback) : fallback;
+        public static string ResolveContainerDisplayName(ref RuntimeContentBlob blob, ContainerDefHandle handle, string fallback = "container")
+            => handle.IsValid ? ResolveDisplayName(ref RuntimeContentBlobUtility.Get(ref blob, handle), fallback) : fallback;
 
-        public static string ResolveActivatorDisplayName(RuntimeContentDatabase contentDb, ActivatorDefHandle handle, string fallback = "activator")
-            => contentDb != null && handle.IsValid ? ResolveDisplayName(contentDb.Get(handle), fallback) : fallback;
+        public static string ResolveActivatorDisplayName(ref RuntimeContentBlob blob, ActivatorDefHandle handle, string fallback = "activator")
+            => handle.IsValid ? ResolveDisplayName(ref RuntimeContentBlobUtility.Get(ref blob, handle), fallback) : fallback;
 
-        public static string ResolveActorDisplayName(RuntimeContentDatabase contentDb, ActorDefHandle handle, string fallback = "npc")
+        public static string ResolveActorDisplayName(ref RuntimeContentBlob blob, ActorDefHandle handle, string fallback = "npc")
         {
-            if (contentDb == null || !handle.IsValid)
+            if (!handle.IsValid)
                 return fallback;
 
-            ref readonly var actor = ref contentDb.Get(handle);
-            if (!string.IsNullOrWhiteSpace(actor.Name))
-                return actor.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(actor.Id))
-                return actor.Id.Trim();
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref blob, handle);
+            string name = actor.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+            string id = actor.Id.ToString();
+            if (!string.IsNullOrWhiteSpace(id))
+                return id.Trim();
             return fallback;
         }
 
-        public static string ResolveRaceDisplayName(RuntimeContentDatabase contentDb, FixedString64Bytes raceId, string fallback = "--")
+        public static string ResolveRaceDisplayName(ref RuntimeContentBlob blob, FixedString64Bytes raceId, string fallback = "--")
         {
             string id = raceId.ToString();
             if (!string.IsNullOrWhiteSpace(id)
-                && contentDb != null
-                && contentDb.TryGetRaceHandle(id, out var handle)
+                && RuntimeContentBlobUtility.TryGetRaceHandleByIdHash(ref blob, RuntimeContentStableHash.HashId(id), out var handle)
                 && handle.IsValid)
             {
-                ref readonly var race = ref contentDb.GetRace(handle);
-                if (!string.IsNullOrWhiteSpace(race.Name))
-                    return race.Name.Trim();
+                ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref blob, handle);
+                string name = race.Name.ToString();
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name.Trim();
             }
 
             return ToDisplay(raceId, fallback);
         }
 
-        public static string ResolveClassDisplayName(RuntimeContentDatabase contentDb, FixedString64Bytes classId, string fallback = "--")
+        public static string ResolveClassDisplayName(ref RuntimeContentBlob blob, FixedString64Bytes classId, string fallback = "--")
         {
             string id = classId.ToString();
             if (!string.IsNullOrWhiteSpace(id)
-                && contentDb != null
-                && contentDb.TryGetClassHandle(id, out var handle)
+                && RuntimeContentBlobUtility.TryGetClassHandleByIdHash(ref blob, RuntimeContentStableHash.HashId(id), out var handle)
                 && handle.IsValid)
             {
-                ref readonly var classDef = ref contentDb.GetClass(handle);
-                if (!string.IsNullOrWhiteSpace(classDef.Name))
-                    return classDef.Name.Trim();
+                ref RuntimeClassDefBlob classDef = ref RuntimeContentBlobUtility.GetClass(ref blob, handle);
+                string name = classDef.Name.ToString();
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name.Trim();
             }
 
             return ToDisplay(classId, fallback);
         }
 
-        public static bool TryResolveClass(RuntimeContentDatabase contentDb, FixedString64Bytes classId, out ClassDef classDef)
+        public static bool TryResolveClassHandle(ref RuntimeContentBlob blob, FixedString64Bytes classId, out GenericRecordDefHandle handle)
         {
-            classDef = default;
+            handle = default;
             string id = classId.ToString();
-            if (contentDb == null || string.IsNullOrWhiteSpace(id) || !contentDb.TryGetClassHandle(id, out var handle) || !handle.IsValid)
-                return false;
-
-            classDef = contentDb.GetClass(handle);
-            return true;
+            return !string.IsNullOrWhiteSpace(id)
+                   && RuntimeContentBlobUtility.TryGetClassHandleByIdHash(ref blob, RuntimeContentStableHash.HashId(id), out handle)
+                   && handle.IsValid;
         }
 
-        public static string ResolveFactionDisplayName(in FactionDef faction, string fallback)
-            => !string.IsNullOrWhiteSpace(faction.Name) ? faction.Name.Trim() : fallback;
-
-        public static string ResolveFactionRankName(in FactionDef faction, int rank)
+        public static string ResolveFactionDisplayName(ref RuntimeFactionDefBlob faction, string fallback)
         {
-            var rankNames = faction.RankNames ?? Array.Empty<string>();
-            if (rank >= 0 && rank < rankNames.Length && !string.IsNullOrWhiteSpace(rankNames[rank]))
-                return rankNames[rank].Trim();
+            string name = faction.Name.ToString();
+            return !string.IsNullOrWhiteSpace(name) ? name.Trim() : fallback;
+        }
+
+        public static string ResolveFactionRankName(ref RuntimeContentBlob blob, ref RuntimeFactionDefBlob faction, int rank)
+        {
+            RuntimeContentBlobUtility.RequireRange(faction.FirstRankNameIndex, faction.RankNameCount, blob.FactionRankNames.Length, "faction rank name");
+            if (rank >= 0 && rank < faction.RankNameCount)
+            {
+                string rankName = blob.FactionRankNames[faction.FirstRankNameIndex + rank].Value.ToString();
+                if (!string.IsNullOrWhiteSpace(rankName))
+                    return rankName.Trim();
+            }
 
             return rank >= 0 ? rank.ToString() : "--";
         }
@@ -471,7 +482,7 @@ namespace VVardenfell.Runtime.Content
             };
         }
 
-        public static string ResolveSchoolName(RuntimeContentDatabase contentDb, int school)
+        public static string ResolveSchoolName(ref RuntimeContentBlob blob, int school)
         {
             string gmstId = school switch
             {
@@ -483,10 +494,9 @@ namespace VVardenfell.Runtime.Content
                 5 => "sSkillRestoration",
                 _ => null,
             };
-            if (!string.IsNullOrWhiteSpace(gmstId)
-                && contentDb != null
-                && contentDb.TryGetGameSettingString(gmstId, out string gmstName))
+            if (!string.IsNullOrWhiteSpace(gmstId))
             {
+                string gmstName = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref blob, RuntimeContentStableHash.HashId(gmstId));
                 return gmstName.Trim();
             }
 
@@ -502,8 +512,14 @@ namespace VVardenfell.Runtime.Content
             };
         }
 
-        public static string ResolveSpellName(in SpellDef spell)
-            => string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? "--" : spell.Name.Trim();
+        public static string ResolveSpellName(ref RuntimeSpellDefBlob spell)
+        {
+            string name = spell.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+            string id = spell.Id.ToString();
+            return string.IsNullOrWhiteSpace(id) ? "--" : id.Trim();
+        }
 
         public static string ResolveSpellTypeName(int type)
         {
@@ -519,15 +535,13 @@ namespace VVardenfell.Runtime.Content
             };
         }
 
-        public static string ResolveMagicEffectName(RuntimeContentDatabase contentDb, short effectId)
+        public static string ResolveMagicEffectName(ref RuntimeContentBlob blob, short effectId)
         {
             if (effectId >= 0 && effectId < s_MagicEffectNames.Length)
             {
                 var name = s_MagicEffectNames[effectId];
-                if (contentDb != null
-                    && !string.IsNullOrWhiteSpace(name.Gmst)
-                    && contentDb.TryGetGameSettingString(name.Gmst, out string gmstName))
-                    return gmstName.Trim();
+                if (!string.IsNullOrWhiteSpace(name.Gmst))
+                    return RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref blob, RuntimeContentStableHash.HashId(name.Gmst)).Trim();
                 if (!string.IsNullOrWhiteSpace(name.Fallback))
                     return name.Fallback;
             }
@@ -535,33 +549,35 @@ namespace VVardenfell.Runtime.Content
             return $"Effect {effectId}";
         }
 
-        public static string ResolveMagicEffectIconPath(RuntimeContentDatabase contentDb, short effectId)
+        public static string ResolveMagicEffectIconPath(ref RuntimeContentBlob blob, short effectId)
         {
-            if (contentDb != null && contentDb.TryGetMagicEffectHandle(effectId, out var handle))
+            if (RuntimeContentBlobUtility.TryGetMagicEffectHandleByIndex(ref blob, effectId, out var handle))
             {
-                ref readonly var def = ref contentDb.Get(handle);
-                return def.Icon ?? string.Empty;
+                ref RuntimeMagicEffectDefBlob def = ref RuntimeContentBlobUtility.Get(ref blob, handle);
+                return def.Icon.ToString();
             }
 
             return string.Empty;
         }
 
-        public static bool TryGetMagicEffectDef(RuntimeContentDatabase contentDb, short effectId, out MagicEffectDef def)
+        public static bool TryGetMagicEffectFlags(ref RuntimeContentBlob blob, short effectId, out int flags)
         {
-            if (contentDb != null && contentDb.TryGetMagicEffectHandle(effectId, out var handle))
+            if (RuntimeContentBlobUtility.TryGetMagicEffectHandleByIndex(ref blob, effectId, out var handle))
             {
-                def = contentDb.Get(handle);
+                ref RuntimeMagicEffectDefBlob def = ref RuntimeContentBlobUtility.Get(ref blob, handle);
+                flags = def.Flags;
                 return true;
             }
 
-            def = default;
+            flags = 0;
             return false;
         }
 
-        public static string ResolveGameSettingString(RuntimeContentDatabase contentDb, string id, string fallback)
-            => contentDb != null && contentDb.TryGetGameSettingString(id, out string value)
-                ? value.Trim()
-                : fallback;
+        public static string ResolveGameSettingString(ref RuntimeContentBlob blob, string id, string fallback)
+        {
+            string value = RuntimeContentBlobUtility.RequireGameSettingStringAllowEmptyByIdHash(ref blob, RuntimeContentStableHash.HashId(id));
+            return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        }
 
         public static string ToDisplay(FixedString64Bytes value, string fallback)
         {
@@ -569,13 +585,14 @@ namespace VVardenfell.Runtime.Content
             return string.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
         }
 
-        static bool HasMagicCategory(in BaseDef item)
+        static bool HasMagicCategory(ref RuntimeBaseDefBlob item)
         {
+            string enchantId = item.EnchantId.ToString();
             return item.RecordTag == AlchTag
                 || item.RecordTag == AppaTag
                 || item.RecordTag == IngrTag
                 || item.RecordTag == BookRecordTag
-                || !string.IsNullOrWhiteSpace(item.EnchantId);
+                || !string.IsNullOrWhiteSpace(enchantId);
         }
 
         static uint MakeTag(char a, char b, char c, char d)

@@ -6,7 +6,6 @@ using Unity.Rendering;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -17,7 +16,7 @@ namespace VVardenfell.Runtime.WorldState
         public static bool QueueActorSpawn(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ContentReference contentReference,
             uint runtimeRefId,
             float3 position,
@@ -29,12 +28,12 @@ namespace VVardenfell.Runtime.WorldState
             byte persistencePolicy)
         {
             if (contentReference.Kind != ContentReferenceKind.Actor)
-                return false;
+                    return false;
 
             Entity logicalEntity = LogicalRefEntityFactory.QueueCreate(
                 entityManager,
                 ref ecb,
-                contentDb,
+                ref content,
                 new LogicalRefEntityDescriptor
                 {
                     ContentReference = contentReference,
@@ -55,7 +54,7 @@ namespace VVardenfell.Runtime.WorldState
         public static bool QueueSpawn(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in WorldResources.RuntimeSpawnPrefabDescriptor descriptor,
             ContentReference contentReference,
             uint runtimeRefId,
@@ -74,7 +73,7 @@ namespace VVardenfell.Runtime.WorldState
                 || (uint)descriptor.ModelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length)
                 return false;
 
-            if (!WorldBootstrap.EnsureModelPrefabBuilt(entityManager, WorldResources.Cache, descriptor.ModelPrefabIndex))
+            if (!WorldBootstrap.EnsureModelPrefabBuilt(entityManager, descriptor.ModelPrefabIndex))
                 return false;
 
             Entity renderPrefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
@@ -96,7 +95,7 @@ namespace VVardenfell.Runtime.WorldState
             Entity logicalEntity = LogicalRefEntityFactory.QueueCreate(
                 entityManager,
                 ref ecb,
-                contentDb,
+                ref content,
                 new LogicalRefEntityDescriptor
                 {
                     ContentReference = contentReference,

@@ -137,14 +137,8 @@ namespace VVardenfell.Runtime.Streaming
         {
             int totalPreloadedCells = CountPreloadedCells(preload);
             progress?.BeginStage("Cell preload merge", "Installing preloaded cells", totalPreloadedCells);
-            WorldResources.Cells.Clear();
-            WorldResources.Cells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
-            WorldResources.InteriorCells.Clear();
-            WorldResources.InteriorCells.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
-            WorldResources.InteriorCellsByHash.Clear();
-            WorldResources.InteriorCellsByHash.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
-            WorldResources.InteriorCellIdsByHash.Clear();
-            WorldResources.InteriorCellIdsByHash.EnsureCapacity(System.Math.Max(totalPreloadedCells, 1));
+            WorldResources.ClearPreloadedCells();
+            WorldResources.EnsurePreloadedCellCapacity(totalPreloadedCells);
             int installed = 0;
             for (int i = 0; i < cache.Manifest.CellGrid.Length; i++)
             {
@@ -158,7 +152,7 @@ namespace VVardenfell.Runtime.Streaming
                     var g = cache.Manifest.CellGrid[i];
                     var coord = new int2(g.Item1, g.Item2);
                     available.Add(coord);
-                    WorldResources.Cells[coord] = data;
+                    WorldResources.RegisterExteriorCell(coord, data);
                     installed++;
                 }
                 finally
@@ -179,21 +173,9 @@ namespace VVardenfell.Runtime.Streaming
                     continue;
 
                 string cellId = cache.Manifest.InteriorCellIds[i] ?? string.Empty;
-                if (!WorldResources.InteriorCells.ContainsKey(cellId))
-                    WorldResources.InteriorCells[cellId] = data;
-                ulong cellHash = InteriorCellIdHash.Hash(cellId);
-                if (cellHash != 0UL)
+                if (!WorldResources.TryRegisterInteriorCell(cellId, data, out string existingId))
                 {
-                    if (WorldResources.InteriorCellsByHash.TryGetValue(cellHash, out var existing) && !ReferenceEquals(existing, data))
-                    {
-                        string existingId = WorldResources.ResolveInteriorCellId(cellHash);
-                        Debug.LogWarning($"[VVardenfell][Streaming] interior cell hash collision between '{existingId}' and '{cellId}'; keeping the first hash mapping.");
-                    }
-                    else
-                    {
-                        WorldResources.InteriorCellsByHash[cellHash] = data;
-                        WorldResources.InteriorCellIdsByHash[cellHash] = cellId;
-                    }
+                    Debug.LogWarning($"[VVardenfell][Streaming] interior cell hash collision between '{existingId}' and '{cellId}'; keeping the first hash mapping.");
                 }
                 installed++;
                 if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
@@ -223,18 +205,21 @@ namespace VVardenfell.Runtime.Streaming
 
         public static IEnumerable<object> InstallColliderBlobs(WorldBootstrapCollisionLoadResult collisionLoad, RuntimeLoadProgress progress)
         {
-            progress?.BeginStage("Cell collider transfer", "Registering collider blobs", WorldResources.Cells.Count);
+            int exteriorCellCount = WorldResources.ExteriorCellCount;
+            progress?.BeginStage("Cell collider transfer", "Registering collider blobs", exteriorCellCount);
             WorldResources.StaticCellColliders.Clear();
             WorldResources.TerrainColliders.Clear();
-            WorldResources.StaticCellColliders.EnsureCapacity(WorldResources.Cells.Count);
-            WorldResources.TerrainColliders.EnsureCapacity(WorldResources.Cells.Count);
+            WorldResources.StaticCellColliders.EnsureCapacity(exteriorCellCount);
+            WorldResources.TerrainColliders.EnsureCapacity(exteriorCellCount);
             WorldResources.ColliderBlobs = collisionLoad.Blobs;
 
             int statCellsWithCol = 0;
             int terrainCellsWithCol = 0;
             int cursor = 0;
-            foreach (var kv in WorldResources.Cells)
+            var exteriorCells = WorldResources.CopyExteriorCellEntries();
+            for (int i = 0; i < exteriorCells.Length; i++)
             {
+                var kv = exteriorCells[i];
                 k_StatCellBlobs.Begin();
                 try
                 {
@@ -259,9 +244,9 @@ namespace VVardenfell.Runtime.Streaming
                 }
 
                 cursor++;
-                if (cursor == WorldResources.Cells.Count || (cursor % MergeBatchSize) == 0)
+                if (cursor == exteriorCellCount || (cursor % MergeBatchSize) == 0)
                 {
-                    progress?.Report($"Registering collider blobs {cursor}/{WorldResources.Cells.Count}", cursor, WorldResources.Cells.Count);
+                    progress?.Report($"Registering collider blobs {cursor}/{exteriorCellCount}", cursor, exteriorCellCount);
                     yield return null;
                 }
             }

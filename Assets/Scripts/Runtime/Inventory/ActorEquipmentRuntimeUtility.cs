@@ -2,7 +2,6 @@ using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
@@ -28,15 +27,15 @@ namespace VVardenfell.Runtime.Inventory
 
         public static ReadOnlySpan<ItemEquipmentSlot> NpcEquipmentVisualSlotOrder => s_NpcEquipmentVisualSlotOrder;
 
-        public static bool IsBeastRace(RuntimeContentDatabase contentDb, string raceId)
+        public static bool IsBeastRace(ref RuntimeContentBlob contentBlob, ulong raceIdHash)
         {
-            if (contentDb == null || string.IsNullOrWhiteSpace(raceId))
+            if (raceIdHash == 0UL)
                 return false;
 
-            if (!contentDb.TryGetRaceHandle(raceId, out var raceHandle))
+            if (!RuntimeContentBlobUtility.TryGetRaceHandleByIdHash(ref contentBlob, raceIdHash, out var raceHandle))
                 return false;
 
-            ref readonly var race = ref contentDb.GetRace(raceHandle);
+            ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref contentBlob, raceHandle);
             return ActorVisualContentRules.IsBeastRaceFlags(race.Flags);
         }
 

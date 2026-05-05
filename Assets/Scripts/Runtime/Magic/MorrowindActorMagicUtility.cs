@@ -4,8 +4,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
-using VVardenfell.Runtime.Movement;
 
 namespace VVardenfell.Runtime.Magic
 {
@@ -27,45 +25,41 @@ namespace VVardenfell.Runtime.Magic
             if (FindKnownSpellIndex(knownSpells, spellHandle) >= 0)
                 return true;
 
-            knownSpells.Add(new ActorKnownSpell
-            {
-                Spell = spellHandle,
-            });
+            knownSpells.Add(new ActorKnownSpell { Spell = spellHandle });
             return true;
         }
 
         public static bool RemoveKnownSpell(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorKnownSpell> knownSpells,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects,
             SpellDefHandle spellHandle)
         {
-            if (contentDb == null || !spellHandle.IsValid)
+            if (!spellHandle.IsValid)
                 return false;
 
             int index = FindKnownSpellIndex(knownSpells, spellHandle);
             if (index >= 0)
                 knownSpells.RemoveAt(index);
 
-            ref readonly var spell = ref contentDb.Get(spellHandle);
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
             if (IsPassiveSpellType(spell.SpellType))
-                RemoveActiveEffectsBySource(activeEffects, spell.Id);
+                RemoveActiveEffectsBySource(activeEffects, spell.IdHash);
 
             return true;
         }
 
-        public static bool CanRepresentScriptedCast(RuntimeContentDatabase contentDb, SpellDefHandle spellHandle)
+        public static bool CanRepresentScriptedCast(ref RuntimeContentBlob content, SpellDefHandle spellHandle)
         {
-            if (contentDb == null || !spellHandle.IsValid)
+            if (!spellHandle.IsValid)
                 return false;
 
-            ref readonly var spell = ref contentDb.Get(spellHandle);
-            if (!TryGetSpellEffects(contentDb, spell, out var effects))
-                return false;
-
-            for (int i = 0; i < effects.Length; i++)
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
+            RequireSpellEffectRange(ref content, ref spell);
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                if (!CanRepresentScriptedEffect(effects[i].EffectId))
+                MagicEffectInstanceDef effect = content.MagicEffectInstances[spell.EffectStartIndex + i];
+                if (!CanRepresentScriptedEffect(effect.EffectId))
                     return false;
             }
 
@@ -73,33 +67,31 @@ namespace VVardenfell.Runtime.Magic
         }
 
         public static bool ApplyScriptedCast(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorActiveMagicEffect> targetEffects,
             SpellDefHandle spellHandle)
         {
-            if (contentDb == null || !spellHandle.IsValid)
+            if (!spellHandle.IsValid)
                 return false;
 
-            ref readonly var spell = ref contentDb.Get(spellHandle);
-            if (!TryGetSpellEffects(contentDb, spell, out var effects))
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
+            RequireSpellEffectRange(ref content, ref spell);
+            if (!CanRepresentScriptedCast(ref content, spellHandle))
                 return false;
 
-            if (!CanRepresentScriptedCast(contentDb, spellHandle))
-                return false;
-
-            for (int i = 0; i < effects.Length; i++)
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                var effect = effects[i];
+                MagicEffectInstanceDef effect = content.MagicEffectInstances[spell.EffectStartIndex + i];
                 switch (effect.EffectId)
                 {
                     case CureCommonDiseaseEffectId:
-                        RemoveEffectsBySpellType(contentDb, targetEffects, SpellTypeDisease);
+                        RemoveEffectsBySpellType(ref content, targetEffects, SpellTypeDisease);
                         break;
                     case CureBlightDiseaseEffectId:
-                        RemoveEffectsBySpellType(contentDb, targetEffects, SpellTypeBlight);
+                        RemoveEffectsBySpellType(ref content, targetEffects, SpellTypeBlight);
                         break;
                     default:
-                        AppendRepresentedEffect(targetEffects, spell, effect);
+                        AppendRepresentedEffect(targetEffects, ref spell, effect);
                         break;
                 }
             }
@@ -113,23 +105,8 @@ namespace VVardenfell.Runtime.Magic
         public static bool HasKnownSpell(DynamicBuffer<ActorKnownSpell> knownSpells, SpellDefHandle spellHandle)
             => FindKnownSpellIndex(knownSpells, spellHandle) >= 0;
 
-        public static bool TryGetSpellEffects(
-            RuntimeContentDatabase contentDb,
-            in SpellDef spell,
-            out ReadOnlySpan<MagicEffectInstanceDef> effects)
-        {
-            effects = ReadOnlySpan<MagicEffectInstanceDef>.Empty;
-            if (contentDb?.Data.MagicEffectInstances == null || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
-                return false;
-
-            int available = math.max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
-            int count = math.min(spell.EffectCount, available);
-            if (count <= 0)
-                return false;
-
-            effects = new ReadOnlySpan<MagicEffectInstanceDef>(contentDb.Data.MagicEffectInstances, spell.EffectStartIndex, count);
-            return true;
-        }
+        public static void RequireSpellEffectRange(ref RuntimeContentBlob content, ref RuntimeSpellDefBlob spell)
+            => RuntimeContentBlobUtility.RequireRange(spell.EffectStartIndex, spell.EffectCount, content.MagicEffectInstances.Length, $"spell contentId=0x{spell.ContentId.Value:X16} effects");
 
         static bool CanRepresentScriptedEffect(short effectId)
             => effectId is CureCommonDiseaseEffectId or CureBlightDiseaseEffectId;
@@ -147,10 +124,14 @@ namespace VVardenfell.Runtime.Magic
 
         static void AppendRepresentedEffect(
             DynamicBuffer<ActorActiveMagicEffect> targetEffects,
-            in SpellDef spell,
+            ref RuntimeSpellDefBlob spell,
             in MagicEffectInstanceDef effect)
         {
             float duration = effect.Duration <= 0 ? -1f : effect.Duration;
+            FixedString64Bytes sourceName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Name);
+            FixedString64Bytes sourceId = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Id);
+            if (sourceName.IsEmpty)
+                sourceName = sourceId;
             targetEffects.Add(new ActorActiveMagicEffect
             {
                 EffectId = effect.EffectId,
@@ -161,37 +142,40 @@ namespace VVardenfell.Runtime.Magic
                 TimeLeftSeconds = duration,
                 Applied = 1,
                 SourceKind = duration < 0f ? ActorActiveMagicEffectSourceKind.PassiveSpell : ActorActiveMagicEffectSourceKind.TimedSpell,
-                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                SourceName = sourceName,
+                SourceId = sourceId,
+                SourceIdHash = spell.IdHash,
             });
         }
 
-        static void RemoveActiveEffectsBySource(DynamicBuffer<ActorActiveMagicEffect> activeEffects, string sourceId)
+        static void RemoveActiveEffectsBySource(DynamicBuffer<ActorActiveMagicEffect> activeEffects, ulong sourceIdHash)
         {
-            FixedString64Bytes fixedSourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(sourceId);
+            if (sourceIdHash == 0UL)
+                return;
+
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
-                if (activeEffects[i].SourceId.Equals(fixedSourceId))
+                if (activeEffects[i].SourceIdHash == sourceIdHash)
                     activeEffects.RemoveAt(i);
             }
         }
 
         static void RemoveEffectsBySpellType(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects,
             int spellType)
         {
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
-                string sourceId = activeEffects[i].SourceId.ToString();
-                if (string.IsNullOrWhiteSpace(sourceId)
-                    || !contentDb.TryGetSpellHandle(sourceId, out var sourceHandle)
+                ulong sourceIdHash = activeEffects[i].SourceIdHash;
+                if (sourceIdHash == 0UL
+                    || !RuntimeContentBlobUtility.TryGetSpellHandleByIdHash(ref content, sourceIdHash, out SpellDefHandle sourceHandle)
                     || !sourceHandle.IsValid)
                 {
                     continue;
                 }
 
-                ref readonly var sourceSpell = ref contentDb.Get(sourceHandle);
+                ref RuntimeSpellDefBlob sourceSpell = ref RuntimeContentBlobUtility.Get(ref content, sourceHandle);
                 if (sourceSpell.SpellType == spellType)
                     activeEffects.RemoveAt(i);
             }

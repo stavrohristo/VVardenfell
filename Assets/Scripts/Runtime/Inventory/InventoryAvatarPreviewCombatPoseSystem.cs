@@ -1,8 +1,8 @@
 #if !VVARDENFELL_OLD_ACTOR_ANIMATION
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.Inventory
         {
             RequireForUpdate<InventoryAvatarPreviewTag>();
             RequireForUpdate<ActorAnimationBlobCatalog>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -25,7 +26,7 @@ namespace VVardenfell.Runtime.Inventory
             if (!catalogRef.IsCreated)
                 return;
 
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             ref var catalog = ref catalogRef.Value;
             foreach (var (presentation, movementState, weaponState, equipment, overlays) in
                      SystemAPI.Query<
@@ -37,7 +38,7 @@ namespace VVardenfell.Runtime.Inventory
                          .WithAll<InventoryAvatarPreviewTag>())
             {
                 ref var state = ref weaponState.ValueRW;
-                state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(contentDb, equipment, out var weaponContent);
+                state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref contentBlob, equipment, out var weaponContent);
                 state.WeaponContent = weaponContent;
                 state.Drawn = 1;
                 state.Phase = ActorWeaponAnimationPhase.Equipped;

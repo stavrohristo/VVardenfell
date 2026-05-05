@@ -1,8 +1,8 @@
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Player;
@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Books
             RequireForUpdate(_focusQuery);
             RequireForUpdate<BookReadRequest>();
             RequireForUpdate<InteractionActivationResult>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -37,10 +38,12 @@ namespace VVardenfell.Runtime.Books
                 return;
 
             Entity target = activation.TargetEntity;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            ContentReference content = default;
             if (!EntityManager.Exists(target)
                 || !EntityManager.HasComponent<BookTag>(target)
-                || !LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, target, out ContentReference content)
-                || !RuntimeContentMetadataResolver.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
+                || !LooseCarryableResolver.TryResolveContent(ref contentBlob, EntityManager, target, out content)
+                || !RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, content, out _))
             {
                 return;
             }
@@ -97,6 +100,7 @@ namespace VVardenfell.Runtime.Books
 
             RequireForUpdate<BookInventoryReadRequest>();
             RequireForUpdate<BookReadRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate(_playerInventoryQuery);
         }
 
@@ -117,7 +121,8 @@ namespace VVardenfell.Runtime.Books
                 return;
 
             ContentReference content = inventory[inventoryIndex].Content;
-            if (!RuntimeContentMetadataResolver.TryResolveBook(RuntimeContentDatabase.Active, content, out _))
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (!RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, content, out _))
             {
                 Debug.LogWarning("[VVardenfell][Books] inventory read request targeted a non-book item.");
                 return;

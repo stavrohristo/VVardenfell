@@ -1,7 +1,7 @@
 using System;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -15,6 +15,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptFactionReactionRequest>();
             RequireForUpdate<MorrowindFactionReactionOverride>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -24,25 +25,23 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][MWScript] Faction reaction mutation requires active runtime content.");
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             var overrides = EntityManager.GetBuffer<MorrowindFactionReactionOverride>(runtimeEntity);
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(contentDb, overrides, requests[i]);
+                ApplyRequest(ref contentBlob, overrides, requests[i]);
 
             requests.Clear();
         }
 
         static void ApplyRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindFactionReactionOverride> overrides,
             in MorrowindScriptFactionReactionRequest request)
         {
             bool applied = request.IsMod != 0
-                ? MorrowindDialogueUtility.TryModFactionReaction(contentDb, overrides, request.SourceFactionIndex, request.TargetFactionIndex, request.Value)
-                : MorrowindDialogueUtility.TrySetFactionReaction(contentDb, overrides, request.SourceFactionIndex, request.TargetFactionIndex, request.Value);
+                ? MorrowindDialogueUtility.TryModFactionReaction(ref contentBlob, overrides, request.SourceFactionIndex, request.TargetFactionIndex, request.Value)
+                : MorrowindDialogueUtility.TrySetFactionReaction(ref contentBlob, overrides, request.SourceFactionIndex, request.TargetFactionIndex, request.Value);
 
             if (!applied)
             {

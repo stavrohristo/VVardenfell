@@ -7,7 +7,6 @@ using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
@@ -31,6 +30,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate<RuntimeSpawnRequest>();
             RequireForUpdate<PlayerTag>();
             RequireForUpdate<MorrowindMovementSettings>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -40,9 +41,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC requested before runtime content database was ready.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] PlaceAtPC requested before runtime content blob was ready.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             Entity player = ResolvePlayer();
             var playerTransform = EntityManager.GetComponentData<LocalTransform>(player);
@@ -57,7 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int requestIndex = 0; requestIndex < requests.Length; requestIndex++)
             {
                 var request = requests[requestIndex];
-                ValidateRequest(contentDb, request, out bool actorSpawn);
+                ValidateRequest(ref content, request, out bool actorSpawn);
                 if (request.Count == 0)
                     continue;
 
@@ -119,15 +121,19 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (transition.ActiveInteriorCellHash == 0UL || transition.ActiveInteriorCellId.IsEmpty)
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC active interior context is incomplete.");
 
-            if (!WorldResources.TryGetInteriorCell(transition.ActiveInteriorCellHash, out _))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] PlaceAtPC active interior 0x{transition.ActiveInteriorCellHash:X16} is not loaded.");
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] PlaceAtPC requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+            if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, transition.ActiveInteriorCellHash, out _))
+                throw new InvalidOperationException($"[VVardenfell][MWScript] PlaceAtPC active interior 0x{transition.ActiveInteriorCellHash:X16} is missing from the world cell blob.");
 
             interiorCellId = transition.ActiveInteriorCellId;
             interiorCellHash = transition.ActiveInteriorCellHash;
             return true;
         }
 
-        static void ValidateRequest(RuntimeContentDatabase contentDb, in MorrowindScriptPlaceAtRequest request, out bool actorSpawn)
+        static void ValidateRequest(ref RuntimeContentBlob content, in MorrowindScriptPlaceAtRequest request, out bool actorSpawn)
         {
             actorSpawn = false;
             if (request.Count < 0)
@@ -136,7 +142,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (request.Direction > 3)
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC direction must be 0, 1, 2, or 3.");
 
-            if (!request.Content.IsValid || !contentDb.IsValid(request.Content))
+            if (!request.Content.IsValid || !RuntimeContentBlobUtility.IsValid(ref content, request.Content))
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC content reference is invalid.");
 
             if (request.Content.Kind == ContentReferenceKind.Actor)
@@ -240,13 +246,12 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (isInterior)
             {
-                if (!WorldResources.TryGetInteriorCell(interiorCellHash, out var cell)
-                    || cell?.StaticColliderBlob.IsCreated != true)
+                if (!WorldSpawner.TryGetInteriorStaticCollider(interiorCellHash, out var staticCollider))
                 {
                     return false;
                 }
 
-                TryRaycastBody(BuildBody(cell.StaticColliderBlob, Entity.Null, float3.zero), input, ref found, ref bestHit);
+                TryRaycastBody(BuildBody(staticCollider, Entity.Null, float3.zero), input, ref found, ref bestHit);
                 return found;
             }
 

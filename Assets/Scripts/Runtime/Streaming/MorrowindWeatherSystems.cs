@@ -2,7 +2,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
@@ -16,11 +15,16 @@ namespace VVardenfell.Runtime.Streaming
         {
             RequireForUpdate<MorrowindTimeState>();
             RequireForUpdate<MorrowindWeatherState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Weather selection requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             Entity weatherEntity = SystemAPI.GetSingletonEntity<MorrowindWeatherState>();
             ref var weather = ref SystemAPI.GetSingletonRW<MorrowindWeatherState>().ValueRW;
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
@@ -31,14 +35,14 @@ namespace VVardenfell.Runtime.Streaming
             DynamicBuffer<MorrowindRegionWeatherOverrideRequest> regionOverrideRequests = SystemAPI.GetBuffer<MorrowindRegionWeatherOverrideRequest>(weatherEntity);
 
             bool interiorActive = SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0;
-            int regionHandleValue = ResolveCurrentRegionHandle(contentDb);
-            var settings = contentDb?.Data?.WeatherSettings ?? default;
+            int regionHandleValue = ResolveCurrentRegionHandle(ref content);
+            var settings = content.WeatherSettings;
             float hoursBetweenChanges = settings.HoursBetweenWeatherChanges > 0f ? settings.HoursBetweenWeatherChanges : 20f;
             var random = new Unity.Mathematics.Random(EnsureSeed(weather.RandomState));
 
             if (weather.Initialized == 0)
             {
-                weather.CurrentWeather = ClampWeatherIndex((int)WeatherKind.Clear, contentDb);
+                weather.CurrentWeather = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, (int)WeatherKind.Clear);
                 weather.NextWeather = -1;
                 weather.QueuedWeather = -1;
                 weather.Transition = 0f;
@@ -51,10 +55,10 @@ namespace VVardenfell.Runtime.Streaming
                 weather.Initialized = 1;
             }
 
-            ProcessForceRequests(ref weather, forceRequests, contentDb);
+            ProcessForceRequests(ref weather, forceRequests, ref content);
             if (weather.ForcedWeather >= 0)
             {
-                int forced = ClampWeatherIndex(weather.ForcedWeather, contentDb);
+                int forced = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, weather.ForcedWeather);
                 weather.CurrentWeather = forced;
                 weather.NextWeather = -1;
                 weather.QueuedWeather = -1;
@@ -68,13 +72,13 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            ProcessRegionOverrideRequests(ref weather, regionOverrideRequests, regionOverrides, regionWeather, contentDb, regionHandleValue, ref random);
-            ProcessChangeRequests(ref weather, changeRequests, regionWeather, contentDb, regionHandleValue);
+            ProcessRegionOverrideRequests(ref weather, regionOverrideRequests, regionOverrides, regionWeather, ref content, regionHandleValue, ref random);
+            ProcessChangeRequests(ref weather, changeRequests, regionWeather, ref content, regionHandleValue);
 
             if (interiorActive)
             {
                 AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
-                AdvanceTransition(ref weather, contentDb, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
+                AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
                 weather.RandomState = random.state;
                 return;
             }
@@ -83,45 +87,48 @@ namespace VVardenfell.Runtime.Streaming
             weather.RegionHandleValue = regionHandleValue;
 
             bool expiredWeather = AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
-            AdvanceTransition(ref weather, contentDb, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
+            AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
             if (weather.Transitioning != 0)
                 return;
 
             if (!regionChanged && !expiredWeather)
                 return;
 
-            int next = ClampWeatherIndex(GetRegionWeather(contentDb, regionHandleValue, regionWeather, regionOverrides, ref random), contentDb);
+            int next = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, GetRegionWeather(ref content, regionHandleValue, regionWeather, regionOverrides, ref random));
             weather.RandomState = random.state;
-            AddWeatherTransition(ref weather, contentDb, next);
+            AddWeatherTransition(ref weather, ref content, next);
         }
 
-        int ResolveCurrentRegionHandle(RuntimeContentDatabase contentDb)
+        int ResolveCurrentRegionHandle(ref RuntimeContentBlob content)
         {
-            if (contentDb == null || !SystemAPI.HasSingleton<StreamingConfig>())
+            if (!SystemAPI.HasSingleton<StreamingConfig>())
                 return 0;
 
             if (SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0)
                 return 0;
 
             var streaming = SystemAPI.GetSingleton<StreamingConfig>();
-            if (WorldResources.Cells.TryGetValue(streaming.CameraCell, out var cell)
-                && cell != null
-                && !string.IsNullOrWhiteSpace(cell.Environment.RegionId)
-                && contentDb.TryGetRegionHandle(cell.Environment.RegionId, out var regionHandle))
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] Weather selection requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+            if (RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, streaming.CameraCell, out int cellIndex))
+            {
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                if (cell.Environment.RegionIdHash != 0UL
+                    && RuntimeContentBlobUtility.TryGetRegionHandleByIdHash(ref content, cell.Environment.RegionIdHash, out var regionHandle))
                 return regionHandle.Value;
+            }
 
             return 0;
         }
 
         static int SampleWeather(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             int regionHandleValue,
             DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
             ref Unity.Mathematics.Random random)
         {
-            if (contentDb == null)
-                return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
-
             if (regionHandleValue <= 0)
                 return MorrowindWeatherSelectionUtility.SampleFallbackExteriorWeather(ref random);
 
@@ -141,12 +148,23 @@ namespace VVardenfell.Runtime.Streaming
                     ref random);
             }
 
-            ref readonly var region = ref contentDb.Get(new RegionDefHandle { Value = regionHandleValue });
-            return MorrowindWeatherSelectionUtility.SampleRegionWeather(region, ref random);
+            ref RuntimeRegionDefBlob region = ref RuntimeContentBlobUtility.Get(ref content, new RegionDefHandle { Value = regionHandleValue });
+            return MorrowindWeatherSelectionUtility.SampleWeather(
+                region.ClearChance,
+                region.CloudyChance,
+                region.FoggyChance,
+                region.OvercastChance,
+                region.RainChance,
+                region.ThunderChance,
+                region.AshChance,
+                region.BlightChance,
+                region.SnowChance,
+                region.BlizzardChance,
+                ref random);
         }
 
         static int GetRegionWeather(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             int regionHandleValue,
             DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
             DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
@@ -159,7 +177,7 @@ namespace VVardenfell.Runtime.Streaming
                     return regionWeather[i].Weather;
             }
 
-            int weather = SampleWeather(contentDb, region, regionOverrides, ref random);
+            int weather = SampleWeather(ref content, region, regionOverrides, ref random);
             regionWeather.Add(new MorrowindRegionWeatherCacheEntry
             {
                 RegionHandleValue = region,
@@ -196,7 +214,7 @@ namespace VVardenfell.Runtime.Streaming
             DynamicBuffer<MorrowindRegionWeatherOverrideRequest> requests,
             DynamicBuffer<MorrowindRegionWeatherOverrideEntry> regionOverrides,
             DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             int activeRegion,
             ref Unity.Mathematics.Random random)
         {
@@ -208,9 +226,9 @@ namespace VVardenfell.Runtime.Streaming
                 if (request.RegionHandleValue != activeRegion || IsWeatherSupported(request, weather.CurrentWeather))
                     continue;
 
-                int next = ClampWeatherIndex(SampleWeather(contentDb, request.RegionHandleValue, regionOverrides, ref random), contentDb);
+                int next = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, SampleWeather(ref content, request.RegionHandleValue, regionOverrides, ref random));
                 SetRegionWeather(regionWeather, request.RegionHandleValue, next);
-                AddWeatherTransition(ref weather, contentDb, next);
+                AddWeatherTransition(ref weather, ref content, next);
             }
 
             requests.Clear();
@@ -298,7 +316,7 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static void ProcessForceRequests(ref MorrowindWeatherState weather, DynamicBuffer<MorrowindWeatherForceRequest> requests, RuntimeContentDatabase contentDb)
+        static void ProcessForceRequests(ref MorrowindWeatherState weather, DynamicBuffer<MorrowindWeatherForceRequest> requests, ref RuntimeContentBlob content)
         {
             for (int i = 0; i < requests.Length; i++)
             {
@@ -308,7 +326,7 @@ namespace VVardenfell.Runtime.Streaming
                     continue;
                 }
 
-                weather.ForcedWeather = ClampWeatherIndex(requests[i].Weather, contentDb);
+                weather.ForcedWeather = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, requests[i].Weather);
             }
 
             requests.Clear();
@@ -318,15 +336,15 @@ namespace VVardenfell.Runtime.Streaming
             ref MorrowindWeatherState weather,
             DynamicBuffer<MorrowindWeatherChangeRequest> requests,
             DynamicBuffer<MorrowindRegionWeatherCacheEntry> regionWeather,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             int activeRegion)
         {
             for (int i = 0; i < requests.Length; i++)
             {
-                int requested = ClampWeatherIndex(requests[i].Weather, contentDb);
+                int requested = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, requests[i].Weather);
                 SetRegionWeather(regionWeather, requests[i].RegionHandleValue, requested);
                 if (requests[i].RegionHandleValue == activeRegion)
-                    AddWeatherTransition(ref weather, contentDb, requested);
+                    AddWeatherTransition(ref weather, ref content, requested);
             }
 
             requests.Clear();
@@ -349,16 +367,16 @@ namespace VVardenfell.Runtime.Streaming
             return expired;
         }
 
-        static void AddWeatherTransition(ref MorrowindWeatherState weather, RuntimeContentDatabase contentDb, int weatherIndex)
+        static void AddWeatherTransition(ref MorrowindWeatherState weather, ref RuntimeContentBlob content, int weatherIndex)
         {
-            int next = ClampWeatherIndex(weatherIndex, contentDb);
+            int next = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, weatherIndex);
             if (weather.NextWeather < 0 && next != weather.CurrentWeather)
             {
                 weather.NextWeather = next;
                 weather.QueuedWeather = -1;
                 weather.TransitionFactor = 1f;
                 weather.Transition = 0f;
-                weather.TransitionDelta = ResolveTransitionDelta(contentDb, next);
+                weather.TransitionDelta = RuntimeContentBlobUtility.ResolveWeatherTransitionDelta(ref content, next);
                 weather.Transitioning = 1;
                 return;
             }
@@ -367,7 +385,7 @@ namespace VVardenfell.Runtime.Streaming
                 weather.QueuedWeather = next;
         }
 
-        static void AdvanceTransition(ref MorrowindWeatherState weather, RuntimeContentDatabase contentDb, float elapsedSeconds, bool fastForward)
+        static void AdvanceTransition(ref MorrowindWeatherState weather, ref RuntimeContentBlob content, float elapsedSeconds, bool fastForward)
         {
             if (weather.NextWeather < 0)
             {
@@ -379,7 +397,7 @@ namespace VVardenfell.Runtime.Streaming
 
             if (fastForward)
             {
-                weather.CurrentWeather = ClampWeatherIndex(weather.QueuedWeather >= 0 ? weather.QueuedWeather : weather.NextWeather, contentDb);
+                weather.CurrentWeather = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, weather.QueuedWeather >= 0 ? weather.QueuedWeather : weather.NextWeather);
                 weather.NextWeather = -1;
                 weather.QueuedWeather = -1;
                 weather.TransitionFactor = 0f;
@@ -391,13 +409,13 @@ namespace VVardenfell.Runtime.Streaming
             weather.TransitionFactor -= math.max(0f, elapsedSeconds) * math.max(0.001f, weather.TransitionDelta);
             if (weather.TransitionFactor <= 0f)
             {
-                weather.CurrentWeather = ClampWeatherIndex(weather.NextWeather, contentDb);
+                weather.CurrentWeather = RuntimeContentBlobUtility.ClampWeatherIndex(ref content, weather.NextWeather);
                 weather.NextWeather = weather.QueuedWeather;
                 weather.QueuedWeather = -1;
                 if (weather.NextWeather >= 0)
                 {
                     weather.TransitionFactor = 1f;
-                    weather.TransitionDelta = ResolveTransitionDelta(contentDb, weather.NextWeather);
+                    weather.TransitionDelta = RuntimeContentBlobUtility.ResolveWeatherTransitionDelta(ref content, weather.NextWeather);
                     weather.Transitioning = 1;
                 }
                 else
@@ -408,22 +426,6 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             weather.Transition = weather.NextWeather >= 0 ? math.saturate(1f - weather.TransitionFactor) : 0f;
-        }
-
-        static int ClampWeatherIndex(int index, RuntimeContentDatabase contentDb)
-        {
-            int count = contentDb?.Data?.WeatherDefinitions?.Length ?? 0;
-            if (count <= 0)
-                return 0;
-            return math.clamp(index, 0, count - 1);
-        }
-
-        static float ResolveTransitionDelta(RuntimeContentDatabase contentDb, int weatherIndex)
-        {
-            var defs = contentDb?.Data?.WeatherDefinitions;
-            if (defs == null || (uint)weatherIndex >= (uint)defs.Length)
-                return 0.015f;
-            return defs[weatherIndex].TransitionDelta > 0f ? defs[weatherIndex].TransitionDelta : 0.015f;
         }
 
         static uint EnsureSeed(uint seed) => seed == 0u ? 1u : seed;
@@ -440,20 +442,24 @@ namespace VVardenfell.Runtime.Streaming
             RequireForUpdate<MorrowindDayCycleState>();
             RequireForUpdate<MorrowindWeatherState>();
             RequireForUpdate<ActiveSkyWeatherState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Sky weather resolve requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
             var settings = SystemAPI.GetSingleton<MorrowindDayCycleState>();
             ref var weather = ref SystemAPI.GetSingletonRW<MorrowindWeatherState>().ValueRW;
             ref var sky = ref SystemAPI.GetSingletonRW<ActiveSkyWeatherState>().ValueRW;
 
-            WeatherDefinitionDef current = ResolveWeather(contentDb, weather.CurrentWeather);
+            WeatherDefinitionDef current = ResolveWeather(ref content, weather.CurrentWeather);
             int nextIndex = weather.NextWeather >= 0 ? weather.NextWeather : -1;
-            WeatherDefinitionDef next = nextIndex >= 0 ? ResolveWeather(contentDb, nextIndex) : current;
-            WeatherSettingsDef weatherSettings = contentDb?.Data?.WeatherSettings ?? MorrowindDayCycleUtility.CreateFallbackWeatherSettings(settings);
+            WeatherDefinitionDef next = nextIndex >= 0 ? ResolveWeather(ref content, nextIndex) : current;
+            WeatherSettingsDef weatherSettings = content.WeatherSettings;
             var blended = MorrowindWeatherEvaluationUtility.Evaluate(settings, weatherSettings, current, weather.CurrentWeather, next, nextIndex, weather.Transition, time.GameHour);
             var eval = blended.Evaluation;
             WeatherDefinitionDef dominant = blended.DominantWeather;
@@ -511,12 +517,11 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static WeatherDefinitionDef ResolveWeather(RuntimeContentDatabase contentDb, int index)
+        static WeatherDefinitionDef ResolveWeather(ref RuntimeContentBlob content, int index)
         {
-            var defs = contentDb?.Data?.WeatherDefinitions;
-            if (defs != null && (uint)index < (uint)defs.Length)
-                return defs[index];
-            return MorrowindDayCycleUtility.CreateFallbackClearWeather();
+            if ((uint)index >= (uint)content.WeatherDefinitions.Length)
+                throw new System.InvalidOperationException($"[VVardenfell][ContentBlob] Invalid weather definition index {index}; length {content.WeatherDefinitions.Length}.");
+            return RuntimeContentBlobUtility.RequireWeatherDefinition(ref content, index);
         }
 
         static float3 ResolveStormDirection(in WeatherDefinitionDef weather)

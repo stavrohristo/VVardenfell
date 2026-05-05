@@ -6,6 +6,9 @@ namespace VVardenfell.Runtime.Vfx
 {
     public struct MorrowindVfxSpawnRequest : IComponentData
     {
+        public int ModelPrefabIndex;
+        public ulong ModelPathHash;
+        public ulong TextureOverridePathHash;
         public FixedString512Bytes ModelPath;
         public FixedString512Bytes TextureOverridePath;
         public float3 Position;

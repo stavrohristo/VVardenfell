@@ -9,9 +9,9 @@ using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using BoxCollider = Unity.Physics.BoxCollider;
 using Collider = Unity.Physics.Collider;
@@ -54,6 +54,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<PickedItemRecord>();
             RequireForUpdate<WorldJournalEntry>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -70,10 +71,11 @@ namespace VVardenfell.Runtime.Interactions
             uint sequence = request.Sequence;
             request.Pending = 0;
             request.TargetEntity = Entity.Null;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             if (!EntityManager.Exists(target)
                 || !EntityManager.HasComponent<PlacedRefIdentity>(target)
-                || !LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, target, out ContentReference content, out _))
+                || !LooseCarryableResolver.TryResolveContent(ref contentBlob, EntityManager, target, out ContentReference content, out _))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] loose-item activation request resolved to a missing or non-carryable logical entity.");
                 ClearFocus();
@@ -88,13 +90,13 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            string itemName = RuntimeContentMetadataResolver.TryResolveCarryable(RuntimeContentDatabase.Active, content, out var metadata)
+            string itemName = RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, content, out var metadata)
                 ? metadata.DisplayName
                 : "item";
 
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
             var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
-            AddInventoryItem(inventory, content, target);
+            AddInventoryItem(ref contentBlob, inventory, content, target);
             PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
             if (!isRuntimeSpawnedItem)
             {
@@ -137,15 +139,15 @@ namespace VVardenfell.Runtime.Interactions
             return false;
         }
 
-        int AddInventoryItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, Entity target)
+        int AddInventoryItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, Entity target)
         {
             if (EntityManager.Exists(target) && EntityManager.HasComponent<PlacedRefCapturedSoul>(target))
             {
                 var soul = EntityManager.GetComponentData<PlacedRefCapturedSoul>(target);
-                return ContainerLootUtility.AddInventoryStack(inventory, content, soul.SoulId, soul.SoulActorHandleValue, 1);
+                return ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, soul.SoulId, soul.SoulActorHandleValue, 1);
             }
 
-            return ContainerLootUtility.AddInventoryStack(inventory, content, 1);
+            return ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, 1);
         }
 
         void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)
@@ -233,6 +235,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionRuntimeState>();
             RequireForUpdate<PickedItemRecord>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -252,13 +255,14 @@ namespace VVardenfell.Runtime.Interactions
                 pickedSet.Add(pickedItems[i].PlacedRefId);
 
             var entitiesToDestroy = new List<Entity>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             foreach (var (placedRefId, entity) in SystemAPI
                          .Query<RefRO<PlacedRefIdentity>>()
                          .WithAll<LogicalRefTag, InteriorCellMember>()
                          .WithEntityAccess())
             {
                 if (pickedSet.Contains(placedRefId.ValueRO.Value)
-                    && LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, EntityManager, entity, out _))
+                    && LooseCarryableResolver.TryResolveContent(ref contentBlob, EntityManager, entity, out _))
                     entitiesToDestroy.Add(entity);
             }
 

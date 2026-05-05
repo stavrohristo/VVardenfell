@@ -8,7 +8,7 @@ namespace VVardenfell.Runtime.Shell
     static class RuntimeShellCarryableEntryBuilder
     {
         public static InventoryWindowEntryViewModel Build(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ContentReference content,
             int count,
             int index,
@@ -20,7 +20,7 @@ namespace VVardenfell.Runtime.Shell
             string weightText = "--";
             string valueText = "--";
 
-            if (RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, content, out var metadata))
+            if (RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, content, out var metadata))
             {
                 name = metadata.DisplayName;
                 iconPath = metadata.IconPath ?? string.Empty;

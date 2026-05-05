@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core;
@@ -241,6 +242,8 @@ namespace VVardenfell.Runtime.Shell
 
         static LocalMapMarkerViewModel[] BuildDoorMarkers(int2 centerCell)
         {
+            var worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
             var markers = new List<LocalMapMarkerViewModel>();
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             for (int y = -GridRadius; y <= GridRadius; y++)
@@ -248,16 +251,17 @@ namespace VVardenfell.Runtime.Shell
                 for (int x = -GridRadius; x <= GridRadius; x++)
                 {
                     var coord = centerCell + new int2(x, y);
-                    if (!WorldResources.Cells.TryGetValue(coord, out var cell) || cell?.Refs == null || cell.Doors == null)
+                    if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, coord, out int cellIndex))
                         continue;
 
-                    for (int i = 0; i < cell.Refs.Length; i++)
+                    ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                    ref BlobArray<RefEntry> refs = ref RuntimeWorldCellBlobUtility.GetRefs(ref worldCells, ref cell, out int firstRef, out int refCount);
+                    for (int i = 0; i < refCount; i++)
                     {
-                        ref readonly var entry = ref cell.Refs[i];
-                        if (entry.DoorMetaIndex < 0 || entry.DoorMetaIndex >= cell.Doors.Length)
+                        RefEntry entry = refs[firstRef + i];
+                        if (!RuntimeWorldCellBlobUtility.TryGetDoorForRef(ref worldCells, ref cell, entry, out var door))
                             continue;
 
-                        var door = cell.Doors[entry.DoorMetaIndex];
                         if ((door.Flags & DoorRefEntry.FlagTeleport) == 0)
                             continue;
 
@@ -309,6 +313,34 @@ namespace VVardenfell.Runtime.Shell
             int cellX = (int)math.floor(door.DestPosX / cellMeters);
             int cellY = (int)math.floor(door.DestPosZ / cellMeters);
             return $"{cellX}, {cellY}";
+        }
+
+        static string BuildDoorMarkerLabel(in RuntimeWorldDoorRefDefBlob door)
+        {
+            string destinationCellId = door.DestinationCellId.ToString();
+            if (!string.IsNullOrWhiteSpace(destinationCellId))
+                return destinationCellId.Trim();
+
+            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            int cellX = (int)math.floor(door.DestPosX / cellMeters);
+            int cellY = (int)math.floor(door.DestPosZ / cellMeters);
+            return $"{cellX}, {cellY}";
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob()
+        {
+            var world = Unity.Entities.World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires a default world.");
+
+            using var query = world.EntityManager.CreateEntityQuery(Unity.Entities.ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var reference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!reference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires runtime world cell blob.");
+            return reference.Blob;
         }
 
         static TileResources EnsureTile(int2 coord)

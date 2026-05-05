@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Player;
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<ContainerWindowState>();
             RequireForUpdate<ContainerWindowRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate(_playerInventoryQuery);
         }
 
@@ -62,6 +64,7 @@ namespace VVardenfell.Runtime.Inventory
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
             var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             int transferredStacks = 0;
 
             if (request.PendingTakeAll != 0)
@@ -74,7 +77,7 @@ namespace VVardenfell.Runtime.Inventory
 
                     RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
                     WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
-                    ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
+                    ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                     items.RemoveAt(i);
                     transferredStacks++;
                 }
@@ -92,7 +95,7 @@ namespace VVardenfell.Runtime.Inventory
                     {
                         RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
                         WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
-                        ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
+                        ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                         items.RemoveAt(selectedIndex);
                         transferredStacks = 1;
                     }

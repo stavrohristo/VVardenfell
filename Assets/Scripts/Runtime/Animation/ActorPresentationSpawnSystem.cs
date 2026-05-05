@@ -8,7 +8,6 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
@@ -28,19 +27,17 @@ namespace VVardenfell.Runtime.Animation
         protected override void OnCreate()
         {
             RequireForUpdate<ActorAnimationBlobCatalog>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
-
             CacheLoader cache = WorldResources.Cache;
             var blobRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ref var catalog = ref blobRef.Value;
-            PrebuildRigidEquipmentPrefabs(contentDb);
+            PrebuildRigidEquipmentPrefabs(ref contentBlob);
             var actorRenderResources = WorldResources.ActorEntitiesGraphicsRenderer ?? new ActorEntitiesGraphicsRenderResources();
             WorldResources.ActorEntitiesGraphicsRenderer = actorRenderResources;
             actorRenderResources.Ensure(EntityManager, ref catalog);
@@ -56,7 +53,7 @@ namespace VVardenfell.Runtime.Animation
                 if (!source.ValueRO.Definition.IsValid)
                     continue;
 
-                ref readonly ActorDef actor = ref contentDb.Get(source.ValueRO.Definition);
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, source.ValueRO.Definition);
                 bool isNpc = actor.Kind == ActorDefKind.Npc;
                 bool firstPerson = source.ValueRO.FirstPerson != 0;
                 ActorVisualRecipeDef recipe = null;
@@ -118,7 +115,7 @@ namespace VVardenfell.Runtime.Animation
                 DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
                     ? EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
                     : default;
-                bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(contentDb, actor.RaceId);
+                bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(ref contentBlob, actor.RaceIdHash);
                 uint hiddenPartMask = EntityManager.HasComponent<ActorHiddenVisualPartMask>(entity)
                     ? EntityManager.GetComponentData<ActorHiddenVisualPartMask>(entity).Mask
                     : 0u;
@@ -126,8 +123,8 @@ namespace VVardenfell.Runtime.Animation
                     skinMeshBuffer,
                     ref catalog,
                     cache,
-                    contentDb,
-                    actor,
+                    ref contentBlob,
+                    ref actor,
                     isNpc,
                     isBeast,
                     firstPerson,
@@ -169,7 +166,7 @@ namespace VVardenfell.Runtime.Animation
                     rigidEquipment,
                     ref catalog,
                     skeletonIndex,
-                    contentDb,
+                    ref contentBlob,
                     hasEquipment,
                     equipmentBuffer);
                 if (rigidEquipment.Length > 0)
@@ -452,8 +449,8 @@ namespace VVardenfell.Runtime.Animation
             DynamicBuffer<ActorSkinMesh> buffer,
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeActorDefBlob actor,
             bool isNpc,
             bool isBeast,
             bool firstPerson,
@@ -473,9 +470,9 @@ namespace VVardenfell.Runtime.Animation
                     buffer,
                     ref catalog,
                     cache,
-                    contentDb,
+                    ref contentBlob,
                     recipe,
-                    actor,
+                    ref actor,
                     isBeast,
                     firstPerson,
                     equipment,
@@ -491,9 +488,9 @@ namespace VVardenfell.Runtime.Animation
             DynamicBuffer<ActorSkinMesh> buffer,
             ref ActorAnimationCatalogBlob catalog,
             CacheLoader cache,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ActorVisualRecipeDef actorRecipe,
-            in ActorDef actor,
+            ref RuntimeActorDefBlob actor,
             bool isBeast,
             bool firstPerson,
             DynamicBuffer<ActorEquipmentSlot> equipment,
@@ -510,10 +507,10 @@ namespace VVardenfell.Runtime.Animation
                     continue;
 
                 var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
-                if (!itemHandle.IsValid || (uint)itemHandle.Index >= (uint)(contentDb?.Data?.Items?.Length ?? 0))
+                if (!itemHandle.IsValid || (uint)itemHandle.Index >= (uint)contentBlob.Items.Length)
                     continue;
 
-                ref readonly var item = ref contentDb.Get(itemHandle);
+                ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref contentBlob, itemHandle);
                 bool hasVisual = cache.TryGetEquipmentVisual(
                         item.ContentId,
                         actorRecipe.RigFamilyIndex,
@@ -608,11 +605,10 @@ namespace VVardenfell.Runtime.Animation
             return true;
         }
 
-        void PrebuildRigidEquipmentPrefabs(RuntimeContentDatabase contentDb)
+        void PrebuildRigidEquipmentPrefabs(ref RuntimeContentBlob contentBlob)
         {
             s_RigidEquipmentPrefabBuildSet.Clear();
-            if (contentDb == null
-                || WorldResources.Cache == null
+            if (WorldResources.Cache == null
                 || WorldResources.SpawnableItemPrefabs == null
                 || WorldResources.ModelPrefabs == null)
             {
@@ -635,7 +631,7 @@ namespace VVardenfell.Runtime.Animation
                         continue;
 
                     var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
-                    if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                    if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, itemHandle, out var itemEquipment))
                         continue;
 
                     if (itemEquipment.Kind != ItemEquipmentKind.Weapon)
@@ -653,7 +649,7 @@ namespace VVardenfell.Runtime.Animation
             }
 
             foreach (int modelPrefabIndex in s_RigidEquipmentPrefabBuildSet)
-                WorldBootstrap.EnsureModelPrefabBuilt(EntityManager, WorldResources.Cache, modelPrefabIndex);
+                WorldBootstrap.EnsureModelPrefabBuilt(EntityManager, modelPrefabIndex);
         }
 
         void PopulateRigidEquipment(
@@ -662,11 +658,11 @@ namespace VVardenfell.Runtime.Animation
             NativeList<ActorRigidEquipment> rigidEquipment,
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             bool hasEquipment,
             DynamicBuffer<ActorEquipmentSlot> equipment)
         {
-            if (!hasEquipment || contentDb == null || WorldResources.ModelPrefabs == null)
+            if (!hasEquipment || WorldResources.ModelPrefabs == null)
                 return;
 
             LocalTransform initialTransform = EntityManager.HasComponent<LocalTransform>(actorEntity)
@@ -680,7 +676,7 @@ namespace VVardenfell.Runtime.Animation
                     continue;
 
                 var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, itemHandle, out var itemEquipment))
                     continue;
 
                 if (itemEquipment.Kind != ItemEquipmentKind.Weapon)

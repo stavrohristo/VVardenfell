@@ -4,8 +4,9 @@ using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.WorldState
 {
@@ -164,14 +165,14 @@ namespace VVardenfell.Runtime.WorldState
         static bool TryResolveContent(string contentId, out ContentReference content, out string error)
         {
             content = default;
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
+            if (!RuntimeContentBlobReferenceUtility.TryGetBlob(out var blob))
             {
-                error = "Runtime content database is not ready.";
+                error = "Runtime content blob is not ready.";
                 return false;
             }
 
-            if (!contentDb.TryResolvePlaceable(contentId, out content))
+            ref RuntimeContentBlob contentBlob = ref blob.Value;
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(contentId), out content))
             {
                 error = $"Unknown placeable content id '{contentId}'.";
                 return false;

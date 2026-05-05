@@ -5,7 +5,6 @@ using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
@@ -32,6 +31,7 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<WorldJournalEntry>();
             RequireForUpdate<PlayerInteractionFocus>();
             RequireForUpdate<InteractionActivationResult>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var headers = SystemAPI.GetSingletonBuffer<ContainerSessionHeader>();
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var journal = SystemAPI.GetSingletonBuffer<WorldJournalEntry>();
@@ -76,14 +76,14 @@ namespace VVardenfell.Runtime.Inventory
             {
                 ActorCorpseLootUtility.RequireDeadLootableActor(EntityManager, target, placedRefId);
                 ActorCorpseLootUtility.EnsureSessionInitialized(EntityManager, journal, headers, items, target, placedRefId);
-                title = ActorCorpseLootUtility.ResolveTitle(contentDb, EntityManager, target);
+                title = ActorCorpseLootUtility.ResolveTitle(ref contentBlob, EntityManager, target);
             }
             else
             {
                 var authoring = EntityManager.GetComponentData<ContainerAuthoring>(target);
                 definition = authoring.Definition;
-                EnsureContainerSessionInitialized(contentDb, journal, headers, items, placedRefId, definition);
-                title = ContainerLootUtility.ResolveContainerTitle(contentDb, definition);
+                EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, definition);
+                title = ContainerLootUtility.ResolveContainerTitle(ref contentBlob, definition);
             }
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -106,7 +106,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         static void EnsureContainerSessionInitialized(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<WorldJournalEntry> journal,
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
@@ -125,11 +125,8 @@ namespace VVardenfell.Runtime.Inventory
                 Definition = definition,
             });
 
-            if (contentDb == null)
-                return;
-
             var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ContainerLootUtility.MaterializeContainerContents(contentDb, items, placedRefId, definition, diagnostics);
+            ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, diagnostics);
             WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
 
             if (diagnostics.Count > 0)

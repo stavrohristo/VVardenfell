@@ -3,7 +3,6 @@ using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -11,16 +10,15 @@ namespace VVardenfell.Runtime.MorrowindScript
     static class MorrowindDialogueUtility
     {
         public static bool TryAddTopic(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
             int dialogueIndex)
         {
-            if (contentDb == null
-                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length
                 || (uint)dialogueIndex >= (uint)knownTopics.Length)
                 return false;
 
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             if (dialogue.Type != DialogueDefType.Topic)
                 return false;
 
@@ -29,7 +27,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static bool TryRecordTopicEntry(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref MorrowindDialogueState state,
             MorrowindTimeState time,
             DynamicBuffer<MorrowindTopicJournalEntry> entries,
@@ -38,12 +36,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint actorPlacedRefId,
             FixedString128Bytes actorId)
         {
-            if (contentDb == null
-                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount
-                || (uint)infoIndex >= (uint)contentDb.DialogueInfoCount)
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length
+                || (uint)infoIndex >= (uint)contentBlob.DialogueInfos.Length)
                 return false;
 
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             if (dialogue.Type != DialogueDefType.Topic)
                 return false;
 
@@ -65,16 +62,15 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static bool TryRemoveLastAddedTopicResponse(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindTopicJournalEntry> entries,
             int dialogueIndex,
             FixedString128Bytes actorName)
         {
-            if (contentDb == null
-                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
                 return false;
 
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             if (dialogue.Type != DialogueDefType.Topic)
                 return true;
 
@@ -93,7 +89,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static bool TryFillJournal(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref MorrowindDialogueState dialogueState,
             ref MorrowindQuestJournalState questState,
             MorrowindTimeState time,
@@ -104,20 +100,19 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint actorPlacedRefId,
             FixedString128Bytes actorId)
         {
-            if (contentDb == null
-                || knownTopics.Length != contentDb.DialogueCount
-                || questStates.Length != contentDb.DialogueCount)
+            if (knownTopics.Length != contentBlob.Dialogues.Length
+                || questStates.Length != contentBlob.Dialogues.Length)
                 return false;
 
-            for (int dialogueIndex = 0; dialogueIndex < contentDb.DialogueCount; dialogueIndex++)
+            for (int dialogueIndex = 0; dialogueIndex < contentBlob.Dialogues.Length; dialogueIndex++)
             {
-                ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-                int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+                ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
+                int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
                 if (dialogue.Type == DialogueDefType.Journal)
                 {
                     for (int infoIndex = dialogue.FirstInfoIndex; infoIndex < end; infoIndex++)
                     {
-                        ref readonly var info = ref contentDb.Data.DialogueInfos[infoIndex];
+                        ref RuntimeDialogueInfoDefBlob info = ref contentBlob.DialogueInfos[infoIndex];
                         if (info.QuestStatus == 1)
                             continue;
 
@@ -129,7 +124,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                             QuestStatus = info.QuestStatus,
                             Operation = (byte)MorrowindQuestJournalRequestOperation.Journal,
                         };
-                        if (!MorrowindQuestJournalUtility.TryApplyRequest(contentDb, ref questState, time, questStates, questEntries, request))
+                        if (!MorrowindQuestJournalUtility.TryApplyRequest(ref contentBlob, ref questState, time, questStates, questEntries, request))
                             return false;
                     }
                 }
@@ -138,7 +133,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     knownTopics[dialogueIndex] = new MorrowindKnownDialogueTopic { Known = 1 };
                     for (int infoIndex = dialogue.FirstInfoIndex; infoIndex < end; infoIndex++)
                     {
-                        if (!TryRecordTopicEntry(contentDb, ref dialogueState, time, topicEntries, dialogueIndex, infoIndex, actorPlacedRefId, actorId))
+                        if (!TryRecordTopicEntry(ref contentBlob, ref dialogueState, time, topicEntries, dialogueIndex, infoIndex, actorPlacedRefId, actorId))
                             return false;
                     }
                 }
@@ -148,30 +143,31 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static void AddTopicsFromResponse(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
             string response,
             EntityManager entityManager,
             Entity speakerEntity,
             ActorDefHandle speakerHandle)
         {
-            if (contentDb == null || string.IsNullOrWhiteSpace(response))
+            if (string.IsNullOrWhiteSpace(response))
                 return;
 
-            for (int i = 0; i < contentDb.DialogueCount && i < knownTopics.Length; i++)
+            for (int i = 0; i < contentBlob.Dialogues.Length && i < knownTopics.Length; i++)
             {
                 if (knownTopics[i].Known != 0)
                     continue;
 
-                ref readonly var dialogue = ref contentDb.Data.Dialogues[i];
+                ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[i];
                 if (dialogue.Type != DialogueDefType.Topic)
                     continue;
 
-                string id = dialogue.StringId ?? dialogue.Id;
+                string stringId = dialogue.StringId.ToString();
+                string id = string.IsNullOrWhiteSpace(stringId) ? dialogue.Id.ToString() : stringId;
                 if (ContainsTopicReference(response, id))
                 {
                     if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
-                            contentDb,
+                            ref contentBlob,
                             entityManager,
                             speakerEntity,
                             speakerHandle,
@@ -251,30 +247,30 @@ namespace VVardenfell.Runtime.MorrowindScript
                || ch == '[';
 
         public static bool TryModFactionReaction(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindFactionReactionOverride> overrides,
             int sourceFactionIndex,
             int targetFactionIndex,
             int diff)
         {
-            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
-                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+            if (!IsValidFactionIndex(ref contentBlob, sourceFactionIndex)
+                || !IsValidFactionIndex(ref contentBlob, targetFactionIndex))
                 return false;
 
-            int value = GetFactionReaction(contentDb, overrides, sourceFactionIndex, targetFactionIndex) + diff;
+            int value = GetFactionReaction(ref contentBlob, overrides, sourceFactionIndex, targetFactionIndex) + diff;
             SetFactionReactionOverride(overrides, sourceFactionIndex, targetFactionIndex, value);
             return true;
         }
 
         public static bool TrySetFactionReaction(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindFactionReactionOverride> overrides,
             int sourceFactionIndex,
             int targetFactionIndex,
             int value)
         {
-            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
-                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+            if (!IsValidFactionIndex(ref contentBlob, sourceFactionIndex)
+                || !IsValidFactionIndex(ref contentBlob, targetFactionIndex))
                 return false;
 
             SetFactionReactionOverride(overrides, sourceFactionIndex, targetFactionIndex, value);
@@ -282,7 +278,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static int GetFactionReaction(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindFactionReactionOverride> overrides,
             int sourceFactionIndex,
             int targetFactionIndex)
@@ -294,19 +290,21 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return overrides[i].Reaction;
             }
 
-            if (!IsValidFactionIndex(contentDb, sourceFactionIndex)
-                || !IsValidFactionIndex(contentDb, targetFactionIndex))
+            if (!IsValidFactionIndex(ref contentBlob, sourceFactionIndex)
+                || !IsValidFactionIndex(ref contentBlob, targetFactionIndex))
                 return 0;
 
-            ref readonly var source = ref contentDb.Data.Factions[sourceFactionIndex];
-            string targetId = contentDb.Data.Factions[targetFactionIndex].Id;
-            if (source.Reactions == null || string.IsNullOrWhiteSpace(targetId))
+            ref RuntimeFactionDefBlob source = ref contentBlob.Factions[sourceFactionIndex];
+            string targetId = contentBlob.Factions[targetFactionIndex].Id.ToString();
+            if (string.IsNullOrWhiteSpace(targetId))
                 return 0;
 
-            for (int i = 0; i < source.Reactions.Length; i++)
+            RuntimeContentBlobUtility.RequireRange(source.FirstReactionIndex, source.ReactionCount, contentBlob.FactionReactions.Length, "faction reaction");
+            for (int i = 0; i < source.ReactionCount; i++)
             {
-                if (string.Equals(ContentId.NormalizeId(source.Reactions[i].FactionId), ContentId.NormalizeId(targetId), StringComparison.Ordinal))
-                    return source.Reactions[i].Reaction;
+                ref RuntimeFactionReactionDefBlob reaction = ref contentBlob.FactionReactions[source.FirstReactionIndex + i];
+                if (string.Equals(ContentId.NormalizeId(reaction.FactionId.ToString()), ContentId.NormalizeId(targetId), StringComparison.Ordinal))
+                    return reaction.Reaction;
             }
 
             return 0;
@@ -341,7 +339,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             });
         }
 
-        static bool IsValidFactionIndex(RuntimeContentDatabase contentDb, int index)
-            => contentDb?.Data.Factions != null && (uint)index < (uint)contentDb.Data.Factions.Length;
+        static bool IsValidFactionIndex(ref RuntimeContentBlob contentBlob, int index)
+            => (uint)index < (uint)contentBlob.Factions.Length;
     }
 }

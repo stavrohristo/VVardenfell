@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
@@ -12,6 +13,7 @@ namespace VVardenfell.Runtime.Combat
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindCombatRuntimeBootstrapRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -22,7 +24,8 @@ namespace VVardenfell.Runtime.Combat
                 return;
             }
 
-            if (RuntimeContentDatabase.Active == null)
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
                 return;
 
             Entity entity = EntityManager.CreateEntity(typeof(MorrowindCombatRuntimeState));
@@ -36,3 +39,5 @@ namespace VVardenfell.Runtime.Combat
         }
     }
 }
+
+

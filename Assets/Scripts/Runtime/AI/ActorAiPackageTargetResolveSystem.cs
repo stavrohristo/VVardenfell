@@ -1,8 +1,8 @@
+using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -19,13 +19,15 @@ namespace VVardenfell.Runtime.AI
             RequireForUpdate<ActorAiPackageRuntime>();
             RequireForUpdate<ActiveExplicitRefLookup>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] AI package target resolve requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             var activeExplicitRefs = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
             var logicalRefs = SystemAPI.GetSingleton<LogicalRefLookup>();
@@ -40,7 +42,7 @@ namespace VVardenfell.Runtime.AI
                     if (!RequiresTarget(package.Type) || package.FollowTargetEntity != Entity.Null || package.TargetId.IsEmpty)
                         continue;
 
-                    if (!TryResolveTarget(contentDb, activeExplicitRefs, logicalRefs, player, package.TargetId.ToString(), out Entity target, out uint placedRefId))
+                    if (!TryResolveTarget(ref content, activeExplicitRefs, logicalRefs, player, package.TargetId, out Entity target, out uint placedRefId))
                         continue;
 
                     package.FollowTargetEntity = target;
@@ -58,20 +60,20 @@ namespace VVardenfell.Runtime.AI
         }
 
         bool TryResolveTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in ActiveExplicitRefLookup activeExplicitRefs,
             in LogicalRefLookup logicalRefs,
             Entity player,
-            string targetId,
+            FixedString128Bytes targetId,
             out Entity target,
             out uint placedRefId)
         {
             target = Entity.Null;
             placedRefId = 0u;
-            if (string.IsNullOrWhiteSpace(targetId))
+            if (targetId.Length == 0)
                 return false;
 
-            if (MorrowindCommandTextUtility.IsPlayerTarget(targetId))
+            if (IsPlayerTarget(targetId))
             {
                 if (player == Entity.Null || !EntityManager.Exists(player))
                     return false;
@@ -83,7 +85,11 @@ namespace VVardenfell.Runtime.AI
                 return true;
             }
 
-            if (contentDb.TryGetExplicitRefTarget(targetId, out placedRefId) && placedRefId != 0u)
+            ulong targetHash = RuntimeContentStableHash.HashId(targetId);
+            if (targetHash == 0UL)
+                return false;
+
+            if (RuntimeContentBlobUtility.TryGetExplicitRefTargetByIdHash(ref contentBlob, targetHash, out placedRefId) && placedRefId != 0u)
             {
                 if (!logicalRefs.Map.IsCreated || !logicalRefs.Map.TryGetValue(placedRefId, out target))
                     return false;
@@ -91,7 +97,7 @@ namespace VVardenfell.Runtime.AI
                 return target != Entity.Null && EntityManager.Exists(target);
             }
 
-            if (!contentDb.TryResolvePlaceable(targetId, out ContentReference content) || !contentDb.IsValid(content))
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, targetHash, out ContentReference content) || !RuntimeContentBlobUtility.IsValid(ref contentBlob, content))
                 return false;
 
             if (!activeExplicitRefs.ByContentKey.IsCreated)
@@ -108,5 +114,43 @@ namespace VVardenfell.Runtime.AI
             placedRefId = activeTarget.PlacedRefId;
             return true;
         }
+
+        static bool IsPlayerTarget(FixedString128Bytes targetId)
+        {
+            int start = 0;
+            int end = targetId.Length - 1;
+            while (start <= end && IsTrimByte(targetId[start]))
+                start++;
+            while (end >= start && IsTrimByte(targetId[end]))
+                end--;
+            while (start <= end && targetId[start] == (byte)'"')
+                start++;
+            while (end >= start && targetId[end] == (byte)'"')
+                end--;
+
+            if (end - start + 1 != 6)
+                return false;
+
+            return ToLowerAscii(targetId[start]) == (byte)'p'
+                   && ToLowerAscii(targetId[start + 1]) == (byte)'l'
+                   && ToLowerAscii(targetId[start + 2]) == (byte)'a'
+                   && ToLowerAscii(targetId[start + 3]) == (byte)'y'
+                   && ToLowerAscii(targetId[start + 4]) == (byte)'e'
+                   && ToLowerAscii(targetId[start + 5]) == (byte)'r';
+        }
+
+        static bool IsTrimByte(byte value)
+            => value == (byte)' '
+               || value == (byte)'\t'
+               || value == (byte)'\n'
+               || value == (byte)'\r'
+               || value == (byte)'\f'
+               || value == (byte)'\v'
+               || value == (byte)',';
+
+        static byte ToLowerAscii(byte value)
+            => value >= (byte)'A' && value <= (byte)'Z'
+                ? (byte)(value + 32)
+                : value;
     }
 }

@@ -1,8 +1,8 @@
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<MorrowindDialogueSession>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -48,14 +49,15 @@ namespace VVardenfell.Runtime.Interactions
             request.Pending = 0;
             request.TargetEntity = Entity.Null;
 
-            if (!EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (!EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred npc activation resolved to a missing or mismatched logical entity.");
                 ClearFocus();
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(RuntimeContentDatabase.Active, EntityManager, target, kind)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, kind)
                 ?? InteractionMetadataResolver.ResolveKindLabel(kind);
 
             ref var dialogue = ref SystemAPI.GetSingletonRW<DialogueReadinessState>().ValueRW;
@@ -120,6 +122,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_focusQuery);
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -137,8 +140,9 @@ namespace VVardenfell.Runtime.Interactions
             request.Pending = 0;
             request.TargetEntity = Entity.Null;
 
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (!EntityManager.Exists(target)
-                || !InteractionTargetResolver.TryResolveSupportedKind(EntityManager, target, out InteractableKind resolvedKind)
+                || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, target, out InteractableKind resolvedKind)
                 || resolvedKind != InteractableKind.Activator)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred activator activation resolved to a missing or mismatched logical entity.");
@@ -146,7 +150,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(RuntimeContentDatabase.Active, EntityManager, target, InteractableKind.Activator)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, InteractableKind.Activator)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Activator);
 
             ClearFocus();

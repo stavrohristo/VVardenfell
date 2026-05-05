@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
@@ -13,7 +14,6 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.WorldRefs;
 using Collider = Unity.Physics.Collider;
@@ -62,7 +62,41 @@ namespace VVardenfell.Runtime.Streaming
 
         internal static int BuildLogicalRefs(
             EntityManager em,
-            RuntimeContentDatabase contentDb,
+            BlobAssetReference<RuntimeContentBlob> contentBlob,
+            NativeArray<RefEntry> refs,
+            NativeArray<int2> coords,
+            Entity[] childEntities,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            ref LogicalRefLookup logicalRefs,
+            RuntimeLoadProgress progress,
+            out int proxyQueueCount)
+        {
+            if (!contentBlob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] World ref spawn requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            BlobAssetReference<RuntimeWorldCellBlob> worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            return BuildLogicalRefs(
+                em,
+                ref content,
+                ref worldCells,
+                refs,
+                coords,
+                childEntities,
+                isInterior,
+                interiorCellId,
+                worldOffset,
+                ref logicalRefs,
+                progress,
+                out proxyQueueCount);
+        }
+
+        internal static int BuildLogicalRefs(
+            EntityManager em,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             NativeArray<RefEntry> refs,
             NativeArray<int2> coords,
             Entity[] childEntities,
@@ -75,7 +109,8 @@ namespace VVardenfell.Runtime.Streaming
         {
             return BuildLogicalRefsCore(
                 em,
-                contentDb,
+                ref content,
+                ref worldCells,
                 new NativeLogicalRefBuildSource(refs, coords),
                 childEntities,
                 isInterior,
@@ -89,7 +124,39 @@ namespace VVardenfell.Runtime.Streaming
 
         internal static int BuildLogicalRefs(
             EntityManager em,
-            RuntimeContentDatabase contentDb,
+            BlobAssetReference<RuntimeContentBlob> contentBlob,
+            RefEntry[] refs,
+            Entity[] childEntities,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            float3 worldOffset,
+            ref LogicalRefLookup logicalRefs,
+            List<Entity> spawnedEntities,
+            out int proxyQueueCount)
+        {
+            if (!contentBlob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] World ref spawn requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            BlobAssetReference<RuntimeWorldCellBlob> worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            return BuildLogicalRefs(
+                em,
+                ref content,
+                ref worldCells,
+                refs,
+                childEntities,
+                isInterior,
+                interiorCellId,
+                worldOffset,
+                ref logicalRefs,
+                spawnedEntities,
+                out proxyQueueCount);
+        }
+
+        internal static int BuildLogicalRefs(
+            EntityManager em,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             RefEntry[] refs,
             Entity[] childEntities,
             bool isInterior,
@@ -107,7 +174,8 @@ namespace VVardenfell.Runtime.Streaming
 
             return BuildLogicalRefsCore(
                 em,
-                contentDb,
+                ref content,
+                ref worldCells,
                 new ManagedLogicalRefBuildSource(refs),
                 childEntities,
                 isInterior,
@@ -121,7 +189,8 @@ namespace VVardenfell.Runtime.Streaming
 
         static int BuildLogicalRefsCore<TSource>(
             EntityManager em,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             TSource source,
             Entity[] childEntities,
             bool isInterior,
@@ -135,7 +204,7 @@ namespace VVardenfell.Runtime.Streaming
         {
             using var _ = k_LogicalRefs.Auto();
             proxyQueueCount = 0;
-            if (contentDb == null || childEntities == null)
+            if (childEntities == null)
                 return 0;
 
             Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
@@ -150,7 +219,7 @@ namespace VVardenfell.Runtime.Streaming
                     break;
 
                 RefEntry entry = source.GetRef(i);
-                if (!TryGetContentReference(entry, out var contentReference) || !contentDb.IsValid(contentReference))
+                if (!TryGetContentReference(entry, out var contentReference) || !RuntimeContentBlobUtility.IsValid(ref content, contentReference))
                     continue;
 
                 Entity child = childEntities[i];
@@ -171,12 +240,13 @@ namespace VVardenfell.Runtime.Streaming
                         logicalEntity = LogicalRefEntityFactory.QueueCreate(
                             em,
                             ref ecb,
-                            contentDb,
+                            ref content,
                             BuildLogicalRefDescriptor(
                                 contentReference,
                                 placedRefId,
                                 entry,
-                                contentDb,
+                                ref content,
+                                ref worldCells,
                                 source.GetExteriorCell(i),
                                 isInterior,
                                 interiorCellId,
@@ -422,7 +492,7 @@ namespace VVardenfell.Runtime.Streaming
                 return Entity.Null;
             }
 
-            if (!WorldBootstrap.EnsureModelPrefabBuilt(em, WorldResources.Cache, entry.ModelPrefabIndex))
+            if (!WorldBootstrap.EnsureModelPrefabBuilt(em, entry.ModelPrefabIndex))
             {
                 WarnDroppedRef(entry, cellLabel, $"model prefab {entry.ModelPrefabIndex} could not be built");
                 return Entity.Null;
@@ -494,19 +564,16 @@ namespace VVardenfell.Runtime.Streaming
             if (root == Entity.Null || !em.Exists(root) || !IsObjectAnimationRuntimeEligible((ContentReferenceKind)entry.ContentKind))
                 return;
 
-            var modelDefs = WorldResources.Cache?.ModelPrefabCatalog?.Records;
-            if (modelDefs == null || (uint)entry.ModelPrefabIndex >= (uint)modelDefs.Length)
+            if (!TryGetModelPrefabBlob(out var modelReference))
                 return;
 
-            var animation = modelDefs[entry.ModelPrefabIndex]?.ObjectAnimation;
-            if (animation == null || animation.Status == ModelObjectAnimationStatus.None)
+            ref RuntimeModelPrefabBlob modelBlob = ref modelReference.Blob.Value;
+            if ((uint)entry.ModelPrefabIndex >= (uint)modelBlob.Records.Length)
                 return;
 
-            if (!animation.IsEnabled)
-            {
-                WarnDisabledObjectAnimation(entry.ModelPrefabIndex, animation.DisabledReason);
+            ref RuntimeModelPrefabDefBlob model = ref RuntimeModelPrefabBlobUtility.RequireRecord(ref modelBlob, entry.ModelPrefabIndex);
+            if (model.ObjectAnimationEnabled == 0)
                 return;
-            }
 
             if (!em.HasComponent<ObjectAnimationState>(root))
             {
@@ -518,6 +585,23 @@ namespace VVardenfell.Runtime.Streaming
                     CurrentTime = 0f,
                     Active = 0,
                 });
+            }
+        }
+
+        static bool TryGetModelPrefabBlob(out RuntimeModelPrefabBlobReference modelReference)
+        {
+            modelReference = default;
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+                return false;
+            EntityQuery query = world.EntityManager.CreateEntityQuery(typeof(RuntimeModelPrefabBlobReference));
+            try
+            {
+                return query.TryGetSingleton(out modelReference) && modelReference.Blob.IsCreated;
+            }
+            finally
+            {
+                query.Dispose();
             }
         }
 
@@ -694,7 +778,8 @@ namespace VVardenfell.Runtime.Streaming
             ContentReference contentReference,
             uint placedRefId,
             RefEntry entry,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             int2 exteriorCell,
             bool isInterior,
             FixedString128Bytes interiorCellId,
@@ -707,19 +792,19 @@ namespace VVardenfell.Runtime.Streaming
             if (contentReference.Kind == ContentReferenceKind.Door)
             {
                 attachDoor = !isInterior
-                    ? TryResolveDoorInteractable(exteriorCell, entry.PlacedRefId, out door)
-                    : TryResolveInteriorDoorInteractable(entry.PlacedRefId, InteriorCellIdHash.Hash(interiorCellId), out door);
+                    ? TryResolveDoorInteractable(ref worldCells, exteriorCell, entry.PlacedRefId, out door)
+                    : TryResolveInteriorDoorInteractable(ref worldCells, entry.PlacedRefId, InteriorCellIdHash.Hash(interiorCellId), out door);
             }
 
             FixedString64Bytes capturedSoulId = default;
             int capturedSoulActorHandleValue = 0;
-            if (TryResolveCapturedSoul(contentDb, placedRefId, exteriorCell, isInterior, interiorCellId, out string soulId, out ActorDefHandle actorHandle))
+            if (TryResolveCapturedSoul(ref content, ref worldCells, placedRefId, exteriorCell, isInterior, interiorCellId, out FixedString64Bytes soulId, out ActorDefHandle actorHandle))
             {
-                capturedSoulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(soulId);
+                capturedSoulId = soulId;
                 capturedSoulActorHandleValue = actorHandle.Value;
             }
 
-            bool hasLockState = TryResolveLockState(placedRefId, exteriorCell, isInterior, interiorCellId, out var lockState);
+            bool hasLockState = TryResolveLockState(ref worldCells, placedRefId, exteriorCell, isInterior, interiorCellId, out var lockState);
 
             return new LogicalRefEntityDescriptor
             {
@@ -741,6 +826,7 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         static bool TryResolveLockState(
+            ref RuntimeWorldCellBlob worldCells,
             uint placedRefId,
             int2 exteriorCell,
             bool isInterior,
@@ -751,71 +837,51 @@ namespace VVardenfell.Runtime.Streaming
             if (placedRefId == 0u)
                 return false;
 
-            CellData cell = null;
-            if (isInterior)
-                WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(interiorCellId), out cell);
-            else
-                WorldResources.Cells.TryGetValue(exteriorCell, out cell);
-
-            if (cell?.LockStates == null)
+            if (!TryResolveCell(ref worldCells, exteriorCell, isInterior, interiorCellId, out int cellIndex))
                 return false;
 
-            for (int i = 0; i < cell.LockStates.Length; i++)
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (!RuntimeWorldCellBlobUtility.TryGetLockState(ref worldCells, ref cell, placedRefId, out var entry))
+                return false;
+
+            lockState = new PlacedRefLockState
             {
-                var entry = cell.LockStates[i];
-                if (entry.PlacedRefId != placedRefId)
-                    continue;
-
-                lockState = new PlacedRefLockState
-                {
-                    LockLevel = entry.LockLevel,
-                    Locked = entry.Locked,
-                    KeyId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.KeyId),
-                    TrapId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.TrapId),
-                };
-                return true;
-            }
-
-            return false;
+                LockLevel = entry.LockLevel,
+                Locked = entry.Locked,
+                KeyId = entry.KeyId,
+                TrapId = entry.TrapId,
+            };
+            return true;
         }
 
         static bool TryResolveCapturedSoul(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             uint placedRefId,
             int2 exteriorCell,
             bool isInterior,
             FixedString128Bytes interiorCellId,
-            out string soulId,
+            out FixedString64Bytes soulId,
             out ActorDefHandle actorHandle)
         {
-            soulId = null;
+            soulId = default;
             actorHandle = default;
-            if (contentDb == null || placedRefId == 0u)
+            if (placedRefId == 0u)
                 return false;
 
-            CellData cell = null;
-            if (isInterior)
-                WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(interiorCellId), out cell);
-            else
-                WorldResources.Cells.TryGetValue(exteriorCell, out cell);
-
-            if (cell?.CapturedSouls == null)
+            if (!TryResolveCell(ref worldCells, exteriorCell, isInterior, interiorCellId, out int cellIndex))
                 return false;
 
-            for (int i = 0; i < cell.CapturedSouls.Length; i++)
-            {
-                var entry = cell.CapturedSouls[i];
-                if (entry.PlacedRefId != placedRefId || string.IsNullOrWhiteSpace(entry.SoulId))
-                    continue;
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (!RuntimeWorldCellBlobUtility.TryGetCapturedSoul(ref worldCells, ref cell, placedRefId, out var entry))
+                return false;
+            if (entry.SoulIdHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] captured soul ref {placedRefId} has no soul id.");
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref content, entry.SoulIdHash, out actorHandle) || !actorHandle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] captured soul '{entry.SoulId}' for ref {placedRefId} does not resolve to an actor.");
 
-                if (!contentDb.TryGetActorHandle(entry.SoulId, out actorHandle) || !actorHandle.IsValid)
-                    return false;
-
-                soulId = entry.SoulId;
-                return true;
-            }
-
-            return false;
+            soulId = entry.SoulId;
+            return true;
         }
 
         static bool TryGetContentReference(RefEntry entry, out ContentReference contentReference)
@@ -828,55 +894,78 @@ namespace VVardenfell.Runtime.Streaming
             return contentReference.IsValid;
         }
 
-        static bool TryResolveDoorInteractable(int2 coord, uint placedRefId, out DoorInteractable doorInteractable)
+        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, int2 coord, uint placedRefId, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
             if (placedRefId == 0u)
                 return false;
-            if (!WorldResources.Cells.TryGetValue(coord, out var cell) || cell == null)
+            if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, coord, out int cellIndex))
                 return false;
-            return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
+
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            return TryResolveDoorInteractable(ref worldCells, ref cell, placedRefId, out doorInteractable);
         }
 
-        static bool TryResolveInteriorDoorInteractable(uint placedRefId, ulong interiorCellHash, out DoorInteractable doorInteractable)
+        static bool TryResolveInteriorDoorInteractable(ref RuntimeWorldCellBlob worldCells, uint placedRefId, ulong interiorCellHash, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
             if (placedRefId == 0u)
                 return false;
-            if (!WorldResources.TryGetInteriorCell(interiorCellHash, out var cell))
+            if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, interiorCellHash, out int cellIndex))
                 return false;
-            return TryResolveDoorInteractable(cell, placedRefId, out doorInteractable);
+
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            return TryResolveDoorInteractable(ref worldCells, ref cell, placedRefId, out doorInteractable);
         }
 
-        static bool TryResolveDoorInteractable(CellData cell, uint placedRefId, out DoorInteractable doorInteractable)
+        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, ref RuntimeWorldCellDefBlob cell, uint placedRefId, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
-            if (cell?.Refs == null || cell.Doors == null)
+            if (!RuntimeWorldCellBlobUtility.TryGetDoorByPlacedRefId(ref worldCells, ref cell, placedRefId, out var door))
                 return false;
 
-            for (int i = 0; i < cell.Refs.Length; i++)
-            {
-                var entry = cell.Refs[i];
-                if (entry.PlacedRefId != placedRefId || entry.DoorMetaIndex < 0 || entry.DoorMetaIndex >= cell.Doors.Length)
-                    continue;
-
-                doorInteractable = BuildDoorInteractable(cell.Doors[entry.DoorMetaIndex]);
-                return true;
-            }
-
-            return false;
+            doorInteractable = BuildDoorInteractable(door);
+            return true;
         }
 
-        static DoorInteractable BuildDoorInteractable(in DoorRefEntry door)
+        static DoorInteractable BuildDoorInteractable(in RuntimeWorldDoorRefDefBlob door)
         {
             return new DoorInteractable
             {
                 IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
-                DestinationCellId = new FixedString128Bytes(door.DestinationCellId ?? string.Empty),
-                DestinationCellHash = InteriorCellIdHash.Hash(door.DestinationCellId),
+                DestinationCellId = door.DestinationCellId,
+                DestinationCellHash = door.DestinationCellHash,
                 DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
                 DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
             };
+        }
+
+        static bool TryResolveCell(
+            ref RuntimeWorldCellBlob worldCells,
+            int2 exteriorCell,
+            bool isInterior,
+            FixedString128Bytes interiorCellId,
+            out int cellIndex)
+        {
+            return isInterior
+                ? RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, InteriorCellIdHash.Hash(interiorCellId), out cellIndex)
+                : RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, exteriorCell, out cellIndex);
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob()
+        {
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] World ref spawn requires a default world.");
+
+            using var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] World ref spawn requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var blob = query.GetSingleton<RuntimeWorldCellBlobReference>().Blob;
+            if (!blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] World ref spawn requires runtime world cell blob.");
+            return blob;
         }
 
     }

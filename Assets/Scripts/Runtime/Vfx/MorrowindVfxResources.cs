@@ -53,6 +53,7 @@ namespace VVardenfell.Runtime.Vfx
         readonly bool[] _instanceSlotUsed = new bool[MaxInstances];
         readonly int[] _particleCountByBucket;
         readonly Dictionary<string, int> _effectIndexByModelPath = new(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<ulong, int> _effectIndexByModelPathHash = new();
         readonly Material[] _materialsByBucket;
         readonly ComputeShader _computeShader;
         readonly int _simulateKernel;
@@ -125,11 +126,23 @@ namespace VVardenfell.Runtime.Vfx
             if (!SystemInfo.supportsComputeShaders)
                 throw new InvalidOperationException("[VVardenfell][VFX] GPU VFX requires compute shader support.");
 
-            string modelPath = NormalizeModelPath(request.ModelPath.ToString());
-            if (string.IsNullOrWhiteSpace(modelPath))
-                throw new InvalidOperationException("[VVardenfell][VFX] Spawn request has no model path.");
-            if (!_effectIndexByModelPath.TryGetValue(modelPath, out int effectIndex))
-                throw new InvalidOperationException($"[VVardenfell][VFX] Model '{modelPath}' has no baked VFX entry; rebake required.");
+            ulong modelPathHash = request.ModelPathHash;
+            string modelPath = null;
+            int effectIndex;
+            if (modelPathHash != 0UL)
+            {
+                if (!_effectIndexByModelPathHash.TryGetValue(modelPathHash, out effectIndex))
+                    throw new InvalidOperationException($"[VVardenfell][VFX] Model path hash 0x{modelPathHash:X16} has no baked VFX entry; rebake required.");
+            }
+            else
+            {
+                modelPath = NormalizeModelPath(request.ModelPath.ToString());
+                if (string.IsNullOrWhiteSpace(modelPath))
+                    throw new InvalidOperationException("[VVardenfell][VFX] Spawn request has no model path hash.");
+                if (!_effectIndexByModelPath.TryGetValue(modelPath, out effectIndex))
+                    throw new InvalidOperationException($"[VVardenfell][VFX] Model '{modelPath}' has no baked VFX entry; rebake required.");
+                modelPathHash = RuntimeContentStableHash.HashPath(modelPath);
+            }
 
             var effect = cache.VfxCatalog.Effects[effectIndex];
             if (effect.UnsupportedRequiredCategories != MorrowindVfxControllerCategory.None)
@@ -156,7 +169,7 @@ namespace VVardenfell.Runtime.Vfx
                 if (_particleCount + quota > MaxParticles)
                     throw new InvalidOperationException($"[VVardenfell][VFX] Particle capacity {MaxParticles} exceeded by '{modelPath}'.");
 
-                ResolveParticleTexture(cache, request.TextureOverridePath.ToString(), system.TexturePath, modelPath, out int bucket, out int slice);
+                ResolveParticleTexture(cache, request.TextureOverridePathHash, request.TextureOverridePath.ToString(), system.TexturePath, modelPathHash, out int bucket, out int slice);
                 ResolveParticleRotation(cache.VfxCatalog, system, out bool randomInitialRotation, out float rotationSpeed);
                 int emittedParticleIndex = 0;
                 for (int p = 0; p < quota; p++)
@@ -366,26 +379,37 @@ namespace VVardenfell.Runtime.Vfx
             for (int i = 0; i < effects.Length; i++)
             {
                 string modelPath = NormalizeModelPath(effects[i]?.ModelPath);
-                if (!string.IsNullOrWhiteSpace(modelPath) && !_effectIndexByModelPath.ContainsKey(modelPath))
+                if (string.IsNullOrWhiteSpace(modelPath))
+                    continue;
+                if (!_effectIndexByModelPath.ContainsKey(modelPath))
                     _effectIndexByModelPath.Add(modelPath, i);
+                ulong hash = RuntimeContentStableHash.HashPath(modelPath);
+                if (hash != 0UL && !_effectIndexByModelPathHash.ContainsKey(hash))
+                    _effectIndexByModelPathHash.Add(hash, i);
             }
         }
 
         void ResolveParticleTexture(
             CacheLoader cache,
+            ulong overridePathHash,
             string overridePath,
             string bakedPath,
-            string modelPath,
+            ulong modelPathHash,
             out int bucket,
             out int slice)
         {
-            string texturePath = !string.IsNullOrWhiteSpace(overridePath) ? overridePath : bakedPath;
-            if (string.IsNullOrWhiteSpace(texturePath))
-                throw new InvalidOperationException($"[VVardenfell][VFX] Model '{modelPath}' particle system has no texture path.");
-            if (!cache.TryGetTextureIndexByPath(texturePath, out int textureIndex))
-                throw new InvalidOperationException($"[VVardenfell][VFX] Texture '{texturePath}' for model '{modelPath}' is missing from texture cache; rebake required.");
+            int textureIndex;
+            ulong texturePathHash = overridePathHash != 0UL ? overridePathHash : RuntimeContentStableHash.HashPath(bakedPath);
+            if (texturePathHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][VFX] Model path hash 0x{modelPathHash:X16} particle system has no texture path.");
+            if (!cache.TryGetTextureIndexByPathHash(texturePathHash, out textureIndex))
+            {
+                string texturePath = !string.IsNullOrWhiteSpace(overridePath) ? overridePath : bakedPath;
+                if (string.IsNullOrWhiteSpace(texturePath) || !cache.TryGetTextureIndexByPath(texturePath, out textureIndex))
+                    throw new InvalidOperationException($"[VVardenfell][VFX] Texture hash 0x{texturePathHash:X16} for model hash 0x{modelPathHash:X16} is missing from texture cache; rebake required.");
+            }
             if (!WorldResources.TexBucketInfo.IsCreated || (uint)textureIndex >= (uint)WorldResources.TexBucketInfo.Length)
-                throw new InvalidOperationException($"[VVardenfell][VFX] Texture '{texturePath}' for model '{modelPath}' has no texture bucket.");
+                throw new InvalidOperationException($"[VVardenfell][VFX] Texture hash 0x{texturePathHash:X16} for model hash 0x{modelPathHash:X16} has no texture bucket.");
 
             int2 bucketSlice = WorldResources.TexBucketInfo[textureIndex];
             bucket = bucketSlice.x;

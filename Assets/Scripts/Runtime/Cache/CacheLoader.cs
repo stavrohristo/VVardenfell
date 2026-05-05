@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Rendering;
 using UnityEngine;
@@ -56,9 +57,10 @@ namespace VVardenfell.Runtime.Cache
         public Texture2D[] Textures { get; private set; }
         public TerrainLayers TerrainLayers { get; private set; }
         public MaterialRegistry Registry { get; private set; }
-        public RuntimeContentDatabase ContentDatabase { get; private set; }
+        public BlobAssetReference<RuntimeContentBlob> ContentBlob { get; private set; }
 
         Dictionary<string, int> _textureIndexByPath;
+        Dictionary<ulong, int> _textureIndexByPathHash;
         Dictionary<ulong, int> _actorVisualRecipesByActorAndView;
         Dictionary<ulong, int> _equipmentVisualsByItemRigViewAndVariant;
 
@@ -117,21 +119,21 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage();
             yield return null;
 
-            progress?.BeginStage("Gameplay content", "Loading gameplay content database", 1);
+            progress?.BeginStage("Gameplay content", "Loading runtime content blob", 1);
             k_GameplayContent.Begin();
             try
             {
-                ContentDatabase = RuntimeContentDatabase.LoadFromCache();
+                ContentBlob = RuntimeContentBlobFile.Read(CachePaths.RuntimeContentBlob);
                 if (WorldResources.PathGridNavigation.IsCreated)
                     WorldResources.PathGridNavigation.Dispose();
-                WorldResources.PathGridNavigation = PathGridNavigationWorld.Create(ContentDatabase);
+                WorldResources.PathGridNavigation = PathGridNavigationWorld.Create(ContentBlob);
             }
             finally
             {
                 k_GameplayContent.End();
             }
             progress?.Report(
-                $"Gameplay content ready: {ContentDatabase.ActorCount} actors, {ContentDatabase.LightCount} lights, {ContentDatabase.SoundCount} sounds, {ContentDatabase.PathGridNavigationNodeCount} path nodes",
+                DescribeGameplayContent(ContentBlob),
                 1,
                 1);
             progress?.CompleteStage();
@@ -188,6 +190,15 @@ namespace VVardenfell.Runtime.Cache
         {
             bool loaded = ActorAnimationFile.TryRead(CachePaths.ActorAnimations, out var actorAnimationCatalog);
             return loaded ? actorAnimationCatalog : null;
+        }
+
+        static string DescribeGameplayContent(BlobAssetReference<RuntimeContentBlob> contentBlob)
+        {
+            if (!contentBlob.IsCreated)
+                throw new InvalidDataException("runtime_content.blob is not loaded");
+
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            return $"Gameplay content ready: {content.Actors.Length} actors, {content.Lights.Length} lights, {content.Sounds.Length} sounds, {content.PathGridNavigationNodes.Length} path nodes";
         }
 
         public bool TryGetActorVisualRecipe(ContentId actorContentId, bool firstPerson, out ActorVisualRecipeDef recipe)
@@ -253,6 +264,14 @@ namespace VVardenfell.Runtime.Cache
             string normalized = NormalizeTexturePath(sourcePath);
             return _textureIndexByPath.TryGetValue(normalized, out index)
                    || _textureIndexByPath.TryGetValue(ChangeExtension(normalized, ".dds"), out index);
+        }
+
+        public bool TryGetTextureIndexByPathHash(ulong sourcePathHash, out int index)
+        {
+            index = -1;
+            return sourcePathHash != 0UL
+                   && _textureIndexByPathHash != null
+                   && _textureIndexByPathHash.TryGetValue(sourcePathHash, out index);
         }
 
         void BuildActorVisualLookup()
@@ -399,6 +418,7 @@ namespace VVardenfell.Runtime.Cache
         void BuildTexturePathLookup(string[] texHashes)
         {
             _textureIndexByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            _textureIndexByPathHash = new Dictionary<ulong, int>();
             var indexByHash = new Dictionary<string, int>(texHashes?.Length ?? 0, StringComparer.OrdinalIgnoreCase);
             for (int i = 0; texHashes != null && i < texHashes.Length; i++)
             {
@@ -425,12 +445,16 @@ namespace VVardenfell.Runtime.Cache
 
             _textureIndexByPath[normalized] = textureIndex;
             _textureIndexByPath[normalized.Replace('\\', '/')] = textureIndex;
+            RegisterTexturePathHash(normalized, textureIndex);
             RegisterTextureAlias(ChangeExtension(normalized, ".tga"), textureIndex);
             RegisterTextureAlias(ChangeExtension(normalized, ".dds"), textureIndex);
 
             int slash = normalized.LastIndexOf('\\');
             if (slash >= 0 && slash + 1 < normalized.Length)
+            {
                 _textureIndexByPath[normalized.Substring(slash + 1)] = textureIndex;
+                RegisterTexturePathHash(normalized.Substring(slash + 1), textureIndex);
+            }
         }
 
         void RegisterTextureAlias(string normalizedPath, int textureIndex)
@@ -440,10 +464,21 @@ namespace VVardenfell.Runtime.Cache
 
             _textureIndexByPath[normalizedPath] = textureIndex;
             _textureIndexByPath[normalizedPath.Replace('\\', '/')] = textureIndex;
+            RegisterTexturePathHash(normalizedPath, textureIndex);
 
             int slash = normalizedPath.LastIndexOf('\\');
             if (slash >= 0 && slash + 1 < normalizedPath.Length)
+            {
                 _textureIndexByPath[normalizedPath.Substring(slash + 1)] = textureIndex;
+                RegisterTexturePathHash(normalizedPath.Substring(slash + 1), textureIndex);
+            }
+        }
+
+        void RegisterTexturePathHash(string normalizedPath, int textureIndex)
+        {
+            ulong hash = RuntimeContentStableHash.HashPath(normalizedPath);
+            if (hash != 0UL && !_textureIndexByPathHash.ContainsKey(hash))
+                _textureIndexByPathHash.Add(hash, textureIndex);
         }
 
         static string NormalizeTexturePath(string path)

@@ -15,7 +15,7 @@ namespace VVardenfell.Runtime.Combat
         static readonly short ShieldEffectId = RequireEffectId("sEffectShield");
 
         public static float ApplyArmorToHealthDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity target,
             float damage,
@@ -23,28 +23,26 @@ namespace VVardenfell.Runtime.Combat
             out MorrowindArmorImpact impact)
         {
             impact = default;
-            RequireContentDb(contentDb);
             if (damage <= 0f)
                 return damage;
 
-            float armor = ComputeArmorRating(contentDb, entityManager, target);
+            float armor = ComputeArmorRating(ref content, entityManager, target);
             float divisor = damage + armor;
             if (divisor <= 0f)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Invalid armor divisor for target entity={target.Index}:{target.Version}: damage={damage}, armor={armor}.");
 
             float armorMult = damage / divisor;
-            float armorAdjusted = damage * math.max(armorMult, contentDb.RequireGameSettingFloat("fCombatArmorMinMult"));
+            float armorAdjusted = damage * math.max(armorMult, RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatArmorMinMult));
             float finalDamage = math.max(armorAdjusted, 1f);
-            impact = ResolveArmorImpact(contentDb, entityManager, target, roll0To99, damage, armorAdjusted);
+            impact = ResolveArmorImpact(ref content, entityManager, target, roll0To99, damage, armorAdjusted);
             return finalDamage;
         }
 
         public static void ApplyArmorConditionDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             in MorrowindArmorImpact impact)
         {
-            RequireContentDb(contentDb);
             if (impact.HasEquippedArmor == 0 || impact.ConditionDamage <= 0)
                 return;
             if (impact.Target == Entity.Null || !entityManager.Exists(impact.Target))
@@ -55,17 +53,16 @@ namespace VVardenfell.Runtime.Combat
             if (equipped.InventoryIndex < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor slot {impact.Slot} has invalid inventory index {equipped.InventoryIndex}.");
 
-            ApplyEquippedSlotConditionDamage(contentDb, entityManager, impact.Target, impact.Slot, impact.Content, impact.ConditionDamage);
+            ApplyEquippedSlotConditionDamage(ref content, entityManager, impact.Target, impact.Slot, impact.Content, impact.ConditionDamage);
         }
 
         public static void ApplyShieldBlockConditionDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity target,
             in ContentReference shieldContent,
             int conditionDamage)
         {
-            RequireContentDb(contentDb);
             if (conditionDamage <= 0)
                 return;
             if (target == Entity.Null || !entityManager.Exists(target))
@@ -76,10 +73,10 @@ namespace VVardenfell.Runtime.Combat
             if (equipped.InventoryIndex < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Block shield has invalid inventory index {equipped.InventoryIndex}.");
 
-            ApplyEquippedSlotConditionDamage(contentDb, entityManager, target, ItemEquipmentSlot.Shield, shieldContent, conditionDamage);
+            ApplyEquippedSlotConditionDamage(ref content, entityManager, target, ItemEquipmentSlot.Shield, shieldContent, conditionDamage);
         }
 
-        static float ComputeArmorRating(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
+        static float ComputeArmorRating(ref RuntimeContentBlob content, EntityManager entityManager, Entity actor)
         {
             if (actor == Entity.Null || !entityManager.Exists(actor))
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor rating target entity is missing.");
@@ -88,7 +85,7 @@ namespace VVardenfell.Runtime.Combat
 
             var effects = entityManager.GetBuffer<ActorActiveMagicEffect>(actor, true);
             float magicShield = MorrowindMeleeCombatMechanics.SumEffectMagnitude(effects, ShieldEffectId);
-            if (IsCreature(contentDb, entityManager, actor))
+            if (IsCreature(ref content, entityManager, actor))
                 return magicShield;
 
             if (!entityManager.HasComponent<ActorSkillSet>(actor))
@@ -98,21 +95,21 @@ namespace VVardenfell.Runtime.Combat
 
             var skills = entityManager.GetComponentData<ActorSkillSet>(actor);
             var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(actor, true);
-            float unarmored = ComputeUnarmoredRating(contentDb, skills);
+            float unarmored = ComputeUnarmoredRating(ref content, skills);
 
-            return ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.Cuirass, unarmored) * 0.3f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.Shield, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.Helmet, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.Greaves, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.Boots, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.LeftPauldron, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.RightPauldron, unarmored) * 0.1f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.LeftHand, unarmored) * 0.05f
-                   + ComputeSlotRating(contentDb, entityManager, actor, equipment, skills, ItemEquipmentSlot.RightHand, unarmored) * 0.05f
+            return ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.Cuirass, unarmored) * 0.3f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.Shield, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.Helmet, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.Greaves, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.Boots, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.LeftPauldron, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.RightPauldron, unarmored) * 0.1f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.LeftHand, unarmored) * 0.05f
+                   + ComputeSlotRating(ref content, entityManager, actor, equipment, skills, ItemEquipmentSlot.RightHand, unarmored) * 0.05f
                    + magicShield;
         }
 
-        static bool IsCreature(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
+        static bool IsCreature(ref RuntimeContentBlob content, EntityManager entityManager, Entity actor)
         {
             if (entityManager.HasComponent<PlayerTag>(actor))
                 return false;
@@ -123,12 +120,12 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Armor rating target entity={actor.Index}:{actor.Version} has invalid actor definition.");
 
-            ref readonly var actorDef = ref contentDb.Get(source.Definition);
+            ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actorDef.Kind == ActorDefKind.Creature;
         }
 
         static float ComputeSlotRating(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity actor,
             DynamicBuffer<ActorEquipmentSlot> equipment,
@@ -136,19 +133,19 @@ namespace VVardenfell.Runtime.Combat
             ItemEquipmentSlot slot,
             float unarmoredRating)
         {
-            if (!TryGetEquippedArmor(contentDb, equipment, slot, out var equipped, out var armor))
+            if (!TryGetEquippedArmor(ref content, equipment, slot, out var equipped, out var armor))
                 return unarmoredRating;
 
-            float skill = ResolveArmorSkill(contentDb, armor, skills);
-            float conditionMult = ResolveEquippedConditionMultiplier(contentDb, entityManager, actor, equipped, armor);
+            float skill = ResolveArmorSkill(ref content, armor, skills);
+            float conditionMult = ResolveEquippedConditionMultiplier(entityManager, actor, equipped, armor);
             if (armor.Weight == 0f)
                 return armor.Armor * conditionMult;
 
-            return armor.Armor * skill / contentDb.RequireGameSettingInt("iBaseArmorSkill") * conditionMult;
+            return armor.Armor * skill / RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iBaseArmorSkill) * conditionMult;
         }
 
         public static bool TryGetEquippedArmor(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             ItemEquipmentSlot slot,
             out ActorEquipmentSlot equippedArmor,
@@ -170,7 +167,7 @@ namespace VVardenfell.Runtime.Combat
                     throw new InvalidOperationException($"[VVardenfell][Damage] Actor has non-item equipped content kind {equipped.Content.Kind} in armor slot {slot}.");
 
                 var handle = new ItemDefHandle { Value = equipped.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(handle, out var equipmentDef))
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref content, handle, out var equipmentDef))
                     throw new InvalidOperationException($"[VVardenfell][Damage] Equipped item handle {handle.Value} in armor slot {slot} has no equipment definition.");
 
                 found = true;
@@ -185,7 +182,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static MorrowindArmorImpact ResolveArmorImpact(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity target,
             uint roll0To99,
@@ -205,21 +202,21 @@ namespace VVardenfell.Runtime.Combat
                 return impact;
 
             var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(target, true);
-            if (!TryGetEquippedArmor(contentDb, equipment, slot, out _, out var armor))
+            if (!TryGetEquippedArmor(ref content, equipment, slot, out _, out var armor))
                 return impact;
 
             impact.HasEquippedArmor = 1;
-            impact.Content = FindEquippedArmorContent(contentDb, equipment, slot);
-            impact.Skill = ResolveArmorSkillKind(contentDb, armor);
+            impact.Content = FindEquippedArmorContent(ref content, equipment, slot);
+            impact.Skill = ResolveArmorSkillKind(ref content, armor);
             return impact;
         }
 
         static ContentReference FindEquippedArmorContent(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             ItemEquipmentSlot slot)
         {
-            if (!TryGetEquippedArmor(contentDb, equipment, slot, out var equipped, out _))
+            if (!TryGetEquippedArmor(ref content, equipment, slot, out var equipped, out _))
                 return default;
 
             return equipped.Content;
@@ -249,7 +246,6 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static float ResolveEquippedConditionMultiplier(
-            RuntimeContentDatabase contentDb,
             EntityManager entityManager,
             Entity actor,
             in ActorEquipmentSlot equipped,
@@ -290,23 +286,23 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static void ApplyEquippedSlotConditionDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob blob,
             EntityManager entityManager,
             Entity actor,
             ItemEquipmentSlot slot,
-            in ContentReference content,
+            in ContentReference itemContent,
             int conditionDamage)
         {
             if (!entityManager.HasBuffer<ActorEquipmentSlot>(actor))
                 throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor target entity={actor.Index}:{actor.Version} has no equipment buffer.");
 
             var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(actor);
-            int slotIndex = FindEquippedSlotIndex(equipment, slot, content);
+            int slotIndex = FindEquippedSlotIndex(equipment, slot, itemContent);
             if (slotIndex < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor slot {slot} was not found on target entity={actor.Index}:{actor.Version}.");
 
             var equipped = equipment[slotIndex];
-            var equipmentDef = RequireArmorEquipment(contentDb, content);
+            var equipmentDef = RequireArmorEquipment(ref blob, itemContent);
             ActorEquipmentConditionUtility.ApplyConditionDamage(ref equipped, equipmentDef, conditionDamage);
             if (equipmentDef.Health > 0 && equipped.Condition <= 0)
                 equipment.RemoveAt(slotIndex);
@@ -358,28 +354,28 @@ namespace VVardenfell.Runtime.Combat
             return -1;
         }
 
-        static ItemEquipmentDef RequireArmorEquipment(RuntimeContentDatabase contentDb, in ContentReference content)
+        static ItemEquipmentDef RequireArmorEquipment(ref RuntimeContentBlob blob, in ContentReference content)
         {
             if (!content.IsValid || content.Kind != ContentReferenceKind.Item)
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor impact is missing item content.");
 
             var handle = new ItemDefHandle { Value = content.HandleValue };
-            if (!contentDb.TryGetItemEquipment(handle, out var equipment) || equipment.Kind != ItemEquipmentKind.Armor)
+            if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref blob, handle, out var equipment) || equipment.Kind != ItemEquipmentKind.Armor)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Armor impact item handle {handle.Value} does not resolve to armor equipment.");
 
             return equipment;
         }
 
-        static float ComputeUnarmoredRating(RuntimeContentDatabase contentDb, in ActorSkillSet skills)
+        static float ComputeUnarmoredRating(ref RuntimeContentBlob content, in ActorSkillSet skills)
         {
             float unarmoredSkill = skills.Unarmored;
-            return (contentDb.RequireGameSettingFloat("fUnarmoredBase1") * unarmoredSkill)
-                   * (contentDb.RequireGameSettingFloat("fUnarmoredBase2") * unarmoredSkill);
+            return (RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fUnarmoredBase1) * unarmoredSkill)
+                   * (RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fUnarmoredBase2) * unarmoredSkill);
         }
 
-        static float ResolveArmorSkill(RuntimeContentDatabase contentDb, in ItemEquipmentDef armor, in ActorSkillSet skills)
+        static float ResolveArmorSkill(ref RuntimeContentBlob content, in ItemEquipmentDef armor, in ActorSkillSet skills)
         {
-            return ResolveArmorSkillKind(contentDb, armor) switch
+            return ResolveArmorSkillKind(ref content, armor) switch
             {
                 ActorSkillKind.LightArmor => skills.LightArmor,
                 ActorSkillKind.MediumArmor => skills.MediumArmor,
@@ -388,33 +384,33 @@ namespace VVardenfell.Runtime.Combat
             };
         }
 
-        public static ActorSkillKind ResolveArmorSkillKind(RuntimeContentDatabase contentDb, in ItemEquipmentDef armor)
+        public static ActorSkillKind ResolveArmorSkillKind(ref RuntimeContentBlob content, in ItemEquipmentDef armor)
         {
-            float baseWeight = contentDb.RequireGameSettingFloat(ResolveArmorTypeWeightGmst(armor.Type));
+            float baseWeight = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, ResolveArmorTypeWeightGmstHash(armor.Type));
             const float epsilon = 0.0005f;
-            if (armor.Weight <= baseWeight * contentDb.RequireGameSettingFloat("fLightMaxMod") + epsilon)
+            if (armor.Weight <= baseWeight * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fLightMaxMod) + epsilon)
                 return ActorSkillKind.LightArmor;
-            if (armor.Weight <= baseWeight * contentDb.RequireGameSettingFloat("fMedMaxMod") + epsilon)
+            if (armor.Weight <= baseWeight * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fMedMaxMod) + epsilon)
                 return ActorSkillKind.MediumArmor;
 
             return ActorSkillKind.HeavyArmor;
         }
 
-        static string ResolveArmorTypeWeightGmst(int armorType)
+        static ulong ResolveArmorTypeWeightGmstHash(int armorType)
         {
             return armorType switch
             {
-                0 => "iHelmWeight",
-                1 => "iCuirassWeight",
-                2 => "iPauldronWeight",
-                3 => "iPauldronWeight",
-                4 => "iGreavesWeight",
-                5 => "iBootsWeight",
-                6 => "iGauntletWeight",
-                7 => "iGauntletWeight",
-                8 => "iShieldWeight",
-                9 => "iGauntletWeight",
-                10 => "iGauntletWeight",
+                0 => RuntimeContentKnownHashes.iHelmWeight,
+                1 => RuntimeContentKnownHashes.iCuirassWeight,
+                2 => RuntimeContentKnownHashes.iPauldronWeight,
+                3 => RuntimeContentKnownHashes.iPauldronWeight,
+                4 => RuntimeContentKnownHashes.iGreavesWeight,
+                5 => RuntimeContentKnownHashes.iBootsWeight,
+                6 => RuntimeContentKnownHashes.iGauntletWeight,
+                7 => RuntimeContentKnownHashes.iGauntletWeight,
+                8 => RuntimeContentKnownHashes.iShieldWeight,
+                9 => RuntimeContentKnownHashes.iGauntletWeight,
+                10 => RuntimeContentKnownHashes.iGauntletWeight,
                 _ => throw new InvalidOperationException($"[VVardenfell][Damage] Unsupported armor type {armorType}."),
             };
         }
@@ -426,11 +422,6 @@ namespace VVardenfell.Runtime.Combat
 
             return effectId;
         }
-
-        static void RequireContentDb(RuntimeContentDatabase contentDb)
-        {
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
-        }
     }
 }
+

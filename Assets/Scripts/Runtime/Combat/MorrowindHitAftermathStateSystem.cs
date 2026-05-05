@@ -1,6 +1,7 @@
 using System;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -18,16 +19,19 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindDamageAppliedEvent>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Aftermath] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Aftermath] Hit aftermath requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
-            float knockDownMult = contentDb.RequireGameSettingFloat("fKnockDownMult");
-            int knockDownOddsMult = contentDb.RequireGameSettingInt("iKnockDownOddsMult");
-            int knockDownOddsBase = contentDb.RequireGameSettingInt("iKnockDownOddsBase");
+            float knockDownMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fKnockDownMult);
+            int knockDownOddsMult = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iKnockDownOddsMult);
+            int knockDownOddsBase = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iKnockDownOddsBase);
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
             var random = new Unity.Mathematics.Random(combatState.ValueRO.RandomState == 0u ? 0x6E624EB7u : combatState.ValueRO.RandomState);
 
@@ -150,3 +154,5 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+
+

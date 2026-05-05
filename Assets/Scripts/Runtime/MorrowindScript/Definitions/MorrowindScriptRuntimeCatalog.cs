@@ -1,6 +1,7 @@
 using System;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 
@@ -32,11 +33,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         ExternalActorLocals = 1UL << 8,
         ActorAiStatuses = 1UL << 9,
         ActorCombatTargets = 1UL << 10,
-        RefTransforms = 1UL << 11,
-        InitialTransforms = 1UL << 12,
         LockStates = 1UL << 13,
-        InventoryCounts = 1UL << 14,
-        ActorDeaths = 1UL << 15,
         ActorEvents = 1UL << 16,
         ActorVitals = 1UL << 17,
         ActorAttributes = 1UL << 18,
@@ -80,24 +77,27 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         public bool IsCreated => Programs.IsCreated && ProgramIds.IsCreated && Instructions.IsCreated && Locals.IsCreated && Messages.IsCreated && OpcodeHandlers.IsCreated;
 
-        public static MorrowindScriptRuntimeCatalog Create(GameplayContentData data)
+        public static MorrowindScriptRuntimeCatalog Create(BlobAssetReference<RuntimeContentBlob> contentBlob)
         {
-            data ??= new GameplayContentData();
+            if (!contentBlob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][MWScript][Validation] Runtime content blob is not loaded.");
+
+            ref RuntimeContentBlob data = ref contentBlob.Value;
             var catalog = new MorrowindScriptRuntimeCatalog
             {
-                Programs = new NativeArray<MorrowindScriptProgramRuntime>(data.MorrowindScriptPrograms?.Length ?? 0, Allocator.Persistent),
-                ProgramIds = new NativeArray<FixedString128Bytes>(data.MorrowindScriptPrograms?.Length ?? 0, Allocator.Persistent),
-                Instructions = new NativeArray<MorrowindScriptInstructionRuntime>(data.MorrowindScriptInstructions?.Length ?? 0, Allocator.Persistent),
-                Locals = new NativeArray<MorrowindScriptLocalRuntime>(data.MorrowindScriptLocals?.Length ?? 0, Allocator.Persistent),
-                Messages = new NativeArray<FixedString512Bytes>(data.MorrowindScriptMessages?.Length ?? 0, Allocator.Persistent),
+                Programs = new NativeArray<MorrowindScriptProgramRuntime>(data.MorrowindScriptPrograms.Length, Allocator.Persistent),
+                ProgramIds = new NativeArray<FixedString128Bytes>(data.MorrowindScriptPrograms.Length, Allocator.Persistent),
+                Instructions = new NativeArray<MorrowindScriptInstructionRuntime>(data.MorrowindScriptInstructions.Length, Allocator.Persistent),
+                Locals = new NativeArray<MorrowindScriptLocalRuntime>(data.MorrowindScriptLocals.Length, Allocator.Persistent),
+                Messages = new NativeArray<FixedString512Bytes>(data.MorrowindScriptMessages.Length, Allocator.Persistent),
                 OpcodeHandlers = MorrowindScriptOpcodeTable.CreateHandlers(Allocator.Persistent),
             };
 
             for (int i = 0; i < catalog.Programs.Length; i++)
             {
-                var source = data.MorrowindScriptPrograms[i];
-                ValidateProgram(data, i, source);
-                catalog.ProgramIds[i] = RuntimeFixedStringUtility.ToFixed128OrDefault(source.Id);
+                ref RuntimeMorrowindScriptProgramDefBlob source = ref data.MorrowindScriptPrograms[i];
+                ValidateProgram(ref data, i, ref source);
+                catalog.ProgramIds[i] = RuntimeFixedStringUtility.ToFixed128OrDefault(source.Id.ToString());
                 catalog.Programs[i] = new MorrowindScriptProgramRuntime
                 {
                     Status = source.Status,
@@ -137,7 +137,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             for (int i = 0; i < catalog.Messages.Length; i++)
-                catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(data.MorrowindScriptMessages[i].Text);
+                catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(data.MorrowindScriptMessages[i].Text.ToString());
 
             for (int i = 0; i < catalog.Programs.Length; i++)
             {
@@ -201,19 +201,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return MorrowindScriptRequirementMask.ActorCombatTargets;
                 case MorrowindScriptOpcode.GetDistance:
                 case MorrowindScriptOpcode.GetPos:
+                case MorrowindScriptOpcode.GetAngle:
                 case MorrowindScriptOpcode.SetPos:
                 case MorrowindScriptOpcode.MoveWorld:
                 case MorrowindScriptOpcode.Move:
-                    return MorrowindScriptRequirementMask.RefTransforms;
                 case MorrowindScriptOpcode.GetStartingAngle:
-                case MorrowindScriptOpcode.SetAtStart:
-                    return MorrowindScriptRequirementMask.InitialTransforms;
+                    return MorrowindScriptRequirementMask.None;
                 case MorrowindScriptOpcode.GetLocked:
                     return MorrowindScriptRequirementMask.LockStates;
                 case MorrowindScriptOpcode.GetItemCount:
-                    return MorrowindScriptRequirementMask.InventoryCounts;
                 case MorrowindScriptOpcode.GetOnDeath:
-                    return MorrowindScriptRequirementMask.ActorDeaths;
+                    return MorrowindScriptRequirementMask.None;
                 case MorrowindScriptOpcode.GetAttacked:
                 case MorrowindScriptOpcode.OnMurder:
                 case MorrowindScriptOpcode.OnKnockout:
@@ -247,9 +245,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static void ValidateProgram(GameplayContentData data, int programIndex, in MorrowindScriptProgramDef program)
+        static void ValidateProgram(ref RuntimeContentBlob data, int programIndex, ref RuntimeMorrowindScriptProgramDefBlob program)
         {
-            if (string.IsNullOrWhiteSpace(program.Id))
+            string programId = program.Id.ToString();
+            if (string.IsNullOrWhiteSpace(programId))
                 throw new InvalidOperationException($"[VVardenfell][MWScript][Validation] script program {programIndex} has no id.");
 
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled
@@ -263,7 +262,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (program.MaxStack < 0)
                 throw new InvalidOperationException($"[VVardenfell][MWScript][Validation] script '{program.Id}' has negative max stack {program.MaxStack}.");
 
-            int localCount = data.MorrowindScriptLocals?.Length ?? 0;
+            int localCount = data.MorrowindScriptLocals.Length;
             if (program.LocalCount < 0
                 || program.FirstLocalIndex < -1
                 || (program.LocalCount == 0 && program.FirstLocalIndex != -1 && program.Status == (byte)MorrowindScriptProgramStatus.Compiled)
@@ -276,7 +275,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled)
                 return;
 
-            int instructionCount = data.MorrowindScriptInstructions?.Length ?? 0;
+            int instructionCount = data.MorrowindScriptInstructions.Length;
             if (program.InstructionCount == 0)
             {
                 if (program.FirstInstructionIndex == -1)

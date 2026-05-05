@@ -54,20 +54,20 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static JournalWindowViewModel BuildJournalModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in JournalWindowState state,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> entries,
             DynamicBuffer<MorrowindTopicJournalEntry> topicEntries)
         {
-            var rows = BuildJournalQuestRows(contentDb, state, questStates, entries);
+            var rows = BuildJournalQuestRows(ref contentBlob, state, questStates, entries);
             int selectedDialogueIndex = ResolveSelectedJournalQuest(rows, state.SelectedDialogueIndex);
             for (int i = 0; i < rows.Length; i++)
                 rows[i].Selected = rows[i].DialogueIndex == selectedDialogueIndex;
 
             JournalQuestRowViewModel selected = FindJournalRow(rows, selectedDialogueIndex);
             JournalEntryRowViewModel[] selectedEntries = selected != null
-                ? BuildJournalEntryRows(contentDb, entries, selected.DialogueIndices)
+                ? BuildJournalEntryRows(ref contentBlob, entries, selected.DialogueIndices)
                 : Array.Empty<JournalEntryRowViewModel>();
 
             return new JournalWindowViewModel
@@ -87,34 +87,34 @@ namespace VVardenfell.Runtime.Shell
                 SelectedQuestStageText = selected?.StageText ?? string.Empty,
                 SelectedQuestStatusText = selected?.StatusText ?? string.Empty,
                 Quests = rows,
-                JournalEntries = BuildJournalEntryRows(contentDb, entries, null),
-                TopicEntries = BuildTopicJournalEntryRows(contentDb, topicEntries),
+                JournalEntries = BuildJournalEntryRows(ref contentBlob, entries, null),
+                TopicEntries = BuildTopicJournalEntryRows(ref contentBlob, topicEntries),
                 Entries = selectedEntries,
             };
         }
 
         static JournalQuestRowViewModel[] BuildJournalQuestRows(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in JournalWindowState state,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> entries)
         {
-            if (contentDb == null || questStates.Length == 0)
+            if (questStates.Length == 0)
                 return Array.Empty<JournalQuestRowViewModel>();
 
             var groups = new List<JournalQuestGroup>();
-            int questCount = Math.Min(questStates.Length, contentDb.DialogueCount);
+            int questCount = Math.Min(questStates.Length, contentBlob.Dialogues.Length);
             for (int dialogueIndex = 0; dialogueIndex < questCount; dialogueIndex++)
             {
                 var questState = questStates[dialogueIndex];
                 if (questState.Started == 0 && questState.Index == 0 && !HasJournalEntries(entries, dialogueIndex))
                     continue;
 
-                ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+                ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
                 if (dialogue.Type != DialogueDefType.Journal)
                     continue;
 
-                string questName = ResolveJournalQuestName(contentDb, dialogueIndex);
+                string questName = ResolveJournalQuestName(ref contentBlob, dialogueIndex);
                 if (string.IsNullOrWhiteSpace(questName))
                     continue;
 
@@ -195,13 +195,10 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static JournalEntryRowViewModel[] BuildJournalEntryRows(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindQuestJournalEntry> entries,
             int[] selectedDialogueIndices)
         {
-            if (contentDb == null)
-                return Array.Empty<JournalEntryRowViewModel>();
-
             var rows = new List<JournalEntryRowViewModel>();
             for (int i = 0; i < entries.Length; i++)
             {
@@ -211,7 +208,7 @@ namespace VVardenfell.Runtime.Shell
                     && !ContainsDialogueIndex(selectedDialogueIndices, entry.DialogueIndex))
                     continue;
 
-                string body = ResolveJournalEntryText(contentDb, entry.InfoIndex);
+                string body = ResolveJournalEntryText(ref contentBlob, entry.InfoIndex);
                 if (string.IsNullOrWhiteSpace(body))
                     continue;
 
@@ -219,7 +216,7 @@ namespace VVardenfell.Runtime.Shell
                 {
                     Sequence = entry.Sequence,
                     JournalIndex = entry.JournalIndex,
-                    TimestampText = ResolveJournalTimestamp(contentDb, entry),
+                    TimestampText = ResolveJournalTimestamp(ref contentBlob, entry),
                     StageText = $"Stage {entry.JournalIndex}",
                     BodyText = body ?? string.Empty,
                 });
@@ -230,29 +227,26 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static JournalEntryRowViewModel[] BuildTopicJournalEntryRows(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindTopicJournalEntry> entries)
         {
-            if (contentDb == null)
-                return Array.Empty<JournalEntryRowViewModel>();
-
             var rows = new List<JournalEntryRowViewModel>();
             for (int i = 0; i < entries.Length; i++)
             {
                 var entry = entries[i];
-                if ((uint)entry.DialogueIndex >= (uint)contentDb.DialogueCount
-                    || (uint)entry.InfoIndex >= (uint)contentDb.DialogueInfoCount)
+                if ((uint)entry.DialogueIndex >= (uint)contentBlob.Dialogues.Length
+                    || (uint)entry.InfoIndex >= (uint)contentBlob.DialogueInfos.Length)
                     continue;
 
-                string body = ResolveJournalEntryText(contentDb, entry.InfoIndex);
+                string body = ResolveJournalEntryText(ref contentBlob, entry.InfoIndex);
                 if (string.IsNullOrWhiteSpace(body))
                     continue;
 
                 rows.Add(new JournalEntryRowViewModel
                 {
                     Sequence = entry.Sequence,
-                    TimestampText = ResolveTopicTimestamp(contentDb, entry),
-                    StageText = ResolveDialogueTitle(contentDb, entry.DialogueIndex),
+                    TimestampText = ResolveTopicTimestamp(ref contentBlob, entry),
+                    StageText = ResolveDialogueTitle(ref contentBlob, entry.DialogueIndex),
                     BodyText = body,
                 });
             }
@@ -295,63 +289,76 @@ namespace VVardenfell.Runtime.Shell
             return result;
         }
 
-        static string ResolveJournalQuestName(RuntimeContentDatabase contentDb, int dialogueIndex)
+        static string ResolveJournalQuestName(ref RuntimeContentBlob contentBlob, int dialogueIndex)
         {
-            ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             int start = Math.Max(0, dialogue.FirstInfoIndex);
-            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             for (int i = start; i < end; i++)
             {
-                ref readonly DialogueInfoDef info = ref contentDb.Data.DialogueInfos[i];
+                ref RuntimeDialogueInfoDefBlob info = ref contentBlob.DialogueInfos[i];
                 if (info.QuestStatus != JournalQuestStatusName)
                     continue;
 
-                return string.IsNullOrWhiteSpace(info.Response) ? string.Empty : info.Response.Trim();
+                string response = info.Response.ToString();
+                return string.IsNullOrWhiteSpace(response) ? string.Empty : response.Trim();
             }
 
             return string.Empty;
         }
 
-        static string ResolveJournalEntryText(RuntimeContentDatabase contentDb, int infoIndex)
+        static string ResolveJournalEntryText(ref RuntimeContentBlob contentBlob, int infoIndex)
         {
-            if (contentDb == null || (uint)infoIndex >= (uint)contentDb.DialogueInfoCount)
+            if ((uint)infoIndex >= (uint)contentBlob.DialogueInfos.Length)
                 return string.Empty;
 
-            string response = contentDb.Data.DialogueInfos[infoIndex].Response;
+            string response = contentBlob.DialogueInfos[infoIndex].Response.ToString();
             return string.IsNullOrWhiteSpace(response) ? string.Empty : response.Trim();
         }
 
-        static string ResolveJournalTimestamp(RuntimeContentDatabase contentDb, in MorrowindQuestJournalEntry entry)
+        static string ResolveDialogueTitle(ref RuntimeContentBlob contentBlob, int dialogueIndex)
+        {
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
+                return string.Empty;
+
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            string stringId = dialogue.StringId.ToString();
+            if (!string.IsNullOrWhiteSpace(stringId))
+                return stringId.Trim();
+
+            string id = dialogue.Id.ToString();
+            return string.IsNullOrWhiteSpace(id) ? string.Empty : id.Trim();
+        }
+
+        static string ResolveJournalTimestamp(ref RuntimeContentBlob contentBlob, in MorrowindQuestJournalEntry entry)
         {
             if (entry.DayOfMonth <= 0)
                 return string.Empty;
 
             int month = Math.Clamp(entry.Month, 0, k_DefaultMonthNames.Length - 1);
-            string monthName = ResolveMonthName(contentDb, month);
-            string dayLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sDay", "Day");
+            string monthName = ResolveMonthName(ref contentBlob, month);
+            string dayLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sDay", "Day");
             return $"{entry.DayOfMonth} {monthName} ({dayLabel} {entry.Day})";
         }
 
-        static string ResolveTopicTimestamp(RuntimeContentDatabase contentDb, in MorrowindTopicJournalEntry entry)
+        static string ResolveTopicTimestamp(ref RuntimeContentBlob contentBlob, in MorrowindTopicJournalEntry entry)
         {
             if (entry.DayOfMonth <= 0)
                 return string.Empty;
 
             int month = Math.Clamp(entry.Month, 0, k_DefaultMonthNames.Length - 1);
-            string monthName = ResolveMonthName(contentDb, month);
-            string dayLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sDay", "Day");
+            string monthName = ResolveMonthName(ref contentBlob, month);
+            string dayLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sDay", "Day");
             return $"{entry.DayOfMonth} {monthName} ({dayLabel} {entry.Day})";
         }
 
-        static string ResolveMonthName(RuntimeContentDatabase contentDb, int month)
+        static string ResolveMonthName(ref RuntimeContentBlob contentBlob, int month)
         {
-            if (contentDb != null
-                && month >= 0
-                && month < k_MonthGameSettings.Length
-                && contentDb.TryGetGameSettingString(k_MonthGameSettings[month], out string value)
-                && !string.IsNullOrWhiteSpace(value))
+            if (month >= 0 && month < k_MonthGameSettings.Length)
             {
-                return value.Trim();
+                string value = RuntimeContentBlobUtility.RequireGameSettingStringAllowEmptyByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(k_MonthGameSettings[month]));
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value.Trim();
             }
 
             return k_DefaultMonthNames[Math.Clamp(month, 0, k_DefaultMonthNames.Length - 1)];

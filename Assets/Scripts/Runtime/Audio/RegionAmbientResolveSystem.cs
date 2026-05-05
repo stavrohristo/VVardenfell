@@ -4,7 +4,6 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -19,19 +18,25 @@ namespace VVardenfell.Runtime.Audio
         {
             RequireForUpdate<AudioContextState>();
             RequireForUpdate<RegionAmbientState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
         {
             using var _ = k_RegionResolve.Auto();
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] region ambient resolve requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             ref var context = ref SystemAPI.GetSingletonRW<AudioContextState>().ValueRW;
             ref var regionState = ref SystemAPI.GetSingletonRW<RegionAmbientState>().ValueRW;
 
             regionState.PendingEventSound = default;
 
-            if (context.Mode != AudioPlaybackMode.World || contentDb == null)
+            if (context.Mode != AudioPlaybackMode.World)
             {
                 regionState.Region = default;
                 return;
@@ -50,19 +55,21 @@ namespace VVardenfell.Runtime.Audio
                 ? SystemAPI.GetSingleton<ActiveEnvironmentState>()
                 : default;
 
-            regionState.Region = ResolveExteriorRegion(contentDb, streaming.CameraCell, environment);
+            regionState.Region = ResolveExteriorRegion(ref contentBlob, ref worldCells, streaming.CameraCell, environment);
         }
 
-        static RegionDefHandle ResolveExteriorRegion(RuntimeContentDatabase contentDb, int2 cameraCell, ActiveEnvironmentState environment)
+        static RegionDefHandle ResolveExteriorRegion(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, int2 cameraCell, ActiveEnvironmentState environment)
         {
-            if (contentDb == null)
-                return default;
-
-            if (WorldResources.Cells.TryGetValue(cameraCell, out var cell)
-                && cell != null
-                && !string.IsNullOrWhiteSpace(cell.Environment.RegionId)
-                && contentDb.TryGetRegionHandle(cell.Environment.RegionId, out var regionHandle))
-                return regionHandle;
+            if (RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, cameraCell, out int cellIndex))
+            {
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                if (cell.Environment.RegionIdHash != 0UL
+                    && RuntimeContentBlobUtility.TryGetRegionHandleByIdHash(ref contentBlob, cell.Environment.RegionIdHash, out var regionHandle)
+                    && regionHandle.IsValid)
+                {
+                    return regionHandle;
+                }
+            }
 
             if (environment.RegionHandleValue > 0)
                 return new RegionDefHandle { Value = environment.RegionHandleValue };

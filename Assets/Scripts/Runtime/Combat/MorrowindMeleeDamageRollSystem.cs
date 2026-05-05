@@ -5,7 +5,6 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Systems;
 
@@ -22,12 +21,15 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindMeleeHitEvent>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Melee damage roll requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
@@ -37,7 +39,7 @@ namespace VVardenfell.Runtime.Combat
                      SystemAPI.Query<RefRO<MorrowindMeleeHitEvent>>()
                          .WithEntityAccess())
             {
-                var pendingDamage = ResolveDamage(contentDb, ref random, hit.ValueRO);
+                var pendingDamage = ResolveDamage(ref content, ref random, hit.ValueRO);
                 ecb.RemoveComponent<MorrowindMeleeHitEvent>(entity);
                 ecb.AddComponent(entity, pendingDamage);
             }
@@ -48,7 +50,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         MorrowindPendingDamageEvent ResolveDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref Unity.Mathematics.Random random,
             in MorrowindMeleeHitEvent hit)
         {
@@ -70,7 +72,7 @@ namespace VVardenfell.Runtime.Combat
                                   && EntityManager.GetComponentData<ActorCombatTargetState>(target).Active != 0;
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 hit.WeaponContent,
                 out bool hasWeapon,
                 out ItemDefHandle weaponHandle,
@@ -78,7 +80,7 @@ namespace VVardenfell.Runtime.Combat
                 out bool weaponHasEnchantment);
 
             float hitChance = MorrowindMeleeCombatMechanics.ComputeHitChance(
-                contentDb,
+                ref content,
                 attackerAttributes,
                 attackerSkills,
                 attackerVitals,
@@ -94,19 +96,19 @@ namespace VVardenfell.Runtime.Combat
             if (hasWeapon)
             {
                 float amount = MorrowindMeleeCombatMechanics.ComputeWeaponDamage(
-                    contentDb,
+                    ref content,
                     attackerAttributes,
                     weapon,
                     hit.AttackType,
                     fullDamage);
                 amount *= MorrowindWeaponConditionUtility.ResolveEquippedConditionMultiplier(
-                    contentDb,
+                    ref content,
                     EntityManager,
                     attacker,
                     hit.WeaponContent,
                     weapon);
                 MorrowindWeaponConditionUtility.ApplyWeaponConditionDamage(
-                    contentDb,
+                    ref content,
                     EntityManager,
                     attacker,
                     hit.WeaponContent,
@@ -133,7 +135,7 @@ namespace VVardenfell.Runtime.Combat
                                 || aftermath.KnockedOut != 0
                                 || MorrowindMeleeCombatMechanics.SumEffectMagnitude(targetEffects, ParalyzeEffectId) > 0f;
             float handToHandDamage = MorrowindMeleeCombatMechanics.ComputeHandToHandDamage(
-                contentDb,
+                ref content,
                 attackerAttributes,
                 attackerSkills,
                 fullDamage,

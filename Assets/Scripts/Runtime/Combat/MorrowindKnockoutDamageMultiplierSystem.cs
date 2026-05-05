@@ -1,5 +1,6 @@
 using System;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
@@ -14,13 +15,16 @@ namespace VVardenfell.Runtime.Combat
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindPendingDamageEvent>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
-            float knockoutDamageMult = contentDb.RequireGameSettingFloat("fCombatKODamageMult");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Damage] KO damage multiplier requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            float knockoutDamageMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatKODamageMult);
 
             foreach (var damage in SystemAPI.Query<RefRW<MorrowindPendingDamageEvent>>())
             {
@@ -62,3 +66,5 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+
+

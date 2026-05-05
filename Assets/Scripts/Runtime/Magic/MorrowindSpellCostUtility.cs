@@ -3,7 +3,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 
 namespace VVardenfell.Runtime.Magic
@@ -19,20 +18,19 @@ namespace VVardenfell.Runtime.Magic
         public const int MagicEffectFlagHarmful = 0x10;
         public const int MagicEffectFlagAppliedOnce = 0x1000;
 
-        public static int CalculateSpellCost(RuntimeContentDatabase contentDb, in SpellDef spell)
+        public static int CalculateSpellCost(ref RuntimeContentBlob content, ref RuntimeSpellDefBlob spell)
         {
             if ((spell.Flags & SpellFlagAutocalc) == 0)
                 return math.max(0, spell.Cost);
 
-            if (!MorrowindActorMagicUtility.TryGetSpellEffects(contentDb, spell, out var effects))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Autocalc spell '{spell.Id}' has no effect list.");
-
-            float costMult = contentDb.RequireGameSettingFloat("fEffectCostMult");
+            MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
+            float costMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fEffectCostMult);
             float total = 0f;
-            for (int i = 0; i < effects.Length; i++)
+            ulong spellContentId = spell.ContentId.Value;
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                var instance = effects[i];
-                ref readonly var effect = ref RequireMagicEffect(contentDb, instance.EffectId, spell.Id);
+                ref MagicEffectInstanceDef instance = ref content.MagicEffectInstances[spell.EffectStartIndex + i];
+                ref RuntimeMagicEffectDefBlob effect = ref RequireMagicEffect(ref content, instance.EffectId, spellContentId);
                 float duration = (effect.Flags & MagicEffectFlagNoDuration) != 0 ? 1f : math.max(1f, instance.Duration);
                 if ((effect.Flags & MagicEffectFlagAppliedOnce) != 0)
                     duration = math.max(0f, instance.Duration);
@@ -50,8 +48,8 @@ namespace VVardenfell.Runtime.Magic
         }
 
         public static float CalculateSuccessChance(
-            RuntimeContentDatabase contentDb,
-            in SpellDef spell,
+            ref RuntimeContentBlob content,
+            ref RuntimeSpellDefBlob spell,
             in ActorAttributeSet attributes,
             in ActorSkillSet skills,
             in ActorVitalSet vitals,
@@ -70,32 +68,31 @@ namespace VVardenfell.Runtime.Magic
             if (MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(activeEffects, MorrowindMagicEffectIds.Silence) > 0f)
                 return 0f;
 
-            int spellCost = CalculateSpellCost(contentDb, spell);
+            int spellCost = CalculateSpellCost(ref content, ref spell);
             if (checkMagicka && spellCost > 0 && vitals.CurrentMagicka < spellCost)
                 return 0f;
 
-            float baseChance = CalculateBaseChance(contentDb, spell, attributes, skills, out effectiveSchool);
+            float baseChance = CalculateBaseChance(ref content, ref spell, attributes, skills, out effectiveSchool);
             float soundPenalty = MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(activeEffects, MorrowindMagicEffectIds.Sound);
             return (baseChance - soundPenalty) * derived.FatigueTerm;
         }
 
         static float CalculateBaseChance(
-            RuntimeContentDatabase contentDb,
-            in SpellDef spell,
+            ref RuntimeContentBlob content,
+            ref RuntimeSpellDefBlob spell,
             in ActorAttributeSet attributes,
             in ActorSkillSet skills,
             out ActorSkillKind effectiveSchool)
         {
-            if (!MorrowindActorMagicUtility.TryGetSpellEffects(contentDb, spell, out var effects))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' has no effect list.");
-
-            float costMult = contentDb.RequireGameSettingFloat("fEffectCostMult");
+            MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
+            ulong spellContentId = spell.ContentId.Value;
+            float costMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fEffectCostMult);
             float lowest = float.PositiveInfinity;
             effectiveSchool = ActorSkillKind.None;
-            for (int i = 0; i < effects.Length; i++)
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                var instance = effects[i];
-                ref readonly var effect = ref RequireMagicEffect(contentDb, instance.EffectId, spell.Id);
+                ref MagicEffectInstanceDef instance = ref content.MagicEffectInstances[spell.EffectStartIndex + i];
+                ref RuntimeMagicEffectDefBlob effect = ref RequireMagicEffect(ref content, instance.EffectId, spellContentId);
                 float duration = instance.Duration;
                 if ((effect.Flags & MagicEffectFlagAppliedOnce) == 0)
                     duration = math.max(1f, duration);
@@ -118,9 +115,9 @@ namespace VVardenfell.Runtime.Magic
             }
 
             if (!math.isfinite(lowest))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' produced no effective school.");
+                throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spellContentId:X16} produced no effective school.");
 
-            return lowest - CalculateSpellCost(contentDb, spell) + (0.2f * attributes.Willpower) + (0.1f * attributes.Luck);
+            return lowest - CalculateSpellCost(ref content, ref spell) + (0.2f * attributes.Willpower) + (0.1f * attributes.Luck);
         }
 
         public static ActorSkillKind ResolveSchool(int school)
@@ -135,11 +132,11 @@ namespace VVardenfell.Runtime.Magic
                 _ => throw new InvalidOperationException($"[VVardenfell][Magic] Unknown magic school {school}."),
             };
 
-        static ref readonly MagicEffectDef RequireMagicEffect(RuntimeContentDatabase contentDb, short effectId, string spellId)
+        public static ref RuntimeMagicEffectDefBlob RequireMagicEffect(ref RuntimeContentBlob content, short effectId, ulong spellContentId)
         {
-            if (!contentDb.TryGetMagicEffectHandle(effectId, out var handle) || !handle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spellId}' references missing magic effect {effectId}.");
-            return ref contentDb.Get(handle);
+            if (!RuntimeContentBlobUtility.TryGetMagicEffectHandleByIndex(ref content, effectId, out MagicEffectDefHandle handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spellContentId:X16} references missing magic effect {effectId}.");
+            return ref RuntimeContentBlobUtility.Get(ref content, handle);
         }
     }
 

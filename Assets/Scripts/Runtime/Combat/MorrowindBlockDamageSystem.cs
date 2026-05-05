@@ -24,12 +24,15 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindPendingDamageEvent>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Block] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Block] Block damage requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
@@ -39,14 +42,14 @@ namespace VVardenfell.Runtime.Combat
                 if (damage.ValueRO.Amount <= 0f || !IsMeleeDamage(damage.ValueRO.SourceKind))
                     continue;
 
-                if (TryBlockDamage(contentDb, ref random, damage.ValueRO, out var impact))
+                if (TryBlockDamage(ref content, ref random, damage.ValueRO, out var impact))
                 {
                     damage.ValueRW.Amount = 0f;
                     damage.ValueRW.BlockImpact = impact;
                     TriggerBlockAnimation(impact.Target);
-                    SpendBlockFatigue(contentDb, damage.ValueRO, impact.Target);
+                    SpendBlockFatigue(ref content, damage.ValueRO, impact.Target);
                     MorrowindArmorDamageUtility.ApplyShieldBlockConditionDamage(
-                        contentDb,
+                        ref content,
                         EntityManager,
                         impact.Target,
                         impact.ShieldContent,
@@ -58,7 +61,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TryBlockDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref Unity.Mathematics.Random random,
             in MorrowindPendingDamageEvent damage,
             out MorrowindBlockImpact impact)
@@ -86,15 +89,15 @@ namespace VVardenfell.Runtime.Combat
             if (MorrowindMeleeCombatMechanics.SumEffectMagnitude(targetEffects, ParalyzeEffectId) > 0f)
                 return false;
 
-            if (!TryResolveShield(contentDb, target, out var shieldSlot, out var shield))
+            if (!TryResolveShield(ref content, target, out var shieldSlot, out var shield))
                 return false;
 
             if (!IsCarriedLeftVisibleForBlock(target))
                 return false;
 
             float angleDegrees = ComputeBlockAngleDegrees(attacker, target);
-            float leftAngle = contentDb.RequireGameSettingFloat("fCombatBlockLeftAngle");
-            float rightAngle = contentDb.RequireGameSettingFloat("fCombatBlockRightAngle");
+            float leftAngle = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatBlockLeftAngle);
+            float rightAngle = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatBlockRightAngle);
             if (angleDegrees < leftAngle || angleDegrees > rightAngle)
                 return false;
 
@@ -120,15 +123,15 @@ namespace VVardenfell.Runtime.Combat
 
             float blockTerm = targetSkills.Block + 0.2f * targetAttributes.Agility + 0.1f * targetAttributes.Luck;
             float swingTerm = math.saturate(damage.AttackStrength)
-                              * contentDb.RequireGameSettingFloat("fSwingBlockMult")
-                              + contentDb.RequireGameSettingFloat("fSwingBlockBase");
+                              * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fSwingBlockMult)
+                              + RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fSwingBlockBase);
             float blockerTerm = blockTerm * swingTerm;
             if (IsNotMovingForward(target))
-                blockerTerm *= contentDb.RequireGameSettingFloat("fBlockStillBonus");
-            blockerTerm *= MorrowindMeleeCombatMechanics.ComputeFatigueTerm(contentDb, targetVitals);
+                blockerTerm *= RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fBlockStillBonus);
+            blockerTerm *= MorrowindMeleeCombatMechanics.ComputeFatigueTerm(ref content, targetVitals);
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 damage.SourceKind == MorrowindDamageSourceKind.Weapon ? damage.SourceContent : default,
                 out bool hasWeapon,
                 out _,
@@ -136,10 +139,10 @@ namespace VVardenfell.Runtime.Combat
                 out _);
             float attackerSkill = MorrowindMeleeCombatMechanics.ResolveWeaponSkill(attackerSkills, hasWeapon ? weapon.Type : -1);
             float attackerTerm = attackerSkill + 0.2f * attackerAttributes.Agility + 0.1f * attackerAttributes.Luck;
-            attackerTerm *= MorrowindMeleeCombatMechanics.ComputeFatigueTerm(contentDb, attackerVitals);
+            attackerTerm *= MorrowindMeleeCombatMechanics.ComputeFatigueTerm(ref content, attackerVitals);
 
-            int minChance = contentDb.RequireGameSettingInt("iBlockMinChance");
-            int maxChance = contentDb.RequireGameSettingInt("iBlockMaxChance");
+            int minChance = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iBlockMinChance);
+            int maxChance = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iBlockMaxChance);
             int chance = math.clamp((int)(blockerTerm - attackerTerm), minChance, maxChance);
             int roll = random.NextInt(100);
             if (roll >= chance)
@@ -149,7 +152,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 Target = target,
                 ShieldContent = shieldSlot.Content,
-                ShieldSkill = MorrowindArmorDamageUtility.ResolveArmorSkillKind(contentDb, shield),
+                ShieldSkill = MorrowindArmorDamageUtility.ResolveArmorSkillKind(ref content, shield),
                 IncomingDamage = damage.Amount,
                 Chance = chance,
                 Roll = roll,
@@ -169,7 +172,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TryResolveShield(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity target,
             out ActorEquipmentSlot shieldSlot,
             out ItemEquipmentDef shield)
@@ -178,7 +181,7 @@ namespace VVardenfell.Runtime.Combat
             shield = default;
             if (!EntityManager.HasBuffer<ActorEquipmentSlot>(target))
             {
-                if (IsCreature(contentDb, target))
+                if (IsCreature(ref content, target))
                     return false;
 
                 throw new InvalidOperationException($"[VVardenfell][Block] Non-creature target ref={PlacedRefId(target)} has no ActorEquipmentSlot buffer.");
@@ -186,14 +189,14 @@ namespace VVardenfell.Runtime.Combat
 
             var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(target, true);
             return MorrowindArmorDamageUtility.TryGetEquippedArmor(
-                contentDb,
+                ref content,
                 equipment,
                 ItemEquipmentSlot.Shield,
                 out shieldSlot,
                 out shield);
         }
 
-        bool IsCreature(RuntimeContentDatabase contentDb, Entity actor)
+        bool IsCreature(ref RuntimeContentBlob content, Entity actor)
         {
             if (EntityManager.HasComponent<PlayerTag>(actor))
                 return false;
@@ -204,7 +207,7 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(actor)} has invalid actor definition.");
 
-            ref readonly var actorDef = ref contentDb.Get(source.Definition);
+            ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actorDef.Kind == ActorDefKind.Creature;
         }
 
@@ -288,7 +291,7 @@ namespace VVardenfell.Runtime.Combat
             return math.saturate(damage.AttackStrength);
         }
 
-        void SpendBlockFatigue(RuntimeContentDatabase contentDb, in MorrowindPendingDamageEvent damage, Entity target)
+        void SpendBlockFatigue(ref RuntimeContentBlob content, in MorrowindPendingDamageEvent damage, Entity target)
         {
             if (!EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorVitalSet.");
@@ -297,13 +300,13 @@ namespace VVardenfell.Runtime.Combat
 
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
             var derived = EntityManager.GetComponentData<ActorDerivedMovementStats>(target);
-            float fatigueLoss = contentDb.RequireGameSettingFloat("fFatigueBlockBase")
-                                + math.saturate(derived.NormalizedEncumbrance) * contentDb.RequireGameSettingFloat("fFatigueBlockMult");
+            float fatigueLoss = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueBlockBase)
+                                + math.saturate(derived.NormalizedEncumbrance) * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueBlockMult);
 
             if (damage.SourceKind == MorrowindDamageSourceKind.Weapon)
             {
                 MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                    contentDb,
+                    ref content,
                     damage.SourceContent,
                     out bool hasWeapon,
                     out _,
@@ -312,7 +315,7 @@ namespace VVardenfell.Runtime.Combat
                 if (!hasWeapon)
                     throw new InvalidOperationException("[VVardenfell][Block] Weapon damage has no weapon equipment.");
 
-                fatigueLoss += weapon.Weight * math.saturate(ResolveAttackStrength(damage)) * contentDb.RequireGameSettingFloat("fWeaponFatigueBlockMult");
+                fatigueLoss += weapon.Weight * math.saturate(ResolveAttackStrength(damage)) * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fWeaponFatigueBlockMult);
             }
 
             vitals.CurrentFatigue -= fatigueLoss;
@@ -345,3 +348,5 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+
+

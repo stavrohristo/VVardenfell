@@ -2,6 +2,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
+using Unity.Profiling;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
@@ -14,6 +15,15 @@ namespace VVardenfell.Runtime.Physics
         const float MinUsableHitFraction = 0.001f;
         const uint MaxRetainedResultAgeTicks = 8u;
 
+        static readonly ProfilerMarker k_ResolveQueries = new("VV.Physics.DeferredQuery.Resolve");
+        static readonly ProfilerMarker k_PruneResults = new("VV.Physics.DeferredQuery.PruneResults");
+        static readonly ProfilerMarker k_ProcessRequests = new("VV.Physics.DeferredQuery.ProcessRequests");
+        static readonly ProfilerMarker k_GenericRayRequests = new("VV.Physics.DeferredQuery.Kind.GenericRay");
+        static readonly ProfilerMarker k_InteractionPickRequests = new("VV.Physics.DeferredQuery.Kind.InteractionPick");
+        static readonly ProfilerMarker k_LineOfSightRequests = new("VV.Physics.DeferredQuery.Kind.LineOfSight");
+        static readonly ProfilerMarker k_MeleeConfirmationRequests = new("VV.Physics.DeferredQuery.Kind.MeleeConfirmation");
+        static readonly ProfilerMarker k_ProjectileSegmentRequests = new("VV.Physics.DeferredQuery.Kind.ProjectileSegment");
+
         protected override void OnCreate()
         {
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
@@ -23,6 +33,7 @@ namespace VVardenfell.Runtime.Physics
 
         protected override void OnUpdate()
         {
+            using var resolveScope = k_ResolveQueries.Auto();
             Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             if (!EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
                 throw new System.InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
@@ -38,7 +49,10 @@ namespace VVardenfell.Runtime.Physics
             var frame = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>();
             runtime.LastResolvedBuildSequence = frame.BuildSequence;
             EntityManager.SetComponentData(queueEntity, runtime);
-            PruneExpiredResults(results, frame.FixedTick);
+            using (k_PruneResults.Auto())
+            {
+                PruneExpiredResults(results, frame.FixedTick);
+            }
 
             if (requests.Length == 0)
             {
@@ -47,10 +61,11 @@ namespace VVardenfell.Runtime.Physics
             }
 
             var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
-            using var hits = new NativeList<Unity.Physics.RaycastHit>(Allocator.Temp);
-            using var colliderHits = new NativeList<ColliderCastHit>(Allocator.Temp);
-            for (int i = 0; i < requests.Length; i++)
-                ResolveRequest(physicsWorld, requests[i], runtime.LastResolvedBuildSequence, hits, colliderHits, results);
+            using (k_ProcessRequests.Auto())
+            {
+                for (int i = 0; i < requests.Length; i++)
+                    ResolveRequestProfiled(physicsWorld, requests[i], runtime.LastResolvedBuildSequence, results);
+            }
 
             requests.Clear();
             EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, false);
@@ -68,12 +83,44 @@ namespace VVardenfell.Runtime.Physics
             }
         }
 
+        static void ResolveRequestProfiled(
+            in PhysicsWorldSingleton physicsWorld,
+            in DeferredPhysicsQueryRequest request,
+            uint buildSequence,
+            DynamicBuffer<DeferredPhysicsQueryResult> results)
+        {
+            switch (request.Kind)
+            {
+                case DeferredPhysicsQueryKind.GenericRay:
+                    using (k_GenericRayRequests.Auto())
+                        ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+                case DeferredPhysicsQueryKind.InteractionPick:
+                    using (k_InteractionPickRequests.Auto())
+                        ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+                case DeferredPhysicsQueryKind.LineOfSight:
+                    using (k_LineOfSightRequests.Auto())
+                        ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+                case DeferredPhysicsQueryKind.MeleeConfirmation:
+                    using (k_MeleeConfirmationRequests.Auto())
+                        ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+                case DeferredPhysicsQueryKind.ProjectileSegment:
+                    using (k_ProjectileSegmentRequests.Auto())
+                        ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+                default:
+                    ResolveRequest(physicsWorld, request, buildSequence, results);
+                    break;
+            }
+        }
+
         static void ResolveRequest(
             in PhysicsWorldSingleton physicsWorld,
             in DeferredPhysicsQueryRequest request,
             uint buildSequence,
-            NativeList<Unity.Physics.RaycastHit> hits,
-            NativeList<ColliderCastHit> colliderHits,
             DynamicBuffer<DeferredPhysicsQueryResult> results)
         {
             var result = new DeferredPhysicsQueryResult
@@ -97,7 +144,7 @@ namespace VVardenfell.Runtime.Physics
 
             if (request.Collider.IsCreated)
             {
-                ResolveColliderCast(physicsWorld, request, ref result, colliderHits);
+                ResolveColliderCast(physicsWorld, request, ref result);
                 results.Add(result);
                 return;
             }
@@ -109,33 +156,17 @@ namespace VVardenfell.Runtime.Physics
                 Filter = request.Filter,
             };
 
-            hits.Clear();
-            if (!physicsWorld.CastRay(input, ref hits))
+            var collector = new NearestUsableRaycastCollector
+            {
+                Request = request,
+            };
+            if (!physicsWorld.CollisionWorld.CastRay(input, ref collector) || !collector.Found)
             {
                 results.Add(result);
                 return;
             }
 
-            bool found = false;
-            Unity.Physics.RaycastHit nearest = default;
-            for (int i = 0; i < hits.Length; i++)
-            {
-                var hit = hits[i];
-                if (!IsUsableHit(hit, request))
-                    continue;
-                if (found && hit.Fraction >= nearest.Fraction)
-                    continue;
-
-                found = true;
-                nearest = hit;
-            }
-
-            if (!found)
-            {
-                results.Add(result);
-                return;
-            }
-
+            var nearest = collector.Nearest;
             result.Status = DeferredPhysicsQueryStatus.Hit;
             result.HitEntity = nearest.Entity;
             result.Position = nearest.Position;
@@ -147,31 +178,17 @@ namespace VVardenfell.Runtime.Physics
         static void ResolveColliderCast(
             in PhysicsWorldSingleton physicsWorld,
             in DeferredPhysicsQueryRequest request,
-            ref DeferredPhysicsQueryResult result,
-            NativeList<ColliderCastHit> hits)
+            ref DeferredPhysicsQueryResult result)
         {
             var input = new ColliderCastInput(request.Collider, request.Start, request.End, request.Rotation);
-            hits.Clear();
-            if (!physicsWorld.CollisionWorld.CastCollider(input, ref hits))
-                return;
-
-            bool found = false;
-            ColliderCastHit nearest = default;
-            for (int i = 0; i < hits.Length; i++)
+            var collector = new NearestUsableColliderCastCollector
             {
-                var hit = hits[i];
-                if (!IsUsableHit(hit, request))
-                    continue;
-                if (found && hit.Fraction >= nearest.Fraction)
-                    continue;
-
-                found = true;
-                nearest = hit;
-            }
-
-            if (!found)
+                Request = request,
+            };
+            if (!physicsWorld.CollisionWorld.CastCollider(input, ref collector) || !collector.Found)
                 return;
 
+            var nearest = collector.Nearest;
             result.Status = DeferredPhysicsQueryStatus.Hit;
             result.HitEntity = nearest.Entity;
             result.Position = nearest.Position;
@@ -205,6 +222,52 @@ namespace VVardenfell.Runtime.Physics
                 return false;
 
             return true;
+        }
+
+        struct NearestUsableRaycastCollector : ICollector<Unity.Physics.RaycastHit>
+        {
+            public DeferredPhysicsQueryRequest Request;
+            public Unity.Physics.RaycastHit Nearest;
+            public bool Found;
+
+            public bool EarlyOutOnFirstHit => false;
+            public float MaxFraction => Found ? Nearest.Fraction : 1f;
+            public int NumHits => Found ? 1 : 0;
+
+            public bool AddHit(Unity.Physics.RaycastHit hit)
+            {
+                if (!IsUsableHit(hit, Request))
+                    return false;
+                if (Found && hit.Fraction >= Nearest.Fraction)
+                    return false;
+
+                Found = true;
+                Nearest = hit;
+                return true;
+            }
+        }
+
+        struct NearestUsableColliderCastCollector : ICollector<ColliderCastHit>
+        {
+            public DeferredPhysicsQueryRequest Request;
+            public ColliderCastHit Nearest;
+            public bool Found;
+
+            public bool EarlyOutOnFirstHit => false;
+            public float MaxFraction => Found ? Nearest.Fraction : 1f;
+            public int NumHits => Found ? 1 : 0;
+
+            public bool AddHit(ColliderCastHit hit)
+            {
+                if (!IsUsableHit(hit, Request))
+                    return false;
+                if (Found && hit.Fraction >= Nearest.Fraction)
+                    return false;
+
+                Found = true;
+                Nearest = hit;
+                return true;
+            }
         }
     }
 }

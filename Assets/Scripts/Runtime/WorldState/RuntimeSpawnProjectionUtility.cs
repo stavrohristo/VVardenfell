@@ -8,7 +8,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Streaming;
 
@@ -40,13 +39,17 @@ namespace VVardenfell.Runtime.WorldState
         }
 
         public static bool TryRestoreAliveRefsForCurrentWorld(
-            EntityManager entityManager,
-            RuntimeContentDatabase contentDb)
+            EntityManager entityManager)
         {
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            var worldCellBlob = RequireRuntimeWorldCellBlob(entityManager);
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
             var createEcb = new EntityCommandBuffer(Allocator.Temp);
             if (!TryQueueRestoreAliveRefsCreatePhase(
                     entityManager,
-                    contentDb,
+                    ref content,
+                    ref worldCells,
                     ref createEcb,
                     out var projection))
             {
@@ -177,12 +180,13 @@ namespace VVardenfell.Runtime.WorldState
 
         public static bool TryQueueRestoreAliveRefsCreatePhase(
             EntityManager entityManager,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeWorldCellBlob worldCells,
             ref EntityCommandBuffer ecb,
             out RestoreAliveRefsProjection projection)
         {
             projection = default;
-            if (contentDb == null || !TryGetRegistryEntity(entityManager, out Entity registryEntity))
+            if (!TryGetRegistryEntity(entityManager, out Entity registryEntity))
                 return false;
 
             Entity streamingEntity = WorldStateEntityQueryUtility.GetSingletonEntity<LogicalRefLookup>(entityManager);
@@ -220,9 +224,16 @@ namespace VVardenfell.Runtime.WorldState
 
                 if (entry.IsInterior == 0)
                 {
+                    if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, entry.ExteriorCell, out _))
+                        throw new System.InvalidOperationException($"[VVardenfell][Save] alive runtime ref 0x{entry.RuntimeRefId:X8} references missing exterior cell ({entry.ExteriorCell.x},{entry.ExteriorCell.y}).");
+
                     EnsureExteriorCapacity(ref available);
                     available.Set.Add(entry.ExteriorCell);
                     changedAvailable = true;
+                }
+                else if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, entry.InteriorCellHash, out _))
+                {
+                    throw new System.InvalidOperationException($"[VVardenfell][Save] alive runtime ref 0x{entry.RuntimeRefId:X8} references missing interior hash 0x{entry.InteriorCellHash:X16}.");
                 }
 
                 bool shouldSpawn = entry.IsInterior == 0
@@ -250,7 +261,7 @@ namespace VVardenfell.Runtime.WorldState
                     ? RuntimeSpawnFactory.QueueActorSpawn(
                         entityManager,
                         ref ecb,
-                        contentDb,
+                        ref content,
                         entry.Content,
                         entry.RuntimeRefId,
                         entry.Position,
@@ -263,7 +274,7 @@ namespace VVardenfell.Runtime.WorldState
                     : RuntimeSpawnFactory.QueueSpawn(
                         entityManager,
                         ref ecb,
-                        contentDb,
+                        ref content,
                         descriptor,
                         entry.Content,
                         entry.RuntimeRefId,
@@ -378,17 +389,25 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.InteriorActive && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId))
             {
                 ulong activeInteriorCellHash = InteriorCellIdHash.Hash(payload.ActiveInteriorCellId);
-                if (!WorldResources.TryGetInteriorCell(activeInteriorCellHash, out CellData interiorCell))
+                var worldCellBlob = RequireRuntimeWorldCellBlob(entityManager);
+                ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, activeInteriorCellHash, out _))
                 {
                     error = $"Continue save references missing interior '{payload.ActiveInteriorCellId}'.";
                     return false;
                 }
 
                 WorldSpawner.HideExteriorVisibility(world, ref loaded);
-                WorldSpawner.SpawnInteriorCell(world, interiorCell, InteriorWorldOffset, transitionEntity, ref logicalLookup);
+                if (!WorldSpawner.TrySpawnInteriorCellByHash(world, activeInteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalLookup, out FixedString128Bytes spawnedInteriorCellId))
+                {
+                    error = $"Continue save references unloaded interior '{payload.ActiveInteriorCellId}'.";
+                    return false;
+                }
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
-                transition.ActiveInteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(payload.ActiveInteriorCellId);
+                transition.ActiveInteriorCellId = spawnedInteriorCellId.IsEmpty
+                    ? RuntimeFixedStringUtility.ToFixed128OrDefault(payload.ActiveInteriorCellId)
+                    : spawnedInteriorCellId;
                 transition.ActiveInteriorCellHash = activeInteriorCellHash;
                 transition.TransitionInProgress = 0;
 
@@ -443,6 +462,30 @@ namespace VVardenfell.Runtime.WorldState
 
             registryEntity = query.GetSingletonEntity();
             return true;
+        }
+
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+            if (query.IsEmptyIgnoreFilter)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Runtime spawn projection requires runtime content blob.");
+
+            var blob = entityManager.GetComponentData<RuntimeContentBlobReference>(query.GetSingletonEntity()).Blob;
+            if (!blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Runtime spawn projection content blob is not created.");
+            return blob;
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireRuntimeWorldCellBlob(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] Runtime spawn projection requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var blob = query.GetSingleton<RuntimeWorldCellBlobReference>().Blob;
+            if (!blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] Runtime spawn projection requires runtime world cell blob.");
+            return blob;
         }
 
         static bool IsExteriorCellActive(in StreamingConfig config, int2 exteriorCell)

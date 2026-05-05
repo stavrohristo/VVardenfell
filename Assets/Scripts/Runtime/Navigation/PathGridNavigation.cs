@@ -1,10 +1,10 @@
 using System;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Pathfinding
 {
@@ -240,23 +240,25 @@ namespace VVardenfell.Runtime.Pathfinding
         public int NodeCount => Nodes.IsCreated ? Nodes.Length : 0;
         public int PortalCount => Portals.IsCreated ? Portals.Length : 0;
 
-        public static PathGridNavigationWorld Create(RuntimeContentDatabase database, Allocator allocator = Allocator.Persistent)
+        public static PathGridNavigationWorld Create(BlobAssetReference<RuntimeContentBlob> contentBlob, Allocator allocator = Allocator.Persistent)
         {
-            var data = database?.Data ?? new GameplayContentData();
-            var pathGrids = data.PathGrids ?? Array.Empty<PathGridDef>();
+            if (!contentBlob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][PathGrid] Runtime content blob is not loaded.");
+
+            ref RuntimeContentBlob data = ref contentBlob.Value;
             var world = new PathGridNavigationWorld
             {
-                PathGrids = new NativeArray<PathGridNavigationPathGridInfo>(pathGrids.Length, allocator),
-                Nodes = new NativeArray<PathGridNavigationNodeDef>(data.PathGridNavigationNodes ?? Array.Empty<PathGridNavigationNodeDef>(), allocator),
-                Edges = new NativeArray<PathGridNavigationEdgeDef>(data.PathGridNavigationEdges ?? Array.Empty<PathGridNavigationEdgeDef>(), allocator),
-                Portals = new NativeArray<PathGridNavigationPortalDef>(data.PathGridNavigationPortals ?? Array.Empty<PathGridNavigationPortalDef>(), allocator),
-                AbstractEdges = new NativeArray<PathGridNavigationAbstractEdgeDef>(data.PathGridNavigationAbstractEdges ?? Array.Empty<PathGridNavigationAbstractEdgeDef>(), allocator),
-                Neighbors = new NativeArray<PathGridNavigationNeighborDef>(data.PathGridNavigationNeighbors ?? Array.Empty<PathGridNavigationNeighborDef>(), allocator),
+                PathGrids = new NativeArray<PathGridNavigationPathGridInfo>(data.PathGrids.Length, allocator),
+                Nodes = Copy(ref data.PathGridNavigationNodes, allocator),
+                Edges = Copy(ref data.PathGridNavigationEdges, allocator),
+                Portals = Copy(ref data.PathGridNavigationPortals, allocator),
+                AbstractEdges = Copy(ref data.PathGridNavigationAbstractEdges, allocator),
+                Neighbors = Copy(ref data.PathGridNavigationNeighbors, allocator),
             };
 
-            for (int i = 0; i < pathGrids.Length; i++)
+            for (int i = 0; i < data.PathGrids.Length; i++)
             {
-                var pathGrid = pathGrids[i];
+                ref RuntimePathGridDefBlob pathGrid = ref data.PathGrids[i];
                 world.PathGrids[i] = new PathGridNavigationPathGridInfo
                 {
                     GridX = pathGrid.GridX,
@@ -271,6 +273,15 @@ namespace VVardenfell.Runtime.Pathfinding
             }
 
             return world;
+        }
+
+        static NativeArray<T> Copy<T>(ref BlobArray<T> source, Allocator allocator)
+            where T : unmanaged
+        {
+            var result = new NativeArray<T>(source.Length, allocator);
+            for (int i = 0; i < source.Length; i++)
+                result[i] = source[i];
+            return result;
         }
 
         public PathGridPathWorkingSet CreateWorkingSet(Allocator allocator = Allocator.Persistent)

@@ -248,11 +248,11 @@ namespace VVardenfell.Runtime.Streaming
                     return true;
 
                 var cache = WorldResources.Cache;
-                var content = cache?.ContentDatabase?.Data;
-                if (cache == null || content == null || cache.Textures == null)
+                var contentBlob = cache?.ContentBlob ?? default;
+                if (cache == null || !contentBlob.IsCreated || cache.Textures == null)
                     return false;
 
-                LoadBakedTexturesOrThrow(cache, content);
+                LoadBakedTexturesOrThrow(cache, contentBlob);
                 _bakedTexturesLoaded = true;
                 return true;
             }
@@ -622,21 +622,26 @@ namespace VVardenfell.Runtime.Streaming
                 return ResolveCloudTexture(nextWeather);
             }
 
-            void LoadBakedTexturesOrThrow(VVardenfell.Runtime.Cache.CacheLoader cache, GameplayContentData content)
+            void LoadBakedTexturesOrThrow(VVardenfell.Runtime.Cache.CacheLoader cache, Unity.Entities.BlobAssetReference<RuntimeContentBlob> contentBlob)
             {
-                SkyWeatherVisualSettingsDef visual = content.SkyWeatherVisualSettings;
+                ref RuntimeContentBlob content = ref contentBlob.Value;
+                ref RuntimeSkyWeatherVisualSettingsDefBlob visual = ref content.SkyWeatherVisualSettings;
                 var missing = new StringBuilder();
 
-                _sunTexture = LoadRequiredTexture(cache, visual.SunTexture, "sun disc", missing);
-                _sunGlareTexture = LoadRequiredTexture(cache, visual.SunGlareTexture, "sun glare", missing);
-                _starTexture = LoadRequiredTexture(cache, visual.StarTexture, "stars", missing);
-                _masserMaskTexture = LoadRequiredTexture(cache, visual.MasserShadowTexture, "Masser mask", missing);
-                _secundaMaskTexture = LoadRequiredTexture(cache, visual.SecundaShadowTexture, "Secunda mask", missing);
-                _masserPhaseTextures = LoadRequiredTextureSet(cache, visual.MasserPhaseTextures, "Masser phase", 8, missing);
-                _secundaPhaseTextures = LoadRequiredTextureSet(cache, visual.SecundaPhaseTextures, "Secunda phase", 8, missing);
-                _cloudTextures = LoadCloudTextures(cache, content.WeatherDefinitions);
-                _precipitationTextures = LoadPrecipitationTextures(cache, visual.PrecipitationTextures);
-                _precipitationTexturePaths = visual.PrecipitationTextures ?? Array.Empty<string>();
+                string[] masserPhaseTextures = ToStringArray(ref content.SkyMasserPhaseTextures);
+                string[] secundaPhaseTextures = ToStringArray(ref content.SkySecundaPhaseTextures);
+                string[] precipitationTextures = ToStringArray(ref content.SkyPrecipitationTextures);
+
+                _sunTexture = LoadRequiredTexture(cache, visual.SunTexture.ToString(), "sun disc", missing);
+                _sunGlareTexture = LoadRequiredTexture(cache, visual.SunGlareTexture.ToString(), "sun glare", missing);
+                _starTexture = LoadRequiredTexture(cache, visual.StarTexture.ToString(), "stars", missing);
+                _masserMaskTexture = LoadRequiredTexture(cache, visual.MasserShadowTexture.ToString(), "Masser mask", missing);
+                _secundaMaskTexture = LoadRequiredTexture(cache, visual.SecundaShadowTexture.ToString(), "Secunda mask", missing);
+                _masserPhaseTextures = LoadRequiredTextureSet(cache, masserPhaseTextures, "Masser phase", 8, missing);
+                _secundaPhaseTextures = LoadRequiredTextureSet(cache, secundaPhaseTextures, "Secunda phase", 8, missing);
+                _cloudTextures = LoadCloudTextures(cache, ref content.WeatherDefinitions);
+                _precipitationTextures = LoadPrecipitationTextures(cache, precipitationTextures);
+                _precipitationTexturePaths = precipitationTextures;
                 if (_cloudTextures.Length == 0)
                     missing.AppendLine("- weather cloud texture table: no weather definitions");
 
@@ -741,9 +746,9 @@ namespace VVardenfell.Runtime.Streaming
 
             Texture2D[] LoadCloudTextures(
                 VVardenfell.Runtime.Cache.CacheLoader cache,
-                WeatherDefinitionDef[] weatherDefinitions)
+                ref Unity.Entities.BlobArray<RuntimeWeatherDefinitionDefBlob> weatherDefinitions)
             {
-                _weatherDefinitionCount = weatherDefinitions?.Length ?? 0;
+                _weatherDefinitionCount = weatherDefinitions.Length;
                 if (_weatherDefinitionCount <= 0)
                     return Array.Empty<Texture2D>();
 
@@ -752,8 +757,8 @@ namespace VVardenfell.Runtime.Streaming
                 _cloudWeatherIds = new string[_weatherDefinitionCount];
                 for (int i = 0; i < _weatherDefinitionCount; i++)
                 {
-                    _cloudWeatherIds[i] = weatherDefinitions[i].Id ?? string.Empty;
-                    string path = weatherDefinitions[i].CloudTexture;
+                    _cloudWeatherIds[i] = weatherDefinitions[i].Id.ToString();
+                    string path = weatherDefinitions[i].CloudTexture.ToString();
                     _cloudTexturePaths[i] = path ?? string.Empty;
                     if (string.IsNullOrWhiteSpace(path))
                         continue;
@@ -763,6 +768,17 @@ namespace VVardenfell.Runtime.Streaming
                 }
 
                 return textures;
+            }
+
+            static string[] ToStringArray(ref Unity.Entities.BlobArray<RuntimeContentStringBlob> values)
+            {
+                if (values.Length == 0)
+                    return Array.Empty<string>();
+
+                var result = new string[values.Length];
+                for (int i = 0; i < values.Length; i++)
+                    result[i] = values[i].Value.ToString();
+                return result;
             }
 
             static Texture2D ConfigureRepeatingTexture(Texture2D texture)

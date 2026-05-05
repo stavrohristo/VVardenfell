@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -30,9 +31,19 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int QuestJournalCount;
         public ulong PreparedRequirements;
         public NativeParallelHashMap<uint, byte> RefDisabledStates;
+        public NativeParallelHashMap<uint, Entity> LogicalRefs;
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> ActiveExplicitRefs;
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllExplicitRefs;
+        public ComponentLookup<LocalTransform> CurrentTransforms;
+        public ComponentLookup<PlacedRefInitialTransform> InitialTransformLookup;
+        public BufferLookup<ActorInventoryItem> ActorInventories;
+        public BufferLookup<ContainerSessionItem> ContainerSessionItems;
+        public ComponentLookup<ActorVitalSet> ActorVitalsLookup;
+        public ComponentLookup<ActorHitAftermathState> ActorHitAftermathStates;
+        public ComponentLookup<MorrowindActorDeathCounted> ActorDeathCountedStates;
+        public ComponentLookup<MorrowindActorOnDeathConsumed> ActorOnDeathConsumedStates;
         public float SecondsPassed;
+        public Entity ContainerSessionEntity;
         public float3 Position;
         public quaternion Rotation;
         public float3 PlayerPosition;
@@ -53,16 +64,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int ActorAiStatusCount;
         public MorrowindScriptActorCombatTargetSnapshot* ActorCombatTargets;
         public int ActorCombatTargetCount;
-        public MorrowindScriptRefTransformSnapshot* RefTransforms;
-        public int RefTransformCount;
-        public MorrowindScriptInitialTransformSnapshot* InitialTransforms;
-        public int InitialTransformCount;
         public MorrowindScriptLockStateSnapshot* LockStates;
         public int LockStateCount;
-        public MorrowindScriptInventoryCountSnapshot* InventoryCounts;
-        public int InventoryCountCount;
-        public MorrowindScriptActorDeathSnapshot* ActorDeaths;
-        public int ActorDeathCount;
         public MorrowindScriptActorEventSnapshot* ActorEvents;
         public int ActorEventCount;
         public MorrowindScriptActorVitalSnapshot* ActorVitals;
@@ -2424,7 +2427,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out _))
+            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
 
             if (targetPlacedRefId == 0u || !IsLoadedPlacedRef(context, targetPlacedRefId))
@@ -2433,21 +2436,44 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            if ((context->InventoryCounts == null && context->InventoryCountCount > 0) || context->InventoryCountCount < 0)
+            int count = 0;
+            if (targetEntity == Entity.Null
+                && !TryResolvePlacedRefEntity(context, targetPlacedRefId, out targetEntity))
             {
-                context->Faulted = 1;
                 return;
             }
 
-            int count = 0;
-            for (int i = 0; i < context->InventoryCountCount; i++)
+            if (context->ActorInventories.HasBuffer(targetEntity))
             {
-                var item = context->InventoryCounts[i];
-                if (item.PlacedRefId == targetPlacedRefId
-                    && item.Content.Kind == kind
-                    && item.Content.HandleValue == handleValue)
+                var inventory = context->ActorInventories[targetEntity];
+                for (int i = 0; i < inventory.Length; i++)
                 {
-                    count += item.Count;
+                    var item = inventory[i];
+                    if (item.Content.IsValid
+                        && item.Count > 0
+                        && item.Content.Kind == kind
+                        && item.Content.HandleValue == handleValue)
+                    {
+                        count += item.Count;
+                    }
+                }
+            }
+
+            if (context->ContainerSessionEntity != Entity.Null
+                && context->ContainerSessionItems.HasBuffer(context->ContainerSessionEntity))
+            {
+                var containerItems = context->ContainerSessionItems[context->ContainerSessionEntity];
+                for (int i = 0; i < containerItems.Length; i++)
+                {
+                    var item = containerItems[i];
+                    if (item.PlacedRefId == targetPlacedRefId
+                        && item.Content.IsValid
+                        && item.Count > 0
+                        && item.Content.Kind == kind
+                        && item.Content.HandleValue == handleValue)
+                    {
+                        count += item.Count;
+                    }
                 }
             }
 
@@ -3007,37 +3033,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            quaternion rotation;
-            if (instruction->Operand0 == (byte)MorrowindScriptRefTargetMode.Self)
-            {
-                rotation = context->Rotation;
-            }
-            else
-            {
-                if ((context->RefTransforms == null && context->RefTransformCount > 0) || context->RefTransformCount < 0)
-                {
-                    context->Faulted = 1;
-                    return;
-                }
-
-                int matchCount = 0;
-                rotation = quaternion.identity;
-                for (int i = 0; i < context->RefTransformCount; i++)
-                {
-                    var snapshot = context->RefTransforms[i];
-                    if (snapshot.PlacedRefId != targetPlacedRefId)
-                        continue;
-
-                    matchCount++;
-                    rotation = snapshot.Rotation;
-                }
-
-                if (matchCount != 1)
-                {
-                    context->Faulted = 1;
-                    return;
-                }
-            }
+            if (!TryResolveTargetTransform(context, instruction->Operand0, instruction->Int0, out _, out quaternion rotation))
+                return;
 
             float angle = math.degrees(LogicalRefRotationUtility.GetAngle(rotation, (byte)instruction->Operand1));
             Push(context, new MorrowindScriptStackValue
@@ -3056,31 +3053,14 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (targetPlacedRefId == 0u
                 || instruction->Operand1 < 0
-                || instruction->Operand1 > 2
-                || (context->InitialTransforms == null && context->InitialTransformCount > 0)
-                || context->InitialTransformCount < 0)
+                || instruction->Operand1 > 2)
             {
                 context->Faulted = 1;
                 return;
             }
 
-            int matchCount = 0;
-            quaternion rotation = quaternion.identity;
-            for (int i = 0; i < context->InitialTransformCount; i++)
-            {
-                var snapshot = context->InitialTransforms[i];
-                if (snapshot.PlacedRefId != targetPlacedRefId)
-                    continue;
-
-                matchCount++;
-                rotation = snapshot.Rotation;
-            }
-
-            if (matchCount != 1)
-            {
-                context->Faulted = 1;
+            if (!TryResolveInitialTransform(context, targetPlacedRefId, out _, out quaternion rotation))
                 return;
-            }
 
             float angle = math.degrees(LogicalRefRotationUtility.GetAngle(rotation, (byte)instruction->Operand1));
             Push(context, new MorrowindScriptStackValue
@@ -3094,42 +3074,45 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void GetOnDeath(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
-            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out _))
+            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
 
-            if (targetPlacedRefId == 0u
-                || context->OnDeathRuntimeEntity == Entity.Null
-                || (context->ActorDeaths == null && context->ActorDeathCount > 0)
-                || context->ActorDeathCount < 0)
+            if (targetPlacedRefId == 0u || context->OnDeathRuntimeEntity == Entity.Null)
             {
                 context->Faulted = 1;
                 return;
             }
 
-            int matchCount = 0;
-            MorrowindScriptActorDeathSnapshot matched = default;
-            for (int i = 0; i < context->ActorDeathCount; i++)
+            if (targetEntity == Entity.Null
+                && !TryResolvePlacedRefEntity(context, targetPlacedRefId, out targetEntity))
             {
-                var snapshot = context->ActorDeaths[i];
-                if (snapshot.PlacedRefId != targetPlacedRefId)
-                    continue;
-
-                matchCount++;
-                matched = snapshot;
+                return;
             }
 
-            if (matchCount != 1 || matched.Entity == Entity.Null)
+            if (!context->ActorVitalsLookup.HasComponent(targetEntity))
             {
                 context->Faulted = 1;
                 return;
             }
 
-            int died = matched.Died != 0 && matched.Consumed == 0 ? 1 : 0;
+            byte diedState = context->ActorDeathCountedStates.HasComponent(targetEntity) ? (byte)1 : (byte)0;
+            if (context->ActorHitAftermathStates.HasComponent(targetEntity))
+            {
+                if (context->ActorHitAftermathStates[targetEntity].Dead != 0)
+                    diedState = 1;
+            }
+            else if (context->ActorVitalsLookup[targetEntity].CurrentHealth <= 0f)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            int died = diedState != 0 && !context->ActorOnDeathConsumedStates.HasComponent(targetEntity) ? 1 : 0;
             if (died != 0)
             {
                 context->Ecb.AppendToBuffer(context->SortKey, context->OnDeathRuntimeEntity, new MorrowindScriptOnDeathConsumeRequest
                 {
-                    TargetEntity = matched.Entity,
+                    TargetEntity = targetEntity,
                     TargetPlacedRefId = targetPlacedRefId,
                 });
             }
@@ -3885,58 +3868,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return true;
             }
 
-            uint placedRefId = 0u;
-            if (targetMode == (byte)MorrowindScriptRefTargetMode.PlacedRef)
-            {
-                placedRefId = unchecked((uint)targetRefKey);
-            }
-            else if (targetMode == (byte)MorrowindScriptRefTargetMode.ActiveContentRef)
-            {
-                if (!context->ActiveExplicitRefs.IsCreated
-                    || !context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var target)
-                    || target.Ambiguous != 0
-                    || target.PlacedRefId == 0u)
-                {
-                    context->Faulted = 1;
-                    return false;
-                }
-
-                placedRefId = target.PlacedRefId;
-            }
-            else
-            {
-                context->Faulted = 1;
-                return false;
-            }
-
-            if (placedRefId == 0u
-                || (context->RefTransforms == null && context->RefTransformCount > 0)
-                || context->RefTransformCount < 0)
-            {
-                context->Faulted = 1;
-                return false;
-            }
-
-            int matchCount = 0;
-            float3 matchedPosition = default;
-            for (int i = 0; i < context->RefTransformCount; i++)
-            {
-                var snapshot = context->RefTransforms[i];
-                if (snapshot.PlacedRefId != placedRefId)
-                    continue;
-
-                matchCount++;
-                matchedPosition = snapshot.Position;
-            }
-
-            if (matchCount != 1)
-            {
-                context->Faulted = 1;
-                return false;
-            }
-
-            position = matchedPosition;
-            return true;
+            return TryResolveTargetTransform(context, targetMode, targetRefKey, out position, out _);
         }
 
         static bool TryResolveTargetTransform(
@@ -3955,7 +3887,51 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return true;
             }
 
-            uint placedRefId = 0u;
+            if (!TryResolvePlacedRefEntity(context, targetMode, targetRefKey, out _, out Entity entity))
+                return false;
+
+            if (!context->CurrentTransforms.HasComponent(entity))
+            {
+                context->Faulted = 1;
+                return false;
+            }
+
+            var transform = context->CurrentTransforms[entity];
+            position = transform.Position;
+            rotation = transform.Rotation;
+            return true;
+        }
+
+        static bool TryResolveInitialTransform(
+            MorrowindScriptExecutionContext* context,
+            uint placedRefId,
+            out float3 position,
+            out quaternion rotation)
+        {
+            position = default;
+            rotation = quaternion.identity;
+            if (!TryResolvePlacedRefEntity(context, placedRefId, out Entity entity)
+                || !context->InitialTransformLookup.HasComponent(entity))
+            {
+                context->Faulted = 1;
+                return false;
+            }
+
+            var transform = context->InitialTransformLookup[entity];
+            position = transform.Position;
+            rotation = transform.Rotation;
+            return true;
+        }
+
+        static bool TryResolvePlacedRefEntity(
+            MorrowindScriptExecutionContext* context,
+            byte targetMode,
+            int targetRefKey,
+            out uint placedRefId,
+            out Entity entity)
+        {
+            placedRefId = 0u;
+            entity = Entity.Null;
             if (targetMode == (byte)MorrowindScriptRefTargetMode.PlacedRef)
             {
                 placedRefId = unchecked((uint)targetRefKey);
@@ -3972,6 +3948,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
 
                 placedRefId = target.PlacedRefId;
+                entity = target.Entity;
             }
             else
             {
@@ -3979,31 +3956,33 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            if (placedRefId == 0u
-                || (context->RefTransforms == null && context->RefTransformCount > 0)
-                || context->RefTransformCount < 0)
+            return TryResolvePlacedRefEntityWithOptionalKnownEntity(context, placedRefId, ref entity);
+        }
+
+        static bool TryResolvePlacedRefEntity(MorrowindScriptExecutionContext* context, uint placedRefId, out Entity entity)
+        {
+            entity = Entity.Null;
+            return TryResolvePlacedRefEntityWithOptionalKnownEntity(context, placedRefId, ref entity);
+        }
+
+        static bool TryResolvePlacedRefEntityWithOptionalKnownEntity(MorrowindScriptExecutionContext* context, uint placedRefId, ref Entity entity)
+        {
+            if (placedRefId == 0u)
             {
                 context->Faulted = 1;
                 return false;
             }
 
-            int matchCount = 0;
-            for (int i = 0; i < context->RefTransformCount; i++)
-            {
-                var snapshot = context->RefTransforms[i];
-                if (snapshot.PlacedRefId != placedRefId)
-                    continue;
-
-                matchCount++;
-                position = snapshot.Position;
-                rotation = snapshot.Rotation;
-            }
-
-            if (matchCount == 1)
+            if (entity != Entity.Null)
                 return true;
 
-            context->Faulted = 1;
-            return false;
+            if (!context->LogicalRefs.IsCreated || !context->LogicalRefs.TryGetValue(placedRefId, out entity))
+            {
+                context->Faulted = 1;
+                return false;
+            }
+
+            return true;
         }
 
         static float3 AxisDelta(byte axis, float value)
@@ -4021,20 +4000,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (placedRefId == context->PlacedRefId && context->Entity != Entity.Null)
                 return true;
 
-            if ((context->RefTransforms == null && context->RefTransformCount > 0) || context->RefTransformCount < 0)
-            {
-                context->Faulted = 1;
-                return false;
-            }
-
-            int matchCount = 0;
-            for (int i = 0; i < context->RefTransformCount; i++)
-            {
-                if (context->RefTransforms[i].PlacedRefId == placedRefId)
-                    matchCount++;
-            }
-
-            return matchCount == 1;
+            return placedRefId != 0u
+                   && context->LogicalRefs.IsCreated
+                   && context->LogicalRefs.TryGetValue(placedRefId, out Entity entity)
+                   && context->CurrentTransforms.HasComponent(entity);
         }
 
         public static ulong BuildScriptLoopSourceKey(uint placedRefId, Entity sourceEntity)

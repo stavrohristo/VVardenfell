@@ -8,7 +8,6 @@ using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Combat;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
@@ -54,7 +53,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager, RuntimeContentDatabase.Active);
+            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager);
             return true;
         }
 
@@ -85,7 +84,7 @@ namespace VVardenfell.Runtime.WorldState
                     out error))
                 return false;
 
-            if (!ValidateWorldLocation(payload, out error))
+            if (!ValidateWorldLocation(entityManager, payload, out error))
                 return false;
             if (!TryValidateWorldRestorePrereqs(entityManager, out error))
                 return false;
@@ -98,7 +97,7 @@ namespace VVardenfell.Runtime.WorldState
             if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(world, entityManager, payload, out error))
                 return false;
 
-            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager, RuntimeContentDatabase.Active);
+            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager);
             if (!WorldStateEntityQueryUtility.HasExactlyOne<PlayerTag>(entityManager)
                 || !WorldStateEntityQueryUtility.HasExactlyOne<PlayerViewComponent>(entityManager))
             {
@@ -160,6 +159,8 @@ namespace VVardenfell.Runtime.WorldState
 
         static void ApplyPlayerPayload(EntityManager entityManager, Entity playerEntity, Entity viewEntity, in WorldSavePayload payload)
         {
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
             entityManager.SetComponentData(playerEntity, LocalTransform.FromPositionRotationScale(payload.PlayerPosition, payload.PlayerRotation, 1f));
             entityManager.SetComponentData(playerEntity, new LocalToWorld
             {
@@ -168,11 +169,11 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(playerEntity, payload.ActorStats.Attributes);
             entityManager.SetComponentData(playerEntity, payload.ActorStats.Skills);
             var vitals = payload.ActorStats.Vitals;
-            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, payload.ActorStats.Attributes, ref vitals, initializeMissingCurrents: true);
+            MorrowindActorMovementStats.ApplyVitalBases(ref content, payload.ActorStats.Attributes, ref vitals, initializeMissingCurrents: true);
             entityManager.SetComponentData(playerEntity, vitals);
             entityManager.SetComponentData(playerEntity, payload.ActorStats.EffectModifiers);
             var derived = MorrowindActorMovementStats.BuildDerived(
-                RuntimeContentDatabase.Active,
+                ref content,
                 payload.ActorStats.Attributes,
                 payload.ActorStats.Skills,
                 vitals,
@@ -182,7 +183,7 @@ namespace VVardenfell.Runtime.WorldState
             entityManager.SetComponentData(
                 playerEntity,
                 MorrowindActorMovementStats.BuildPlayerMovementSpeed(
-                    RuntimeContentDatabase.Active,
+                    ref content,
                     payload.ActorStats.Attributes,
                     payload.ActorStats.Skills,
                     vitals,
@@ -301,6 +302,18 @@ namespace VVardenfell.Runtime.WorldState
             });
         }
 
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+            if (query.IsEmptyIgnoreFilter)
+                throw new System.InvalidOperationException("[VVardenfell][Save] Save replay requires runtime content blob.");
+
+            var blob = entityManager.GetComponentData<RuntimeContentBlobReference>(query.GetSingletonEntity()).Blob;
+            if (!blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][Save] Save replay runtime content blob is not created.");
+            return blob;
+        }
+
         static bool TryValidatePayload(in WorldSavePayload payload, out string error)
         {
             error = null;
@@ -369,15 +382,32 @@ namespace VVardenfell.Runtime.WorldState
             return true;
         }
 
-        static bool ValidateWorldLocation(in WorldSavePayload payload, out string error)
+        static bool ValidateWorldLocation(EntityManager entityManager, in WorldSavePayload payload, out string error)
         {
             error = null;
             if (payload.InteriorActive
-                && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId)
-                && !WorldResources.TryGetInteriorCell(InteriorCellIdHash.Hash(payload.ActiveInteriorCellId), out CellData cell))
+                && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId))
             {
-                error = $"Save references missing interior '{payload.ActiveInteriorCellId}'.";
-                return false;
+                using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+                if (query.CalculateEntityCount() != 1)
+                {
+                    error = "World cell blob is not ready for save replay.";
+                    return false;
+                }
+
+                var blob = query.GetSingleton<RuntimeWorldCellBlobReference>().Blob;
+                if (!blob.IsCreated)
+                {
+                    error = "World cell blob is not ready for save replay.";
+                    return false;
+                }
+
+                ref RuntimeWorldCellBlob worldCells = ref blob.Value;
+                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, InteriorCellIdHash.Hash(payload.ActiveInteriorCellId), out _))
+                {
+                    error = $"Save references missing interior '{payload.ActiveInteriorCellId}'.";
+                    return false;
+                }
             }
 
             return true;
@@ -889,12 +919,8 @@ namespace VVardenfell.Runtime.WorldState
             if (payload == null || payload.Length == 0)
                 return true;
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-            {
-                error = "Runtime content database is not ready for actor death count replay.";
-                return false;
-            }
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
 
             if (!entityManager.HasBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity))
             {
@@ -903,9 +929,9 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             var deathCounts = entityManager.GetBuffer<MorrowindActorDeathCount>(scriptRuntimeEntity);
-            if (payload.Length != contentDb.ActorCount || deathCounts.Length != contentDb.ActorCount)
+            if (payload.Length != content.Actors.Length || deathCounts.Length != content.Actors.Length)
             {
-                error = $"Actor death count replay count mismatch: save={payload.Length} buffer={deathCounts.Length} content={contentDb.ActorCount}.";
+                error = $"Actor death count replay count mismatch: save={payload.Length} buffer={deathCounts.Length} content={content.Actors.Length}.";
                 return false;
             }
 
@@ -930,19 +956,15 @@ namespace VVardenfell.Runtime.WorldState
             out string error)
         {
             error = null;
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-            {
-                error = "Runtime content database is not ready for quest journal replay.";
-                return false;
-            }
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
 
             var state = entityManager.GetComponentData<MorrowindQuestJournalState>(questJournalEntity);
             var questStates = entityManager.GetBuffer<MorrowindQuestJournalIndex>(questJournalEntity);
             var entries = entityManager.GetBuffer<MorrowindQuestJournalEntry>(questJournalEntity);
-            if (state.QuestCount != questStates.Length || questStates.Length != contentDb.DialogueCount)
+            if (state.QuestCount != questStates.Length || questStates.Length != content.Dialogues.Length)
             {
-                error = $"Quest journal replay count mismatch: state={state.QuestCount} buffer={questStates.Length} content={contentDb.DialogueCount}.";
+                error = $"Quest journal replay count mismatch: state={state.QuestCount} buffer={questStates.Length} content={content.Dialogues.Length}.";
                 return false;
             }
 
@@ -964,7 +986,7 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             uint maxSequence = 0u;
-            int dialogueInfoCount = contentDb.Data.DialogueInfos?.Length ?? 0;
+            int dialogueInfoCount = content.DialogueInfos.Length;
             for (int i = 0; i < payload.Entries.Length; i++)
             {
                 var saved = payload.Entries[i];
@@ -1007,12 +1029,8 @@ namespace VVardenfell.Runtime.WorldState
             out string error)
         {
             error = null;
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-            {
-                error = "Runtime content database is not ready for dialogue replay.";
-                return false;
-            }
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
 
             if (!entityManager.HasComponent<MorrowindDialogueState>(dialogueEntity))
             {
@@ -1024,9 +1042,9 @@ namespace VVardenfell.Runtime.WorldState
             var knownTopics = entityManager.GetBuffer<MorrowindKnownDialogueTopic>(dialogueEntity);
             var entries = entityManager.GetBuffer<MorrowindTopicJournalEntry>(dialogueEntity);
             var factionReactions = entityManager.GetBuffer<MorrowindFactionReactionOverride>(dialogueEntity);
-            if (state.DialogueCount != knownTopics.Length || knownTopics.Length != contentDb.DialogueCount)
+            if (state.DialogueCount != knownTopics.Length || knownTopics.Length != content.Dialogues.Length)
             {
-                error = $"Dialogue replay count mismatch: state={state.DialogueCount} buffer={knownTopics.Length} content={contentDb.DialogueCount}.";
+                error = $"Dialogue replay count mismatch: state={state.DialogueCount} buffer={knownTopics.Length} content={content.Dialogues.Length}.";
                 return false;
             }
 
@@ -1039,7 +1057,7 @@ namespace VVardenfell.Runtime.WorldState
                     return false;
                 }
 
-                if (contentDb.Data.Dialogues[dialogueIndex].Type != DialogueDefType.Topic)
+                if (content.Dialogues[dialogueIndex].Type != DialogueDefType.Topic)
                 {
                     error = $"Dialogue save references non-topic known dialogue index {dialogueIndex}.";
                     return false;
@@ -1049,7 +1067,7 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             uint maxSequence = 0u;
-            int infoCount = contentDb.Data.DialogueInfos?.Length ?? 0;
+            int infoCount = content.DialogueInfos.Length;
             for (int i = 0; i < payload.TopicEntries.Length; i++)
             {
                 var saved = payload.TopicEntries[i];
@@ -1059,7 +1077,7 @@ namespace VVardenfell.Runtime.WorldState
                     return false;
                 }
 
-                if (contentDb.Data.Dialogues[saved.DialogueIndex].Type != DialogueDefType.Topic)
+                if (content.Dialogues[saved.DialogueIndex].Type != DialogueDefType.Topic)
                 {
                     error = $"Topic journal entry references non-topic dialogue index {saved.DialogueIndex}.";
                     return false;
@@ -1086,7 +1104,7 @@ namespace VVardenfell.Runtime.WorldState
                     maxSequence = saved.Sequence;
             }
 
-            int factionCount = contentDb.Data.Factions?.Length ?? 0;
+            int factionCount = content.Factions.Length;
             for (int i = 0; i < payload.FactionReactions.Length; i++)
             {
                 var saved = payload.FactionReactions[i];

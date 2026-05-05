@@ -7,7 +7,6 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Projectiles;
@@ -27,6 +26,8 @@ namespace VVardenfell.Runtime.Magic
         {
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeModelPrefabBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -48,7 +49,14 @@ namespace VVardenfell.Runtime.Magic
             castRequests.Clear();
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
-            var contentDb = RuntimeContentDatabase.Active ?? throw new InvalidOperationException("[VVardenfell][Magic] Cast requires active runtime content.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Cast requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            var modelBlobReference = SystemAPI.GetSingleton<RuntimeModelPrefabBlobReference>();
+            if (!modelBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ModelPrefabBlob] Cast requires runtime model prefab blob.");
+            ref RuntimeModelPrefabBlob modelPrefabs = ref modelBlobReference.Blob.Value;
             var magicRef = SystemAPI.GetSingletonRW<MorrowindMagicRuntimeState>();
             var random = new Random(magicRef.ValueRO.RandomState == 0u ? 0xA5C38F2Du : magicRef.ValueRO.RandomState);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -56,7 +64,7 @@ namespace VVardenfell.Runtime.Magic
             for (int i = 0; i < scriptedCopy.Length; i++)
             {
                 var request = scriptedCopy[i];
-                ApplyRequest(contentDb, lookup, ref random, ref magicRef.ValueRW, new ActorSpellCastRequest
+                ApplyRequest(ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, new ActorSpellCastRequest
                 {
                     CasterEntity = request.CasterEntity,
                     CasterPlacedRefId = request.CasterPlacedRefId,
@@ -71,7 +79,7 @@ namespace VVardenfell.Runtime.Magic
             }
 
             for (int i = 0; i < castCopy.Length; i++)
-                ApplyRequest(contentDb, lookup, ref random, ref magicRef.ValueRW, castCopy[i], ref ecb);
+                ApplyRequest(ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, castCopy[i], ref ecb);
 
             magicRef.ValueRW.RandomState = random.state == 0u ? 0xA5C38F2Du : random.state;
             ecb.Playback(EntityManager);
@@ -81,44 +89,44 @@ namespace VVardenfell.Runtime.Magic
         }
 
         void ApplyRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeModelPrefabBlob modelPrefabs,
             in LogicalRefLookup lookup,
             ref Random random,
             ref MorrowindMagicRuntimeState magicState,
             in ActorSpellCastRequest request,
             ref EntityCommandBuffer ecb)
         {
-            RequireValidSpell(contentDb, request.Spell);
-            ref readonly var spell = ref contentDb.Get(request.Spell);
+            RequireValidSpell(ref content, request.Spell);
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, request.Spell);
             Entity caster = ResolveActor(request.CasterEntity, request.CasterPlacedRefId, lookup, "caster");
             Entity target = ResolveOptionalTarget(request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (request.ProjectileImpact != 0)
             {
-                InflictRangeEffects(contentDb, request, caster, target, MorrowindMagicRange.Target, request.HasHitPosition != 0 ? (float3?)request.HitPosition : null, ref random, ref magicState);
+                InflictRangeEffects(ref content, request, caster, target, MorrowindMagicRange.Target, request.HasHitPosition != 0 ? (float3?)request.HitPosition : null, ref random, ref magicState);
                 return;
             }
 
-            if (request.Scripted == 0 && !ValidateAndSpendNormalCast(contentDb, caster, request.Spell, spell, ref random))
+            if (request.Scripted == 0 && !ValidateAndSpendNormalCast(ref content, caster, request.Spell, ref spell, ref random))
                 return;
 
-            if (!MorrowindActorMagicUtility.TryGetSpellEffects(contentDb, spell, out var effects))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Cast spell '{spell.Id}' has no effects.");
+            MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
 
             bool hasTargetProjectile = false;
-            for (int i = 0; i < effects.Length; i++)
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                var instance = effects[i];
-                ref readonly var effect = ref RequireMagicEffect(contentDb, instance.EffectId, spell.Id);
+                ref MagicEffectInstanceDef instance = ref content.MagicEffectInstances[spell.EffectStartIndex + i];
+                ref RuntimeMagicEffectDefBlob effect = ref RequireMagicEffect(ref content, instance.EffectId, spell.ContentId.Value);
                 if (!MorrowindMagicEffectApplicationUtility.IsSupported(instance.EffectId))
-                    throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' contains unsupported effect {instance.EffectId}.");
+                    throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spell.ContentId.Value:X16} contains unsupported effect {instance.EffectId}.");
 
-                EmitMagicVfxObject(contentDb, effect.CastingObjectId, caster, ref ecb);
+                EmitMagicVfxObject(ref content, ref modelPrefabs, effect.CastingObjectIdHash, caster, ref ecb);
 
                 if (instance.Range == MorrowindMagicRange.Target)
                 {
                     if (!hasTargetProjectile)
                     {
-                        EmitMagicProjectile(contentDb, request.Spell, instance, effect, caster, target, request.Scripted, request.IgnoreReflect, request.IgnoreSpellAbsorption, ref ecb);
+                        EmitMagicProjectile(ref content, ref modelPrefabs, request.Spell, instance, ref effect, caster, target, request.Scripted, request.IgnoreReflect, request.IgnoreSpellAbsorption, ref ecb);
                         hasTargetProjectile = true;
                     }
                     continue;
@@ -126,24 +134,24 @@ namespace VVardenfell.Runtime.Magic
 
                 Entity anchor = instance.Range == MorrowindMagicRange.Self ? caster : target;
                 if (anchor == Entity.Null || !EntityManager.Exists(anchor))
-                    throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' touch effect has no resolved target.");
+                    throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spell.ContentId.Value:X16} touch effect has no resolved target.");
 
-                EmitMagicVfxObject(contentDb, effect.HitObjectId, anchor, ref ecb);
-                InflictRangeEffects(contentDb, request, caster, anchor, instance.Range, null, ref random, ref magicState);
+                EmitMagicVfxObject(ref content, ref modelPrefabs, effect.HitObjectIdHash, anchor, ref ecb);
+                InflictRangeEffects(ref content, request, caster, anchor, instance.Range, null, ref random, ref magicState);
             }
         }
 
         bool ValidateAndSpendNormalCast(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity caster,
             SpellDefHandle spellHandle,
-            in SpellDef spell,
+            ref RuntimeSpellDefBlob spell,
             ref Random random)
         {
             if (!EntityManager.HasBuffer<ActorKnownSpell>(caster))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} has no known spell buffer.");
             if (!MorrowindActorMagicUtility.HasKnownSpell(EntityManager.GetBuffer<ActorKnownSpell>(caster, true), spellHandle))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} does not know spell '{spell.Id}'.");
+                throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} does not know spell contentId=0x{spell.ContentId.Value:X16}.");
             if (!EntityManager.HasComponent<ActorAttributeSet>(caster)
                 || !EntityManager.HasComponent<ActorSkillSet>(caster)
                 || !EntityManager.HasComponent<ActorVitalSet>(caster)
@@ -160,14 +168,14 @@ namespace VVardenfell.Runtime.Magic
             var casterEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(caster);
             var usedPowers = EntityManager.GetBuffer<ActorUsedPower>(caster);
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(caster);
-            int spellCost = MorrowindSpellCostUtility.CalculateSpellCost(contentDb, spell);
+            int spellCost = MorrowindSpellCostUtility.CalculateSpellCost(ref content, ref spell);
 
-            if (MorrowindSpellCostUtility.CalculateSuccessChance(contentDb, spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: true, out _) <= 0f)
+            if (MorrowindSpellCostUtility.CalculateSuccessChance(ref content, ref spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: true, out _) <= 0f)
             {
                 if (spellCost > 0 && vitals.CurrentMagicka < spellCost)
-                    QueuePlayerMessageIfPlayer(caster, contentDb.RequireGameSettingString("sMagicInsufficientSP"));
+                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
                 else
-                    QueuePlayerMessageIfPlayer(caster, contentDb.RequireGameSettingString("sMagicSkillFail"));
+                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
                 return false;
             }
 
@@ -178,7 +186,7 @@ namespace VVardenfell.Runtime.Magic
                 {
                     if (usedPowers[i].Spell.Value == spellHandle.Value && totalHours - usedPowers[i].LastUsedTotalGameHours < 24f)
                     {
-                        QueuePlayerMessageIfPlayer(caster, contentDb.RequireGameSettingString("sPowerAlreadyUsed"));
+                        QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sPowerAlreadyUsed));
                         return false;
                     }
                 }
@@ -188,20 +196,20 @@ namespace VVardenfell.Runtime.Magic
             {
                 if (vitals.CurrentMagicka < spellCost)
                 {
-                    QueuePlayerMessageIfPlayer(caster, contentDb.RequireGameSettingString("sMagicInsufficientSP"));
+                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
                     return false;
                 }
 
                 vitals.CurrentMagicka -= spellCost;
-                float fatigueLoss = spellCost * (contentDb.RequireGameSettingFloat("fFatigueSpellBase") + derived.NormalizedEncumbrance * contentDb.RequireGameSettingFloat("fFatigueSpellMult"));
+                float fatigueLoss = spellCost * (RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueSpellBase) + derived.NormalizedEncumbrance * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueSpellMult));
                 vitals.CurrentFatigue -= fatigueLoss;
                 EntityManager.SetComponentData(caster, vitals);
             }
 
-            float chance = MorrowindSpellCostUtility.CalculateSuccessChance(contentDb, spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: false, out _);
+            float chance = MorrowindSpellCostUtility.CalculateSuccessChance(ref content, ref spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: false, out _);
             if ((spell.Flags & MorrowindSpellCostUtility.SpellFlagAlways) == 0 && spell.SpellType == MorrowindSpellCostUtility.SpellTypeSpell && random.NextInt(0, 100) >= chance)
             {
-                QueuePlayerMessageIfPlayer(caster, contentDb.RequireGameSettingString("sMagicSkillFail"));
+                QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
                 return false;
             }
 
@@ -212,7 +220,7 @@ namespace VVardenfell.Runtime.Magic
         }
 
         public void InflictRangeEffects(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
             Entity target,
@@ -221,32 +229,31 @@ namespace VVardenfell.Runtime.Magic
             ref Random random,
             ref MorrowindMagicRuntimeState magicState)
         {
-            ref readonly var spell = ref contentDb.Get(request.Spell);
-            if (!MorrowindActorMagicUtility.TryGetSpellEffects(contentDb, spell, out var effects))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' has no effects.");
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, request.Spell);
+            MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
 
-            for (int i = 0; i < effects.Length; i++)
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                var instance = effects[i];
+                ref MagicEffectInstanceDef instance = ref content.MagicEffectInstances[spell.EffectStartIndex + i];
                 if (instance.Range != range)
                     continue;
 
                 if (instance.Area > 0)
                 {
-                    float3 origin = areaOrigin ?? RequirePosition(target, $"[VVardenfell][Magic] Area spell '{spell.Id}' target");
-                    ApplyAreaEffect(contentDb, request, caster, target, instance, i, origin, ref random, ref magicState);
+                    float3 origin = areaOrigin ?? RequirePosition(target, $"[VVardenfell][Magic] Area spell contentId=0x{spell.ContentId.Value:X16} target");
+                    ApplyAreaEffect(ref content, request, caster, target, instance, i, origin, ref random, ref magicState);
                 }
                 else
                 {
                     if (target == Entity.Null)
                         continue;
-                    ApplyEffectToTarget(contentDb, request, caster, target, instance, i, ref random, ref magicState);
+                    ApplyEffectToTarget(ref content, request, caster, target, instance, i, ref random, ref magicState);
                 }
             }
         }
 
         void ApplyAreaEffect(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
             Entity primaryTarget,
@@ -262,12 +269,12 @@ namespace VVardenfell.Runtime.Magic
                 if (entity == caster)
                     continue;
                 if (math.distancesq(transform.ValueRO.Position, origin) <= radius * radius)
-                    ApplyEffectToTarget(contentDb, request, caster, entity, instance, effectIndex, ref random, ref magicState);
+                    ApplyEffectToTarget(ref content, request, caster, entity, instance, effectIndex, ref random, ref magicState);
             }
         }
 
         void ApplyEffectToTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
             Entity target,
@@ -285,18 +292,22 @@ namespace VVardenfell.Runtime.Magic
                 throw new InvalidOperationException($"[VVardenfell][Magic] Spell effect target entity={target.Index}:{target.Version} has no active magic composition.");
             }
 
-            ref readonly var spell = ref contentDb.Get(request.Spell);
-            ref readonly var effectDef = ref RequireMagicEffect(contentDb, instance.EffectId, spell.Id);
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, request.Spell);
+            FixedString64Bytes sourceName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Name);
+            FixedString64Bytes sourceId = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Id);
+            if (sourceName.IsEmpty)
+                sourceName = sourceId;
+            ref RuntimeMagicEffectDefBlob effectDef = ref RequireMagicEffect(ref content, instance.EffectId, spell.ContentId.Value);
             if (!MorrowindMagicEffectApplicationUtility.IsSupported(instance.EffectId))
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spell.Id}' contains unsupported effect {instance.EffectId}.");
+                throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spell.ContentId.Value:X16} contains unsupported effect {instance.EffectId}.");
 
             Entity finalTarget = target;
             byte ignoreReflect = request.IgnoreReflect;
             byte ignoreAbsorb = request.IgnoreSpellAbsorption;
-            float magnitude = ResolveMagnitude(instance, effectDef, ref random);
+            float magnitude = ResolveMagnitude(instance, ref effectDef, ref random);
             if ((effectDef.Flags & MorrowindSpellCostUtility.MagicEffectFlagHarmful) != 0 && target != caster)
             {
-                if (!TryResolveProtection(contentDb, request, caster, target, instance.EffectId, effectDef, ref magnitude, ref finalTarget, ref ignoreReflect, ref ignoreAbsorb, ref random))
+                if (!TryResolveProtection(ref content, request, caster, target, instance.EffectId, ref effectDef, ref magnitude, ref finalTarget, ref ignoreReflect, ref ignoreAbsorb, ref random))
                     return;
             }
 
@@ -314,11 +325,12 @@ namespace VVardenfell.Runtime.Magic
                         | (request.Scripted != 0 ? ActorActiveSpellFlags.Scripted : ActorActiveSpellFlags.None)
                         | (ignoreReflect != 0 ? ActorActiveSpellFlags.IgnoreReflect : ActorActiveSpellFlags.None)
                         | (ignoreAbsorb != 0 ? ActorActiveSpellFlags.IgnoreSpellAbsorption : ActorActiveSpellFlags.None),
-                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                SourceName = sourceName,
+                SourceId = sourceId,
+                SourceIdHash = spell.IdHash,
             });
 
-            float duration = ResolveDuration(instance, effectDef);
+            float duration = ResolveDuration(instance, ref effectDef);
             activeEffects.Add(new ActorActiveMagicEffect
             {
                 ActiveSpellId = activeSpellId,
@@ -334,19 +346,20 @@ namespace VVardenfell.Runtime.Magic
                 IgnoreReflect = ignoreReflect,
                 IgnoreSpellAbsorption = ignoreAbsorb,
                 SourceKind = request.Scripted != 0 ? ActorActiveMagicEffectSourceKind.ScriptedSpell : ActorActiveMagicEffectSourceKind.TimedSpell,
-                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                SourceName = sourceName,
+                SourceId = sourceId,
+                SourceIdHash = spell.IdHash,
             });
             EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(finalTarget, true);
         }
 
         bool TryResolveProtection(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
             Entity target,
             short effectId,
-            in MagicEffectDef effectDef,
+            ref RuntimeMagicEffectDefBlob effectDef,
             ref float magnitude,
             ref Entity finalTarget,
             ref byte ignoreReflect,
@@ -359,7 +372,7 @@ namespace VVardenfell.Runtime.Magic
                 float absorption = MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(targetEffects, MorrowindMagicEffectIds.SpellAbsorption);
                 if (absorption > 0f && random.NextInt(0, 100) < absorption)
                 {
-                    RestoreAbsorbedMagicka(contentDb, request.Spell, target);
+                    RestoreAbsorbedMagicka(ref content, request.Spell, target);
                     return false;
                 }
             }
@@ -382,21 +395,22 @@ namespace VVardenfell.Runtime.Magic
             return magnitude > 0f;
         }
 
-        void RestoreAbsorbedMagicka(RuntimeContentDatabase contentDb, SpellDefHandle spellHandle, Entity target)
+        void RestoreAbsorbedMagicka(ref RuntimeContentBlob content, SpellDefHandle spellHandle, Entity target)
         {
             if (!EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Spell absorption target entity={target.Index}:{target.Version} has no ActorVitalSet.");
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            ref readonly var spell = ref contentDb.Get(spellHandle);
-            vitals.CurrentMagicka += MorrowindSpellCostUtility.CalculateSpellCost(contentDb, spell);
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
+            vitals.CurrentMagicka += MorrowindSpellCostUtility.CalculateSpellCost(ref content, ref spell);
             EntityManager.SetComponentData(target, vitals);
         }
 
         void EmitMagicProjectile(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
+            ref RuntimeModelPrefabBlob modelPrefabs,
             SpellDefHandle spellHandle,
             in MagicEffectInstanceDef instance,
-            in MagicEffectDef effect,
+            ref RuntimeMagicEffectDefBlob effect,
             Entity caster,
             Entity target,
             byte scripted,
@@ -404,8 +418,8 @@ namespace VVardenfell.Runtime.Magic
             byte ignoreSpellAbsorption,
             ref EntityCommandBuffer ecb)
         {
-            string model = ResolveMagicVfxModel(contentDb, effect.BoltObjectId);
-            float speed = contentDb.RequireGameSettingFloat("fTargetSpellMaxSpeed") * effect.Speed;
+            RuntimeMagicVfxModelRef model = ResolveMagicVfxModel(ref content, ref modelPrefabs, effect.BoltObjectIdHash, "projectile bolt");
+            float speed = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fTargetSpellMaxSpeed) * effect.Speed;
             if (speed <= 0f || !math.isfinite(speed))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Target projectile effect {effect.Index} produced invalid speed {speed}.");
 
@@ -432,9 +446,10 @@ namespace VVardenfell.Runtime.Magic
                 Rotation = quaternion.LookRotationSafe(direction, math.up()),
                 Direction = direction,
                 Speed = speed,
-                UseModelCollisionRadius = 1,
-                ModelPath = model,
-                TextureOverridePath = effect.ParticleTexture ?? string.Empty,
+                CollisionRadius = RuntimeModelPrefabBlobUtility.RequireCollisionRadius(ref modelPrefabs, model.ModelPrefabIndex, "magic projectile"),
+                ModelPrefabIndex = model.ModelPrefabIndex,
+                ModelPathHash = model.ModelPathHash,
+                TextureOverridePathHash = effect.ParticleTexturePathHash,
                 SpawnVisual = 1,
                 Scripted = scripted,
                 IgnoreReflect = ignoreReflect,
@@ -446,20 +461,26 @@ namespace VVardenfell.Runtime.Magic
             });
         }
 
-        void EmitMagicVfxObject(RuntimeContentDatabase contentDb, string objectId, Entity anchor, ref EntityCommandBuffer ecb)
+        void EmitMagicVfxObject(
+            ref RuntimeContentBlob content,
+            ref RuntimeModelPrefabBlob modelPrefabs,
+            ulong objectIdHash,
+            Entity anchor,
+            ref EntityCommandBuffer ecb)
         {
-            if (string.IsNullOrWhiteSpace(objectId))
+            if (objectIdHash == 0UL)
                 return;
             if (!EntityManager.HasComponent<LocalTransform>(anchor) || !EntityManager.HasComponent<LogicalRefLocation>(anchor))
                 throw new InvalidOperationException($"[VVardenfell][Magic] VFX anchor entity={anchor.Index}:{anchor.Version} lacks transform/location.");
 
-            string model = ResolveMagicVfxModel(contentDb, objectId);
+            RuntimeMagicVfxModelRef model = ResolveMagicVfxModel(ref content, ref modelPrefabs, objectIdHash, "anchored VFX");
             var transform = EntityManager.GetComponentData<LocalTransform>(anchor);
             var location = EntityManager.GetComponentData<LogicalRefLocation>(anchor);
             Entity request = ecb.CreateEntity();
             ecb.AddComponent(request, new MorrowindVfxSpawnRequest
             {
-                ModelPath = model,
+                ModelPrefabIndex = model.ModelPrefabIndex,
+                ModelPathHash = model.ModelPathHash,
                 Position = transform.Position,
                 Rotation = transform.Rotation,
                 Scale = transform.Scale <= 0f ? 1f : transform.Scale,
@@ -472,10 +493,10 @@ namespace VVardenfell.Runtime.Magic
             });
         }
 
-        static float ResolveDuration(in MagicEffectInstanceDef instance, in MagicEffectDef effectDef)
+        static float ResolveDuration(in MagicEffectInstanceDef instance, ref RuntimeMagicEffectDefBlob effectDef)
             => (effectDef.Flags & MorrowindSpellCostUtility.MagicEffectFlagNoDuration) != 0 ? 1f : math.max(1f, instance.Duration);
 
-        static float ResolveMagnitude(in MagicEffectInstanceDef instance, in MagicEffectDef effectDef, ref Random random)
+        static float ResolveMagnitude(in MagicEffectInstanceDef instance, ref RuntimeMagicEffectDefBlob effectDef, ref Random random)
         {
             if ((effectDef.Flags & MorrowindSpellCostUtility.MagicEffectFlagNoMagnitude) != 0)
                 return 1f;
@@ -529,17 +550,17 @@ namespace VVardenfell.Runtime.Magic
             return ResolveActor(entity, placedRefId, lookup, "target");
         }
 
-        static void RequireValidSpell(RuntimeContentDatabase contentDb, SpellDefHandle spell)
+        static void RequireValidSpell(ref RuntimeContentBlob content, SpellDefHandle spell)
         {
-            if (!spell.IsValid || contentDb.Data.Spells == null || spell.Index < 0 || spell.Index >= contentDb.Data.Spells.Length)
+            if (!spell.IsValid || spell.Index < 0 || spell.Index >= content.Spells.Length)
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast references invalid spell handle {spell.Value}.");
         }
 
-        static ref readonly MagicEffectDef RequireMagicEffect(RuntimeContentDatabase contentDb, short effectId, string spellId)
+        static ref RuntimeMagicEffectDefBlob RequireMagicEffect(ref RuntimeContentBlob content, short effectId, ulong spellContentId)
         {
-            if (!contentDb.TryGetMagicEffectHandle(effectId, out var handle) || !handle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][Magic] Spell '{spellId}' references missing magic effect {effectId}.");
-            return ref contentDb.Get(handle);
+            if (!RuntimeContentBlobUtility.TryGetMagicEffectHandleByIndex(ref content, effectId, out var handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spellContentId:X16} references missing magic effect {effectId}.");
+            return ref RuntimeContentBlobUtility.Get(ref content, handle);
         }
 
         float3 RequirePosition(Entity entity, string context)
@@ -565,31 +586,53 @@ namespace VVardenfell.Runtime.Magic
             return transform.Position + bounds.Center;
         }
 
-        static string ResolveMagicVfxModel(RuntimeContentDatabase contentDb, string objectId)
+        static RuntimeMagicVfxModelRef ResolveMagicVfxModel(
+            ref RuntimeContentBlob content,
+            ref RuntimeModelPrefabBlob modelPrefabs,
+            ulong objectIdHash,
+            string context)
         {
-            if (string.IsNullOrWhiteSpace(objectId))
-                throw new InvalidOperationException("[VVardenfell][Magic] Magic projectile effect has no VFX object.");
-            if (contentDb.TryGetActivatorHandle(objectId, out var activator) && activator.IsValid)
-                return RequireModel(objectId, contentDb.Get(activator).Model);
-            if (contentDb.TryGetStaticHandle(objectId, out var stat) && stat.IsValid)
-                return RequireModel(objectId, contentDb.GetStatic(stat).Model);
-            if (contentDb.TryGetLightHandle(objectId, out var light) && light.IsValid)
-                return RequireModel(objectId, contentDb.Get(light).Model);
-            if (contentDb.TryGetItemHandle(objectId, out var item) && item.IsValid)
-                return RequireModel(objectId, contentDb.Get(item).Model);
-            throw new InvalidOperationException($"[VVardenfell][Magic] VFX object '{objectId}' is missing from runtime content.");
+            if (objectIdHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][Magic] Magic {context} effect has no VFX object hash.");
+            if (RuntimeContentBlobUtility.TryGetActivatorHandleByIdHash(ref content, objectIdHash, out var activator) && activator.IsValid)
+                return RequireModel(ref modelPrefabs, RuntimeContentBlobUtility.Get(ref content, activator).ModelPathHash, objectIdHash, context);
+            if (RuntimeContentBlobUtility.TryGetStaticHandleByIdHash(ref content, objectIdHash, out var stat) && stat.IsValid)
+                return RequireModel(ref modelPrefabs, RuntimeContentBlobUtility.GetStatic(ref content, stat).ModelPathHash, objectIdHash, context);
+            if (RuntimeContentBlobUtility.TryGetLightHandleByIdHash(ref content, objectIdHash, out var light) && light.IsValid)
+                return RequireModel(ref modelPrefabs, RuntimeContentBlobUtility.Get(ref content, light).ModelPathHash, objectIdHash, context);
+            if (RuntimeContentBlobUtility.TryGetItemHandleByIdHash(ref content, objectIdHash, out var item) && item.IsValid)
+                return RequireModel(ref modelPrefabs, RuntimeContentBlobUtility.Get(ref content, item).ModelPathHash, objectIdHash, context);
+            throw new InvalidOperationException($"[VVardenfell][Magic] VFX object hash 0x{objectIdHash:X16} is missing from runtime content.");
         }
 
-        static string RequireModel(string objectId, string model)
+        static RuntimeMagicVfxModelRef RequireModel(
+            ref RuntimeModelPrefabBlob modelPrefabs,
+            ulong contentModelPathHash,
+            ulong objectIdHash,
+            string context)
         {
-            if (string.IsNullOrWhiteSpace(model))
-                throw new InvalidOperationException($"[VVardenfell][Magic] VFX object '{objectId}' has no model.");
-            return model;
+            if (contentModelPathHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][Magic] VFX object hash 0x{objectIdHash:X16} for {context} has no model path hash.");
+            int modelPrefabIndex = RuntimeModelPrefabBlobUtility.RequireIndexByContentModelPathHash(ref modelPrefabs, contentModelPathHash, $"magic {context}");
+            ref RuntimeModelPrefabDefBlob record = ref RuntimeModelPrefabBlobUtility.RequireRecord(ref modelPrefabs, modelPrefabIndex);
+            return new RuntimeMagicVfxModelRef
+            {
+                ModelPrefabIndex = modelPrefabIndex,
+                ModelPathHash = record.ModelPathHash,
+            };
         }
 
         uint PlacedRefId(Entity entity)
             => EntityManager.HasComponent<PlacedRefIdentity>(entity)
                 ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
+
+        struct RuntimeMagicVfxModelRef
+        {
+            public int ModelPrefabIndex;
+            public ulong ModelPathHash;
+        }
     }
 }
+
+

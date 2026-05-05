@@ -4,7 +4,6 @@ using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
@@ -27,11 +26,15 @@ namespace VVardenfell.Runtime.WorldState
             RequireForUpdate<StreamingConfig>();
             RequireForUpdate<InteriorTransitionState>();
             RequireForUpdate<InteriorSpawnedEntity>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Runtime spawn requests require runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
             var spawnState = SystemAPI.GetSingleton<RuntimeSpawnState>();
             var spawnResult = SystemAPI.GetSingleton<RuntimeSpawnResult>();
@@ -60,7 +63,7 @@ namespace VVardenfell.Runtime.WorldState
                 var request = requestSnapshot[i];
                 ProcessRequest(
                     spawnEntity,
-                    contentDb,
+                    ref content,
                     ref spawnState,
                     ref spawnResult,
                     ref logicalLookup,
@@ -83,7 +86,7 @@ namespace VVardenfell.Runtime.WorldState
 
         void ProcessRequest(
             Entity spawnEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref RuntimeSpawnState spawnState,
             ref RuntimeSpawnResult spawnResult,
             ref LogicalRefLookup logicalLookup,
@@ -101,13 +104,7 @@ namespace VVardenfell.Runtime.WorldState
                 LogicalEntity = Entity.Null,
             };
 
-            if (contentDb == null)
-            {
-                CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.NotReady, "Runtime content database is not ready.");
-                return;
-            }
-
-            if (!contentDb.IsValid(request.Content))
+            if (!RuntimeContentBlobUtility.IsValid(ref content, request.Content))
             {
                 CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.InvalidContent, "Spawn content reference is invalid.");
                 return;
@@ -164,7 +161,7 @@ namespace VVardenfell.Runtime.WorldState
                 ? RuntimeSpawnFactory.QueueActorSpawn(
                     EntityManager,
                     ref createEcb,
-                    contentDb,
+                    ref content,
                     request.Content,
                     runtimeRefId,
                     request.Position,
@@ -177,7 +174,7 @@ namespace VVardenfell.Runtime.WorldState
                 : RuntimeSpawnFactory.QueueSpawn(
                     EntityManager,
                     ref createEcb,
-                    contentDb,
+                    ref content,
                     descriptor,
                     request.Content,
                     runtimeRefId,

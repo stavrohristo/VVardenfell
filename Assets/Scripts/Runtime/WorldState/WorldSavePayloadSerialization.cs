@@ -1,12 +1,12 @@
 using System;
 using System.IO;
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Combat;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
@@ -578,9 +578,16 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             int count = r.ReadInt32();
-            int condition = version >= InventoryConditionPayloadVersion
-                ? r.ReadInt32()
-                : InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+            int condition;
+            if (version >= InventoryConditionPayloadVersion)
+            {
+                condition = r.ReadInt32();
+            }
+            else
+            {
+                var contentBlob = RequireRuntimeContentBlob();
+                condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob.Value, content);
+            }
 
             return new PlayerInventoryItem
             {
@@ -972,8 +979,17 @@ namespace VVardenfell.Runtime.WorldState
                 FeatherMagnitude = r.ReadSingle(),
                 BurdenMagnitude = r.ReadSingle(),
             };
-            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, result.Attributes, ref result.Vitals, initializeMissingCurrents: true);
+            var contentBlob = RequireRuntimeContentBlob();
+            MorrowindActorMovementStats.ApplyVitalBases(ref contentBlob.Value, result.Attributes, ref result.Vitals, initializeMissingCurrents: true);
             return result;
+        }
+
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
+        {
+            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            if (!blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Save] Save payload deserialization requires runtime content blob.");
+            return blob;
         }
 
         static void WriteActorIdentity(BinaryWriter w, in ActorIdentitySet value)
@@ -1060,6 +1076,12 @@ namespace VVardenfell.Runtime.WorldState
                 sbyte skill = r.ReadSByte();
                 sbyte attribute = r.ReadSByte();
                 float magnitude = r.ReadSingle();
+                float durationSeconds = r.ReadSingle();
+                float timeLeftSeconds = r.ReadSingle();
+                byte applied = r.ReadByte();
+                var sourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte();
+                var sourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString());
+                var sourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString());
                 return new ActorActiveMagicEffect
                 {
                     EffectId = effectId,
@@ -1069,16 +1091,17 @@ namespace VVardenfell.Runtime.WorldState
                     Magnitude = magnitude,
                     MagnitudeMin = magnitude,
                     MagnitudeMax = magnitude,
-                    DurationSeconds = r.ReadSingle(),
-                    TimeLeftSeconds = r.ReadSingle(),
-                    Applied = r.ReadByte(),
-                    SourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte(),
-                    SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
-                    SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                    DurationSeconds = durationSeconds,
+                    TimeLeftSeconds = timeLeftSeconds,
+                    Applied = applied,
+                    SourceKind = sourceKind,
+                    SourceName = sourceName,
+                    SourceId = sourceId,
+                    SourceIdHash = RuntimeContentStableHash.HashId(sourceId),
                 };
             }
 
-            return new ActorActiveMagicEffect
+            var readEffect = new ActorActiveMagicEffect
             {
                 ActiveSpellId = r.ReadInt32(),
                 EffectId = r.ReadInt16(),
@@ -1099,6 +1122,25 @@ namespace VVardenfell.Runtime.WorldState
                 SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
             };
+            readEffect.SourceIdHash = RuntimeContentStableHash.HashId(readEffect.SourceId);
+            return readEffect;
+        }
+
+        static ActorActiveSpell ReadActiveSpell(BinaryReader r)
+        {
+            var activeSpell = new ActorActiveSpell
+            {
+                ActiveSpellId = r.ReadInt32(),
+                CasterPlacedRefId = r.ReadUInt32(),
+                Spell = new SpellDefHandle { Value = r.ReadInt32() },
+                SourceContent = ReadContentReference(r),
+                SourceKind = (ActorActiveSpellSourceKind)r.ReadByte(),
+                Flags = (ActorActiveSpellFlags)r.ReadUInt16(),
+                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+            };
+            activeSpell.SourceIdHash = RuntimeContentStableHash.HashId(activeSpell.SourceId);
+            return activeSpell;
         }
 
         static void WriteActiveSpell(BinaryWriter w, in ActorActiveSpell value)
@@ -1111,21 +1153,6 @@ namespace VVardenfell.Runtime.WorldState
             w.Write((ushort)value.Flags);
             w.Write(value.SourceName.ToString());
             w.Write(value.SourceId.ToString());
-        }
-
-        static ActorActiveSpell ReadActiveSpell(BinaryReader r)
-        {
-            return new ActorActiveSpell
-            {
-                ActiveSpellId = r.ReadInt32(),
-                CasterPlacedRefId = r.ReadUInt32(),
-                Spell = new SpellDefHandle { Value = r.ReadInt32() },
-                SourceContent = ReadContentReference(r),
-                SourceKind = (ActorActiveSpellSourceKind)r.ReadByte(),
-                Flags = (ActorActiveSpellFlags)r.ReadUInt16(),
-                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
-                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
-            };
         }
 
         static void WriteUsedPower(BinaryWriter w, in ActorUsedPower value)
@@ -1157,6 +1184,7 @@ namespace VVardenfell.Runtime.WorldState
                 var effect = payload.ActiveMagicEffects[i];
                 int activeSpellId = i + 1;
                 effect.ActiveSpellId = activeSpellId;
+                effect.SourceIdHash = RuntimeContentStableHash.HashId(effect.SourceId);
                 payload.ActiveMagicEffects[i] = effect;
                 payload.ActiveSpells[i] = new ActorActiveSpell
                 {
@@ -1164,6 +1192,7 @@ namespace VVardenfell.Runtime.WorldState
                     SourceKind = effect.SourceKind == ActorActiveMagicEffectSourceKind.PassiveSpell ? ActorActiveSpellSourceKind.PassiveSpell : ActorActiveSpellSourceKind.Spell,
                     SourceName = effect.SourceName,
                     SourceId = effect.SourceId,
+                    SourceIdHash = effect.SourceIdHash,
                     Flags = effect.SourceKind == ActorActiveMagicEffectSourceKind.PassiveSpell ? ActorActiveSpellFlags.SpellStore | ActorActiveSpellFlags.IgnoreResistances : ActorActiveSpellFlags.Temporary,
                 };
             }

@@ -1,8 +1,8 @@
 using System;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
@@ -32,6 +32,7 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<RuntimeShellActionRequest>();
             RequireForUpdate<MorrowindTimeState>();
             RequireForUpdate<MorrowindTimeAdvanceRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate(_playerQuery);
         }
 
@@ -131,17 +132,17 @@ namespace VVardenfell.Runtime.Shell
 
         int ComputeUntilHealedHours()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
             var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
             var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(_playerQuery.GetSingletonEntity(), true);
             bool stuntedMagicka = RuntimeRestUtility.HasStuntedMagicka(activeEffects);
-            return RuntimeRestUtility.ComputeUntilHealedHours(contentDb, vitals, attributes, stuntedMagicka);
+            return RuntimeRestUtility.ComputeUntilHealedHours(ref contentBlob, vitals, attributes, stuntedMagicka);
         }
 
         void RestorePlayerVitalsForHour(bool sleeping)
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
             var skills = _playerQuery.GetSingleton<ActorSkillSet>();
             ref var vitals = ref _playerQuery.GetSingletonRW<ActorVitalSet>().ValueRW;
@@ -151,8 +152,8 @@ namespace VVardenfell.Runtime.Shell
             var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(_playerQuery.GetSingletonEntity());
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
 
-            MorrowindActorMovementStats.ApplyVitalBases(contentDb, attributes, ref vitals, initializeMissingCurrents: false);
-            var context = MorrowindPlayerSpeedResolver.Build(contentDb, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
+            MorrowindActorMovementStats.ApplyVitalBases(ref contentBlob, attributes, ref vitals, initializeMissingCurrents: false);
+            var context = MorrowindPlayerSpeedResolver.Build(ref contentBlob, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
             vitals.CurrentFatigue = math.min(vitals.ModifiedFatigueBase, vitals.CurrentFatigue + context.GetFatigueRestorePerSecond() * 3600f);
 
             if (sleeping)
@@ -166,7 +167,7 @@ namespace VVardenfell.Runtime.Shell
                 {
                     vitals.CurrentMagicka = math.min(
                         vitals.ModifiedMagickaBase,
-                        vitals.CurrentMagicka + RuntimeRestUtility.MagickaPerSleepHour(contentDb, attributes) * magickaRestoreHours);
+                        vitals.CurrentMagicka + RuntimeRestUtility.MagickaPerSleepHour(ref contentBlob, attributes) * magickaRestoreHours);
                 }
             }
 

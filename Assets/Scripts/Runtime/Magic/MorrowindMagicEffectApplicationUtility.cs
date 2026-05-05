@@ -2,10 +2,10 @@ using System;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Magic
 {
@@ -41,6 +41,7 @@ namespace VVardenfell.Runtime.Magic
         public static readonly short FortifyHealth = Require("sEffectFortifyHealth");
         public static readonly short FortifyMagicka = Require("sEffectFortifySpellpoints");
         public static readonly short FortifyFatigue = Require("sEffectFortifyFatigue");
+        public static readonly short FortifyMaximumMagicka = Require("sEffectFortifyMagickaMultiplier");
         public static readonly short AbsorbHealth = Require("sEffectAbsorbHealth");
         public static readonly short AbsorbMagicka = Require("sEffectAbsorbSpellPoints");
         public static readonly short AbsorbFatigue = Require("sEffectAbsorbFatigue");
@@ -88,7 +89,7 @@ namespace VVardenfell.Runtime.Magic
 
         public static bool ApplyOrTick(
             EntityManager entityManager,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity target,
             DynamicBuffer<ActorActiveSpell> activeSpells,
             DynamicBuffer<ActorActiveMagicEffect> effects,
@@ -102,7 +103,7 @@ namespace VVardenfell.Runtime.Magic
             bool changed = false;
             if (effect.Applied == 0)
             {
-                ApplyOnce(entityManager, contentDb, target, activeSpells, effects, index, ref effect);
+                ApplyOnce(entityManager, ref content, target, activeSpells, effects, index, ref effect);
                 effect.Applied = 1;
                 changed = true;
             }
@@ -172,7 +173,7 @@ namespace VVardenfell.Runtime.Magic
 
         static void ApplyOnce(
             EntityManager entityManager,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity target,
             DynamicBuffer<ActorActiveSpell> activeSpells,
             DynamicBuffer<ActorActiveMagicEffect> effects,
@@ -181,7 +182,7 @@ namespace VVardenfell.Runtime.Magic
         {
             if (IsPurgeEffect(effect.EffectId))
             {
-                ApplyPurge(contentDb, effects, index, effect.EffectId);
+                ApplyPurge(ref content, effects, index, effect.EffectId);
                 return;
             }
 
@@ -189,7 +190,7 @@ namespace VVardenfell.Runtime.Magic
                 ApplyVitalDelta(entityManager, target, ResolveCaster(entityManager, activeSpells, effect.ActiveSpellId), effect.EffectId, effect.Magnitude);
         }
 
-        static void ApplyPurge(RuntimeContentDatabase contentDb, DynamicBuffer<ActorActiveMagicEffect> effects, int selfIndex, short effectId)
+        static void ApplyPurge(ref RuntimeContentBlob content, DynamicBuffer<ActorActiveMagicEffect> effects, int selfIndex, short effectId)
         {
             for (int i = effects.Length - 1; i >= 0; i--)
             {
@@ -201,28 +202,27 @@ namespace VVardenfell.Runtime.Magic
                     effects.RemoveAt(i);
                 else if (effectId == MorrowindMagicEffectIds.CureParalyzation && active.EffectId == MorrowindMagicEffectIds.Paralyze)
                     effects.RemoveAt(i);
-                else if (effectId == MorrowindMagicEffectIds.CureCommonDisease && IsSourceSpellType(contentDb, active, MorrowindActorMagicUtility.SpellTypeDisease))
+                else if (effectId == MorrowindMagicEffectIds.CureCommonDisease && IsSourceSpellType(ref content, active, MorrowindActorMagicUtility.SpellTypeDisease))
                     effects.RemoveAt(i);
-                else if (effectId == MorrowindMagicEffectIds.CureBlightDisease && IsSourceSpellType(contentDb, active, MorrowindActorMagicUtility.SpellTypeBlight))
+                else if (effectId == MorrowindMagicEffectIds.CureBlightDisease && IsSourceSpellType(ref content, active, MorrowindActorMagicUtility.SpellTypeBlight))
                     effects.RemoveAt(i);
-                else if (effectId == MorrowindMagicEffectIds.RemoveCurse && IsSourceSpellType(contentDb, active, MorrowindActorMagicUtility.SpellTypeCurse))
+                else if (effectId == MorrowindMagicEffectIds.RemoveCurse && IsSourceSpellType(ref content, active, MorrowindActorMagicUtility.SpellTypeCurse))
                     effects.RemoveAt(i);
                 else if (effectId == MorrowindMagicEffectIds.Dispel && active.SourceKind != ActorActiveMagicEffectSourceKind.PassiveSpell)
                     effects.RemoveAt(i);
             }
         }
 
-        static bool IsSourceSpellType(RuntimeContentDatabase contentDb, in ActorActiveMagicEffect active, int spellType)
+        static bool IsSourceSpellType(ref RuntimeContentBlob content, in ActorActiveMagicEffect active, int spellType)
         {
-            string sourceId = active.SourceId.ToString();
-            if (string.IsNullOrWhiteSpace(sourceId)
-                || !contentDb.TryGetSpellHandle(sourceId, out var spellHandle)
+            if (active.SourceIdHash == 0UL
+                || !RuntimeContentBlobUtility.TryGetSpellHandleByIdHash(ref content, active.SourceIdHash, out var spellHandle)
                 || !spellHandle.IsValid)
             {
                 return false;
             }
 
-            ref readonly var spell = ref contentDb.Get(spellHandle);
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
             return spell.SpellType == spellType;
         }
 
@@ -317,6 +317,7 @@ namespace VVardenfell.Runtime.Magic
                || effectId == MorrowindMagicEffectIds.FireShield
                || effectId == MorrowindMagicEffectIds.FrostShield
                || effectId == MorrowindMagicEffectIds.LightningShield
+               || effectId == MorrowindMagicEffectIds.FortifyMaximumMagicka
                || effectId == MorrowindMagicEffectIds.Burden
                || effectId == MorrowindMagicEffectIds.Feather
                || effectId == MorrowindMagicEffectIds.Jump

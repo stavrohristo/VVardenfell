@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindDamageAppliedEvent>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -28,8 +29,10 @@ namespace VVardenfell.Runtime.Combat
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
             uint randomState = combatState.ValueRO.RandomState;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Damage] Hit feedback has no runtime content database.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Damage] Damage feedback requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
             var audioState = hasAudioState
                 ? EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
@@ -39,10 +42,10 @@ namespace VVardenfell.Runtime.Combat
                      SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>()
                          .WithEntityAccess())
             {
-                EmitBlockImpactAudio(contentDb, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
-                EmitArmorImpactAudio(contentDb, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
-                EmitAppliedDamageAudio(contentDb, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
-                EmitBloodVfxRequest(contentDb, ref randomState, ref ecb, damage.ValueRO);
+                EmitBlockImpactAudio(ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
+                EmitArmorImpactAudio(ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
+                EmitAppliedDamageAudio(ref content, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
+                EmitBloodVfxRequest(ref content, ref randomState, ref ecb, damage.ValueRO);
                 ecb.DestroyEntity(entity);
             }
 
@@ -61,7 +64,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void EmitBlockImpactAudio(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
             ref EntityCommandBuffer ecb,
@@ -87,7 +90,7 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target has no LocalTransform.");
 
             MorrowindCombatAudioUtility.EmitRequiredSound(
-                contentDb,
+                ref content,
                 soundId,
                 impact.Target,
                 PlacedRefId(impact.Target),
@@ -100,7 +103,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void EmitArmorImpactAudio(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
             ref EntityCommandBuffer ecb,
@@ -126,7 +129,7 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor hit sound target has no LocalTransform.");
 
             MorrowindCombatAudioUtility.EmitRequiredSound(
-                contentDb,
+                ref content,
                 soundId,
                 impact.Target,
                 PlacedRefId(impact.Target),
@@ -139,7 +142,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void EmitAppliedDamageAudio(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
             ref uint randomState,
@@ -159,7 +162,7 @@ namespace VVardenfell.Runtime.Combat
                 return;
 
             MorrowindCombatAudioUtility.EmitRequiredSound(
-                contentDb,
+                ref content,
                 soundId,
                 damage.Target,
                 PlacedRefId(damage.Target),
@@ -187,7 +190,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void EmitBloodVfxRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref uint randomState,
             ref EntityCommandBuffer ecb,
             in MorrowindDamageAppliedEvent damage)
@@ -207,10 +210,10 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(damage.Target)} has no LogicalRefLocation.");
 
             int modelVariant = (int)(NextRandom(ref randomState) % 3u);
-            string model = "meshes/" + contentDb.RequireGameSettingString($"Blood_Model_{modelVariant}");
+            string model = "meshes/" + RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentStableHash.HashId($"Blood_Model_{modelVariant}"));
             var actorSource = EntityManager.GetComponentData<ActorSpawnSource>(damage.Target);
-            ref readonly var actor = ref contentDb.Get(actorSource.Definition);
-            string texture = ResolveBloodTexture(contentDb, actor.BloodType);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorSource.Definition);
+            string texture = ResolveBloodTexture(ref content, actor.BloodType);
             var location = EntityManager.GetComponentData<LogicalRefLocation>(damage.Target);
             float3 bloodPosition = ResolveBloodVfxPosition(damage, ref randomState);
 
@@ -266,19 +269,14 @@ namespace VVardenfell.Runtime.Combat
         static float NextRandom01(ref uint randomState)
             => (NextRandom(ref randomState) & 0x00FFFFFFu) / 16777216f;
 
-        static string ResolveBloodTexture(RuntimeContentDatabase contentDb, int bloodType)
+        static string ResolveBloodTexture(ref RuntimeContentBlob content, int bloodType)
         {
             string typedId = $"Blood_Texture_{bloodType}";
-            if (!contentDb.TryGetGameSettingHandle(typedId, out var handle) || !handle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][Damage] Missing GMST '{typedId}'.");
+            string typed = RuntimeContentBlobUtility.RequireGameSettingStringAllowEmptyByIdHash(ref content, RuntimeContentStableHash.HashId(typedId));
+            if (!string.IsNullOrWhiteSpace(typed))
+                return typed;
 
-            ref readonly var setting = ref contentDb.GetGameSetting(handle);
-            if (setting.ValueKind != GenericRecordValueKind.String)
-                throw new InvalidOperationException($"[VVardenfell][Damage] GMST '{typedId}' is not a string game setting.");
-            if (!string.IsNullOrWhiteSpace(setting.Text))
-                return setting.Text;
-
-            return contentDb.RequireGameSettingString("Blood_Texture_0");
+            return RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.Blood_Texture_0);
         }
 
         uint PlacedRefId(Entity entity)
@@ -287,3 +285,5 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+
+

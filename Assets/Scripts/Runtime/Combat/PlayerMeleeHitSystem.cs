@@ -6,7 +6,6 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Player;
@@ -41,12 +40,15 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
             RequireForUpdate<MorrowindPhysicsFrameState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Combat] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Player melee hit requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             Entity player = _playerQuery.GetSingletonEntity();
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
@@ -62,7 +64,7 @@ namespace VVardenfell.Runtime.Combat
             var audioEcb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             if (weaponState.MeleeSwingPending != 0)
             {
-                EmitWeaponSwish(contentDb, player, playerTransform.Position, weaponState, ref audioState, hasAudioState, ref audioEcb);
+                EmitWeaponSwish(ref content, player, playerTransform.Position, weaponState, ref audioState, hasAudioState, ref audioEcb);
                 weaponState.MeleeSwingPending = 0;
                 weaponState.MeleeSwingAttackStrength = 0f;
                 weaponState.MeleeSwingWeaponContent = default;
@@ -85,7 +87,7 @@ namespace VVardenfell.Runtime.Combat
             float hitAttackStrength = math.saturate(weaponState.MeleeHitAttackStrength);
             var hitWeaponContent = weaponState.MeleeHitWeaponContent;
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 hitWeaponContent,
                 out bool hasWeapon,
                 out _,
@@ -96,14 +98,14 @@ namespace VVardenfell.Runtime.Combat
             var playerDerived = _playerQuery.GetSingleton<ActorDerivedMovementStats>();
             var playerComponent = _playerQuery.GetSingleton<PlayerCharacterComponent>();
 
-            SpendAttackFatigue(contentDb, ref playerVitals, playerDerived, hasWeapon, weapon, hitAttackStrength);
+            SpendAttackFatigue(ref content, ref playerVitals, playerDerived, hasWeapon, weapon, hitAttackStrength);
             EntityManager.SetComponentData(player, playerVitals);
 
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
-            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(contentDb, hasWeapon, weapon);
+            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
             TryQueueMeleeConfirmation(
-                contentDb,
+                ref content,
                 logicalRefLookup,
                 player,
                 playerTransform.Position,
@@ -124,7 +126,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TryQueueMeleeConfirmation(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in LogicalRefLookup logicalRefLookup,
             Entity player,
             float3 playerPosition,
@@ -141,7 +143,7 @@ namespace VVardenfell.Runtime.Combat
             querySequence = 0u;
             targetPlacedRefId = 0u;
             if (!TrySelectMeleeTarget(
-                    contentDb,
+                    ref content,
                     logicalRefLookup,
                     player,
                     playerPosition,
@@ -184,7 +186,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TrySelectMeleeTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in LogicalRefLookup logicalRefLookup,
             Entity player,
             float3 playerPosition,
@@ -211,7 +213,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             return TrySelectActorBoundsMeleeTarget(
-                contentDb,
+                ref content,
                 player,
                 playerPosition,
                 playerRadius,
@@ -265,7 +267,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TrySelectActorBoundsMeleeTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity player,
             float3 playerPosition,
             float playerRadius,
@@ -283,8 +285,8 @@ namespace VVardenfell.Runtime.Combat
             hasHitPosition = 0;
             confirmationEnd = default;
 
-            float combatAngleXY = contentDb.RequireGameSettingFloat("fCombatAngleXY") / 90f;
-            float combatAngleZ = contentDb.RequireGameSettingFloat("fCombatAngleZ") / 90f;
+            float combatAngleXY = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleXY) / 90f;
+            float combatAngleZ = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleZ) / 90f;
             float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
             float3 forwardXY = math.normalizesafe(new float3(forward.x, 0f, forward.z), new float3(0f, 0f, 1f));
             float actorVerticalAngle = forward.y;
@@ -442,7 +444,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void EmitWeaponSwish(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity player,
             float3 playerPosition,
             in ActorWeaponAnimationState weaponState,
@@ -452,7 +454,7 @@ namespace VVardenfell.Runtime.Combat
         {
             float strength = math.saturate(weaponState.MeleeSwingAttackStrength);
             MorrowindCombatAudioUtility.EmitRequiredSound(
-                contentDb,
+                ref content,
                 "Weapon Swish",
                 player,
                 0u,
@@ -465,7 +467,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static void SpendAttackFatigue(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ref ActorVitalSet playerVitals,
             in ActorDerivedMovementStats playerDerived,
             bool hasWeapon,
@@ -473,7 +475,7 @@ namespace VVardenfell.Runtime.Combat
             float attackStrength)
         {
             float fatigueLoss = MorrowindMeleeCombatMechanics.ComputeAttackFatigueLoss(
-                contentDb,
+                ref content,
                 playerDerived,
                 hasWeapon,
                 weapon,
@@ -483,3 +485,5 @@ namespace VVardenfell.Runtime.Combat
 
     }
 }
+
+

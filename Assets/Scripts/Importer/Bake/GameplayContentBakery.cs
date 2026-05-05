@@ -337,6 +337,7 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "Writing gameplay content cache";
             progress.Current = recordSourcePaths.Length + 2;
             GameplayContentFile.Write(CachePaths.GameplayContent, data);
+            RuntimeContentBlobFile.Write(CachePaths.RuntimeContentBlob, data);
             yield return null;
 
             progress.Label = "Writing gameplay validation report";

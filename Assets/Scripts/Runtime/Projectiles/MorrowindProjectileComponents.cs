@@ -37,9 +37,9 @@ namespace VVardenfell.Runtime.Projectiles
         public float Speed;
         public float AttackStrength;
         public float CollisionRadius;
-        public byte UseModelCollisionRadius;
-        public FixedString512Bytes ModelPath;
-        public FixedString512Bytes TextureOverridePath;
+        public int ModelPrefabIndex;
+        public ulong ModelPathHash;
+        public ulong TextureOverridePathHash;
         public byte SpawnVisual;
         public byte Scripted;
         public byte IgnoreReflect;
@@ -61,8 +61,9 @@ namespace VVardenfell.Runtime.Projectiles
         public float3 Velocity;
         public float AttackStrength;
         public float Radius;
-        public FixedString512Bytes ModelPath;
-        public FixedString512Bytes TextureOverridePath;
+        public int ModelPrefabIndex;
+        public ulong ModelPathHash;
+        public ulong TextureOverridePathHash;
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
         public ulong InteriorCellHash;
@@ -87,8 +88,9 @@ namespace VVardenfell.Runtime.Projectiles
         public float AttackStrength;
         public float3 HitPosition;
         public float3 HitNormal;
-        public FixedString512Bytes ModelPath;
-        public FixedString512Bytes TextureOverridePath;
+        public int ModelPrefabIndex;
+        public ulong ModelPathHash;
+        public ulong TextureOverridePathHash;
         public byte Scripted;
         public byte IgnoreReflect;
         public byte IgnoreSpellAbsorption;

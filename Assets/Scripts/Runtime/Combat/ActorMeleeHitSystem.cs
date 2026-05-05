@@ -6,7 +6,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Physics;
@@ -26,12 +25,15 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
             RequireForUpdate<MorrowindPhysicsFrameState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][ActorMelee] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Actor melee hit requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
             var audioState = hasAudioState
@@ -55,7 +57,7 @@ namespace VVardenfell.Runtime.Combat
                 ref var weapon = ref weaponState.ValueRW;
                 if (weapon.MeleeSwingPending != 0)
                 {
-                    EmitWeaponSwish(contentDb, entity, transform.ValueRO.Position, weapon, ref audioState, hasAudioState, ref audioEcb);
+                    EmitWeaponSwish(ref content, entity, transform.ValueRO.Position, weapon, ref audioState, hasAudioState, ref audioEcb);
                     weapon.MeleeSwingPending = 0;
                     weapon.MeleeSwingAttackStrength = 0f;
                     weapon.MeleeSwingWeaponContent = default;
@@ -66,7 +68,7 @@ namespace VVardenfell.Runtime.Combat
 
                 Entity target = combat.ValueRO.TargetEntity;
                 if (TryQueueActorMeleeHit(
-                        contentDb,
+                        ref content,
                         entity,
                         transform.ValueRO,
                         actorBounds.ValueRO,
@@ -74,7 +76,7 @@ namespace VVardenfell.Runtime.Combat
                         weapon,
                         runtimeEntity))
                 {
-                    SpendAttackFatigue(contentDb, entity, weapon.MeleeHitWeaponContent, math.saturate(weapon.MeleeHitAttackStrength));
+                    SpendAttackFatigue(ref content, entity, weapon.MeleeHitWeaponContent, math.saturate(weapon.MeleeHitAttackStrength));
                 }
 
                 weapon.MeleeHitPending = 0;
@@ -89,7 +91,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool TryQueueActorMeleeHit(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity attacker,
             in LocalTransform attackerTransform,
             in ActorLocalBounds attackerBounds,
@@ -103,18 +105,18 @@ namespace VVardenfell.Runtime.Combat
                 return false;
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 weaponState.MeleeHitWeaponContent,
                 out bool hasWeapon,
                 out _,
                 out var weapon,
                 out _);
-            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(contentDb, hasWeapon, weapon);
+            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
             float attackerRadius = math.max(attackerBounds.Extents.x, attackerBounds.Extents.z) * math.max(0.01f, attackerTransform.Scale);
             float distanceToBounds = math.max(0f, math.distance(ToHorizontal(attackerTransform.Position), ToHorizontal(targetBase)) - attackerRadius - targetRadius);
             if (distanceToBounds > reach)
                 return false;
-            if (!PassesCombatCone(contentDb, attackerTransform, targetBase, targetHeight))
+            if (!PassesCombatCone(ref content, attackerTransform, targetBase, targetHeight))
                 return false;
 
             float3 source = math.transform(
@@ -223,7 +225,7 @@ namespace VVardenfell.Runtime.Combat
             throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorLocalBounds or PlayerCharacterComponent.");
         }
 
-        void SpendAttackFatigue(RuntimeContentDatabase contentDb, Entity attacker, in ContentReference weaponContent, float attackStrength)
+        void SpendAttackFatigue(ref RuntimeContentBlob content, Entity attacker, in ContentReference weaponContent, float attackStrength)
         {
             if (!EntityManager.HasComponent<ActorVitalSet>(attacker))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorVitalSet.");
@@ -231,7 +233,7 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(attacker)} has no ActorDerivedMovementStats.");
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 weaponContent,
                 out bool hasWeapon,
                 out _,
@@ -239,12 +241,12 @@ namespace VVardenfell.Runtime.Combat
                 out _);
             var vitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
             var derived = EntityManager.GetComponentData<ActorDerivedMovementStats>(attacker);
-            vitals.CurrentFatigue -= MorrowindMeleeCombatMechanics.ComputeAttackFatigueLoss(contentDb, derived, hasWeapon, weapon, attackStrength);
+            vitals.CurrentFatigue -= MorrowindMeleeCombatMechanics.ComputeAttackFatigueLoss(ref content, derived, hasWeapon, weapon, attackStrength);
             EntityManager.SetComponentData(attacker, vitals);
         }
 
         void EmitWeaponSwish(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity actor,
             float3 actorPosition,
             in ActorWeaponAnimationState weaponState,
@@ -254,7 +256,7 @@ namespace VVardenfell.Runtime.Combat
         {
             float strength = math.saturate(weaponState.MeleeSwingAttackStrength);
             MorrowindCombatAudioUtility.EmitRequiredSound(
-                contentDb,
+                ref content,
                 "Weapon Swish",
                 actor,
                 PlacedRefId(actor),
@@ -266,10 +268,10 @@ namespace VVardenfell.Runtime.Combat
                 ref ecb);
         }
 
-        static bool PassesCombatCone(RuntimeContentDatabase contentDb, in LocalTransform actorTransform, float3 targetBase, float targetHeight)
+        static bool PassesCombatCone(ref RuntimeContentBlob content, in LocalTransform actorTransform, float3 targetBase, float targetHeight)
         {
-            float combatAngleXY = contentDb.RequireGameSettingFloat("fCombatAngleXY") / 90f;
-            float combatAngleZ = contentDb.RequireGameSettingFloat("fCombatAngleZ") / 90f;
+            float combatAngleXY = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleXY) / 90f;
+            float combatAngleZ = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleZ) / 90f;
             float3 forward = math.normalizesafe(math.rotate(actorTransform.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
             float3 forwardXY = math.normalizesafe(new float3(forward.x, 0f, forward.z), new float3(0f, 0f, 1f));
             float3 toTargetXY = math.normalizesafe(ToHorizontal(targetBase - actorTransform.Position), float3.zero);
@@ -305,3 +307,4 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+

@@ -2,7 +2,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -13,14 +12,14 @@ namespace VVardenfell.Runtime.MorrowindScript
         const byte QuestStatusRestart = 3;
 
         public static bool TryApplyRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref MorrowindQuestJournalState state,
             in MorrowindTimeState time,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> entries,
             in MorrowindQuestJournalRequest request)
         {
-            if (contentDb == null || (uint)request.DialogueIndex >= (uint)questStates.Length)
+            if ((uint)request.DialogueIndex >= (uint)questStates.Length || (uint)request.DialogueIndex >= (uint)contentBlob.Dialogues.Length)
                 return false;
 
             var quest = questStates[request.DialogueIndex];
@@ -60,7 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 else if (request.QuestStatus == QuestStatusRestart)
                 {
                     quest.Finished = 0;
-                    RestartFinishedQuestSiblings(contentDb, questStates, request.DialogueIndex);
+                    RestartFinishedQuestSiblings(ref contentBlob, questStates, request.DialogueIndex);
                 }
             }
 
@@ -69,15 +68,15 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static void RestartFinishedQuestSiblings(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             int sourceDialogueIndex)
         {
-            string sourceName = ResolveJournalQuestName(contentDb, sourceDialogueIndex);
+            string sourceName = ResolveJournalQuestName(ref contentBlob, sourceDialogueIndex);
             if (string.IsNullOrWhiteSpace(sourceName))
                 return;
 
-            int count = math.min(questStates.Length, contentDb.DialogueCount);
+            int count = math.min(questStates.Length, contentBlob.Dialogues.Length);
             for (int i = 0; i < count; i++)
             {
                 if (i == sourceDialogueIndex)
@@ -87,7 +86,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (quest.Finished == 0)
                     continue;
 
-                string questName = ResolveJournalQuestName(contentDb, i);
+                string questName = ResolveJournalQuestName(ref contentBlob, i);
                 if (!string.Equals(sourceName, questName, System.StringComparison.OrdinalIgnoreCase))
                     continue;
 
@@ -96,24 +95,25 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static string ResolveJournalQuestName(RuntimeContentDatabase contentDb, int dialogueIndex)
+        static string ResolveJournalQuestName(ref RuntimeContentBlob contentBlob, int dialogueIndex)
         {
-            if (contentDb == null || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
                 return string.Empty;
 
-            ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+            ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[dialogueIndex];
             if (dialogue.Type != DialogueDefType.Journal)
                 return string.Empty;
 
             int start = math.max(0, dialogue.FirstInfoIndex);
-            int end = math.min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int end = math.min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             for (int i = start; i < end; i++)
             {
-                ref readonly DialogueInfoDef info = ref contentDb.Data.DialogueInfos[i];
+                ref RuntimeDialogueInfoDefBlob info = ref contentBlob.DialogueInfos[i];
                 if (info.QuestStatus != QuestStatusName)
                     continue;
 
-                return string.IsNullOrWhiteSpace(info.Response) ? string.Empty : info.Response.Trim();
+                string response = info.Response.ToString();
+                return string.IsNullOrWhiteSpace(response) ? string.Empty : response.Trim();
             }
 
             return string.Empty;

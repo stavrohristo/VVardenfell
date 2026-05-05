@@ -1,8 +1,9 @@
 using System;
 using Unity.Collections;
 using Unity.Entities;
-using VVardenfell.Runtime.Components;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
@@ -19,6 +20,7 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<ContainerWindowState>();
             RequireForUpdate<ContainerWindowRequest>();
             RequireForUpdate<ContainerSessionItem>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -27,7 +29,7 @@ namespace VVardenfell.Runtime.Inventory
             ref var state = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<ContainerWindowRequest>().ValueRW;
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ApplyRequests(ref state, ref request);
             state.Visible = shell.ContainerOpen;
@@ -44,7 +46,7 @@ namespace VVardenfell.Runtime.Inventory
                 selectedIndex = ContainerLootUtility.FindFirstItemIndex(items, state.OpenPlacedRefId);
 
             state.SelectedItemIndex = selectedIndex;
-            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(contentDb, items, state.OpenPlacedRefId, selectedIndex));
+            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(ref contentBlob, items, state.OpenPlacedRefId, selectedIndex));
         }
 
         static void ApplyRequests(ref ContainerWindowState state, ref ContainerWindowRequest request)
@@ -68,16 +70,16 @@ namespace VVardenfell.Runtime.Inventory
                 : -1;
         }
 
-        static string BuildSelectedItemDetails(RuntimeContentDatabase contentDb, DynamicBuffer<ContainerSessionItem> items, uint placedRefId, int selectedIndex)
+        static string BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<ContainerSessionItem> items, uint placedRefId, int selectedIndex)
         {
             if (selectedIndex < 0 || selectedIndex >= items.Length)
                 return "Container is empty.";
 
             var entry = items[selectedIndex];
-            if (entry.PlacedRefId != placedRefId || entry.Count <= 0 || contentDb == null)
+            if (entry.PlacedRefId != placedRefId || entry.Count <= 0)
                 return "Container is empty.";
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
                 return "Container is empty.";
 
             return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, Math.Max(1, entry.Count));

@@ -1,7 +1,8 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.Movement;
@@ -31,20 +32,25 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
             RequireForUpdate(_actorQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
             float dt = math.max(0f, SystemAPI.Time.DeltaTime);
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Active magic effect update requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             foreach (var (knownSpells, activeEffects, activeSpells, modifiers, vitals, entity) in
                      SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>, RefRW<ActorVitalSet>>()
                          .WithEntityAccess())
             {
                 bool dirty = EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity);
                 if (dirty)
-                    RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeSpells, activeEffects);
+                    RebuildPassiveSpellEffects(ref content, knownSpells, activeSpells, activeEffects);
                 InjectDebugActiveEffects(activeEffects);
-                bool changed = ApplyAndTickActiveEffects(RuntimeContentDatabase.Active, entity, activeSpells, activeEffects, dt);
+                bool changed = ApplyAndTickActiveEffects(ref content, entity, activeSpells, activeEffects, dt);
 
                 if (dirty || changed)
                 {
@@ -68,9 +74,10 @@ namespace VVardenfell.Runtime.Player
 
         static bool HasDebugBuffs(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
         {
+            ulong debugSourceHash = RuntimeContentStableHash.HashId(RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId));
             for (int i = 0; i < activeEffects.Length; i++)
             {
-                if (activeEffects[i].SourceId.Equals(RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId)))
+                if (activeEffects[i].SourceIdHash == debugSourceHash)
                     return true;
             }
 
@@ -83,6 +90,7 @@ namespace VVardenfell.Runtime.Player
             float magnitude,
             string sourceName)
         {
+            var sourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId);
             activeEffects.Add(new ActorActiveMagicEffect
             {
                 EffectId = effectId,
@@ -94,12 +102,13 @@ namespace VVardenfell.Runtime.Player
                 Applied = 1,
                 SourceKind = ActorActiveMagicEffectSourceKind.TimedSpell,
                 SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(sourceName),
-                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId),
+                SourceId = sourceId,
+                SourceIdHash = RuntimeContentStableHash.HashId(sourceId),
             });
         }
 
         static void RebuildPassiveSpellEffects(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             DynamicBuffer<ActorKnownSpell> knownSpells,
             DynamicBuffer<ActorActiveSpell> activeSpells,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects)
@@ -116,18 +125,20 @@ namespace VVardenfell.Runtime.Player
                     activeSpells.RemoveAt(i);
             }
 
-            if (contentDb?.Data.Spells == null || contentDb.Data.MagicEffectInstances == null)
-                return;
-
             for (int i = 0; i < knownSpells.Length; i++)
             {
                 var handle = knownSpells[i].Spell;
-                if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentDb.Data.Spells.Length)
-                    continue;
+                if (!handle.IsValid || handle.Index < 0 || handle.Index >= content.Spells.Length)
+                    throw new System.InvalidOperationException($"[VVardenfell][Magic] Passive known spell references invalid handle {handle.Value}.");
 
-                ref readonly var spell = ref contentDb.Get(handle);
+                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, handle);
                 if (!MorrowindActorMagicUtility.IsPassiveSpellType(spell.SpellType) || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                     continue;
+                MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
+                FixedString64Bytes sourceName = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Name);
+                FixedString64Bytes sourceId = RuntimeFixedStringUtility.ToFixed64OrDefault(ref spell.Id);
+                if (sourceName.IsEmpty)
+                    sourceName = sourceId;
 
                 int activeSpellId = -(i + 1);
                 activeSpells.Add(new ActorActiveSpell
@@ -136,15 +147,14 @@ namespace VVardenfell.Runtime.Player
                     Spell = handle,
                     SourceKind = ActorActiveSpellSourceKind.PassiveSpell,
                     Flags = ActorActiveSpellFlags.SpellStore | ActorActiveSpellFlags.IgnoreResistances | ActorActiveSpellFlags.IgnoreReflect | ActorActiveSpellFlags.IgnoreSpellAbsorption,
-                    SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                    SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                    SourceName = sourceName,
+                    SourceId = sourceId,
+                    SourceIdHash = spell.IdHash,
                 });
 
-                int available = math.max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
-                int count = math.min(spell.EffectCount, available);
-                for (int effectIndex = 0; effectIndex < count; effectIndex++)
+                for (int effectIndex = 0; effectIndex < spell.EffectCount; effectIndex++)
                 {
-                    var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex + effectIndex];
+                    ref MagicEffectInstanceDef effect = ref content.MagicEffectInstances[spell.EffectStartIndex + effectIndex];
                     activeEffects.Add(new ActorActiveMagicEffect
                     {
                         ActiveSpellId = activeSpellId,
@@ -162,8 +172,9 @@ namespace VVardenfell.Runtime.Player
                         IgnoreReflect = 1,
                         IgnoreSpellAbsorption = 1,
                         SourceKind = ActorActiveMagicEffectSourceKind.PassiveSpell,
-                        SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
-                        SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                        SourceName = sourceName,
+                        SourceId = sourceId,
+                        SourceIdHash = spell.IdHash,
                     });
                 }
             }
@@ -191,20 +202,20 @@ namespace VVardenfell.Runtime.Player
                     case BurdenEffectId:
                         modifiers.BurdenMagnitude += math.max(0f, effect.Magnitude);
                         break;
+                    case var effectId when effectId == MorrowindMagicEffectIds.FortifyMaximumMagicka:
+                        modifiers.FortifyMaximumMagickaMagnitude += effect.Magnitude;
+                        break;
                 }
             }
 
             return modifiers;
         }
 
-        bool ApplyAndTickActiveEffects(RuntimeContentDatabase contentDb, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
+        bool ApplyAndTickActiveEffects(ref RuntimeContentBlob content, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
         {
-            if (contentDb == null)
-                throw new System.InvalidOperationException("[VVardenfell][Magic] Active magic effect update requires active runtime content.");
-
             bool changed = false;
             for (int i = 0; i < activeEffects.Length; i++)
-                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(EntityManager, contentDb, entity, activeSpells, activeEffects, i, deltaSeconds);
+                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(EntityManager, ref content, entity, activeSpells, activeEffects, i, deltaSeconds);
 
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
@@ -237,13 +248,15 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<PlayerEncumbranceDirty>());
 
             RequireForUpdate(_dirtyPlayerQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player encumbrance requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             foreach (var (attributes, effectModifiers, derived, inventory, entity) in
                      SystemAPI.Query<
@@ -254,9 +267,9 @@ namespace VVardenfell.Runtime.Player
                          .WithAll<PlayerTag, PlayerEncumbranceDirty>()
                          .WithEntityAccess())
             {
-                float inventoryWeight = SumInventoryWeight(contentDb, inventory);
+                float inventoryWeight = SumInventoryWeight(ref content, inventory);
 
-                derived.ValueRW.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(contentDb, attributes.ValueRO);
+                derived.ValueRW.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(ref content, attributes.ValueRO);
                 derived.ValueRW.Encumbrance = MorrowindActorMovementStats.ComputeEncumbrance(effectModifiers.ValueRO, inventoryWeight);
                 derived.ValueRW.NormalizedEncumbrance = MorrowindActorMovementStats.ComputeNormalizedEncumbrance(
                     derived.ValueRO.Encumbrance,
@@ -266,7 +279,7 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static float SumInventoryWeight(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory)
+        static float SumInventoryWeight(ref RuntimeContentBlob content, DynamicBuffer<PlayerInventoryItem> inventory)
         {
             float totalWeight = 0f;
             for (int i = 0; i < inventory.Length; i++)
@@ -275,13 +288,11 @@ namespace VVardenfell.Runtime.Player
                 if (entry.Count <= 0 || !entry.Content.IsValid)
                     continue;
 
-                if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+                float weight = RuntimeContentBlobUtility.RequireCarryWeight(ref content, entry.Content);
+                if (weight < 0f)
                     continue;
 
-                if (metadata.Weight < 0f)
-                    continue;
-
-                totalWeight += metadata.Weight * entry.Count;
+                totalWeight += weight * entry.Count;
             }
 
             return totalWeight;
@@ -308,6 +319,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<MorrowindMovementState>());
 
             RequireForUpdate(_playerQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -318,6 +330,10 @@ namespace VVardenfell.Runtime.Player
             float dt = SystemAPI.Time.DeltaTime;
             if (dt <= 0f)
                 return;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player fatigue requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
             var skills = _playerQuery.GetSingleton<ActorSkillSet>();
@@ -328,8 +344,8 @@ namespace VVardenfell.Runtime.Player
             var movementInput = _playerQuery.GetSingleton<MorrowindMovementInput>();
             var movementState = _playerQuery.GetSingleton<MorrowindMovementState>();
 
-            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: false);
-            var context = MorrowindPlayerSpeedResolver.Build(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
+            MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, effectModifiers, ref vitals, initializeMissingCurrents: false);
+            var context = MorrowindPlayerSpeedResolver.Build(ref content, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
 
             float fatigue = vitals.CurrentFatigue;
             fatigue -= context.GetMovementFatigueLossPerSecond(
@@ -364,6 +380,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<MorrowindMovementSpeed>());
 
             RequireForUpdate(_playerQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -376,11 +393,15 @@ namespace VVardenfell.Runtime.Player
             ref var vitals = ref _playerQuery.GetSingletonRW<ActorVitalSet>().ValueRW;
             var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
             ref var derived = ref _playerQuery.GetSingletonRW<ActorDerivedMovementStats>().ValueRW;
-            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: false);
-            MorrowindActorMovementStats.ApplyMovementDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, ref derived);
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player movement derived stats require runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, effectModifiers, ref vitals, initializeMissingCurrents: false);
+            MorrowindActorMovementStats.ApplyMovementDerived(ref content, attributes, skills, vitals, effectModifiers, ref derived);
             ref var movementSpeed = ref _playerQuery.GetSingletonRW<MorrowindMovementSpeed>().ValueRW;
             movementSpeed = MorrowindActorMovementStats.BuildPlayerMovementSpeed(
-                RuntimeContentDatabase.Active,
+                ref content,
                 attributes,
                 skills,
                 vitals,

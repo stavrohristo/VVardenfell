@@ -13,7 +13,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using BoxCollider = Unity.Physics.BoxCollider;
 using Collider = Unity.Physics.Collider;
@@ -44,49 +43,45 @@ namespace VVardenfell.Runtime.Interactions
 
             uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
             var location = entityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
-            return TryBuild(location, placedRefId, out interactable);
+            return TryBuild(entityManager, location, placedRefId, out interactable);
         }
 
-        static bool TryBuild(in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
+        static bool TryBuild(EntityManager entityManager, in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
         {
             interactable = default;
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] door resolution requires exactly one RuntimeWorldCellBlobReference singleton.");
 
-            CellData cell = null;
+            var blobReference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!blobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] door resolution requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref blobReference.Blob.Value;
+            int cellIndex;
             if (location.IsInterior != 0)
             {
-                if (!WorldResources.TryGetInteriorCell(location.InteriorCellHash, out cell))
+                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, location.InteriorCellHash, out cellIndex))
                     return false;
             }
             else
             {
-                if (!WorldResources.Cells.TryGetValue(location.ExteriorCell, out cell) || cell == null)
+                if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, location.ExteriorCell, out cellIndex))
                     return false;
             }
 
-            var refs = cell.Refs;
-            var doors = cell.Doors;
-            if (refs == null || doors == null)
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (!RuntimeWorldCellBlobUtility.TryGetDoorByPlacedRefId(ref worldCells, ref cell, placedRefId, out var door))
                 return false;
 
-            for (int i = 0; i < refs.Length; i++)
+            interactable = new DoorInteractable
             {
-                ref readonly var entry = ref refs[i];
-                if (entry.PlacedRefId != placedRefId || entry.DoorMetaIndex < 0 || entry.DoorMetaIndex >= doors.Length)
-                    continue;
-
-                var door = doors[entry.DoorMetaIndex];
-                interactable = new DoorInteractable
-                {
-                    IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
-                    DestinationCellId = new FixedString128Bytes(door.DestinationCellId ?? string.Empty),
-                    DestinationCellHash = InteriorCellIdHash.Hash(door.DestinationCellId),
-                    DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
-                    DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
-                };
-                return true;
-            }
-
-            return false;
+                IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
+                DestinationCellId = door.DestinationCellId,
+                DestinationCellHash = door.DestinationCellHash,
+                DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
+                DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
+            };
+            return true;
         }
     }
 
@@ -152,6 +147,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionAudioRequest>();
             RequireForUpdate<MorrowindMovementSettings>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -204,18 +200,22 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] teleport door transition requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+
             bool goesToInterior = door.DestinationCellHash != 0UL;
-            CellData destinationInterior = null;
+            BlobAssetReference<Collider> destinationInteriorStaticCollider = default;
             if (goesToInterior)
             {
-                if (!WorldResources.TryGetInteriorCell(door.DestinationCellHash, out destinationInterior))
+                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, door.DestinationCellHash, out int destinationCellIndex))
                 {
                     string destinationCellId = door.DestinationCellId.ToString();
-                    Debug.LogWarning($"[VVardenfell][Streaming] teleport destination interior '{destinationCellId}' was not preloaded; transition aborted.");
-                    transition.TransitionInProgress = 0;
-                    ClearFocus();
-                    return;
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination interior '{destinationCellId}' is missing from the world cell blob.");
                 }
+
+                WorldSpawner.TryGetInteriorStaticCollider(door.DestinationCellHash, out destinationInteriorStaticCollider);
             }
 
             TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
@@ -231,10 +231,11 @@ namespace VVardenfell.Runtime.Interactions
             {
                 DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
                 WorldSpawner.HideExteriorVisibility(World, ref loaded);
-                WorldSpawner.SpawnInteriorCell(World, destinationInterior, InteriorWorldOffset, transitionEntity, ref logicalRefLookup);
+                if (!WorldSpawner.TrySpawnInteriorCellByHash(World, door.DestinationCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination interior '{door.DestinationCellId}' was not preloaded.");
                 configRef.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
-                transition.ActiveInteriorCellId = door.DestinationCellId;
+                transition.ActiveInteriorCellId = spawnedInteriorCellId.IsEmpty ? door.DestinationCellId : spawnedInteriorCellId;
                 transition.ActiveInteriorCellHash = door.DestinationCellHash;
                 ref var runtimeState = ref SystemAPI.GetSingletonRW<InteractionRuntimeState>().ValueRW;
                 runtimeState.PendingPickedItemPrune = 1;
@@ -259,12 +260,12 @@ namespace VVardenfell.Runtime.Interactions
             }
 
             quaternion bodyYawRotation = ExtractYawRotation(door.DestinationRotation);
-            if (!TryGroundTeleportDestination(destinationPosition, bodyYawRotation, goesToInterior, destinationInterior, out var grounded))
+            if (!TryGroundTeleportDestination(destinationPosition, bodyYawRotation, goesToInterior, destinationInteriorStaticCollider, out var grounded))
             {
                 string destinationLabel = goesToInterior
                     ? $"interior '{door.DestinationCellId.ToString()}'"
                     : $"exterior position {destinationPosition}";
-                LogTeleportGroundingFailureDiagnostics(destinationPosition, bodyYawRotation, goesToInterior, destinationInterior, destinationLabel);
+                LogTeleportGroundingFailureDiagnostics(destinationPosition, bodyYawRotation, goesToInterior, destinationInteriorStaticCollider, destinationLabel);
                 throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination in {destinationLabel} could not be grounded.");
             }
 
@@ -276,7 +277,7 @@ namespace VVardenfell.Runtime.Interactions
             EntityManager.SetComponentData(transitionEntity, transition);
 
             if (goesToInterior)
-                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager, RuntimeContentDatabase.Active);
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager);
 
             ClearFocus();
             transition.TransitionInProgress = 0;
@@ -350,7 +351,7 @@ namespace VVardenfell.Runtime.Interactions
             float3 destinationPosition,
             quaternion bodyYawRotation,
             bool destinationIsInterior,
-            CellData destinationInterior,
+            BlobAssetReference<Collider> destinationInteriorStaticCollider,
             out GroundedTeleportDestination grounded)
         {
             grounded = default;
@@ -377,9 +378,9 @@ namespace VVardenfell.Runtime.Interactions
             {
                 if (destinationIsInterior)
                 {
-                    if (destinationInterior?.StaticColliderBlob.IsCreated == true)
+                    if (destinationInteriorStaticCollider.IsCreated)
                     {
-                        var body = BuildGroundingBody(destinationInterior.StaticColliderBlob, Entity.Null, InteriorWorldOffset);
+                        var body = BuildGroundingBody(destinationInteriorStaticCollider, Entity.Null, InteriorWorldOffset);
                         TryFindGroundingColliderHit(
                             body,
                             input,
@@ -459,7 +460,7 @@ namespace VVardenfell.Runtime.Interactions
                 start,
                 probeDistance,
                 destinationIsInterior,
-                destinationInterior,
+                destinationInteriorStaticCollider,
                 destinationPosition,
                 entities,
                 colliders,
@@ -550,7 +551,7 @@ namespace VVardenfell.Runtime.Interactions
             float3 start,
             float probeDistance,
             bool destinationIsInterior,
-            CellData destinationInterior,
+            BlobAssetReference<Collider> destinationInteriorStaticCollider,
             float3 destinationPosition,
             NativeArray<Entity> entities,
             NativeArray<PhysicsCollider> colliders,
@@ -567,9 +568,9 @@ namespace VVardenfell.Runtime.Interactions
             bool found = false;
             if (destinationIsInterior)
             {
-                if (destinationInterior?.StaticColliderBlob.IsCreated == true)
+                if (destinationInteriorStaticCollider.IsCreated)
                 {
-                    var body = BuildGroundingBody(destinationInterior.StaticColliderBlob, Entity.Null, InteriorWorldOffset);
+                    var body = BuildGroundingBody(destinationInteriorStaticCollider, Entity.Null, InteriorWorldOffset);
                     TryFindTeleportGroundingRayHit(body, input, ref found, ref bestHit);
                 }
             }
@@ -626,7 +627,7 @@ namespace VVardenfell.Runtime.Interactions
             float3 destinationPosition,
             quaternion bodyYawRotation,
             bool destinationIsInterior,
-            CellData destinationInterior,
+            BlobAssetReference<Collider> destinationInteriorStaticCollider,
             string destinationLabel)
         {
             float probeLift = TeleportGroundProbeLiftMw * WorldScale.MwUnitsToMeters;
@@ -669,12 +670,12 @@ namespace VVardenfell.Runtime.Interactions
             {
                 if (destinationIsInterior)
                 {
-                    bool hasInteriorCollider = destinationInterior?.StaticColliderBlob.IsCreated == true;
+                    bool hasInteriorCollider = destinationInteriorStaticCollider.IsCreated;
                     log.Append("  destinationInteriorStaticCollider=").Append(hasInteriorCollider).AppendLine();
                     if (hasInteriorCollider)
                     {
                         directBodyCount++;
-                        var body = BuildGroundingBody(destinationInterior.StaticColliderBlob, Entity.Null, InteriorWorldOffset);
+                        var body = BuildGroundingBody(destinationInteriorStaticCollider, Entity.Null, InteriorWorldOffset);
                         AddTeleportDiagnosticColliderCast(
                             "destination interior static blob",
                             body,

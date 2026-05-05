@@ -2,9 +2,9 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -13,15 +13,14 @@ namespace VVardenfell.Runtime.MorrowindScript
         const float CombatPursuitDistanceMw = 128f;
 
         public static bool TryStartCombat(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity actor,
             uint actorPlacedRefId,
             Entity target,
             uint targetPlacedRefId)
         {
-            if (contentDb == null
-                || actor == Entity.Null
+            if (actor == Entity.Null
                 || target == Entity.Null
                 || !entityManager.Exists(actor)
                 || !entityManager.Exists(target)
@@ -45,25 +44,17 @@ namespace VVardenfell.Runtime.MorrowindScript
             else
                 entityManager.AddComponentData(actor, state);
 
-            return MorrowindScriptAiPackageUtility.TryApplyRequest(
-                contentDb,
+            return MorrowindScriptAiPackageUtility.TryApplyCombatFollowRequest(
+                ref content,
                 entityManager,
                 actor,
-                new MorrowindScriptAiPackageRequest
-                {
-                    TargetEntity = actor,
-                    TargetPlacedRefId = actorPlacedRefId,
-                    FollowTargetEntity = target,
-                    FollowTargetPlacedRefId = targetPlacedRefId,
-                    PackageType = (byte)MorrowindScriptAiPackageRequestType.Follow,
-                    ShouldRepeat = 1,
-                    AllowPartial = 1,
-                    TargetPosition = entityManager.HasComponent<LocalTransform>(target)
-                        ? entityManager.GetComponentData<LocalTransform>(target).Position
-                        : float3.zero,
-                    FollowDistance = CombatPursuitDistanceMw * WorldScale.MwUnitsToMeters,
-                    IdleSeconds = 0f,
-                });
+                actorPlacedRefId,
+                target,
+                targetPlacedRefId,
+                entityManager.HasComponent<LocalTransform>(target)
+                    ? entityManager.GetComponentData<LocalTransform>(target).Position
+                    : float3.zero,
+                CombatPursuitDistanceMw * WorldScale.MwUnitsToMeters);
         }
 
         public static bool TryStopCombat(EntityManager entityManager, Entity actor)

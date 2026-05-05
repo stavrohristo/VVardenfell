@@ -1,20 +1,17 @@
 using System;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
     public static class InventoryConditionUtility
     {
-        public static int ResolveInitialCondition(RuntimeContentDatabase contentDb, in ContentReference content)
+        public static int ResolveInitialCondition(ref RuntimeContentBlob blob, in ContentReference content)
         {
             if (!content.IsValid || content.Kind != ContentReferenceKind.Item)
                 return 0;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Inventory] Cannot resolve item condition without runtime content.");
 
             var handle = new ItemDefHandle { Value = content.HandleValue };
-            return contentDb.TryGetItemEquipment(handle, out var equipment) && equipment.Health > 0
+            return RuntimeContentBlobUtility.TryGetItemEquipment(ref blob, handle, out var equipment) && equipment.Health > 0
                 ? equipment.Health
                 : 0;
         }

@@ -1,6 +1,7 @@
 using System;
 using Unity.Entities;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
@@ -14,7 +15,7 @@ namespace VVardenfell.Runtime.Shell
     {
         RuntimeHudViewModel BuildHudModel(
             bool showHud,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in InteractionPresentationState interaction,
             in PlayerPresentationStats playerStats,
             in LocationPresentation location,
@@ -24,8 +25,8 @@ namespace VVardenfell.Runtime.Shell
             in RuntimeSubtitleState subtitle,
             in RuntimeEnemyHealthBarState enemyHealth)
         {
-            string itemLabel = ResolveSelectedInventoryLabel(contentDb, inventoryState, inventory);
-            string spellLabel = ResolveSelectedSpellLabel(contentDb, playerStats, spellState, out string spellIconPath, out string spellTooltip);
+            string itemLabel = ResolveSelectedInventoryLabel(ref contentBlob, inventoryState, inventory);
+            string spellLabel = ResolveSelectedSpellLabel(ref contentBlob, playerStats, spellState, out string spellIconPath, out string spellTooltip);
             _hudModel.Visible = showHud;
             // Final crosshair visibility is gameplay state AND the user
             // preference - the Options "Show Crosshair" checkbox flips the
@@ -48,7 +49,7 @@ namespace VVardenfell.Runtime.Shell
             _hudModel.SneakLabel = "Sneak";
             _hudModel.SelectedSpellIconPath = spellIconPath;
             _hudModel.SelectedSpellTooltip = spellTooltip;
-            _hudModel.ActiveEffects = BuildHudActiveEffectIcons(contentDb, playerStats);
+            _hudModel.ActiveEffects = BuildHudActiveEffectIcons(ref contentBlob, playerStats);
             ResolveEnemyHealthBar(showHud, enemyHealth, out _hudModel.ShowEnemyHealth, out _hudModel.EnemyHealthFillNormalized, out _hudModel.EnemyHealthAlpha);
             _hudModel.ShowSneakIndicator = false;
             _hudModel.LocalMap = showHud ? LocalMapPresentationCache.FillViewModel(
@@ -97,7 +98,7 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static string ResolveSelectedInventoryLabel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in InventoryWindowState state,
             DynamicBuffer<PlayerInventoryItem> inventory)
         {
@@ -109,14 +110,14 @@ namespace VVardenfell.Runtime.Shell
             if (entry.Count <= 0 || !entry.Content.IsValid)
                 return string.Empty;
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
                 return string.Empty;
 
             return metadata.DisplayName ?? string.Empty;
         }
 
         string ResolveSelectedSpellLabel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in PlayerPresentationStats playerStats,
             in SpellWindowState state,
             out string iconPath,
@@ -125,7 +126,6 @@ namespace VVardenfell.Runtime.Shell
             iconPath = string.Empty;
             tooltip = null;
             if (!playerStats.HasPlayer
-                || contentDb == null
                 || !EntityManager.Exists(playerStats.PlayerEntity)
                 || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
             {
@@ -138,19 +138,20 @@ namespace VVardenfell.Runtime.Shell
                 return string.Empty;
 
             var handle = knownSpells[selected].Spell;
-            if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentDb.Data.Spells.Length)
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentBlob.Spells.Length)
                 return string.Empty;
 
-            ref readonly var spell = ref contentDb.Get(handle);
-            string label = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id ?? string.Empty : spell.Name;
+            ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+            string name = spell.Name.ToString();
+            string label = string.IsNullOrWhiteSpace(name) ? spell.Id.ToString() : name;
             tooltip = label;
-            if (spell.EffectStartIndex >= 0 && spell.EffectCount > 0 && contentDb.Data.MagicEffectInstances != null)
+            if (spell.EffectStartIndex >= 0 && spell.EffectCount > 0)
             {
-                int available = Math.Max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
+                int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - spell.EffectStartIndex);
                 if (available > 0)
                 {
-                    var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex];
-                    iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId);
+                    var effect = contentBlob.MagicEffectInstances[spell.EffectStartIndex];
+                    iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(ref contentBlob, effect.EffectId);
                 }
             }
 

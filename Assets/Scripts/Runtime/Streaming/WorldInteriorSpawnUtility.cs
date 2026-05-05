@@ -7,7 +7,6 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
@@ -42,9 +41,12 @@ namespace VVardenfell.Runtime.Streaming
             int proxyQueueCount = 0;
             if (cell.Refs != null && cell.Refs.Length > 0)
             {
+                var contentBlob = WorldResources.Cache?.ContentBlob ?? default;
+                if (!contentBlob.IsCreated)
+                    throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Interior spawn requires runtime content blob for logical refs.");
                 logicalRefCount = WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
-                    WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
+                    contentBlob,
                     cell.Refs,
                     interiorChildEntities,
                     true,

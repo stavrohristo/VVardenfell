@@ -65,17 +65,17 @@ namespace VVardenfell.Runtime.Streaming
                     if (loaded.Streamed.Contains(coord))
                         continue;
 
-                    if (!WorldResources.Cells.TryGetValue(coord, out var cellData) || cellData == null)
-                        continue;
-
-                    WorldSpawner.SpawnExteriorCell(
+                    if (!WorldSpawner.TrySpawnExteriorCellByCoord(
                         world,
                         coord,
-                        cellData,
                         ref loaded,
                         ref logicalRefs,
                         active: true,
-                        gateTerrainByRadius: config.GateTerrainByRadius);
+                        gateTerrainByRadius: config.GateTerrainByRadius))
+                    {
+                        continue;
+                    }
+
                     spawnedMissingCells = true;
                 }
 

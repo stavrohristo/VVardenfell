@@ -3,9 +3,9 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
@@ -15,8 +15,57 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     static class MorrowindScriptAiPackageUtility
     {
+        public static bool TryApplyCombatFollowRequest(
+            ref RuntimeContentBlob content,
+            EntityManager entityManager,
+            Entity target,
+            uint targetPlacedRefId,
+            Entity followTarget,
+            uint followTargetPlacedRefId,
+            float3 targetPosition,
+            float followDistance)
+        {
+            if (target == Entity.Null || followTarget == Entity.Null || !entityManager.Exists(target) || !entityManager.Exists(followTarget))
+                return false;
+            if (!entityManager.HasComponent<ActorSpawnSource>(target))
+                return true;
+
+            EnsureActorAiComponents(ref content, entityManager, target, targetPlacedRefId);
+            ResetTraversal(entityManager, target);
+
+            var packages = entityManager.HasBuffer<ActorAiPackageRuntime>(target)
+                ? entityManager.GetBuffer<ActorAiPackageRuntime>(target)
+                : entityManager.AddBuffer<ActorAiPackageRuntime>(target);
+            packages.Clear();
+            packages.Add(new ActorAiPackageRuntime
+            {
+                Type = (byte)ActorAiRuntimePackageType.Follow,
+                ShouldRepeat = 1,
+                AllowPartial = 1,
+                TargetPathGridIndex = -1,
+                TargetPosition = targetPosition,
+                FollowTargetEntity = followTarget,
+                FollowTargetPlacedRefId = followTargetPlacedRefId,
+                FollowDistance = math.max(0f, followDistance),
+            });
+
+            var aiState = entityManager.GetComponentData<ActorAiState>(target);
+            aiState.CurrentPackageIndex = 0;
+            aiState.CurrentNodeIndex = -1;
+            aiState.GoalNodeIndex = -1;
+            aiState.WaitUntilTime = 0f;
+            aiState.FollowActive = 0;
+            aiState.PendingIdleGroup = 0;
+            aiState.ActiveIdleGroupHash = 0UL;
+            aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+            if (entityManager.HasComponent<LocalTransform>(target))
+                aiState.HomePosition = entityManager.GetComponentData<LocalTransform>(target).Position;
+            entityManager.SetComponentData(target, aiState);
+            return true;
+        }
+
         public static bool TryApplyRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             in MorrowindScriptAiPackageRequest request,
             in LogicalRefLookup lookup)
@@ -25,16 +74,16 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (target == Entity.Null)
                 return false;
 
-            return TryApplyRequest(contentDb, entityManager, target, request);
+            return TryApplyRequest(ref content, entityManager, target, request);
         }
 
         public static bool TryApplyRequest(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity target,
             in MorrowindScriptAiPackageRequest request)
         {
-            if (contentDb == null || target == Entity.Null || !entityManager.Exists(target))
+            if (target == Entity.Null || !entityManager.Exists(target))
                 return false;
 
             if (request.PackageType == (byte)MorrowindScriptAiPackageRequestType.StopCombat)
@@ -46,7 +95,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
 
                 return MorrowindCombatTargetUtility.TryStartCombat(
-                    contentDb,
+                    ref content,
                     entityManager,
                     target,
                     request.TargetPlacedRefId,
@@ -57,7 +106,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!entityManager.HasComponent<ActorSpawnSource>(target))
                 return true;
 
-            EnsureActorAiComponents(contentDb, entityManager, target, request.TargetPlacedRefId);
+            EnsureActorAiComponents(ref content, entityManager, target, request.TargetPlacedRefId);
             ResetTraversal(entityManager, target);
 
             var packages = entityManager.HasBuffer<ActorAiPackageRuntime>(target)
@@ -141,7 +190,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static void EnsureActorAiComponents(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity actor,
             uint placedRefId)
@@ -162,15 +211,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             if (!entityManager.HasComponent<ActorAiNavigationAnchor>(actor))
-                entityManager.AddComponentData(actor, BuildAnchor(contentDb, entityManager, actor));
+                entityManager.AddComponentData(actor, BuildAnchor(ref content, entityManager, actor));
             if (!entityManager.HasComponent<ActorAiNavigationAnchorDirty>(actor))
                 entityManager.AddComponent<ActorAiNavigationAnchorDirty>(actor);
             entityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(actor, false);
 
-            EnsureMovementComponents(contentDb, entityManager, actor);
+            EnsureMovementComponents(ref content, entityManager, actor);
         }
 
-        static ActorAiNavigationAnchor BuildAnchor(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
+        static ActorAiNavigationAnchor BuildAnchor(ref RuntimeContentBlob content, EntityManager entityManager, Entity actor)
         {
             if (!entityManager.HasComponent<LogicalRefLocation>(actor))
                 throw new InvalidOperationException("[VVardenfell][MWScript] Ai package target is missing LogicalRefLocation.");
@@ -184,7 +233,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     InteriorCellHash = location.InteriorCellHash,
                     IsInterior = 1,
                 };
-                if (contentDb.TryGetInteriorPathGridHandle(location.InteriorCellHash, out var handle) && handle.IsValid)
+                if (RuntimeContentBlobUtility.TryGetInteriorPathGridHandleByCellHash(ref content, location.InteriorCellHash, out var handle) && handle.IsValid)
                 {
                     anchor.PathGridIndex = handle.Index;
                     anchor.IsResolved = 1;
@@ -200,7 +249,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 GridY = location.ExteriorCell.y,
                 IsInterior = 0,
             };
-            if (contentDb.TryGetExteriorPathGridHandle(location.ExteriorCell.x, location.ExteriorCell.y, out var exteriorHandle) && exteriorHandle.IsValid)
+            if (RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, location.ExteriorCell.x, location.ExteriorCell.y, out var exteriorHandle) && exteriorHandle.IsValid)
             {
                 exterior.PathGridIndex = exteriorHandle.Index;
                 exterior.IsResolved = 1;
@@ -208,8 +257,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return exterior;
         }
-
-        static void EnsureMovementComponents(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
+        static void EnsureMovementComponents(ref RuntimeContentBlob content, EntityManager entityManager, Entity actor)
         {
             if (!entityManager.HasComponent<MorrowindMovementInput>(actor))
                 entityManager.AddComponentData(actor, new MorrowindMovementInput());
@@ -228,15 +276,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
 
                 var source = entityManager.GetComponentData<ActorSpawnSource>(actor);
-                ref readonly var actorDef = ref contentDb.Get(source.Definition);
+                ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
                 var attributes = entityManager.GetComponentData<ActorAttributeSet>(actor);
                 var skills = entityManager.GetComponentData<ActorSkillSet>(actor);
                 var vitals = entityManager.GetComponentData<ActorVitalSet>(actor);
                 var effects = entityManager.GetComponentData<ActorEffectStatModifiers>(actor);
                 ActorDerivedMovementStats derived = entityManager.HasComponent<ActorDerivedMovementStats>(actor)
                     ? entityManager.GetComponentData<ActorDerivedMovementStats>(actor)
-                    : MorrowindActorMovementStats.BuildDerived(contentDb, attributes, skills, vitals, effects, inventoryWeight: 0f);
-                entityManager.AddComponentData(actor, MorrowindActorMovementStats.BuildMovementSpeed(contentDb, actorDef.Kind, attributes, skills, vitals, effects, derived));
+                    : MorrowindActorMovementStats.BuildDerived(ref content, attributes, skills, vitals, effects, inventoryWeight: 0f);
+                entityManager.AddComponentData(actor, MorrowindActorMovementStats.BuildMovementSpeed(ref content, actorDef.Kind, attributes, skills, vitals, effects, derived));
             }
 
             if (!entityManager.HasComponent<PathGridTraversalState>(actor))

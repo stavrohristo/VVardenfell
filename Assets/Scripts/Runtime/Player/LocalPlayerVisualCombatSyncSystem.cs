@@ -1,8 +1,8 @@
 #if !VVARDENFELL_OLD_ACTOR_ANIMATION
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -23,11 +23,15 @@ namespace VVardenfell.Runtime.Player
 
             RequireForUpdate(_playerQuery);
             RequireForUpdate<LocalPlayerVisual>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][Player] Local player visual combat sync requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             Entity player = _playerQuery.GetSingletonEntity();
             var presentation = _playerQuery.GetSingleton<LocalPlayerPresentationState>();
             Entity activeVisual = presentation.Mode == PlayerViewMode.FirstPerson
@@ -64,8 +68,8 @@ namespace VVardenfell.Runtime.Player
                 if (EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
                 {
                     var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(entity, true);
-                    state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(contentDb, equipment, out var content);
-                    state.WeaponContent = content;
+                    state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref content, equipment, out var weaponContent);
+                    state.WeaponContent = weaponContent;
                 }
             }
 

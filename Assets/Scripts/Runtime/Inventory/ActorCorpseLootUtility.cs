@@ -1,8 +1,8 @@
 using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.WorldState;
 
@@ -46,15 +46,15 @@ namespace VVardenfell.Runtime.Inventory
                 throw new InvalidOperationException($"[VVardenfell][Corpse] Actor ref={placedRefId} has no ActorSpawnSource.");
         }
 
-        public static string ResolveTitle(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
+        public static string ResolveTitle(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity actor)
         {
-            if (contentDb == null || actor == Entity.Null || !entityManager.Exists(actor))
+            if (actor == Entity.Null || !entityManager.Exists(actor))
                 return "Corpse";
 
             var source = entityManager.HasComponent<ActorSpawnSource>(actor)
                 ? entityManager.GetComponentData<ActorSpawnSource>(actor)
                 : default;
-            return RuntimeContentMetadataResolver.ResolveActorDisplayName(contentDb, source.Definition, "Corpse");
+            return RuntimeContentMetadataResolver.ResolveActorDisplayName(ref contentBlob, source.Definition, "Corpse");
         }
 
         public static void EnsureSessionInitialized(

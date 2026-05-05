@@ -8,7 +8,6 @@ using UnityEngine.Networking;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
 
@@ -341,19 +340,19 @@ namespace VVardenfell.Runtime.Audio
                 UnityEngine.Object.Destroy(_root);
         }
 
-        public void SyncMusic(RuntimeContentDatabase contentDb, MusicState state, in AudioTuningState tuning)
+        public void SyncMusic(ref RuntimeContentBlob contentBlob, MusicState state, in AudioTuningState tuning)
         {
             string path = state.DirectPath.IsEmpty
-                ? ResolveMusicPath(contentDb, state.ResolvedTrack)
+                ? ResolveMusicPath(ref contentBlob, state.ResolvedTrack)
                 : ResolveDirectMusicPath(state.DirectPath.ToString());
             SyncChannel(_music, path, state.Looping != 0, ResolveMusicVolume(state, tuning));
         }
 
-        public void SyncInteriorAmbient(RuntimeContentDatabase contentDb, InteriorAmbientState state, in AudioTuningState tuning)
+        public void SyncInteriorAmbient(ref RuntimeContentBlob contentBlob, InteriorAmbientState state, in AudioTuningState tuning)
         {
-            string path = ResolveSoundPath(contentDb, state.ResolvedSound);
+            string path = ResolveSoundPath(ref contentBlob, state.ResolvedSound);
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedSound,
                 tuning.InteriorAmbientFallbackBaseVolume,
                 tuning.InteriorAmbientVolumeMultiplier);
@@ -361,56 +360,56 @@ namespace VVardenfell.Runtime.Audio
             ApplyInteriorAmbientSpatial(state, tuning);
         }
 
-        public void SyncWeatherAmbient(RuntimeContentDatabase contentDb, WeatherAudioState state, in AudioTuningState tuning)
+        public void SyncWeatherAmbient(ref RuntimeContentBlob contentBlob, WeatherAudioState state, in AudioTuningState tuning)
         {
-            string path = ResolveSoundPath(contentDb, state.ResolvedLoopSound);
+            string path = ResolveSoundPath(ref contentBlob, state.ResolvedLoopSound);
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedLoopSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.CurrentLoopVolume <= 0f && !state.ResolvedNextLoopSound.IsValid ? 1f : state.CurrentLoopVolume);
             SyncChannel(_weatherAmbient, path, state.ResolvedLoopSound.IsValid && volume > 0.0001f, volume);
 
-            string nextPath = ResolveSoundPath(contentDb, state.ResolvedNextLoopSound);
+            string nextPath = ResolveSoundPath(ref contentBlob, state.ResolvedNextLoopSound);
             float nextVolume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedNextLoopSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.NextLoopVolume);
             SyncChannel(_weatherAmbientNext, nextPath, state.ResolvedNextLoopSound.IsValid && nextVolume > 0.0001f, nextVolume);
         }
 
-        public void SyncWeatherRain(RuntimeContentDatabase contentDb, WeatherRainAudioState state, in AudioTuningState tuning)
+        public void SyncWeatherRain(ref RuntimeContentBlob contentBlob, WeatherRainAudioState state, in AudioTuningState tuning)
         {
-            string path = ResolveSoundPath(contentDb, state.ResolvedLoopSound);
+            string path = ResolveSoundPath(ref contentBlob, state.ResolvedLoopSound);
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedLoopSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.CurrentLoopVolume <= 0f && !state.ResolvedNextLoopSound.IsValid ? 1f : state.CurrentLoopVolume);
             SyncChannel(_weatherRain, path, state.ResolvedLoopSound.IsValid && volume > 0.0001f, volume);
 
-            string nextPath = ResolveSoundPath(contentDb, state.ResolvedNextLoopSound);
+            string nextPath = ResolveSoundPath(ref contentBlob, state.ResolvedNextLoopSound);
             float nextVolume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedNextLoopSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.NextLoopVolume);
             SyncChannel(_weatherRainNext, nextPath, state.ResolvedNextLoopSound.IsValid && nextVolume > 0.0001f, nextVolume);
         }
 
-        public void SyncNearWater(RuntimeContentDatabase contentDb, NearWaterAudioState state, in AudioTuningState tuning)
+        public void SyncNearWater(ref RuntimeContentBlob contentBlob, NearWaterAudioState state, in AudioTuningState tuning)
         {
-            string path = ResolveSoundPath(contentDb, state.ResolvedLoopSound);
+            string path = ResolveSoundPath(ref contentBlob, state.ResolvedLoopSound);
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.ResolvedLoopSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier) * Mathf.Clamp01(state.Volume);
             SyncChannel(_nearWater, path, state.Looping != 0 && state.ResolvedLoopSound.IsValid && volume > 0.0001f, volume);
         }
 
-        public void QueueRegionAmbientEvent(RuntimeContentDatabase contentDb, RegionAmbientState state, in AudioTuningState tuning)
+        public void QueueRegionAmbientEvent(ref RuntimeContentBlob contentBlob, RegionAmbientState state, in AudioTuningState tuning)
         {
             using var _ = k_QueueRegionEvent.Auto();
 
@@ -419,9 +418,9 @@ namespace VVardenfell.Runtime.Audio
             if (HasActiveRegionEvent())
                 return;
 
-            string path = ResolveSoundPath(contentDb, state.PendingEventSound);
+            string path = ResolveSoundPath(ref contentBlob, state.PendingEventSound);
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 state.PendingEventSound,
                 tuning.ExteriorAmbientFallbackBaseVolume,
                 tuning.ExteriorAmbientVolumeMultiplier);
@@ -464,7 +463,7 @@ namespace VVardenfell.Runtime.Audio
         }
 
         public void QueueInteractionAudioEvents(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<InteractionAudioRequest> requests,
             ref InteractionAudioRequestState state,
             in AudioTuningState tuning)
@@ -482,7 +481,7 @@ namespace VVardenfell.Runtime.Audio
                 if (request.Sequence <= lastConsumedSequence)
                     continue;
 
-                QueueInteractionAudioEvent(contentDb, request, tuning);
+                QueueInteractionAudioEvent(ref contentBlob, request, tuning);
                 if (request.Sequence > lastConsumedSequence)
                     lastConsumedSequence = request.Sequence;
             }
@@ -497,7 +496,7 @@ namespace VVardenfell.Runtime.Audio
             _scriptLoopTouched.Clear();
         }
 
-        public void QueueScriptAudioEvent(RuntimeContentDatabase contentDb, in MorrowindScriptAudioRequest request, in AudioTuningState tuning)
+        public void QueueScriptAudioEvent(ref RuntimeContentBlob contentBlob, in MorrowindScriptAudioRequest request, in AudioTuningState tuning)
         {
             using var _ = k_QueueScriptEvent.Auto();
 
@@ -508,32 +507,26 @@ namespace VVardenfell.Runtime.Audio
             }
 
             bool directPath = !request.DirectPath.IsEmpty;
-            if (contentDb == null)
-            {
-                if (request.Sound.IsValid || directPath)
-                    throw new InvalidOperationException("[VVardenfell][Audio] Missing content database for script audio request.");
-                return;
-            }
 
             if (!request.Sound.IsValid && !directPath)
                 return;
 
             string path = request.Sound.IsValid
-                ? ResolveSoundPath(contentDb, request.Sound)
+                ? ResolveSoundPath(ref contentBlob, request.Sound)
                 : ResolveDirectSoundPath(request.DirectPath.ToString());
             if (string.IsNullOrWhiteSpace(path))
             {
                 if (directPath)
                     throw new InvalidOperationException($"[VVardenfell][Audio] Missing direct say audio file '{request.DirectPath}'.");
 
-                ref readonly var sound = ref contentDb.Get(request.Sound);
-                throw new InvalidOperationException($"[VVardenfell][Audio] Missing audio file for sound '{sound.Id}'.");
+                ref var sound = ref RuntimeContentBlobUtility.Get(ref contentBlob, request.Sound);
+                throw new InvalidOperationException($"[VVardenfell][Audio] Missing audio file for sound '{sound.Id.ToString()}'.");
             }
 
             float requestVolume = Mathf.Clamp01(request.Volume <= 0f ? 1f : request.Volume);
             float volume = request.Sound.IsValid
                 ? ResolveSoundVolume(
-                    contentDb,
+                    ref contentBlob,
                     request.Sound,
                     tuning.InteractionFallbackBaseVolume,
                     tuning.InteractionVolumeMultiplier) * requestVolume
@@ -543,7 +536,7 @@ namespace VVardenfell.Runtime.Audio
             if (request.Sound.IsValid)
             {
                 ResolveSoundRange(
-                    contentDb,
+                    ref contentBlob,
                     request.Sound,
                     tuning.InteractionMinDistanceMultiplier,
                     tuning.InteractionMaxDistanceMultiplier,
@@ -552,7 +545,7 @@ namespace VVardenfell.Runtime.Audio
             }
             else
             {
-                ResolveVoiceSoundRange(contentDb, out minDistance, out maxDistance);
+                ResolveVoiceSoundRange(ref contentBlob, out minDistance, out maxDistance);
             }
 
             var position = new Vector3(request.Position.x, request.Position.y, request.Position.z);
@@ -674,16 +667,17 @@ namespace VVardenfell.Runtime.Audio
             TickPendingEvents();
         }
 
-        string ResolveMusicPath(RuntimeContentDatabase contentDb, MusicTrackDefHandle handle)
+        string ResolveMusicPath(ref RuntimeContentBlob contentBlob, MusicTrackDefHandle handle)
         {
-            if (contentDb == null || !handle.IsValid || string.IsNullOrWhiteSpace(_installPath))
+            if ( !handle.IsValid || string.IsNullOrWhiteSpace(_installPath))
                 return null;
 
-            ref readonly var track = ref contentDb.Get(handle);
-            if (string.IsNullOrWhiteSpace(track.RelativePath))
+            ref var track = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+            string relativePath = track.RelativePath.ToString();
+            if (string.IsNullOrWhiteSpace(relativePath))
                 return null;
 
-            string path = Path.Combine(_installPath, "Data Files", "Music", track.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            string path = Path.Combine(_installPath, "Data Files", "Music", relativePath.Replace('/', Path.DirectorySeparatorChar));
             return NormalizeExistingPath(path);
         }
 
@@ -701,16 +695,17 @@ namespace VVardenfell.Runtime.Audio
             return NormalizeExistingPath(path);
         }
 
-        string ResolveSoundPath(RuntimeContentDatabase contentDb, SoundDefHandle handle)
+        string ResolveSoundPath(ref RuntimeContentBlob contentBlob, SoundDefHandle handle)
         {
-            if (contentDb == null || !handle.IsValid || string.IsNullOrWhiteSpace(_installPath))
+            if ( !handle.IsValid || string.IsNullOrWhiteSpace(_installPath))
                 return null;
 
-            ref readonly var sound = ref contentDb.Get(handle);
-            if (string.IsNullOrWhiteSpace(sound.SoundPath))
+            ref var sound = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+            string soundPath = sound.SoundPath.ToString();
+            if (string.IsNullOrWhiteSpace(soundPath))
                 return null;
 
-            string relativePath = SoundPathResolver.Correct(sound.SoundPath);
+            string relativePath = SoundPathResolver.Correct(soundPath);
             if (_soundResourceResolver.TryResolve(_installPath, relativePath, out string resolvedPath))
                 return resolvedPath;
 
@@ -736,18 +731,18 @@ namespace VVardenfell.Runtime.Audio
                 ? null
                 : Path.Combine(_installPath, "Data Files", relativePath.Replace('\\', Path.DirectorySeparatorChar));
 
-        float ResolveSoundVolume(RuntimeContentDatabase contentDb, SoundDefHandle handle, float fallbackBaseVolume, float multiplier)
+        float ResolveSoundVolume(ref RuntimeContentBlob contentBlob, SoundDefHandle handle, float fallbackBaseVolume, float multiplier)
         {
-            float baseVolume = ResolveSoundBaseVolume(contentDb, handle, fallbackBaseVolume);
+            float baseVolume = ResolveSoundBaseVolume(ref contentBlob, handle, fallbackBaseVolume);
             return Mathf.Clamp01(baseVolume * Mathf.Max(0f, multiplier));
         }
 
-        float ResolveSoundBaseVolume(RuntimeContentDatabase contentDb, SoundDefHandle handle, float fallbackBaseVolume)
+        float ResolveSoundBaseVolume(ref RuntimeContentBlob contentBlob, SoundDefHandle handle, float fallbackBaseVolume)
         {
-            if (contentDb == null || !handle.IsValid)
+            if ( !handle.IsValid)
                 return Mathf.Clamp01(fallbackBaseVolume);
 
-            ref readonly var sound = ref contentDb.Get(handle);
+            ref var sound = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
             if (sound.Volume == 0)
                 return Mathf.Clamp01(fallbackBaseVolume);
 
@@ -1032,22 +1027,22 @@ namespace VVardenfell.Runtime.Audio
             return count;
         }
 
-        void QueueInteractionAudioEvent(RuntimeContentDatabase contentDb, in InteractionAudioRequest request, in AudioTuningState tuning)
+        void QueueInteractionAudioEvent(ref RuntimeContentBlob contentBlob, in InteractionAudioRequest request, in AudioTuningState tuning)
         {
-            if (contentDb == null || !request.Sound.IsValid)
+            if ( !request.Sound.IsValid)
                 return;
 
-            string path = ResolveSoundPath(contentDb, request.Sound);
+            string path = ResolveSoundPath(ref contentBlob, request.Sound);
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
             float volume = ResolveSoundVolume(
-                contentDb,
+                ref contentBlob,
                 request.Sound,
                 tuning.InteractionFallbackBaseVolume,
                 tuning.InteractionVolumeMultiplier);
             ResolveSoundRange(
-                contentDb,
+                ref contentBlob,
                 request.Sound,
                 tuning.InteractionMinDistanceMultiplier,
                 tuning.InteractionMaxDistanceMultiplier,
@@ -1581,7 +1576,7 @@ namespace VVardenfell.Runtime.Audio
         }
 
         void ResolveSoundRange(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             SoundDefHandle handle,
             float minMultiplier,
             float maxMultiplier,
@@ -1591,22 +1586,22 @@ namespace VVardenfell.Runtime.Audio
             minDistance = 0f;
             maxDistance = 0f;
 
-            if (contentDb == null || !handle.IsValid)
+            if ( !handle.IsValid)
                 return;
 
-            ref readonly var sound = ref contentDb.Get(handle);
+            ref var sound = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
             float minRange = sound.MinRange;
             float maxRange = sound.MaxRange;
             if (sound.MinRange == 0 && sound.MaxRange == 0)
             {
-                minRange = contentDb.RequireGameSettingFloat("fAudioDefaultMinDistance");
-                maxRange = contentDb.RequireGameSettingFloat("fAudioDefaultMaxDistance");
+                minRange = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioDefaultMinDistance);
+                maxRange = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioDefaultMaxDistance);
             }
 
             minRange *= Mathf.Max(0f, minMultiplier);
             maxRange *= Mathf.Max(0f, maxMultiplier);
-            float audioMinMultiplier = contentDb.RequireGameSettingFloat("fAudioMinDistanceMult");
-            float audioMaxMultiplier = contentDb.RequireGameSettingFloat("fAudioMaxDistanceMult");
+            float audioMinMultiplier = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioMinDistanceMult);
+            float audioMaxMultiplier = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioMaxDistanceMult);
             minRange *= Mathf.Max(0f, audioMinMultiplier);
             maxRange *= Mathf.Max(0f, audioMaxMultiplier);
 
@@ -1617,19 +1612,17 @@ namespace VVardenfell.Runtime.Audio
             maxDistance = maxRange * WorldScale.MwUnitsToMeters;
         }
 
-        void ResolveVoiceSoundRange(RuntimeContentDatabase contentDb, out float minDistance, out float maxDistance)
+        void ResolveVoiceSoundRange(ref RuntimeContentBlob contentBlob, out float minDistance, out float maxDistance)
         {
             minDistance = 0f;
             maxDistance = 0f;
-            if (contentDb == null)
-                return;
 
             float minRange = 0f;
             float maxRange = 0f;
-            minRange = contentDb.RequireGameSettingFloat("fAudioVoiceDefaultMinDistance");
-            maxRange = contentDb.RequireGameSettingFloat("fAudioVoiceDefaultMaxDistance");
-            float audioMinMultiplier = contentDb.RequireGameSettingFloat("fAudioMinDistanceMult");
-            float audioMaxMultiplier = contentDb.RequireGameSettingFloat("fAudioMaxDistanceMult");
+            minRange = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioVoiceDefaultMinDistance);
+            maxRange = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioVoiceDefaultMaxDistance);
+            float audioMinMultiplier = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioMinDistanceMult);
+            float audioMaxMultiplier = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fAudioMaxDistanceMult);
             minRange *= Mathf.Max(0f, audioMinMultiplier);
             maxRange *= Mathf.Max(0f, audioMaxMultiplier);
 

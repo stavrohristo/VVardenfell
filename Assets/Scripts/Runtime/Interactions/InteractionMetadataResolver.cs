@@ -1,3 +1,4 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core;
@@ -12,23 +13,23 @@ namespace VVardenfell.Runtime.Interactions
 {
     static class InteractionMetadataResolver
     {
-        public static string BuildFocusPrompt(RuntimeContentDatabase contentDb, EntityManager entityManager, PlayerInteractionFocus focus)
+        public static string BuildFocusPrompt(ref RuntimeContentBlob contentBlob, EntityManager entityManager, PlayerInteractionFocus focus)
         {
             var kind = (InteractableKind)focus.InteractKind;
-            return ResolvePromptDisplayName(contentDb, entityManager, focus.TargetEntity, kind);
+            return ResolvePromptDisplayName(ref contentBlob, entityManager, focus.TargetEntity, kind);
         }
 
-        public static string ResolveDisplayName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity, InteractableKind kind)
+        public static string ResolveDisplayName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity, InteractableKind kind)
         {
             return kind switch
             {
-                InteractableKind.Door => ResolveDoorName(contentDb, entityManager, entity),
-                InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Door => ResolveDoorName(ref contentBlob, entityManager, entity),
+                InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(ref contentBlob, entityManager, entity),
                 InteractableKind.Container => ActorCorpseLootUtility.IsDeadLootableActor(entityManager, entity)
-                    ? ActorCorpseLootUtility.ResolveTitle(contentDb, entityManager, entity)
-                    : ResolveAuthoredDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
+                    ? ActorCorpseLootUtility.ResolveTitle(ref contentBlob, entityManager, entity)
+                    : ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity),
+                InteractableKind.Activator => ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity),
+                InteractableKind.Npc => ResolveActorName(ref contentBlob, entityManager, entity),
                 _ => null,
             };
         }
@@ -46,22 +47,22 @@ namespace VVardenfell.Runtime.Interactions
             };
         }
 
-        static string ResolvePromptDisplayName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity, InteractableKind kind)
+        static string ResolvePromptDisplayName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity, InteractableKind kind)
         {
             return kind switch
             {
-                InteractableKind.Door => ResolveDoorPromptName(contentDb, entityManager, entity),
-                InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(contentDb, entityManager, entity),
+                InteractableKind.Door => ResolveDoorPromptName(ref contentBlob, entityManager, entity),
+                InteractableKind.LooseItem => LooseCarryableResolver.ResolveDisplayName(ref contentBlob, entityManager, entity),
                 InteractableKind.Container => ActorCorpseLootUtility.IsDeadLootableActor(entityManager, entity)
-                    ? ActorCorpseLootUtility.ResolveTitle(contentDb, entityManager, entity)
-                    : ResolveAuthoredDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Activator => ResolveAuthoredDisplayName(contentDb, entityManager, entity),
-                InteractableKind.Npc => ResolveActorName(contentDb, entityManager, entity),
+                    ? ActorCorpseLootUtility.ResolveTitle(ref contentBlob, entityManager, entity)
+                    : ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity),
+                InteractableKind.Activator => ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity),
+                InteractableKind.Npc => ResolveActorName(ref contentBlob, entityManager, entity),
                 _ => null,
             };
         }
 
-        static string ResolveDoorPromptName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
+        static string ResolveDoorPromptName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity)
         {
             if (!entityManager.Exists(entity))
                 return "door";
@@ -76,57 +77,63 @@ namespace VVardenfell.Runtime.Interactions
                         ? resolvedDoor
                         : default;
                 if (door.IsTeleport != 0 && door.DestinationCellId.Length > 0)
-                    return ResolveInteriorDoorPromptName(door);
+                    return ResolveInteriorDoorPromptName(entityManager, door);
 
                 if (door.IsTeleport != 0)
-                    return ResolveExteriorDoorPromptName(contentDb, entityManager, entity, door);
+                    return ResolveExteriorDoorPromptName(ref contentBlob, entityManager, entity, door);
             }
 
-            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity);
         }
 
-        static string ResolveDoorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
+        static string ResolveDoorName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity)
         {
-            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity);
         }
 
-        static string ResolveInteriorDoorPromptName(in DoorInteractable door)
+        static string ResolveInteriorDoorPromptName(EntityManager entityManager, in DoorInteractable door)
         {
-            if (WorldResources.TryGetInteriorCell(door.DestinationCellHash, out CellData destinationCell))
-                return TrimInteriorCellPromptName(destinationCell.CellId);
+            ref RuntimeWorldCellBlob worldCells = ref RequireWorldCellBlob(entityManager);
+            if (RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, door.DestinationCellHash, out int cellIndex))
+            {
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                FixedString128Bytes cellId = !cell.InteriorCellId.IsEmpty ? cell.InteriorCellId : cell.CellId;
+                return TrimInteriorCellPromptName(cellId.ToString());
+            }
 
-            string destinationCellId = WorldResources.ResolveInteriorCellId(door.DestinationCellHash);
-            if (string.IsNullOrWhiteSpace(destinationCellId))
-                destinationCellId = door.DestinationCellId.ToString();
+            if (door.DestinationCellHash != 0UL)
+                throw new System.InvalidOperationException($"[VVardenfell][Interaction] teleport destination interior hash 0x{door.DestinationCellHash:X16} is missing from the world cell blob.");
+
+            string destinationCellId = door.DestinationCellId.ToString();
             return TrimInteriorCellPromptName(destinationCellId);
         }
 
-        static string ResolveExteriorDoorPromptName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity, in DoorInteractable door)
+        static string ResolveExteriorDoorPromptName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity, in DoorInteractable door)
         {
+            ref RuntimeWorldCellBlob worldCells = ref RequireWorldCellBlob(entityManager);
             if (TryResolveExteriorDestinationCell(door.DestinationPosition, out int2 destinationCellCoord)
-                && WorldResources.Cells.TryGetValue(destinationCellCoord, out CellData destinationCell)
-                && destinationCell != null)
+                && RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, destinationCellCoord, out int cellIndex))
             {
-                string regionId = destinationCell.Environment.RegionId ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(regionId))
+                ref RuntimeWorldCellDefBlob destinationCell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                if (destinationCell.Environment.RegionIdHash != 0UL)
                 {
-                    if (contentDb != null && contentDb.TryGetRegionHandle(regionId, out var regionHandle))
-                    {
-                        ref readonly var region = ref contentDb.Get(regionHandle);
-                        if (!string.IsNullOrWhiteSpace(region.Name))
-                            return region.Name;
-                        if (!string.IsNullOrWhiteSpace(region.Id))
-                            return region.Id;
-                    }
+                    if (!RuntimeContentBlobUtility.TryGetRegionHandleByIdHash(ref contentBlob, destinationCell.Environment.RegionIdHash, out var regionHandle) || !regionHandle.IsValid)
+                        throw new System.InvalidOperationException($"[VVardenfell][Interaction] exterior door destination region hash 0x{destinationCell.Environment.RegionIdHash:X16} does not resolve.");
 
-                    return regionId;
+                    ref RuntimeRegionDefBlob region = ref RuntimeContentBlobUtility.Get(ref contentBlob, regionHandle);
+                    string name = region.Name.ToString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                        return name;
+                    string id = region.Id.ToString();
+                    if (!string.IsNullOrWhiteSpace(id))
+                        return id;
                 }
 
-                if (!string.IsNullOrWhiteSpace(destinationCell.CellId))
-                    return destinationCell.CellId;
+                if (!destinationCell.CellId.IsEmpty)
+                    return destinationCell.CellId.ToString();
             }
 
-            return ResolveAuthoredDisplayName(contentDb, entityManager, entity);
+            return ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity);
         }
 
         static bool TryResolveExteriorDestinationCell(float3 destinationPosition, out int2 cellCoord)
@@ -156,61 +163,73 @@ namespace VVardenfell.Runtime.Interactions
             return value.Substring(commaIndex + 1).Trim();
         }
 
-        static string ResolveAuthoredDisplayName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
+        static ref RuntimeWorldCellBlob RequireWorldCellBlob(EntityManager entityManager)
         {
-            if (contentDb == null || !entityManager.Exists(entity))
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction metadata requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var reference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!reference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction metadata requires runtime world cell blob.");
+            return ref reference.Blob.Value;
+        }
+
+        static string ResolveAuthoredDisplayName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity)
+        {
+            if (!entityManager.Exists(entity))
                 return null;
 
             if (entityManager.HasComponent<DoorAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<DoorAuthoring>(entity);
-                return RuntimeContentMetadataResolver.ResolveDoorDisplayName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveDoorDisplayName(ref contentBlob, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ItemPickupAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ItemPickupAuthoring>(entity);
-                return RuntimeContentMetadataResolver.ResolveItemDisplayName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveItemDisplayName(ref contentBlob, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ContainerAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ContainerAuthoring>(entity);
-                return RuntimeContentMetadataResolver.ResolveContainerDisplayName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveContainerDisplayName(ref contentBlob, authoring.Definition);
             }
 
             if (entityManager.HasComponent<ActivatorAuthoring>(entity))
             {
                 var authoring = entityManager.GetComponentData<ActivatorAuthoring>(entity);
-                return RuntimeContentMetadataResolver.ResolveActivatorDisplayName(contentDb, authoring.Definition);
+                return RuntimeContentMetadataResolver.ResolveActivatorDisplayName(ref contentBlob, authoring.Definition);
             }
 
             if (entityManager.HasComponent<PassiveActorPresence>(entity))
             {
                 var actor = entityManager.GetComponentData<PassiveActorPresence>(entity);
-                return ResolveActorName(contentDb, entityManager, entity, actor);
+                return ResolveActorName(ref contentBlob, entityManager, entity, actor);
             }
 
             return null;
         }
 
-        static string ResolveActorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity)
+        static string ResolveActorName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity)
         {
             if (!entityManager.Exists(entity))
                 return "npc";
 
             if (entityManager.HasComponent<PassiveActorPresence>(entity))
-                return ResolveActorName(contentDb, entityManager, entity, entityManager.GetComponentData<PassiveActorPresence>(entity));
+                return ResolveActorName(ref contentBlob, entityManager, entity, entityManager.GetComponentData<PassiveActorPresence>(entity));
 
             return "npc";
         }
 
-        static string ResolveActorName(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity entity, in PassiveActorPresence actor)
+        static string ResolveActorName(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity entity, in PassiveActorPresence actor)
         {
             var source = entityManager.HasComponent<ActorSpawnSource>(entity)
                 ? entityManager.GetComponentData<ActorSpawnSource>(entity)
                 : default;
-            return RuntimeContentMetadataResolver.ResolveActorDisplayName(contentDb, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
+            return RuntimeContentMetadataResolver.ResolveActorDisplayName(ref contentBlob, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
         }
     }
 }

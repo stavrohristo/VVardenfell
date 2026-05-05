@@ -16,10 +16,16 @@ namespace VVardenfell.Runtime.Streaming
         protected override void OnCreate()
         {
             RequireForUpdate<LightingBootstrapRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Lighting bootstrap requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+
             if (!SystemAPI.HasSingleton<ActiveEnvironmentState>())
             {
                 var entity = EntityManager.CreateEntity();
@@ -31,7 +37,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 var entity = EntityManager.CreateEntity();
                 EntityManager.SetName(entity, "VVardenfell.DayCycleState");
-                EntityManager.AddComponentData(entity, CreateDefaultDayCycle());
+                EntityManager.AddComponentData(entity, CreateDefaultDayCycle(ref content));
             }
 
             if (!SystemAPI.HasSingleton<ActiveSkyWeatherState>())
@@ -89,7 +95,14 @@ namespace VVardenfell.Runtime.Streaming
 
         public static MorrowindDayCycleState CreateDefaultDayCycle()
         {
-            var settings = RuntimeContentDatabase.Active?.Data?.WeatherSettings ?? default;
+            var contentBlob = RuntimeContentBlobReferenceUtility.RequireBlob("Lighting bootstrap");
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            return CreateDefaultDayCycle(ref content);
+        }
+
+        public static MorrowindDayCycleState CreateDefaultDayCycle(ref RuntimeContentBlob content)
+        {
+            var settings = content.WeatherSettings;
             if (settings.SunriseTime <= 0f && settings.SunsetTime <= 0f)
                 settings = MorrowindDayCycleUtility.CreateFallbackWeatherSettings(default);
 

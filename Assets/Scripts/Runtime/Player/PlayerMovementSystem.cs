@@ -4,7 +4,6 @@ using Unity.Physics;
 using Unity.Transforms;
 using System;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Systems;

@@ -4,7 +4,6 @@ using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -24,13 +23,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptStackValue>());
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptStartRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             var requests = EntityManager.GetBuffer<MorrowindScriptStartRequest>(runtimeEntity);
@@ -40,31 +38,31 @@ namespace VVardenfell.Runtime.MorrowindScript
             using var snapshot = requests.ToNativeArray(Allocator.Temp);
             requests.Clear();
             for (int i = 0; i < snapshot.Length; i++)
-                ApplyRequest(contentDb, snapshot[i]);
+                ApplyRequest(ref contentBlob, snapshot[i]);
         }
 
-        void ApplyRequest(RuntimeContentDatabase contentDb, in MorrowindScriptStartRequest request)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptStartRequest request)
         {
             if (!request.Program.IsValid
-                || (uint)request.ProgramIndex >= (uint)contentDb.MorrowindScriptProgramCount
+                || (uint)request.ProgramIndex >= (uint)contentBlob.MorrowindScriptPrograms.Length
                 || request.ProgramIndex != request.Program.Index)
             {
                 throw new InvalidOperationException($"[VVardenfell][MWScript] invalid StartScript request programIndex={request.ProgramIndex}.");
             }
 
-            ref readonly var program = ref contentDb.Get(request.Program);
+            ref var program = ref RuntimeContentBlobUtility.Get(ref contentBlob, request.Program);
             if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] StartScript requested disabled script '{program.Id}': {program.DisabledReason}");
+                throw new InvalidOperationException($"[VVardenfell][MWScript] StartScript requested disabled script '{program.Id.ToString()}': {program.DisabledReason.ToString()}");
 
             Entity existing = FindGlobalScriptEntity(request.ProgramIndex);
             if (existing != Entity.Null)
             {
-                RestartExisting(contentDb, existing, program.Id, request);
+                RestartExisting(ref contentBlob, existing, program.Id.ToString(), request);
                 return;
             }
 
             Entity entity = EntityManager.CreateEntity();
-            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{program.Id}");
+            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{program.Id.ToString()}");
             EntityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetEntity = request.TargetEntity,
@@ -77,16 +75,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ProgramCounter = 0,
                 Status = (byte)MorrowindScriptInstanceStatus.Running,
             });
-            MorrowindScriptRuntimeAuthoringUtility.AddRuntimeScriptBuffers(EntityManager, entity, contentDb, request.Program);
+            MorrowindScriptRuntimeAuthoringUtility.AddRuntimeScriptBuffers(EntityManager, entity, ref contentBlob, request.Program);
         }
 
         void RestartExisting(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             Entity entity,
             string scriptId,
             in MorrowindScriptStartRequest request)
         {
-            MorrowindScriptRuntimeAuthoringUtility.EnsureRuntimeScriptBuffers(EntityManager, entity, contentDb, request.Program);
+            MorrowindScriptRuntimeAuthoringUtility.EnsureRuntimeScriptBuffers(EntityManager, entity, ref contentBlob, request.Program);
 
             var instance = EntityManager.GetComponentData<MorrowindScriptInstance>(entity);
             if (instance.Status == (byte)MorrowindScriptInstanceStatus.Running)

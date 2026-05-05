@@ -7,10 +7,10 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Combat
@@ -27,12 +27,15 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<ActorMeleeCombatAiState>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][ActorMelee] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Actor melee combat animation sync requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             float deltaTime = math.max(0f, SystemAPI.Time.DeltaTime);
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
@@ -51,7 +54,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 ref var aiState = ref ai.ValueRW;
                 ref var weapon = ref weaponState.ValueRW;
-                ResolveEquippedMeleeWeapon(contentDb, entity, ref weapon);
+                ResolveEquippedMeleeWeapon(ref content, entity, ref weapon);
 
                 if (combat.ValueRO.Active == 0)
                 {
@@ -88,14 +91,14 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 if (weapon.Drawn == 0 || weapon.Phase != ActorWeaponAnimationPhase.Equipped)
                     continue;
-                if (!CanStartMeleeAttack(contentDb, entity, actorBounds.ValueRO, transform.ValueRO, target))
+                if (!CanStartMeleeAttack(ref content, entity, actorBounds.ValueRO, transform.ValueRO, target))
                     continue;
 
                 FaceTarget(ref transform.ValueRW, target);
                 aiState.DesiredAttackStrength = random.NextFloat();
-                aiState.DesiredAttackType = ChooseAttackType(contentDb, weapon.WeaponContent, ref random);
+                aiState.DesiredAttackType = ChooseAttackType(ref content, weapon.WeaponContent, ref random);
                 aiState.AttackInProgress = 1;
-                aiState.CooldownSeconds = ResolveAttackCooldown(contentDb, entity, ref random);
+                aiState.CooldownSeconds = ResolveAttackCooldown(ref content, entity, ref random);
                 weapon.AiAttackTypeOverride = 1;
                 weapon.AiAttackType = aiState.DesiredAttackType;
                 weapon.AttackPressed = 1;
@@ -104,22 +107,22 @@ namespace VVardenfell.Runtime.Combat
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        void ResolveEquippedMeleeWeapon(RuntimeContentDatabase contentDb, Entity actor, ref ActorWeaponAnimationState state)
+        void ResolveEquippedMeleeWeapon(ref RuntimeContentBlob content, Entity actor, ref ActorWeaponAnimationState state)
         {
             state.WeaponType = ActorWeaponAnimationUtility.NoWeaponType;
             state.WeaponContent = default;
 
             if (!EntityManager.HasBuffer<ActorEquipmentSlot>(actor))
             {
-                if (IsCreature(contentDb, actor))
+                if (IsCreature(ref content, actor))
                     return;
 
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] NPC ref={PlacedRefId(actor)} has no ActorEquipmentSlot buffer.");
             }
 
             var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(actor, true);
-            state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(contentDb, equipment, out var content);
-            state.WeaponContent = content;
+            state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref content, equipment, out var weaponContent);
+            state.WeaponContent = weaponContent;
         }
 
         void StopActorCombatAnimation(ref ActorMeleeCombatAiState aiState, ref ActorWeaponAnimationState weapon)
@@ -216,7 +219,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         bool CanStartMeleeAttack(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity actor,
             in ActorLocalBounds actorBounds,
             in LocalTransform actorTransform,
@@ -226,19 +229,19 @@ namespace VVardenfell.Runtime.Combat
                 return false;
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 EntityManager.GetComponentData<ActorWeaponAnimationState>(actor).WeaponContent,
                 out bool hasWeapon,
                 out _,
                 out var weapon,
                 out _);
-            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(contentDb, hasWeapon, weapon);
+            float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
             float actorRadius = math.max(actorBounds.Extents.x, actorBounds.Extents.z) * math.max(0.01f, actorTransform.Scale);
             float distanceToBounds = math.max(0f, math.distance(ToHorizontal(actorTransform.Position), ToHorizontal(targetBase)) - actorRadius - targetRadius);
             if (distanceToBounds > reach)
                 return false;
 
-            if (!PassesCombatCone(contentDb, actorTransform, targetBase, targetHeight))
+            if (!PassesCombatCone(ref content, actorTransform, targetBase, targetHeight))
                 return false;
 
             float3 source = math.transform(
@@ -285,10 +288,10 @@ namespace VVardenfell.Runtime.Combat
             throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorLocalBounds or PlayerCharacterComponent.");
         }
 
-        static bool PassesCombatCone(RuntimeContentDatabase contentDb, in LocalTransform actorTransform, float3 targetBase, float targetHeight)
+        static bool PassesCombatCone(ref RuntimeContentBlob content, in LocalTransform actorTransform, float3 targetBase, float targetHeight)
         {
-            float combatAngleXY = contentDb.RequireGameSettingFloat("fCombatAngleXY") / 90f;
-            float combatAngleZ = contentDb.RequireGameSettingFloat("fCombatAngleZ") / 90f;
+            float combatAngleXY = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleXY) / 90f;
+            float combatAngleZ = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatAngleZ) / 90f;
             float3 forward = math.normalizesafe(math.rotate(actorTransform.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
             float3 forwardXY = math.normalizesafe(new float3(forward.x, 0f, forward.z), new float3(0f, 0f, 1f));
             float3 toTargetXY = math.normalizesafe(ToHorizontal(targetBase - actorTransform.Position), float3.zero);
@@ -305,13 +308,13 @@ namespace VVardenfell.Runtime.Combat
             return actorVerticalAngle - toHead.y <= combatAngleZ && actorVerticalAngle - toFeet.y >= -combatAngleZ;
         }
 
-        ActorWeaponAttackType ChooseAttackType(RuntimeContentDatabase contentDb, in ContentReference weaponContent, ref Unity.Mathematics.Random random)
+        ActorWeaponAttackType ChooseAttackType(ref RuntimeContentBlob content, in ContentReference weaponContent, ref Unity.Mathematics.Random random)
         {
             if (!weaponContent.IsValid)
                 return ChooseRandomAttackType(ref random);
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
-                contentDb,
+                ref content,
                 weaponContent,
                 out bool hasWeapon,
                 out _,
@@ -345,14 +348,16 @@ namespace VVardenfell.Runtime.Combat
             return ActorWeaponAttackType.Chop;
         }
 
-        float ResolveAttackCooldown(RuntimeContentDatabase contentDb, Entity actor, ref Unity.Mathematics.Random random)
+        float ResolveAttackCooldown(ref RuntimeContentBlob content, Entity actor, ref Unity.Mathematics.Random random)
         {
-            string gmst = IsCreature(contentDb, actor) ? "fCombatDelayCreature" : "fCombatDelayNPC";
-            float baseDelay = contentDb.RequireGameSettingFloat(gmst);
+            ulong gmstHash = IsCreature(ref content, actor)
+                ? RuntimeContentKnownHashes.fCombatDelayCreature
+                : RuntimeContentKnownHashes.fCombatDelayNPC;
+            float baseDelay = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, gmstHash);
             return math.min(baseDelay + 0.01f * random.NextInt(100), baseDelay + 0.9f);
         }
 
-        bool IsCreature(RuntimeContentDatabase contentDb, Entity actor)
+        bool IsCreature(ref RuntimeContentBlob content, Entity actor)
         {
             if (!EntityManager.HasComponent<ActorSpawnSource>(actor))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has no ActorSpawnSource.");
@@ -360,7 +365,7 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has invalid ActorSpawnSource.");
 
-            ref readonly var actorDef = ref contentDb.Get(source.Definition);
+            ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actorDef.Kind == ActorDefKind.Creature;
         }
 
@@ -382,3 +387,4 @@ namespace VVardenfell.Runtime.Combat
                 : 0u;
     }
 }
+

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -9,7 +8,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
@@ -65,6 +63,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate(_playerQuery);
             RequireForUpdate(_viewQuery);
             RequireForUpdate<MorrowindTimeAdvanceRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -76,13 +76,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length > 1)
                 throw new InvalidOperationException("[VVardenfell][MWScript] multiple GotoJail requests were queued in one frame.");
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][MWScript] GotoJail requested before runtime content database was ready.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] GotoJail requested before runtime content blob was ready.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] GotoJail requested before runtime world cell blob was ready.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
 
-            if (!contentDb.TryResolvePlaceable("prisonmarker", out var prisonMarkerContent)
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, RuntimeContentKnownHashes.prisonmarker, out var prisonMarkerContent)
                 || prisonMarkerContent.Kind != ContentReferenceKind.Door
-                || !contentDb.IsValid(prisonMarkerContent))
+                || !RuntimeContentBlobUtility.IsValid(ref content, prisonMarkerContent))
             {
                 throw new InvalidOperationException("[VVardenfell][MWScript] GotoJail requires a valid prisonmarker door content record.");
             }
@@ -92,7 +97,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             var transitionEntity = _transitionQuery.GetSingletonEntity();
             var transition = EntityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
 
-            if (!TryResolveClosestPrisonMarker(prisonMarkerContent, playerTransform.Position, transition, out var destination))
+            if (!TryResolveClosestPrisonMarker(ref worldCells, prisonMarkerContent, playerTransform.Position, transition, out var destination))
                 throw new InvalidOperationException("[VVardenfell][MWScript] GotoJail could not find a prisonmarker destination.");
 
             int jailDays = math.max(1, requests[0].Days);
@@ -113,12 +118,13 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             EntityManager.SetComponentData(transitionEntity, transition);
             if (destination.IsInterior)
-                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager, contentDb);
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager);
 
             requests.Clear();
         }
 
         bool TryResolveClosestPrisonMarker(
+            ref RuntimeWorldCellBlob worldCells,
             ContentReference prisonMarkerContent,
             float3 playerPosition,
             InteriorTransitionState transition,
@@ -126,10 +132,10 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             if (transition.InteriorActive != 0)
             {
-                if (TryResolveInteriorPrisonMarker(prisonMarkerContent, transition.ActiveInteriorCellHash, out destination))
+                if (TryResolveInteriorPrisonMarker(ref worldCells, prisonMarkerContent, transition.ActiveInteriorCellHash, out destination))
                     return true;
             }
-            else if (TryResolveExteriorPrisonMarker(prisonMarkerContent, playerPosition, out destination))
+            else if (TryResolveExteriorPrisonMarker(ref worldCells, prisonMarkerContent, playerPosition, out destination))
             {
                 return true;
             }
@@ -139,37 +145,41 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         bool TryResolveInteriorPrisonMarker(
+            ref RuntimeWorldCellBlob worldCells,
             ContentReference prisonMarkerContent,
             ulong activeInteriorCellHash,
             out PrisonMarkerDestination destination)
         {
             destination = default;
-            if (activeInteriorCellHash == 0UL || !WorldResources.TryGetInteriorCell(activeInteriorCellHash, out var startCell))
+            if (activeInteriorCellHash == 0UL || !RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, activeInteriorCellHash, out _))
                 return false;
 
-            var visited = new HashSet<ulong>();
-            var queue = new Queue<CellData>();
-            queue.Enqueue(startCell);
+            using var visited = new NativeHashSet<ulong>(16, Allocator.Temp);
+            using var queue = new NativeList<ulong>(16, Allocator.Temp);
+            queue.Add(activeInteriorCellHash);
             visited.Add(activeInteriorCellHash);
 
-            while (queue.Count > 0)
+            for (int cursor = 0; cursor < queue.Length; cursor++)
             {
-                CellData cell = queue.Dequeue();
-                if (TryFindMarkerInCell(prisonMarkerContent, cell, out destination))
+                ulong cellHash = queue[cursor];
+                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, cellHash, out int cellIndex))
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] GotoJail interior search reached missing cell hash 0x{cellHash:X16}.");
+
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                if (TryFindMarkerInCell(ref worldCells, ref cell, prisonMarkerContent, out destination))
                     return true;
 
-                if (cell.Doors == null)
-                    continue;
-
-                for (int i = 0; i < cell.Doors.Length; i++)
+                ref BlobArray<RuntimeWorldDoorRefDefBlob> doors = ref RuntimeWorldCellBlobUtility.GetDoors(ref worldCells, ref cell, out int firstDoor, out int doorCount);
+                for (int i = 0; i < doorCount; i++)
                 {
-                    var door = cell.Doors[i];
+                    ref readonly var door = ref doors[firstDoor + i];
                     if ((door.Flags & DoorRefEntry.FlagTeleport) == 0)
                         continue;
 
-                    if (string.IsNullOrWhiteSpace(door.DestinationCellId))
+                    if (door.DestinationCellHash == 0UL)
                     {
                         if (TryResolveExteriorPrisonMarker(
+                                ref worldCells,
                                 prisonMarkerContent,
                                 new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
                                 out destination))
@@ -180,15 +190,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                         continue;
                     }
 
-                    ulong destinationHash = InteriorCellIdHash.Hash(door.DestinationCellId);
+                    ulong destinationHash = door.DestinationCellHash;
                     if (destinationHash == 0UL || visited.Contains(destinationHash))
                         continue;
 
-                    if (!WorldResources.TryGetInteriorCell(destinationHash, out var nextCell))
+                    if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, destinationHash, out _))
                         throw new InvalidOperationException($"[VVardenfell][MWScript] GotoJail interior search reached missing cell '{door.DestinationCellId}'.");
 
                     visited.Add(destinationHash);
-                    queue.Enqueue(nextCell);
+                    queue.Add(destinationHash);
                 }
             }
 
@@ -196,71 +206,46 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryResolveExteriorPrisonMarker(
+            ref RuntimeWorldCellBlob worldCells,
             ContentReference prisonMarkerContent,
             float3 playerPosition,
             out PrisonMarkerDestination destination)
         {
             destination = default;
-            bool found = false;
-            float bestDistanceSq = 0f;
-
-            foreach (var kv in WorldResources.Cells)
+            if (!RuntimeWorldCellBlobUtility.TryFindNearestExteriorRefWithContent(
+                    ref worldCells,
+                    prisonMarkerContent,
+                    playerPosition,
+                    out int cellIndex,
+                    out var entry))
             {
-                CellData cell = kv.Value;
-                if (cell?.Refs == null)
-                    continue;
-
-                for (int i = 0; i < cell.Refs.Length; i++)
-                {
-                    var entry = cell.Refs[i];
-                    if (!MatchesContent(entry, prisonMarkerContent))
-                        continue;
-
-                    float3 position = new(entry.PosX, entry.PosY, entry.PosZ);
-                    float distanceSq = math.lengthsq(position.xz - playerPosition.xz);
-                    if (found && distanceSq >= bestDistanceSq)
-                        continue;
-
-                    found = true;
-                    bestDistanceSq = distanceSq;
-                    destination = BuildExteriorDestination(cell, entry);
-                }
+                return false;
             }
 
-            return found;
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            destination = BuildExteriorDestination(ref cell, entry);
+            return true;
         }
 
         static bool TryFindMarkerInCell(
+            ref RuntimeWorldCellBlob worldCells,
+            ref RuntimeWorldCellDefBlob cell,
             ContentReference prisonMarkerContent,
-            CellData cell,
             out PrisonMarkerDestination destination)
         {
             destination = default;
-            if (cell?.Refs == null)
+            if (!RuntimeWorldCellBlobUtility.TryFindFirstRefWithContent(ref worldCells, ref cell, prisonMarkerContent, out var entry))
                 return false;
 
-            for (int i = 0; i < cell.Refs.Length; i++)
-            {
-                var entry = cell.Refs[i];
-                if (!MatchesContent(entry, prisonMarkerContent))
-                    continue;
-
-                destination = cell.IsInterior
-                    ? BuildInteriorDestination(cell, entry)
-                    : BuildExteriorDestination(cell, entry);
-                return true;
-            }
-
-            return false;
+            destination = cell.IsInterior != 0
+                ? BuildInteriorDestination(ref cell, entry)
+                : BuildExteriorDestination(ref cell, entry);
+            return true;
         }
 
-        static bool MatchesContent(in RefEntry entry, ContentReference content)
-            => entry.ContentKind == (int)content.Kind
-               && entry.ContentHandleValue == content.HandleValue;
-
-        static PrisonMarkerDestination BuildInteriorDestination(CellData cell, in RefEntry entry)
+        static PrisonMarkerDestination BuildInteriorDestination(ref RuntimeWorldCellDefBlob cell, in RefEntry entry)
         {
-            FixedString128Bytes cellId = RuntimeFixedStringUtility.ToFixed128OrDefault(cell.CellId);
+            FixedString128Bytes cellId = cell.InteriorCellId;
             if (cellId.IsEmpty)
                 throw new InvalidOperationException("[VVardenfell][MWScript] GotoJail prisonmarker interior cell has no id.");
 
@@ -268,19 +253,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 IsInterior = true,
                 InteriorCellId = cellId,
-                InteriorCellHash = InteriorCellIdHash.Hash(cellId),
-                InteriorCell = cell,
+                InteriorCellHash = cell.InteriorCellHash,
                 Position = new float3(entry.PosX, entry.PosY, entry.PosZ) + InteriorWorldOffset,
                 Rotation = new quaternion(entry.RotX, entry.RotY, entry.RotZ, entry.RotW),
             };
         }
 
-        static PrisonMarkerDestination BuildExteriorDestination(CellData cell, in RefEntry entry)
+        static PrisonMarkerDestination BuildExteriorDestination(ref RuntimeWorldCellDefBlob cell, in RefEntry entry)
         {
             return new PrisonMarkerDestination
             {
                 IsInterior = false,
-                ExteriorCell = new int2(cell.GridX, cell.GridY),
+                ExteriorCell = cell.ExteriorCoord,
                 Position = new float3(entry.PosX, entry.PosY, entry.PosZ),
                 Rotation = new quaternion(entry.RotX, entry.RotY, entry.RotZ, entry.RotW),
             };
@@ -302,10 +286,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
                 WorldSpawner.HideExteriorVisibility(World, ref loaded);
-                WorldSpawner.SpawnInteriorCell(World, destination.InteriorCell, InteriorWorldOffset, transitionEntity, ref logicalRefLookup);
+                if (!WorldSpawner.TrySpawnInteriorCellByHash(World, destination.InteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] GotoJail destination interior '{destination.InteriorCellId}' was not preloaded.");
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
-                transition.ActiveInteriorCellId = destination.InteriorCellId;
+                transition.ActiveInteriorCellId = spawnedInteriorCellId.IsEmpty ? destination.InteriorCellId : spawnedInteriorCellId;
                 transition.ActiveInteriorCellHash = destination.InteriorCellHash;
             }
             else
@@ -421,31 +406,44 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (spawnedBuffer.Length == 0)
                 return;
 
-            var entitiesToDestroy = new Entity[spawnedBuffer.Length];
-            for (int i = 0; i < spawnedBuffer.Length; i++)
-                entitiesToDestroy[i] = spawnedBuffer[i].Value;
-
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            for (int i = 0; i < entitiesToDestroy.Length; i++)
+            var entitiesToDestroy = new NativeArray<Entity>(spawnedBuffer.Length, Allocator.Temp);
+            try
             {
-                if (EntityManager.Exists(entitiesToDestroy[i])
-                    && EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
+                for (int i = 0; i < spawnedBuffer.Length; i++)
+                    entitiesToDestroy[i] = spawnedBuffer[i].Value;
+
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                try
                 {
-                    LogicalRefDestroyUtility.QueueDestroyLogicalRef(
-                        EntityManager,
-                        ref ecb,
-                        entitiesToDestroy[i],
-                        ref logicalRefLookup,
-                        preserveRuntimeSpawnRegistration: true);
-                    continue;
+                    for (int i = 0; i < entitiesToDestroy.Length; i++)
+                    {
+                        if (EntityManager.Exists(entitiesToDestroy[i])
+                            && EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
+                        {
+                            LogicalRefDestroyUtility.QueueDestroyLogicalRef(
+                                EntityManager,
+                                ref ecb,
+                                entitiesToDestroy[i],
+                                ref logicalRefLookup,
+                                preserveRuntimeSpawnRegistration: true);
+                            continue;
+                        }
+
+                        if (EntityManager.Exists(entitiesToDestroy[i]))
+                            ecb.DestroyEntity(entitiesToDestroy[i]);
+                    }
+
+                    ecb.Playback(EntityManager);
                 }
-
-                if (EntityManager.Exists(entitiesToDestroy[i]))
-                    ecb.DestroyEntity(entitiesToDestroy[i]);
+                finally
+                {
+                    ecb.Dispose();
+                }
             }
-
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
+            finally
+            {
+                entitiesToDestroy.Dispose();
+            }
             spawnedBuffer.Clear();
         }
 
@@ -465,7 +463,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             public int2 ExteriorCell;
             public FixedString128Bytes InteriorCellId;
             public ulong InteriorCellHash;
-            public CellData InteriorCell;
             public float3 Position;
             public quaternion Rotation;
         }

@@ -3,7 +3,6 @@ using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -12,16 +11,16 @@ namespace VVardenfell.Runtime.MorrowindScript
         public static bool TryQueueObjectScript(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             string scriptId)
         {
-            if (contentDb == null || string.IsNullOrWhiteSpace(scriptId))
+            if (string.IsNullOrWhiteSpace(scriptId))
                 return false;
 
-            if (!contentDb.TryGetMorrowindScriptProgramHandle(scriptId, out var programHandle) || !programHandle.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref content, RuntimeContentStableHash.HashId(scriptId), out var programHandle) || !programHandle.IsValid)
                 return false;
 
-            ref readonly var program = ref contentDb.Get(programHandle);
+            ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
             var status = (MorrowindScriptProgramStatus)program.Status;
             var instance = new MorrowindScriptInstance
             {
@@ -33,18 +32,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                     : (byte)MorrowindScriptInstanceStatus.Disabled,
                 DisabledReason = status == MorrowindScriptProgramStatus.Compiled
                     ? default
-                    : RuntimeFixedStringUtility.ToFixed128OrDefault(program.DisabledReason),
+                    : RuntimeFixedStringUtility.ToFixed128OrDefault(program.DisabledReason.ToString()),
             };
 
             ecb.AddComponent(logicalEntity, instance);
-
-            var locals = contentDb.GetMorrowindScriptLocals(programHandle);
-            if (locals.Length > 0)
+            RuntimeContentBlobUtility.RequireRange(program.FirstLocalIndex, program.LocalCount, content.MorrowindScriptLocals.Length, "script local");
+            if (program.LocalCount > 0)
             {
                 var localBuffer = ecb.AddBuffer<MorrowindScriptLocalValue>(logicalEntity);
-                for (int i = 0; i < locals.Length; i++)
+                for (int i = 0; i < program.LocalCount; i++)
                 {
-                    byte valueKind = locals[i].ValueKind;
+                    byte valueKind = content.MorrowindScriptLocals[program.FirstLocalIndex + i].ValueKind;
                     localBuffer.Add(new MorrowindScriptLocalValue
                     {
                         ValueKind = valueKind,
@@ -62,16 +60,17 @@ namespace VVardenfell.Runtime.MorrowindScript
         public static void AddRuntimeScriptBuffers(
             EntityManager entityManager,
             Entity entity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             MorrowindScriptProgramDefHandle programHandle)
         {
+            ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
+            RuntimeContentBlobUtility.RequireRange(program.FirstLocalIndex, program.LocalCount, content.MorrowindScriptLocals.Length, "script local");
             var localBuffer = entityManager.AddBuffer<MorrowindScriptLocalValue>(entity);
-            var locals = contentDb.GetMorrowindScriptLocals(programHandle);
-            for (int i = 0; i < locals.Length; i++)
+            for (int i = 0; i < program.LocalCount; i++)
             {
                 localBuffer.Add(new MorrowindScriptLocalValue
                 {
-                    ValueKind = locals[i].ValueKind,
+                    ValueKind = content.MorrowindScriptLocals[program.FirstLocalIndex + i].ValueKind,
                 });
             }
 
@@ -81,18 +80,19 @@ namespace VVardenfell.Runtime.MorrowindScript
         public static void EnsureRuntimeScriptBuffers(
             EntityManager entityManager,
             Entity entity,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             MorrowindScriptProgramDefHandle programHandle)
         {
+            ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
+            RuntimeContentBlobUtility.RequireRange(program.FirstLocalIndex, program.LocalCount, content.MorrowindScriptLocals.Length, "script local");
             if (!entityManager.HasBuffer<MorrowindScriptLocalValue>(entity))
             {
                 var localBuffer = entityManager.AddBuffer<MorrowindScriptLocalValue>(entity);
-                var locals = contentDb.GetMorrowindScriptLocals(programHandle);
-                for (int i = 0; i < locals.Length; i++)
+                for (int i = 0; i < program.LocalCount; i++)
                 {
                     localBuffer.Add(new MorrowindScriptLocalValue
                     {
-                        ValueKind = locals[i].ValueKind,
+                        ValueKind = content.MorrowindScriptLocals[program.FirstLocalIndex + i].ValueKind,
                     });
                 }
             }

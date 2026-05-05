@@ -6,7 +6,6 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -119,12 +118,9 @@ namespace VVardenfell.Runtime.Streaming
             if (cache == null || preload == null || profile == null)
                 return;
 
-            var contentDb = cache.ContentDatabase ?? RuntimeContentDatabase.Active;
-            if (contentDb == null)
-            {
-                Debug.LogWarning("[VVardenfell][Sandbox] runtime content database is unavailable; sandbox refs will be empty.");
-                return;
-            }
+            if (!cache.ContentBlob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Sandbox] runtime content blob is unavailable; sandbox refs cannot be built.");
+            ref RuntimeContentBlob content = ref cache.ContentBlob.Value;
 
             var exteriorCells = BuildExteriorCellLookup(cache, preload);
             var interiorCells = BuildInteriorCellLookup(cache, preload);
@@ -136,11 +132,11 @@ namespace VVardenfell.Runtime.Streaming
             ClearVanillaRefs(preload, profile.ClearVanillaStaticCollision);
 
             var modelLookup = WorldModelPrefabUtility.BuildModelDescriptorLookup(cache.ModelPrefabCatalog?.Records);
-            var spawns = BuildSpawnList(contentDb, profile, exteriorCells);
+            var spawns = BuildSpawnList(ref content, profile, exteriorCells);
             for (int i = 0; i < spawns.Length; i++)
             {
-                if (!TryBuildRef(cache, contentDb, modelLookup, spawns[i], i, out var entry, out var door, out bool hasDoor))
-                    continue;
+                if (!TryBuildRef(cache, ref content, modelLookup, spawns[i], i, out var entry, out var door, out bool hasDoor))
+                    throw new InvalidOperationException($"[VVardenfell][Sandbox] failed to build sandbox ref for '{spawns[i].ContentId}'.");
 
                 if (spawns[i].IsInterior)
                 {
@@ -187,28 +183,28 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         static SandboxSpawnSpec[] BuildSpawnList(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             SandboxWorldProfile profile,
             Dictionary<int2, CellData> exteriorCells)
         {
             var authored = profile.Spawns ?? Array.Empty<SandboxSpawnSpec>();
-            if (!profile.GenerateActorInspectionGrid || contentDb == null)
+            if (!profile.GenerateActorInspectionGrid)
                 return authored;
 
-            var result = new List<SandboxSpawnSpec>(authored.Length + contentDb.ActorCount);
+            var result = new List<SandboxSpawnSpec>(authored.Length + content.Actors.Length);
             result.AddRange(authored);
 
             if (!string.IsNullOrWhiteSpace(profile.ActorInspectionRepeatActorId))
             {
-                AppendRepeatedActorInspectionGrid(contentDb, profile, exteriorCells, result);
+                AppendRepeatedActorInspectionGrid(ref content, profile, exteriorCells, result);
                 return result.ToArray();
             }
 
             int generated = 0;
-            for (int i = 0; i < contentDb.ActorCount; i++)
+            for (int i = 0; i < content.Actors.Length; i++)
             {
-                ref readonly var actor = ref contentDb.Get(ActorDefHandle.FromIndex(i));
-                if (!ShouldIncludeActor(profile, actor))
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, ActorDefHandle.FromIndex(i));
+                if (!ShouldIncludeActor(profile, ref actor))
                     continue;
 
                 int column = generated % Math.Max(1, profile.ActorInspectionGridColumns);
@@ -224,7 +220,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 result.Add(new SandboxSpawnSpec
                 {
-                    ContentId = actor.Id ?? string.Empty,
+                    ContentId = actor.Id.ToString(),
                     Position = position,
                     Rotation = quaternion.identity,
                     Scale = 1f,
@@ -238,16 +234,16 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         static void AppendRepeatedActorInspectionGrid(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             SandboxWorldProfile profile,
             Dictionary<int2, CellData> exteriorCells,
             List<SandboxSpawnSpec> result)
         {
             string actorId = profile.ActorInspectionRepeatActorId ?? string.Empty;
-            if (!contentDb.TryGetActorHandle(actorId, out var actorHandle) || !actorHandle.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref content, RuntimeContentStableHash.HashId(actorId), out var actorHandle) || !actorHandle.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Sandbox] repeated actor inspection grid requested missing actor id '{actorId}'.");
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
             if (actor.Kind != ActorDefKind.Npc)
                 throw new InvalidOperationException($"[VVardenfell][Sandbox] repeated actor inspection grid requires an NPC actor, but '{actorId}' is '{actor.Kind}'.");
 
@@ -267,7 +263,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 result.Add(new SandboxSpawnSpec
                 {
-                    ContentId = actor.Id ?? string.Empty,
+                    ContentId = actor.Id.ToString(),
                     Position = position,
                     Rotation = quaternion.identity,
                     Scale = 1f,
@@ -295,7 +291,7 @@ namespace VVardenfell.Runtime.Streaming
             return profile.ActorInspectionGridHeight;
         }
 
-        static bool ShouldIncludeActor(SandboxWorldProfile profile, in ActorDef actor)
+        static bool ShouldIncludeActor(SandboxWorldProfile profile, ref RuntimeActorDefBlob actor)
         {
             return actor.Kind switch
             {
@@ -337,7 +333,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static bool TryBuildRef(
             CacheLoader cache,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Dictionary<string, WorldResources.RuntimeSpawnPrefabDescriptor> modelLookup,
             SandboxSpawnSpec spec,
             int index,
@@ -350,13 +346,12 @@ namespace VVardenfell.Runtime.Streaming
             hasDoor = false;
 
             string contentId = spec.ContentId ?? string.Empty;
-            if (!contentDb.TryResolvePlaceable(contentId, out var content) || !contentDb.IsValid(content))
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, RuntimeContentStableHash.HashId(contentId), out var contentRef) || !RuntimeContentBlobUtility.IsValid(ref content, contentRef))
             {
-                Debug.LogWarning($"[VVardenfell][Sandbox] unknown placeable content id '{contentId}'.");
-                return false;
+                throw new InvalidOperationException($"[VVardenfell][Sandbox] unknown placeable content id '{contentId}'.");
             }
 
-            if (!TryGetModelPath(contentDb, content, out string modelPath, out bool modelRequired))
+            if (!TryGetModelPath(ref content, contentRef, out string modelPath, out bool modelRequired))
                 return false;
 
             bool hasModel = false;
@@ -382,8 +377,8 @@ namespace VVardenfell.Runtime.Streaming
                 CollisionIndex = hasModel ? descriptor.CollisionIndex : -1,
                 PlacedRefId = SandboxPlacedRefBase + (uint)index + 1u,
                 DoorMetaIndex = -1,
-                ContentHandleValue = content.HandleValue,
-                ContentKind = (int)content.Kind,
+                ContentHandleValue = contentRef.HandleValue,
+                ContentKind = (int)contentRef.Kind,
                 PosX = spec.Position.x,
                 PosY = spec.Position.y,
                 PosZ = spec.Position.z,
@@ -395,7 +390,7 @@ namespace VVardenfell.Runtime.Streaming
                 SpawnModeRaw = (int)(hasModel ? RefSpawnMode.ModelPrefab : RefSpawnMode.LogicalOnly),
             };
 
-            if (content.Kind == ContentReferenceKind.Door && spec.DoorDestination.Enabled)
+            if (contentRef.Kind == ContentReferenceKind.Door && spec.DoorDestination.Enabled)
             {
                 hasDoor = true;
                 door = new DoorRefEntry
@@ -416,35 +411,35 @@ namespace VVardenfell.Runtime.Streaming
             return true;
         }
 
-        static bool TryGetModelPath(RuntimeContentDatabase contentDb, ContentReference content, out string modelPath, out bool modelRequired)
+        static bool TryGetModelPath(ref RuntimeContentBlob contentBlob, ContentReference content, out string modelPath, out bool modelRequired)
         {
             modelPath = string.Empty;
             modelRequired = true;
             switch (content.Kind)
             {
                 case ContentReferenceKind.Actor:
-                    ref readonly var actor = ref contentDb.Get(new ActorDefHandle { Value = content.HandleValue });
+                    ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, new ActorDefHandle { Value = content.HandleValue });
                     modelRequired = actor.Kind == ActorDefKind.Creature;
-                    modelPath = actor.Kind == ActorDefKind.Creature ? actor.Model : string.Empty;
+                    modelPath = actor.Kind == ActorDefKind.Creature ? actor.Model.ToString() : string.Empty;
                     return true;
 
                 case ContentReferenceKind.Activator:
-                    modelPath = contentDb.Get(new ActivatorDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.Get(ref contentBlob, new ActivatorDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 case ContentReferenceKind.Door:
-                    modelPath = contentDb.Get(new DoorDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.Get(ref contentBlob, new DoorDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 case ContentReferenceKind.Container:
-                    modelPath = contentDb.Get(new ContainerDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.Get(ref contentBlob, new ContainerDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 case ContentReferenceKind.Item:
-                    modelPath = contentDb.Get(new ItemDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.Get(ref contentBlob, new ItemDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 case ContentReferenceKind.Light:
-                    modelPath = contentDb.Get(new LightDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.Get(ref contentBlob, new LightDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 case ContentReferenceKind.Static:
-                    modelPath = contentDb.GetStatic(new GenericRecordDefHandle { Value = content.HandleValue }).Model;
+                    modelPath = RuntimeContentBlobUtility.GetStatic(ref contentBlob, new GenericRecordDefHandle { Value = content.HandleValue }).Model.ToString();
                     return !string.IsNullOrWhiteSpace(modelPath);
                 default:
                     Debug.LogWarning($"[VVardenfell][Sandbox] content kind '{content.Kind}' is not supported by sandbox refs.");

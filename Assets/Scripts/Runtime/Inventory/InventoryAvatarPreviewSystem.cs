@@ -5,7 +5,6 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
@@ -24,6 +23,7 @@ namespace VVardenfell.Runtime.Inventory
         {
             RequireForUpdate<PlayerTag>();
             RequireForUpdate<ActorEquipmentSlot>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnDestroy()
@@ -34,8 +34,8 @@ namespace VVardenfell.Runtime.Inventory
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null || !contentDb.TryGetActorHandle("player", out var actorHandle) || !actorHandle.IsValid)
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.player, out var actorHandle) || !actorHandle.IsValid)
             {
                 DestroyPreview();
                 return;
@@ -63,10 +63,10 @@ namespace VVardenfell.Runtime.Inventory
                 equipmentSnapshot.Add(equipment[i]);
 
             DestroyPreview();
-            CreatePreview(contentDb, actorHandle, equipmentSnapshot.AsArray(), signature);
+            CreatePreview(ref contentBlob, actorHandle, equipmentSnapshot.AsArray(), signature);
         }
 
-        void CreatePreview(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
+        void CreatePreview(ref RuntimeContentBlob contentBlob, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
         {
             Entity preview = EntityManager.CreateEntity();
             EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
@@ -101,7 +101,7 @@ namespace VVardenfell.Runtime.Inventory
             for (int i = 0; i < equipment.Length; i++)
                 previewEquipment.Add(equipment[i]);
 
-            int weaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(contentDb, previewEquipment, out var weaponContent);
+            int weaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref contentBlob, previewEquipment, out var weaponContent);
             EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
             {
                 WeaponContent = weaponContent,

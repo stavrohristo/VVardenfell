@@ -2,7 +2,6 @@ using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
@@ -24,6 +23,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<MorrowindDialogueSession>();
             RequireForUpdate<DialogueReadinessState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -34,13 +34,14 @@ namespace VVardenfell.Runtime.Interactions
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i], lookup);
+                ApplyRequest(ref contentBlob, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !EntityManager.Exists(target))
@@ -55,7 +56,7 @@ namespace VVardenfell.Runtime.Interactions
                 throw new InvalidOperationException($"[VVardenfell][Interaction] ForceGreeting target ref={request.TargetPlacedRefId} is disabled.");
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(RuntimeContentDatabase.Active, EntityManager, target, InteractableKind.Npc)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, InteractableKind.Npc)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Npc);
             ActorDefHandle actor = EntityManager.GetComponentData<ActorSpawnSource>(target).Definition;
             uint placedRefId = request.TargetPlacedRefId;

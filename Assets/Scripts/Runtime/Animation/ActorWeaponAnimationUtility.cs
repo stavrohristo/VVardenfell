@@ -1,8 +1,8 @@
+using System;
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Animation
 {
@@ -69,7 +69,7 @@ namespace VVardenfell.Runtime.Animation
         }
 
         public static int ResolveEquippedWeaponType(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob blob,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             out ContentReference content)
         {
@@ -81,11 +81,8 @@ namespace VVardenfell.Runtime.Animation
                     continue;
 
                 content = slot.Content;
-                if (contentDb == null)
-                    return UnsupportedWeaponType;
-
                 var handle = new ItemDefHandle { Value = slot.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(handle, out var itemEquipment)
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref blob, handle, out var itemEquipment)
                     || itemEquipment.Kind != ItemEquipmentKind.Weapon)
                 {
                     return UnsupportedWeaponType;

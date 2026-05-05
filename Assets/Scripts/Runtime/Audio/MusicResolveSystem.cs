@@ -5,7 +5,6 @@ using Unity.Entities;
 using Unity.Profiling;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
@@ -18,8 +17,7 @@ namespace VVardenfell.Runtime.Audio
 
         static readonly ProfilerMarker k_MusicResolve = new("VV.Audio.ResolveMusic");
 
-        RuntimeContentDatabase _lastLoggedContentDb;
-        RuntimeContentDatabase _lastPlaylistContentDb;
+        int _lastPlaylistTrackCount = -1;
         bool _loggedMusicPool;
 
         protected override void OnCreate()
@@ -29,14 +27,15 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<MusicPlaylistState>();
             RequireForUpdate<MusicPlaybackStatus>();
             RequireForUpdate<MorrowindMusicRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
             using var _ = k_MusicResolve.Auto();
 
-            var contentDb = RuntimeContentDatabase.Active;
-            LogMusicPoolOnce(contentDb);
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            LogMusicPoolOnce(ref contentBlob);
 
             ref var context = ref SystemAPI.GetSingletonRW<AudioContextState>().ValueRW;
             ref var music = ref SystemAPI.GetSingletonRW<MusicState>().ValueRW;
@@ -45,9 +44,9 @@ namespace VVardenfell.Runtime.Audio
             var trackPool = SystemAPI.GetSingletonBuffer<MusicPlaylistEntry>();
             var scriptMusicRequests = SystemAPI.GetSingletonBuffer<MorrowindMusicRequest>();
 
-            if (!ReferenceEquals(_lastPlaylistContentDb, contentDb))
+            if (_lastPlaylistTrackCount != contentBlob.MusicTracks.Length)
             {
-                _lastPlaylistContentDb = contentDb;
+                _lastPlaylistTrackCount = contentBlob.MusicTracks.Length;
                 trackPool.Clear();
                 playlist = default;
             }
@@ -59,15 +58,15 @@ namespace VVardenfell.Runtime.Audio
                     music.Scripted = 0;
                     music.DirectPath = default;
                     music.Looping = 1;
-                    music.ResolvedTrack = ResolveMenuTrack(contentDb);
-                    music.Category = music.ResolvedTrack.IsValid ? contentDb.Get(music.ResolvedTrack).Category : MusicTrackCategory.Special;
+                    music.ResolvedTrack = ResolveMenuTrack(ref contentBlob);
+                    music.Category = music.ResolvedTrack.IsValid ? RuntimeContentBlobUtility.Get(ref contentBlob, music.ResolvedTrack).Category : MusicTrackCategory.Special;
                     playlist.CurrentTrackValue = 0;
                     break;
                 case AudioPlaybackMode.World:
-                    if (ResolveScriptTrack(contentDb, ref music, ref playlist, playback, scriptMusicRequests))
+                    if (ResolveScriptTrack(ref contentBlob, ref music, ref playlist, playback, scriptMusicRequests))
                         break;
 
-                    ResolveWorldTrack(contentDb, ref music, ref playlist, playback, trackPool);
+                    ResolveWorldTrack(ref contentBlob, ref music, ref playlist, playback, trackPool);
                     break;
                 default:
                     scriptMusicRequests.Clear();
@@ -81,32 +80,23 @@ namespace VVardenfell.Runtime.Audio
             }
         }
 
-        void LogMusicPoolOnce(RuntimeContentDatabase contentDb)
+        void LogMusicPoolOnce(ref RuntimeContentBlob contentBlob)
         {
-            if (contentDb == null)
-                return;
-
-            if (!ReferenceEquals(_lastLoggedContentDb, contentDb))
-            {
-                _lastLoggedContentDb = contentDb;
-                _loggedMusicPool = false;
-            }
-
             if (_loggedMusicPool)
                 return;
 
             _loggedMusicPool = true;
 
-            var tracks = contentDb.Data?.MusicTracks ?? Array.Empty<MusicTrackDef>();
             var builder = new StringBuilder();
-            builder.Append("[VVardenfell][Audio] music pool loaded: total=").Append(tracks.Length);
+            builder.Append("[VVardenfell][Audio] music pool loaded: total=").Append(contentBlob.MusicTracks.Length);
 
             int exploreCount = 0;
             int battleCount = 0;
             int specialCount = 0;
-            for (int i = 0; i < tracks.Length; i++)
+            for (int i = 0; i < contentBlob.MusicTracks.Length; i++)
             {
-                switch (tracks[i].Category)
+                ref var track = ref contentBlob.MusicTracks[i];
+                switch (track.Category)
                 {
                     case MusicTrackCategory.Explore:
                         exploreCount++;
@@ -125,35 +115,33 @@ namespace VVardenfell.Runtime.Audio
                 .Append(", battle=").Append(battleCount)
                 .Append(", special=").Append(specialCount);
 
-            for (int i = 0; i < tracks.Length; i++)
+            for (int i = 0; i < contentBlob.MusicTracks.Length; i++)
             {
+                ref var track = ref contentBlob.MusicTracks[i];
                 builder
                     .Append("\n  [")
                     .Append(i)
                     .Append("] ")
-                    .Append(tracks[i].Category)
+                    .Append(track.Category)
                     .Append(": ")
-                    .Append(tracks[i].RelativePath ?? "<null>");
+                    .Append(track.RelativePath.ToString());
             }
 
         }
 
-        static MusicTrackDefHandle ResolveMenuTrack(RuntimeContentDatabase contentDb)
+        static MusicTrackDefHandle ResolveMenuTrack(ref RuntimeContentBlob contentBlob)
         {
-            if (contentDb == null)
-                return default;
-
-            if (contentDb.TryGetMusicTrackHandle(MenuMusicTrackRelativePath, out var handle))
+            if (TryGetMusicTrackHandle(ref contentBlob, MenuMusicTrackRelativePath, out var handle))
                 return handle;
-            if (contentDb.TryGetFirstMusicTrackByCategory(MusicTrackCategory.Special, out handle))
+            if (TryGetFirstMusicTrackByCategory(ref contentBlob, MusicTrackCategory.Special, out handle))
                 return handle;
-            if (contentDb.TryGetFirstMusicTrackByCategory(MusicTrackCategory.Explore, out handle))
+            if (TryGetFirstMusicTrackByCategory(ref contentBlob, MusicTrackCategory.Explore, out handle))
                 return handle;
             return default;
         }
 
         static bool ResolveScriptTrack(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref MusicState music,
             ref MusicPlaylistState playlist,
             in MusicPlaybackStatus playback,
@@ -164,7 +152,7 @@ namespace VVardenfell.Runtime.Audio
                 var request = requests[requests.Length - 1];
                 requests.Clear();
                 bool hasTrack = request.Track.IsValid;
-                if (hasTrack && (contentDb == null || request.Track.Index < 0 || request.Track.Index >= contentDb.MusicTrackCount))
+                if (hasTrack && (request.Track.Index < 0 || request.Track.Index >= contentBlob.MusicTracks.Length))
                     throw new InvalidOperationException("[VVardenfell][Audio] StreamMusic request references invalid music content.");
                 if (!hasTrack && request.DirectPath.IsEmpty)
                     throw new InvalidOperationException("[VVardenfell][Audio] StreamMusic request has no music content.");
@@ -173,7 +161,7 @@ namespace VVardenfell.Runtime.Audio
                 music.Scripted = 1;
                 music.ResolvedTrack = request.Track;
                 music.DirectPath = request.DirectPath;
-                music.Category = hasTrack ? contentDb.Get(request.Track).Category : MusicTrackCategory.Special;
+                music.Category = hasTrack ? RuntimeContentBlobUtility.Get(ref contentBlob, request.Track).Category : MusicTrackCategory.Special;
                 playlist.CurrentTrackValue = request.Track.Value;
                 return true;
             }
@@ -192,7 +180,7 @@ namespace VVardenfell.Runtime.Audio
         }
 
         static void ResolveWorldTrack(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref MusicState music,
             ref MusicPlaylistState playlist,
             in MusicPlaybackStatus playback,
@@ -202,77 +190,60 @@ namespace VVardenfell.Runtime.Audio
             music.DirectPath = default;
             music.Category = MusicTrackCategory.Explore;
 
-            if (contentDb == null)
-            {
-                music.ResolvedTrack = default;
-                playlist.CurrentTrackValue = 0;
-                return;
-            }
-
-            EnsurePlaylistReady(contentDb, MusicTrackCategory.Explore, ref playlist, trackPool);
+            EnsurePlaylistReady(ref contentBlob, MusicTrackCategory.Explore, ref playlist, trackPool);
 
             bool currentTrackMatchesCategory = music.ResolvedTrack.IsValid
-                && contentDb.Get(music.ResolvedTrack).Category == MusicTrackCategory.Explore;
+                && RuntimeContentBlobUtility.Get(ref contentBlob, music.ResolvedTrack).Category == MusicTrackCategory.Explore;
             bool currentTrackPendingOrPlaying = playback.HasPendingTrack != 0 || playback.IsPlaying != 0;
 
             if (!currentTrackMatchesCategory || playlist.CurrentTrackValue == 0)
             {
-                music.ResolvedTrack = SelectNextTrack(contentDb, MusicTrackCategory.Explore, ref playlist, trackPool);
-                LogSelectedTrack(contentDb, music.ResolvedTrack, "initial world track");
+                music.ResolvedTrack = SelectNextTrack(ref contentBlob, MusicTrackCategory.Explore, ref playlist, trackPool);
+                LogSelectedTrack(ref contentBlob, music.ResolvedTrack, "initial world track");
                 return;
             }
 
             if (!currentTrackPendingOrPlaying)
             {
-                music.ResolvedTrack = SelectNextTrack(contentDb, MusicTrackCategory.Explore, ref playlist, trackPool);
-                LogSelectedTrack(contentDb, music.ResolvedTrack, "advanced world track");
+                music.ResolvedTrack = SelectNextTrack(ref contentBlob, MusicTrackCategory.Explore, ref playlist, trackPool);
+                LogSelectedTrack(ref contentBlob, music.ResolvedTrack, "advanced world track");
             }
         }
 
         static void EnsurePlaylistReady(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             MusicTrackCategory category,
             ref MusicPlaylistState playlist,
             DynamicBuffer<MusicPlaylistEntry> trackPool)
         {
-            if (contentDb == null)
-            {
-                trackPool.Clear();
-                playlist.Initialized = 0;
-                return;
-            }
-
             if (playlist.RandomState == 0u)
-                playlist.RandomState = CreateMusicSeed(category, contentDb.MusicTrackCount);
+                playlist.RandomState = CreateMusicSeed(category, contentBlob.MusicTracks.Length);
 
             bool categoryChanged = playlist.ActiveCategory != (byte)category;
-            bool contentChanged = playlist.ContentTrackCount != contentDb.MusicTrackCount;
+            bool contentChanged = playlist.ContentTrackCount != contentBlob.MusicTracks.Length;
             if (playlist.Initialized == 0 || categoryChanged || contentChanged)
             {
-                RefillTrackPool(contentDb, category, trackPool);
+                RefillTrackPool(ref contentBlob, category, trackPool);
                 playlist.ActiveCategory = (byte)category;
-                playlist.ContentTrackCount = contentDb.MusicTrackCount;
+                playlist.ContentTrackCount = contentBlob.MusicTracks.Length;
                 playlist.CurrentTrackValue = 0;
                 playlist.Initialized = 1;
             }
         }
 
         static MusicTrackDefHandle SelectNextTrack(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             MusicTrackCategory category,
             ref MusicPlaylistState playlist,
             DynamicBuffer<MusicPlaylistEntry> trackPool)
         {
-            if (contentDb == null)
-                return default;
-
             if (trackPool.Length == 0)
-                RefillTrackPool(contentDb, category, trackPool);
+                RefillTrackPool(ref contentBlob, category, trackPool);
 
             if (trackPool.Length == 0)
             {
                 playlist.CurrentTrackValue = 0;
-                if (contentDb.TryGetFirstMusicTrackByCategory(MusicTrackCategory.Special, out var specialFallback))
+                if (TryGetFirstMusicTrackByCategory(ref contentBlob, MusicTrackCategory.Special, out var specialFallback))
                     return specialFallback;
                 return default;
             }
@@ -293,18 +264,14 @@ namespace VVardenfell.Runtime.Audio
         }
 
         static void RefillTrackPool(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             MusicTrackCategory category,
             DynamicBuffer<MusicPlaylistEntry> trackPool)
         {
             trackPool.Clear();
-            if (contentDb == null)
-                return;
-
-            var tracks = contentDb.Data?.MusicTracks ?? Array.Empty<MusicTrackDef>();
-            for (int i = 0; i < tracks.Length; i++)
+            for (int i = 0; i < contentBlob.MusicTracks.Length; i++)
             {
-                if (tracks[i].Category != category)
+                if (contentBlob.MusicTracks[i].Category != category)
                     continue;
 
                 trackPool.Add(new MusicPlaylistEntry
@@ -325,12 +292,42 @@ namespace VVardenfell.Runtime.Audio
             return seed == 0u ? 1u : seed;
         }
 
-        static void LogSelectedTrack(RuntimeContentDatabase contentDb, MusicTrackDefHandle handle, string reason)
+        static void LogSelectedTrack(ref RuntimeContentBlob contentBlob, MusicTrackDefHandle handle, string reason)
         {
-            if (contentDb == null || !handle.IsValid)
+            if (!handle.IsValid)
                 return;
 
-            ref readonly var track = ref contentDb.Get(handle);
+            ref var track = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+        }
+
+        static bool TryGetMusicTrackHandle(ref RuntimeContentBlob contentBlob, string relativePath, out MusicTrackDefHandle handle)
+        {
+            for (int i = 0; i < contentBlob.MusicTracks.Length; i++)
+            {
+                if (string.Equals(contentBlob.MusicTracks[i].RelativePath.ToString(), relativePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    handle = MusicTrackDefHandle.FromIndex(i);
+                    return true;
+                }
+            }
+
+            handle = default;
+            return false;
+        }
+
+        static bool TryGetFirstMusicTrackByCategory(ref RuntimeContentBlob contentBlob, MusicTrackCategory category, out MusicTrackDefHandle handle)
+        {
+            for (int i = 0; i < contentBlob.MusicTracks.Length; i++)
+            {
+                if (contentBlob.MusicTracks[i].Category == category)
+                {
+                    handle = MusicTrackDefHandle.FromIndex(i);
+                    return true;
+                }
+            }
+
+            handle = default;
+            return false;
         }
     }
 }

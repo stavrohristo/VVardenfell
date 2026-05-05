@@ -1,7 +1,6 @@
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
@@ -9,67 +8,66 @@ namespace VVardenfell.Runtime.Inventory
     {
         const string Gold001 = "gold_001";
 
-        public static bool TryAddPlayerItem(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
+        public static bool TryAddPlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveAddContent(contentDb, itemId, 0u, out var content))
+            if (!TryResolveAddContent(ref contentBlob, itemId, 0u, out var content))
                 return false;
 
-            ContainerLootUtility.AddInventoryStack(inventory, content, count);
+            ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, count);
             return true;
         }
 
-        public static bool TryRemovePlayerItem(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
+        public static bool TryRemovePlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveDirectCarryable(contentDb, itemId, out var content))
+            if (!TryResolveDirectCarryable(ref contentBlob, itemId, out var content))
                 return false;
 
             RemovePlayerInventoryStack(inventory, content, count);
             return true;
         }
 
-        public static bool TryAddActorItem(RuntimeContentDatabase contentDb, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count, uint resolutionSeed)
+        public static bool TryAddActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count, uint resolutionSeed)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveAddContent(contentDb, itemId, resolutionSeed, out var content))
+            if (!TryResolveAddContent(ref contentBlob, itemId, resolutionSeed, out var content))
                 return false;
 
-            AddActorInventoryStack(inventory, content, count);
+            AddActorInventoryStack(ref contentBlob, inventory, content, count);
             return true;
         }
 
-        public static bool TryRemoveActorItem(RuntimeContentDatabase contentDb, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count)
+        public static bool TryRemoveActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveDirectCarryable(contentDb, itemId, out var content))
+            if (!TryResolveDirectCarryable(ref contentBlob, itemId, out var content))
                 return false;
 
             RemoveActorInventoryStack(inventory, content, count);
             return true;
         }
 
-        static bool TryResolveAddContent(RuntimeContentDatabase contentDb, string itemId, uint resolutionSeed, out ContentReference content)
+        static bool TryResolveAddContent(ref RuntimeContentBlob contentBlob, string itemId, uint resolutionSeed, out ContentReference content)
         {
-            if (TryResolveDirectCarryable(contentDb, itemId, out content))
+            if (TryResolveDirectCarryable(ref contentBlob, itemId, out content))
                 return true;
 
             string normalizedId = NormalizeGoldId(itemId);
-            if (contentDb != null
-                && contentDb.TryGetItemLeveledListHandle(normalizedId, out var listHandle)
-                && ContainerLootUtility.TryResolveLooseLeveledCarryable(contentDb, listHandle, resolutionSeed, out content, out _))
+            if (RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(normalizedId), out var listHandle)
+                && ContainerLootUtility.TryResolveLooseLeveledCarryable(ref contentBlob, listHandle, resolutionSeed, out content, out _))
             {
                 return content.IsValid;
             }
@@ -78,8 +76,8 @@ namespace VVardenfell.Runtime.Inventory
             return false;
         }
 
-        static bool TryResolveDirectCarryable(RuntimeContentDatabase contentDb, string itemId, out ContentReference content)
-            => ContainerLootUtility.TryResolveDirectCarryable(contentDb, NormalizeGoldId(itemId), out content, out _);
+        static bool TryResolveDirectCarryable(ref RuntimeContentBlob contentBlob, string itemId, out ContentReference content)
+            => ContainerLootUtility.TryResolveDirectCarryable(ref contentBlob, NormalizeGoldId(itemId), out content, out _);
 
         static string NormalizeGoldId(string itemId)
         {
@@ -119,12 +117,12 @@ namespace VVardenfell.Runtime.Inventory
             }
         }
 
-        static void AddActorInventoryStack(DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
+        static void AddActorInventoryStack(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
         {
             if (!content.IsValid || count <= 0)
                 return;
 
-            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 if (inventory[i].Content.Kind != content.Kind

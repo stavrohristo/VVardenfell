@@ -5,10 +5,10 @@ using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
@@ -44,7 +44,8 @@ namespace VVardenfell.Runtime.Shell
         bool _hasCachedHudActiveEffectSignature;
         FixedString128Bytes _lastInteriorCellId;
         int2 _lastLocationExteriorCell = new(int.MinValue, int.MinValue);
-        CellData _lastLocationCellData;
+        FixedString128Bytes _lastLocationCellId;
+        ulong _lastLocationRegionHash;
         int _lastLocationLoadedCount = -1;
         int _lastLocationActiveCount = -1;
         bool _creationFailed;
@@ -76,6 +77,8 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<MorrowindQuestJournalState>();
             RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<MorrowindTimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
             RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<ContainerSessionItem>();
         }
@@ -107,6 +110,7 @@ namespace VVardenfell.Runtime.Shell
             if (_view == null)
                 return;
 
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
             var subtitle = SystemAPI.TryGetSingleton<RuntimeSubtitleState>(out var subtitleState)
                 ? subtitleState
@@ -126,7 +130,7 @@ namespace VVardenfell.Runtime.Shell
                 ? enemyHealthState
                 : default;
             var playerStats = BuildPlayerPresentationStats();
-            var location = BuildLocationPresentation(RuntimeContentDatabase.Active);
+            var location = BuildLocationPresentation(ref contentBlob);
             bool suiteOpen = shell.InventoryOpen != 0 && shell.ContainerOpen == 0;
             bool inventoryVisible = (suiteOpen || (shell.ContainerOpen == 0 && inventoryState.Pinned != 0)) && shell.InventoryMenuDisabled == 0;
             bool statsVisible = (suiteOpen || (shell.ContainerOpen == 0 && statsState.Pinned != 0)) && shell.StatsMenuDisabled == 0;
@@ -135,7 +139,7 @@ namespace VVardenfell.Runtime.Shell
 
             InventoryWindowViewModel inventoryModel = inventoryVisible
                 ? BuildInventoryModel(
-                    RuntimeContentDatabase.Active,
+                    ref contentBlob,
                     inventoryState,
                     inventory,
                     playerStats,
@@ -148,13 +152,13 @@ namespace VVardenfell.Runtime.Shell
             if (inventoryModel != null)
                 inventoryModel.Pinned = inventoryState.Pinned != 0;
             ContainerWindowViewModel containerModel = shell.ContainerOpen != 0
-                ? BuildContainerModel(RuntimeContentDatabase.Active, containerState, containerItems)
+                ? BuildContainerModel(ref contentBlob, containerState, containerItems)
                 : null;
             bool visible = !BootstrapPresentationGate.BlocksGameplayInput;
             bool showHud = shell.HudVisible != 0;
             RuntimeHudViewModel hudModel = BuildHudModel(
                 showHud,
-                RuntimeContentDatabase.Active,
+                ref contentBlob,
                 interaction,
                 playerStats,
                 location,
@@ -164,12 +168,12 @@ namespace VVardenfell.Runtime.Shell
                 subtitle,
                 enemyHealth);
             StatsWindowViewModel statsModel = statsVisible
-                ? BuildStatsModel(RuntimeContentDatabase.Active, EntityManager, statsState, playerStats)
+                ? BuildStatsModel(ref contentBlob, EntityManager, statsState, playerStats)
                 : null;
             if (statsModel != null)
                 statsModel.Pinned = statsState.Pinned != 0;
             SpellWindowViewModel spellModel = spellVisible
-                ? BuildSpellModel(RuntimeContentDatabase.Active, spellState, playerStats)
+                ? BuildSpellModel(ref contentBlob, spellState, playerStats)
                 : null;
             if (spellModel != null)
                 spellModel.Pinned = spellState.Pinned != 0;
@@ -183,7 +187,7 @@ namespace VVardenfell.Runtime.Shell
                 : null;
             JournalWindowViewModel journalModel = shell.JournalOpen != 0
                 ? BuildJournalModel(
-                    RuntimeContentDatabase.Active,
+                    ref contentBlob,
                     journalState,
                     SystemAPI.GetSingletonBuffer<MorrowindQuestJournalIndex>(true),
                     SystemAPI.GetSingletonBuffer<MorrowindQuestJournalEntry>(true),
@@ -191,7 +195,7 @@ namespace VVardenfell.Runtime.Shell
                 : null;
             DialogueWindowViewModel dialogueModel = shell.DialogueOpen != 0
                 ? BuildDialogueModel(
-                    RuntimeContentDatabase.Active,
+                    ref contentBlob,
                     EntityManager,
                     SystemAPI.GetSingleton<MorrowindDialogueSession>(),
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueSessionLine>(true),
@@ -200,7 +204,7 @@ namespace VVardenfell.Runtime.Shell
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueChoice>(true))
                 : null;
             RestMenuViewModel restMenuModel = shell.RestMenuOpen != 0 || shell.RestMenuAdvancing != 0
-                ? BuildRestMenuModel(RuntimeContentDatabase.Active, shell, SystemAPI.GetSingleton<MorrowindTimeState>(), playerStats)
+                ? BuildRestMenuModel(ref contentBlob, shell, SystemAPI.GetSingleton<MorrowindTimeState>(), playerStats)
                 : null;
             MoviePlaybackViewModel movieModel = shell.MovieOpen != 0
                 ? new MoviePlaybackViewModel
@@ -283,7 +287,7 @@ namespace VVardenfell.Runtime.Shell
         }
 
         RestMenuViewModel BuildRestMenuModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in RuntimeShellState shell,
             in MorrowindTimeState time,
             in PlayerPresentationStats playerStats)
@@ -312,17 +316,17 @@ namespace VVardenfell.Runtime.Shell
                 SelectedHours = selectedHours,
                 ProgressHours = progressHours,
                 TargetHours = targetHours,
-                DateText = FormatRestDate(contentDb, time),
+                DateText = FormatRestDate(ref contentBlob, time),
                 TimeText = FormatRestTime(time),
                 HoursText = selectedHours == 1 ? "1 hour" : $"{selectedHours} hours",
                 ProgressText = BuildRestProgressText(shell.RestMenuSleeping != 0, progressHours, targetHours, stuntedMagicka),
             };
         }
 
-        static string FormatRestDate(RuntimeContentDatabase contentDb, in MorrowindTimeState time)
+        static string FormatRestDate(ref RuntimeContentBlob contentBlob, in MorrowindTimeState time)
         {
             int month = Math.Clamp(time.Month, 0, k_DefaultMonthNames.Length - 1);
-            string monthName = ResolveMonthName(contentDb, month);
+            string monthName = ResolveMonthName(ref contentBlob, month);
             return $"{time.Day} {monthName}, {time.Year}";
         }
 

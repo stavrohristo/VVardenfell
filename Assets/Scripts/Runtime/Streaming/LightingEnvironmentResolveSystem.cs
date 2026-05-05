@@ -4,9 +4,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
@@ -43,6 +41,8 @@ namespace VVardenfell.Runtime.Streaming
             RequireForUpdate(_dayCycleQuery);
             RequireForUpdate(_timeQuery);
             RequireForUpdate(_weatherQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -50,7 +50,14 @@ namespace VVardenfell.Runtime.Streaming
             using var _ = k_ResolveEnvironment.Auto();
 
             ref var environment = ref _environmentQuery.GetSingletonRW<ActiveEnvironmentState>().ValueRW;
-            var contentDb = RuntimeContentDatabase.Active;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Lighting environment resolve requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] Lighting environment resolve requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             var streaming = _streamingQuery.GetSingleton<StreamingConfig>();
             var dayCycle = _dayCycleQuery.GetSingleton<MorrowindDayCycleState>();
             var time = _timeQuery.GetSingleton<MorrowindTimeState>();
@@ -62,9 +69,10 @@ namespace VVardenfell.Runtime.Streaming
                 var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
                 if (transition.InteriorActive != 0)
                 {
-                    if (WorldResources.TryGetInteriorCell(transition.ActiveInteriorCellHash, out var interiorCell))
+                    if (RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, transition.ActiveInteriorCellHash, out int interiorCellIndex))
                     {
-                        environment = BuildInteriorEnvironment(interiorCell, fogDistanceScale);
+                        ref RuntimeWorldCellDefBlob interiorCell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, interiorCellIndex);
+                        environment = BuildInteriorEnvironment(in interiorCell.Environment, fogDistanceScale);
                         LogEnvironmentContext(
                             isInterior: true,
                             exteriorCell: default,
@@ -93,19 +101,20 @@ namespace VVardenfell.Runtime.Streaming
                 }
             }
 
-            if (WorldResources.Cells.TryGetValue(streaming.CameraCell, out var exteriorCell) && exteriorCell != null)
+            if (RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, streaming.CameraCell, out int exteriorCellIndex))
             {
-                environment = BuildExteriorEnvironment(exteriorCell, contentDb, dayCycle, time, weather, fogDistanceScale);
+                ref RuntimeWorldCellDefBlob exteriorCell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, exteriorCellIndex);
+                environment = BuildExteriorEnvironment(in exteriorCell.Environment, ref content, dayCycle, time, weather, fogDistanceScale);
                 LogEnvironmentContext(
                     isInterior: false,
                     exteriorCell: streaming.CameraCell,
                     interiorCellId: default,
-                    sourceLabel: string.IsNullOrEmpty(exteriorCell.Environment.RegionId) ? "exterior fallback" : "region baseline");
+                    sourceLabel: exteriorCell.Environment.RegionIdHash == 0UL ? "exterior fallback" : "region baseline");
                 _loggedMissingInteriorCell = false;
                 return;
             }
 
-            environment = BuildExteriorEnvironment(null, contentDb, dayCycle, time, weather, fogDistanceScale);
+            environment = BuildExteriorEnvironment(default, ref content, dayCycle, time, weather, fogDistanceScale);
             LogEnvironmentContext(
                 isInterior: false,
                 exteriorCell: streaming.CameraCell,
@@ -113,12 +122,11 @@ namespace VVardenfell.Runtime.Streaming
                 sourceLabel: "missing exterior fallback");
         }
 
-        static ActiveEnvironmentState BuildInteriorEnvironment(CellData cell, float fogDistanceScale)
+        static ActiveEnvironmentState BuildInteriorEnvironment(in RuntimeWorldCellEnvironmentDefBlob env, float fogDistanceScale)
         {
             var fallback = ApplyFogDistanceScale(
                 LightingBootstrapSystem.CreateFallbackEnvironment(isInterior: true),
                 fogDistanceScale);
-            var env = cell.Environment;
             if (env.HasMood == 0)
                 return fallback;
 
@@ -141,20 +149,26 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static ActiveEnvironmentState BuildExteriorEnvironment(CellData cell, RuntimeContentDatabase contentDb, MorrowindDayCycleState dayCycle, MorrowindTimeState time, MorrowindWeatherState weather, float fogDistanceScale)
+        static ActiveEnvironmentState BuildExteriorEnvironment(
+            in RuntimeWorldCellEnvironmentDefBlob cellEnvironment,
+            ref RuntimeContentBlob content,
+            MorrowindDayCycleState dayCycle,
+            MorrowindTimeState time,
+            MorrowindWeatherState weather,
+            float fogDistanceScale)
         {
             int regionHandleValue = 0;
-            string regionId = cell?.Environment.RegionId ?? string.Empty;
 
-            if (contentDb != null && contentDb.TryGetRegionHandle(regionId, out var regionHandle))
+            if (cellEnvironment.RegionIdHash != 0UL
+                && RuntimeContentBlobUtility.TryGetRegionHandleByIdHash(ref content, cellEnvironment.RegionIdHash, out var regionHandle))
             {
                 regionHandleValue = regionHandle.Value;
             }
 
-            var current = ResolveWeather(contentDb, weather.CurrentWeather);
+            var current = ResolveWeather(ref content, weather.CurrentWeather);
             int nextIndex = weather.NextWeather >= 0 ? weather.NextWeather : -1;
-            var next = nextIndex >= 0 ? ResolveWeather(contentDb, nextIndex) : current;
-            var weatherSettings = contentDb?.Data?.WeatherSettings ?? MorrowindDayCycleUtility.CreateFallbackWeatherSettings(dayCycle);
+            var next = nextIndex >= 0 ? ResolveWeather(ref content, nextIndex) : current;
+            var weatherSettings = content.WeatherSettings;
             var blend = MorrowindWeatherEvaluationUtility.Evaluate(dayCycle, weatherSettings, current, weather.CurrentWeather, next, nextIndex, weather.Transition, time.GameHour);
             var day = blend.Evaluation;
 
@@ -184,12 +198,11 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static WeatherDefinitionDef ResolveWeather(RuntimeContentDatabase contentDb, int index)
+        static WeatherDefinitionDef ResolveWeather(ref RuntimeContentBlob content, int index)
         {
-            var defs = contentDb?.Data?.WeatherDefinitions;
-            if (defs != null && (uint)index < (uint)defs.Length)
-                return defs[index];
-            return MorrowindDayCycleUtility.CreateFallbackClearWeather();
+            if ((uint)index >= (uint)content.WeatherDefinitions.Length)
+                throw new System.InvalidOperationException($"[VVardenfell][ContentBlob] Invalid weather definition index {index}; length {content.WeatherDefinitions.Length}.");
+            return RuntimeContentBlobUtility.RequireWeatherDefinition(ref content, index);
         }
 
         static float3 DecodeRgb(uint value)

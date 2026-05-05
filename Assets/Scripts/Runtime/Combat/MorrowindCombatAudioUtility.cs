@@ -4,15 +4,14 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 
 namespace VVardenfell.Runtime.Combat
 {
-    public static class MorrowindCombatAudioUtility
+    public static partial class MorrowindCombatAudioUtility
     {
         public static void EmitRequiredSound(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             string soundId,
             Entity sourceEntity,
             uint sourcePlacedRefId,
@@ -25,7 +24,7 @@ namespace VVardenfell.Runtime.Combat
         {
             if (!hasAudioState)
                 throw new InvalidOperationException($"[VVardenfell][Combat] Required combat sound '{soundId}' cannot play without InteractionAudioRequestState.");
-            if (!contentDb.TryGetSoundHandle(soundId, out var sound) || !sound.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref content, RuntimeContentStableHash.HashId(soundId), out var sound) || !sound.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Combat] Required combat sound '{soundId}' is missing.");
 
             audioState.NextSequence++;

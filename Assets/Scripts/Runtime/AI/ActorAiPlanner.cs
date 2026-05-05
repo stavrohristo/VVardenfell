@@ -6,7 +6,6 @@ using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -85,21 +84,29 @@ namespace VVardenfell.Runtime.AI
 
     public static class ActorAiRuntimeAuthoringUtility
     {
-        public static bool HasPackage(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        public static bool HasPackage(ref RuntimeContentBlob content, ActorDefHandle actorHandle)
         {
-            return contentDb.GetActorAiPackages(actorHandle).Length > 0;
+            if (!actorHandle.IsValid)
+                return false;
+
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+            RuntimeContentBlobUtility.RequireRange(actor.FirstAiPackageIndex, actor.AiPackageCount, content.ActorAiPackages.Length, "actor AI package");
+            return actor.AiPackageCount > 0;
         }
 
         public static void HydratePackages(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
             in ActorAiNavigationAnchor anchor,
             DynamicBuffer<ActorAiPackageRuntime> target)
         {
-            var packages = contentDb.GetActorAiPackages(actorHandle);
-            for (int i = 0; i < packages.Length; i++)
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+            RuntimeContentBlobUtility.RequireRange(actor.FirstAiPackageIndex, actor.AiPackageCount, content.ActorAiPackages.Length, "actor AI package");
+            for (int i = 0; i < actor.AiPackageCount; i++)
             {
-                var package = packages[i];
+                ref RuntimeActorAiPackageDefBlob package = ref content.ActorAiPackages[actor.FirstAiPackageIndex + i];
+                FixedString128Bytes cellName = RuntimeFixedStringUtility.ToFixed128OrDefault(ref package.CellName);
+                FixedString128Bytes targetId = RuntimeFixedStringUtility.ToFixed128OrDefault(ref package.TargetId);
                 if (package.Type == ActorAiPackageType.Travel)
                 {
                     target.Add(new ActorAiPackageRuntime
@@ -107,7 +114,7 @@ namespace VVardenfell.Runtime.AI
                         Type = (byte)ActorAiRuntimePackageType.Travel,
                         ShouldRepeat = package.ShouldRepeat,
                         SourcePackageIndex = i,
-                        TargetPathGridIndex = ResolvePackagePathGrid(contentDb, package.CellName, anchor),
+                        TargetPathGridIndex = ResolvePackagePathGrid(ref content, cellName, anchor),
                         TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
                         IdleSeconds = 0.5f,
                     });
@@ -141,14 +148,14 @@ namespace VVardenfell.Runtime.AI
                         ShouldRepeat = package.ShouldRepeat,
                         AllowPartial = 1,
                         SourcePackageIndex = i,
-                        TargetPathGridIndex = ResolvePackagePathGrid(contentDb, package.CellName, anchor),
+                        TargetPathGridIndex = ResolvePackagePathGrid(ref content, cellName, anchor),
                         TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
                         FollowDistance = 256f * WorldScale.MwUnitsToMeters,
                         IdleSeconds = 0.5f,
                         DurationHours = math.max(0, package.Duration),
                         RemainingDurationHours = math.max(0, package.Duration),
-                        DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
-                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                        DestinationInteriorCellHash = ResolveInteriorCellHash(cellName),
+                        TargetId = targetId,
                     });
                 }
                 else if (package.Type == ActorAiPackageType.Escort)
@@ -159,14 +166,14 @@ namespace VVardenfell.Runtime.AI
                         ShouldRepeat = package.ShouldRepeat,
                         AllowPartial = 1,
                         SourcePackageIndex = i,
-                        TargetPathGridIndex = ResolvePackagePathGrid(contentDb, package.CellName, anchor),
+                        TargetPathGridIndex = ResolvePackagePathGrid(ref content, cellName, anchor),
                         TargetPosition = ConvertMwPosition(package.X, package.Y, package.Z),
                         FollowDistance = 450f * WorldScale.MwUnitsToMeters,
                         IdleSeconds = 0.5f,
                         DurationHours = math.max(0, package.Duration),
                         RemainingDurationHours = math.max(0, package.Duration),
-                        DestinationInteriorCellHash = ResolveInteriorCellHash(package.CellName),
-                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                        DestinationInteriorCellHash = ResolveInteriorCellHash(cellName),
+                        TargetId = targetId,
                     });
                 }
                 else if (package.Type == ActorAiPackageType.Activate)
@@ -180,16 +187,16 @@ namespace VVardenfell.Runtime.AI
                         TargetPathGridIndex = anchor.IsResolved != 0 ? anchor.PathGridIndex : -1,
                         FollowDistance = 128f * WorldScale.MwUnitsToMeters,
                         IdleSeconds = 0.25f,
-                        TargetId = RuntimeFixedStringUtility.ToFixed128OrDefault(package.TargetId),
+                        TargetId = targetId,
                     });
                 }
             }
         }
 
-        static int ResolvePackagePathGrid(RuntimeContentDatabase contentDb, string cellName, in ActorAiNavigationAnchor anchor)
+        static int ResolvePackagePathGrid(ref RuntimeContentBlob content, FixedString128Bytes cellName, in ActorAiNavigationAnchor anchor)
         {
-            if (!string.IsNullOrWhiteSpace(cellName) &&
-                contentDb.TryGetInteriorPathGridHandle(cellName, out var handle) &&
+            if (!cellName.IsEmpty &&
+                RuntimeContentBlobUtility.TryGetInteriorPathGridHandleByCellHash(ref content, InteriorCellIdHash.Hash(cellName), out var handle) &&
                 handle.IsValid)
             {
                 return handle.Index;
@@ -201,9 +208,9 @@ namespace VVardenfell.Runtime.AI
         static float3 ConvertMwPosition(float x, float y, float z)
             => new float3(x, z, y) * WorldScale.MwUnitsToMeters;
 
-        static ulong ResolveInteriorCellHash(string cellName)
+        static ulong ResolveInteriorCellHash(FixedString128Bytes cellName)
         {
-            if (string.IsNullOrWhiteSpace(cellName))
+            if (cellName.IsEmpty)
                 return 0UL;
 
             return InteriorCellIdHash.Hash(cellName);
@@ -222,13 +229,15 @@ namespace VVardenfell.Runtime.AI
                 ComponentType.ReadOnly<ActorAiNavigationAnchorDirty>(),
                 ComponentType.ReadOnly<ActorAiState>());
             RequireForUpdate(_dirtyQuery);
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] AI navigation anchor sync requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             foreach (var (anchor, entity) in SystemAPI.Query<RefRW<ActorAiNavigationAnchor>>()
                          .WithAll<ActorAiState, ActorAiNavigationAnchorDirty>()
@@ -237,7 +246,7 @@ namespace VVardenfell.Runtime.AI
                 if (EntityManager.HasComponent<CellLink>(entity))
                 {
                     var cellLink = EntityManager.GetComponentData<CellLink>(entity);
-                    SyncExteriorAnchor(contentDb, cellLink.Value, anchor);
+                    SyncExteriorAnchor(ref content, cellLink.Value, anchor);
                     EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
                     continue;
                 }
@@ -248,18 +257,18 @@ namespace VVardenfell.Runtime.AI
                 var location = EntityManager.GetComponentData<LogicalRefLocation>(entity);
                 if (location.IsInterior != 0)
                 {
-                    SyncInteriorAnchor(contentDb, location.InteriorCellHash, anchor);
+                    SyncInteriorAnchor(ref content, location.InteriorCellHash, anchor);
                 }
                 else
                 {
-                    SyncExteriorAnchor(contentDb, location.ExteriorCell, anchor);
+                    SyncExteriorAnchor(ref content, location.ExteriorCell, anchor);
                 }
 
                 EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
             }
         }
 
-        static void SyncExteriorAnchor(RuntimeContentDatabase contentDb, int2 coord, RefRW<ActorAiNavigationAnchor> anchor)
+        static void SyncExteriorAnchor(ref RuntimeContentBlob content, int2 coord, RefRW<ActorAiNavigationAnchor> anchor)
         {
             ref var current = ref anchor.ValueRW;
             if (current.IsInterior == 0 &&
@@ -277,7 +286,7 @@ namespace VVardenfell.Runtime.AI
                 InteriorCellHash = 0UL,
                 IsInterior = 0,
             };
-            if (contentDb.TryGetExteriorPathGridHandle(coord.x, coord.y, out var handle) && handle.IsValid)
+            if (RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, coord.x, coord.y, out var handle) && handle.IsValid)
             {
                 next.PathGridIndex = handle.Index;
                 next.IsResolved = 1;
@@ -286,7 +295,7 @@ namespace VVardenfell.Runtime.AI
             current = next;
         }
 
-        static void SyncInteriorAnchor(RuntimeContentDatabase contentDb, ulong interiorCellHash, RefRW<ActorAiNavigationAnchor> anchor)
+        static void SyncInteriorAnchor(ref RuntimeContentBlob content, ulong interiorCellHash, RefRW<ActorAiNavigationAnchor> anchor)
         {
             ref var current = ref anchor.ValueRW;
             if (current.IsInterior != 0 && current.InteriorCellHash == interiorCellHash)
@@ -300,7 +309,7 @@ namespace VVardenfell.Runtime.AI
                 InteriorCellHash = interiorCellHash,
                 IsInterior = 1,
             };
-            if (contentDb.TryGetInteriorPathGridHandle(interiorCellHash, out var handle) && handle.IsValid)
+            if (RuntimeContentBlobUtility.TryGetInteriorPathGridHandleByCellHash(ref content, interiorCellHash, out var handle) && handle.IsValid)
             {
                 next.PathGridIndex = handle.Index;
                 next.IsResolved = 1;
@@ -349,6 +358,7 @@ namespace VVardenfell.Runtime.AI
             _targetTransformLookup = state.GetComponentLookup<LocalTransform>(isReadOnly: true);
             state.RequireForUpdate(_query);
             state.RequireForUpdate<MorrowindTimeState>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -357,11 +367,12 @@ namespace VVardenfell.Runtime.AI
             if (!navigation.IsCreated)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][AI] Missing GMST fIdleChanceMultiplier for AiWander.");
 
-            float idleChanceMultiplier = contentDb.RequireGameSettingFloat("fIdleChanceMultiplier");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            float idleChanceMultiplier = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fIdleChanceMultiplier);
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
 
             _transformHandle.Update(ref state);

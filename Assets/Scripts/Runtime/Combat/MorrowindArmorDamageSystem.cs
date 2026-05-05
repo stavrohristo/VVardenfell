@@ -18,12 +18,15 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindPendingDamageEvent>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][Damage] Armor damage requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
 
@@ -38,21 +41,21 @@ namespace VVardenfell.Runtime.Combat
 
                 float original = damage.ValueRO.Amount;
                 damage.ValueRW.Amount = MorrowindArmorDamageUtility.ApplyArmorToHealthDamage(
-                    contentDb,
+                    ref content,
                     EntityManager,
                     damage.ValueRO.Target,
                     original,
                     (uint)random.NextInt(100),
                     out var impact);
-                if (!IsUnarmedCreatureAttack(contentDb, damage.ValueRO))
-                    MorrowindArmorDamageUtility.ApplyArmorConditionDamage(contentDb, EntityManager, impact);
+                if (!IsUnarmedCreatureAttack(ref content, damage.ValueRO))
+                    MorrowindArmorDamageUtility.ApplyArmorConditionDamage(ref content, EntityManager, impact);
                 damage.ValueRW.ArmorImpact = impact;
             }
 
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        bool IsUnarmedCreatureAttack(RuntimeContentDatabase contentDb, in MorrowindPendingDamageEvent damage)
+        bool IsUnarmedCreatureAttack(ref RuntimeContentBlob content, in MorrowindPendingDamageEvent damage)
         {
             if (damage.SourceKind != MorrowindDamageSourceKind.HandToHand)
                 return false;
@@ -67,7 +70,7 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Armor condition attacker entity={damage.Attacker.Index}:{damage.Attacker.Version} has invalid actor definition.");
 
-            ref readonly var actor = ref contentDb.Get(source.Definition);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actor.Kind == ActorDefKind.Creature;
         }
 
@@ -76,3 +79,5 @@ namespace VVardenfell.Runtime.Combat
                || sourceKind == MorrowindDamageSourceKind.HandToHand;
     }
 }
+
+

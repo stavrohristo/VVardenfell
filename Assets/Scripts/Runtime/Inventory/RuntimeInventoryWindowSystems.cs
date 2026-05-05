@@ -26,6 +26,7 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<InventoryWindowState>();
             RequireForUpdate<InventoryWindowRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate(_playerInventoryQuery);
         }
 
@@ -36,7 +37,7 @@ namespace VVardenfell.Runtime.Inventory
             ref var request = ref SystemAPI.GetSingletonRW<InventoryWindowRequest>().ValueRW;
             Entity playerInventoryEntity = _playerInventoryQuery.GetSingletonEntity();
             var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ApplyRequests(ref state, ref request);
 
@@ -50,12 +51,12 @@ namespace VVardenfell.Runtime.Inventory
 
             state.ActiveCategory = (byte)ClampCategory((InventoryWindowCategory)state.ActiveCategory);
 
-            int selectedIndex = ValidateSelectedIndex(contentDb, inventory, ref state);
+            int selectedIndex = ValidateSelectedIndex(ref contentBlob, inventory, ref state);
             if (selectedIndex < 0)
-                selectedIndex = FindFirstVisibleInventoryIndex(contentDb, inventory, state);
+                selectedIndex = FindFirstVisibleInventoryIndex(ref contentBlob, inventory, state);
 
             state.SelectedInventoryIndex = selectedIndex;
-            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(contentDb, inventory, selectedIndex));
+            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(ref contentBlob, inventory, selectedIndex));
         }
 
         static void ApplyRequests(ref InventoryWindowState state, ref InventoryWindowRequest request)
@@ -74,32 +75,32 @@ namespace VVardenfell.Runtime.Inventory
             request = default;
         }
 
-        static int ValidateSelectedIndex(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, ref InventoryWindowState state)
+        static int ValidateSelectedIndex(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, ref InventoryWindowState state)
         {
             int selectedIndex = state.SelectedInventoryIndex;
             if (selectedIndex < 0 || selectedIndex >= inventory.Length)
                 return -1;
 
-            return MatchesFilters(contentDb, inventory[selectedIndex], state) ? selectedIndex : -1;
+            return MatchesFilters(ref contentBlob, inventory[selectedIndex], state) ? selectedIndex : -1;
         }
 
-        static int FindFirstVisibleInventoryIndex(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, in InventoryWindowState state)
+        static int FindFirstVisibleInventoryIndex(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, in InventoryWindowState state)
         {
             for (int i = 0; i < inventory.Length; i++)
             {
-                if (MatchesFilters(contentDb, inventory[i], state))
+                if (MatchesFilters(ref contentBlob, inventory[i], state))
                     return i;
             }
 
             return -1;
         }
 
-        public static bool MatchesFilters(RuntimeContentDatabase contentDb, PlayerInventoryItem entry, in InventoryWindowState state)
+        public static bool MatchesFilters(ref RuntimeContentBlob contentBlob, PlayerInventoryItem entry, in InventoryWindowState state)
         {
-            if (contentDb == null || !entry.Content.IsValid)
+            if (!entry.Content.IsValid)
                 return false;
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
                 return false;
 
             if (!RuntimeContentMetadataResolver.MatchesCategory(metadata, (InventoryWindowCategory)state.ActiveCategory))
@@ -112,13 +113,13 @@ namespace VVardenfell.Runtime.Inventory
             return metadata.DisplayName.IndexOf(filter.Trim(), StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        static string BuildSelectedItemDetails(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory, int selectedIndex)
+        static string BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, int selectedIndex)
         {
-            if (contentDb == null || selectedIndex < 0 || selectedIndex >= inventory.Length)
+            if (selectedIndex < 0 || selectedIndex >= inventory.Length)
                 return "Select an item to inspect.";
 
             var entry = inventory[selectedIndex];
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
                 return "Select an item to inspect.";
 
             return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, entry.Count);

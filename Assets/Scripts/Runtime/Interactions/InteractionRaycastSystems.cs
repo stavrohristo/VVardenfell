@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -10,7 +10,6 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
-using VVardenfell.Runtime.Content;
 using BoxCollider = Unity.Physics.BoxCollider;
 using Collider = Unity.Physics.Collider;
 
@@ -67,6 +66,7 @@ namespace VVardenfell.Runtime.Interactions
         }
 
         public static bool TryResolveFromRaycastHit(
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in LogicalRefLookup logicalRefLookup,
             in PlayerInteractionRaycastHit hit,
@@ -80,7 +80,7 @@ namespace VVardenfell.Runtime.Interactions
                 return false;
 
             hitEntity = hit.HitEntity;
-            if (!TryResolveEntity(entityManager, logicalRefLookup, hit.HitEntity, out resolved))
+            if (!TryResolveEntity(ref contentBlob, entityManager, logicalRefLookup, hit.HitEntity, out resolved))
                 return false;
 
             resolved = new ResolvedInteractionTarget(
@@ -91,7 +91,7 @@ namespace VVardenfell.Runtime.Interactions
             return true;
         }
 
-        public static bool TryResolveSupportedKind(EntityManager entityManager, Entity logicalEntity, out InteractableKind kind)
+        public static bool TryResolveSupportedKind(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity logicalEntity, out InteractableKind kind)
         {
             kind = InteractableKind.None;
 
@@ -103,7 +103,7 @@ namespace VVardenfell.Runtime.Interactions
                 return true;
             }
 
-            if (LooseCarryableResolver.TryResolveContent(RuntimeContentDatabase.Active, entityManager, logicalEntity, out _))
+            if (LooseCarryableResolver.TryResolveContent(ref contentBlob, entityManager, logicalEntity, out _))
             {
                 kind = InteractableKind.LooseItem;
                 return true;
@@ -174,6 +174,7 @@ namespace VVardenfell.Runtime.Interactions
         }
 
         public static bool TryResolveEntity(
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in LogicalRefLookup logicalRefLookup,
             Entity hitEntity,
@@ -203,7 +204,7 @@ namespace VVardenfell.Runtime.Interactions
                 return false;
             }
 
-            if (!TryResolveSupportedKind(entityManager, logicalEntity, out InteractableKind kind))
+            if (!TryResolveSupportedKind(ref contentBlob, entityManager, logicalEntity, out InteractableKind kind))
                 return false;
 
             uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
@@ -293,6 +294,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_raycastHitQuery);
             RequireForUpdate(_focusQuery);
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -307,7 +309,9 @@ namespace VVardenfell.Runtime.Interactions
 
             var raycastHit = _raycastHitQuery.GetSingleton<PlayerInteractionRaycastHit>();
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (!InteractionTargetResolver.TryResolveFromRaycastHit(
+                    ref contentBlob,
                     EntityManager,
                     logicalRefLookup,
                     raycastHit,

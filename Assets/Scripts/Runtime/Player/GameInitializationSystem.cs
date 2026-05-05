@@ -10,7 +10,6 @@ using CapsuleCollider = Unity.Physics.CapsuleCollider;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
@@ -74,6 +73,7 @@ namespace VVardenfell.Runtime.Player
             RequireForUpdate<LoadedCellsMap>();
             RequireForUpdate<AvailableCells>();
             RequireForUpdate<MainCameraSingleton>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -87,6 +87,10 @@ namespace VVardenfell.Runtime.Player
             var initEntity = SystemAPI.GetSingletonEntity<GameInitializationSingleton>();
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
             var em = EntityManager;
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Game initialization requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(em);
             WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
             if (init.SpawnLocalPlayer == 0)
@@ -125,7 +129,7 @@ namespace VVardenfell.Runtime.Player
                 if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] load slot location restore failed. {locationError}");
 
-                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em, RuntimeContentDatabase.Active);
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em);
             }
             else if (hasContinueRequest)
             {
@@ -142,10 +146,10 @@ namespace VVardenfell.Runtime.Player
             var skills = init.PlayerActorStats.Skills;
             var vitals = init.PlayerActorStats.Vitals;
             var effectModifiers = init.PlayerActorStats.EffectModifiers;
-            MorrowindActorMovementStats.ApplyVitalBases(RuntimeContentDatabase.Active, attributes, ref vitals, initializeMissingCurrents: true);
-            var derivedStats = MorrowindActorMovementStats.BuildDerived(RuntimeContentDatabase.Active, attributes, skills, vitals, effectModifiers, 0f);
+            MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, ref vitals, initializeMissingCurrents: true);
+            var derivedStats = MorrowindActorMovementStats.BuildDerived(ref content, attributes, skills, vitals, effectModifiers, 0f);
             var movementSpeed = MorrowindActorMovementStats.BuildPlayerMovementSpeed(
-                RuntimeContentDatabase.Active,
+                ref content,
                 attributes,
                 skills,
                 vitals,
@@ -182,7 +186,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, new ActorBlockState());
             em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             em.AddComponentData(player, init.PlayerCrime);
-            PopulatePlayerFactions(em, initEntity, player);
+            PopulatePlayerFactions(ref content, em, initEntity, player);
             var playerSpells = em.AddBuffer<ActorKnownSpell>(player);
             if (em.HasBuffer<ActorKnownSpell>(initEntity))
             {
@@ -221,8 +225,8 @@ namespace VVardenfell.Runtime.Player
             PlayerEncumbranceDirtyUtility.EnsureMarker(em, player, enabled: true);
             em.AddComponent<LocalPlayerViewModeDirty>(player);
             var playerInventory = em.AddBuffer<PlayerInventoryItem>(player);
-            PopulatePlayerInventory(em, initEntity, playerInventory);
-            PopulatePlayerEquipment(em, initEntity, player, playerInventory);
+            PopulatePlayerInventory(ref content, em, initEntity, playerInventory);
+            PopulatePlayerEquipment(ref content, em, initEntity, player, playerInventory);
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
@@ -265,7 +269,7 @@ namespace VVardenfell.Runtime.Player
             ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
         }
 
-        static void PopulatePlayerFactions(EntityManager em, Entity initEntity, Entity player)
+        static void PopulatePlayerFactions(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player)
         {
             var factions = em.AddBuffer<PlayerFactionMembership>(player);
             if (em.HasBuffer<PlayerFactionMembership>(initEntity))
@@ -280,17 +284,16 @@ namespace VVardenfell.Runtime.Player
                 return;
             }
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null
-                || !contentDb.TryGetActorHandle("player", out var actorHandle)
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref content, RuntimeContentKnownHashes.player, out var actorHandle)
                 || !actorHandle.IsValid)
             {
                 return;
             }
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            if (string.IsNullOrWhiteSpace(actor.FactionId)
-                || !contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle)
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+            string factionId = actor.FactionId.ToString();
+            if (string.IsNullOrWhiteSpace(factionId)
+                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, RuntimeContentStableHash.HashId(factionId), out var factionHandle)
                 || !factionHandle.IsValid)
             {
                 return;
@@ -339,7 +342,7 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static void PopulatePlayerEquipment(EntityManager em, Entity initEntity, Entity player, DynamicBuffer<PlayerInventoryItem> inventory)
+        static void PopulatePlayerEquipment(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player, DynamicBuffer<PlayerInventoryItem> inventory)
         {
             var equipment = em.AddBuffer<ActorEquipmentSlot>(player);
             if (em.HasBuffer<ActorEquipmentSlot>(initEntity))
@@ -356,10 +359,10 @@ namespace VVardenfell.Runtime.Player
 
             if (!inventory.IsCreated || inventory.Length == 0)
                 return;
-            if (RuntimeContentDatabase.Active == null || !RuntimeContentDatabase.Active.TryGetActorHandle("player", out var actorHandle))
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref content, RuntimeContentKnownHashes.player, out var actorHandle))
                 return;
 
-            ref readonly var actor = ref RuntimeContentDatabase.Active.Get(actorHandle);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
             using var actorInventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
             for (int i = 0; i < inventory.Length; i++)
             {
@@ -379,7 +382,7 @@ namespace VVardenfell.Runtime.Player
             }
 
             using var selectedEquipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(RuntimeContentDatabase.Active, actor, actorInventory.AsArray(), selectedEquipment);
+            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(ref content, ref actor, actorInventory.AsArray(), selectedEquipment);
             for (int i = 0; i < selectedEquipment.Length; i++)
                 equipment.Add(selectedEquipment[i]);
         }
@@ -416,7 +419,7 @@ namespace VVardenfell.Runtime.Player
             EntityManager.DestroyEntity(initEntity);
         }
 
-        static void PopulatePlayerInventory(EntityManager em, Entity initEntity, DynamicBuffer<PlayerInventoryItem> playerInventory)
+        static void PopulatePlayerInventory(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, DynamicBuffer<PlayerInventoryItem> playerInventory)
         {
             playerInventory.Clear();
             if (em.HasBuffer<PlayerInventoryItem>(initEntity))
@@ -448,7 +451,7 @@ namespace VVardenfell.Runtime.Player
                 {
                     Content = item.Content,
                     Count = item.Count,
-                    Condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, item.Content),
+                    Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, item.Content),
                 });
             }
         }
@@ -551,3 +554,5 @@ namespace VVardenfell.Runtime.Player
         }
     }
 }
+
+

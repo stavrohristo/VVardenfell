@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.UI.Shell;
@@ -125,10 +127,14 @@ namespace VVardenfell.Runtime.Shell
             if (string.IsNullOrWhiteSpace(cellNamePrefix))
                 throw new ArgumentException("ShowMap substring must not be empty.", nameof(cellNamePrefix));
 
+            var worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
             int count = 0;
-            foreach (var pair in WorldResources.Cells)
+            for (int i = 0; i < worldCells.ExteriorCellLookup.Length; i++)
             {
-                string cellId = pair.Value?.CellId;
+                int cellIndex = worldCells.ExteriorCellLookup[i].CellIndex;
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                string cellId = cell.CellId.ToString();
                 if (string.IsNullOrWhiteSpace(cellId)
                     || !cellId.StartsWith(cellNamePrefix, StringComparison.OrdinalIgnoreCase))
                 {
@@ -136,7 +142,7 @@ namespace VVardenfell.Runtime.Shell
                 }
 
                 int before = s_VisitedLocationCells.Count;
-                AddVisitedLocation(pair.Key);
+                AddVisitedLocation(cell.ExteriorCoord);
                 if (s_VisitedLocationCells.Count != before)
                     count++;
             }
@@ -196,12 +202,15 @@ namespace VVardenfell.Runtime.Shell
                 return;
 
             Dispose();
-            if (WorldResources.Cells.Count == 0)
+            var worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            if (worldCells.ExteriorCellLookup.Length == 0)
                 return;
 
             bool any = false;
-            foreach (var coord in WorldResources.Cells.Keys)
+            for (int i = 0; i < worldCells.ExteriorCellLookup.Length; i++)
             {
+                var coord = worldCells.ExteriorCellLookup[i].Coord;
                 if (!any)
                 {
                     s_MinCell = coord;
@@ -232,8 +241,12 @@ namespace VVardenfell.Runtime.Shell
             for (int i = 0; i < basePixels.Length; i++)
                 basePixels[i] = oceanBackground;
 
-            foreach (var pair in WorldResources.Cells)
-                PaintBaseCell(pair.Key, pair.Value, palette, basePixels, s_MapAlphaMask);
+            for (int i = 0; i < worldCells.ExteriorCellLookup.Length; i++)
+            {
+                var lookup = worldCells.ExteriorCellLookup[i];
+                ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, lookup.CellIndex);
+                PaintBaseCell(ref worldCells, ref cell, palette, basePixels, s_MapAlphaMask);
+            }
 
             s_BaseTexture = new Texture2D(s_Width, s_Height, TextureFormat.RGBA32, mipChain: false, linear: false)
             {
@@ -256,9 +269,11 @@ namespace VVardenfell.Runtime.Shell
             ApplyPendingRestore();
         }
 
-        static void PaintBaseCell(int2 coord, CellData cell, Color32[] palette, Color32[] pixels, byte[] alphaMask)
+        static void PaintBaseCell(ref RuntimeWorldCellBlob worldCells, ref RuntimeWorldCellDefBlob cell, Color32[] palette, Color32[] pixels, byte[] alphaMask)
         {
-            if (!ContainsCell(coord) || cell?.WorldMap == null || cell.WorldMap.Length < 81)
+            int2 coord = cell.ExteriorCoord;
+            ref BlobArray<sbyte> worldMap = ref RuntimeWorldCellBlobUtility.GetWorldMapSamples(ref worldCells, ref cell, out int firstSample, out int sampleCount);
+            if (!ContainsCell(coord) || sampleCount < 81)
                 return;
 
             int cellX0 = (coord.x - s_MinCell.x) * s_CellPixelSize;
@@ -270,7 +285,7 @@ namespace VVardenfell.Runtime.Shell
                 for (int x = 0; x < s_CellPixelSize; x++)
                 {
                     int vertexX = math.clamp((x * 9) / s_CellPixelSize, 0, 8);
-                    int lutIndex = math.clamp(cell.WorldMap[vertexY * 9 + vertexX] + 128, 0, 255);
+                    int lutIndex = math.clamp(worldMap[firstSample + vertexY * 9 + vertexX] + 128, 0, 255);
                     Color32 color = palette[lutIndex];
                     byte alpha = (byte)(lutIndex < 128 ? 0 : 255);
                     color.a = 255;
@@ -307,9 +322,12 @@ namespace VVardenfell.Runtime.Shell
 
         static void AddVisitedLocation(int2 cell)
         {
-            if (!WorldResources.Cells.TryGetValue(cell, out var cellData) || cellData == null)
+            var worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, cell, out int cellIndex))
                 return;
-            if (string.IsNullOrWhiteSpace(cellData.CellId))
+            ref RuntimeWorldCellDefBlob cellData = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (cellData.CellId.IsEmpty)
                 return;
 
             s_VisitedLocationCells.Add(cell);
@@ -397,10 +415,13 @@ namespace VVardenfell.Runtime.Shell
         static bool TryGetLocationLabel(int2 cell, out string label)
         {
             label = null;
-            if (!WorldResources.Cells.TryGetValue(cell, out var cellData) || cellData == null)
+            var worldCellBlob = RequireWorldCellBlob();
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, cell, out int cellIndex))
                 return false;
 
-            label = cellData.CellId?.Trim();
+            ref RuntimeWorldCellDefBlob cellData = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            label = cellData.CellId.ToString().Trim();
             return !string.IsNullOrWhiteSpace(label);
         }
 
@@ -510,6 +531,22 @@ namespace VVardenfell.Runtime.Shell
             }
 
             return colors;
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob()
+        {
+            var world = Unity.Entities.World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] global map presentation requires a default world.");
+
+            using var query = world.EntityManager.CreateEntityQuery(Unity.Entities.ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] global map presentation requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var reference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!reference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] global map presentation requires runtime world cell blob.");
+            return reference.Blob;
         }
 
         static void ApplyPendingRestore()

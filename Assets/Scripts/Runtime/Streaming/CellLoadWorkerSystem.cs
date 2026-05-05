@@ -73,16 +73,14 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (!loaded.Streamed.Contains(coord))
                 {
-                    if (WorldResources.Cells.TryGetValue(coord, out var cellData) && cellData != null)
-                    {
-                        WorldSpawner.SpawnExteriorCell(
+                    if (WorldSpawner.TrySpawnExteriorCellByCoord(
                             World.DefaultGameObjectInjectionWorld,
                             coord,
-                            cellData,
                             ref loaded,
                             ref logicalRefs,
                             active: true,
-                            gateTerrainByRadius: cfg.GateTerrainByRadius);
+                            gateTerrainByRadius: cfg.GateTerrainByRadius))
+                    {
                         QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
                         spawnedCellThisFrame = true;
                     }

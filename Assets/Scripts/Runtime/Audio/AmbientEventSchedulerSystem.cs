@@ -1,8 +1,8 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Profiling;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
@@ -20,15 +20,14 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<RegionAmbientState>();
             RequireForUpdate<AmbientSchedulerState>();
             RequireForUpdate<AmbientSettingsState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
             using var _ = k_ScheduleAmbient.Auto();
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ref var context = ref SystemAPI.GetSingletonRW<AudioContextState>().ValueRW;
             ref var regionState = ref SystemAPI.GetSingletonRW<RegionAmbientState>().ValueRW;
@@ -61,16 +60,16 @@ namespace VVardenfell.Runtime.Audio
             var random = new Unity.Mathematics.Random(EnsureSeed(scheduler.RandomState));
             scheduler.SecondsUntilNextAttempt = SampleNextInterval(ref random, settings);
 
-            var refs = contentDb.GetRegionSoundRefs(regionState.Region);
-            if (refs.Length > 0)
+            ref var refs = ref RuntimeContentBlobUtility.GetRegionSoundRefs(ref contentBlob, regionState.Region, out int firstSoundRef, out int soundRefCount);
+            if (soundRefCount > 0)
             {
-                for (int i = 0; i < refs.Length; i++)
+                for (int i = 0; i < soundRefCount; i++)
                 {
-                    var candidate = refs[i];
+                    ref var candidate = ref refs[firstSoundRef + i];
                     int roll = random.NextInt(100);
                     if (roll >= candidate.Chance)
                         continue;
-                    if (!contentDb.TryGetSoundHandle(candidate.SoundId, out var handle) || !handle.IsValid)
+                    if (!RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(candidate.SoundId.ToString()), out var handle) || !handle.IsValid)
                         continue;
 
                     regionState.PendingEventSound = handle;

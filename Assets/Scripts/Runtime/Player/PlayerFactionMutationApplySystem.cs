@@ -2,7 +2,6 @@ using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
@@ -18,6 +17,7 @@ namespace VVardenfell.Runtime.Player
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<PlayerFactionMutationRequest>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -27,9 +27,7 @@ namespace VVardenfell.Runtime.Player
             if (requests.Length == 0)
                 return;
 
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation requires active runtime content.");
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             using var query = EntityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
@@ -41,16 +39,16 @@ namespace VVardenfell.Runtime.Player
             var factions = EntityManager.GetBuffer<PlayerFactionMembership>(player);
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(contentDb, factions, requests[i], lookup);
+                ApplyRequest(ref contentBlob, factions, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerFactionMembership> factions, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerFactionMembership> factions, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
         {
             int factionIndex = request.FactionIndex;
             if (factionIndex < 0)
-                factionIndex = ResolveSourceFactionIndex(contentDb, request, lookup);
+                factionIndex = ResolveSourceFactionIndex(ref contentBlob, request, lookup);
 
             int index = FindPlayerFactionIndex(factions, factionIndex);
             switch ((PlayerFactionMutationKind)request.Kind)
@@ -145,7 +143,7 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        int ResolveSourceFactionIndex(RuntimeContentDatabase contentDb, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
+        int ResolveSourceFactionIndex(ref RuntimeContentBlob contentBlob, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
         {
             Entity source = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.SourceEntity, request.SourcePlacedRefId, lookup);
             if (source == Entity.Null || !EntityManager.HasComponent<ActorSpawnSource>(source))
@@ -155,12 +153,13 @@ namespace VVardenfell.Runtime.Player
             if (!actorHandle.IsValid)
                 throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation source has an invalid actor definition.");
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            if (string.IsNullOrWhiteSpace(actor.FactionId)
-                || !contentDb.TryGetFactionHandle(actor.FactionId, out var factionHandle)
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, actorHandle);
+            string factionId = actor.FactionId.ToString();
+            if (string.IsNullOrWhiteSpace(factionId)
+                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(factionId), out var factionHandle)
                 || !factionHandle.IsValid)
             {
-                throw new InvalidOperationException($"[VVardenfell][Player] Player faction mutation source actor '{actor.Id}' has no valid faction.");
+                throw new InvalidOperationException($"[VVardenfell][Player] Player faction mutation source actor '{actor.Id.ToString()}' has no valid faction.");
             }
 
             return factionHandle.Index;

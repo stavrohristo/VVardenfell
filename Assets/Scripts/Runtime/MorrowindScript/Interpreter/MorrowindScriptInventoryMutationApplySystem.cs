@@ -2,7 +2,6 @@ using System;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
@@ -26,6 +25,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptInventoryMutationRequest>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -36,13 +36,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i], lookup);
+                ApplyRequest(ref contentBlob, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
         {
             if (request.Operation == 2)
             {
@@ -62,7 +63,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] Player inventory mutation requested before player inventory was bootstrapped.");
                 var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
                 if (request.Operation == 0)
-                    AddPlayerItem(inventory, request.Content, count);
+                    AddPlayerItem(ref contentBlob, inventory, request.Content, count);
                 else
                     RemovePlayerItem(inventory, request.Content, count);
                 PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
@@ -78,7 +79,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var actorInventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
             if (request.Operation == 0)
-                AddActorItem(actorInventory, request.Content, count);
+                AddActorItem(ref contentBlob, actorInventory, request.Content, count);
             else
                 RemoveActorItem(actorInventory, request.Content, count);
         }
@@ -114,9 +115,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             return Entity.Null;
         }
 
-        static void AddPlayerItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, int count)
+        static void AddPlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content, int count)
         {
-            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 if (!SameContent(inventory[i].Content, content)
@@ -182,9 +183,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        static void AddActorItem(DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
+        static void AddActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, ContentReference content, int count)
         {
-            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 if (!SameContent(inventory[i].Content, content)

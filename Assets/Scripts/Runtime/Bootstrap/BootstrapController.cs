@@ -234,6 +234,7 @@ namespace VVardenfell.Runtime.Bootstrap
                                 && uiManifest.HasRequiredBootstrapImages(out _)
                                 && MovieTranscodeBridge.CacheMatches(uiManifest, _config.InstallPath, out _);
             bool gameplayCacheValid = File.Exists(CachePaths.GameplayContent)
+                                      && File.Exists(CachePaths.RuntimeContentBlob)
                                       && GameplayContentManifest.TryRead(CachePaths.GameplayContentManifest, out var gameplayManifest)
                                       && gameplayManifest.SourcesMatch(gameplaySources);
 

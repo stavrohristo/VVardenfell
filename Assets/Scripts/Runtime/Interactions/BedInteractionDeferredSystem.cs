@@ -2,7 +2,6 @@ using Unity.Entities;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
@@ -28,6 +27,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_focusQuery);
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -65,16 +65,14 @@ namespace VVardenfell.Runtime.Interactions
             if (!EntityManager.HasComponent<ActivatorAuthoring>(target))
                 return false;
 
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new System.InvalidOperationException("[VVardenfell][Rest] Bed activation requires an active content database.");
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ActivatorDefHandle handle = EntityManager.GetComponentData<ActivatorAuthoring>(target).Definition;
-            if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentDb.ActivatorCount)
+            if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentBlob.Activators.Length)
                 return false;
 
-            ref readonly BaseDef activator = ref contentDb.Get(handle);
-            string scriptId = ContentId.NormalizeId(activator.ScriptId);
+            ref RuntimeBaseDefBlob activator = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+            string scriptId = ContentId.NormalizeId(activator.ScriptId.ToString());
             return scriptId == BedStandardScriptId || scriptId == CharGenBedScriptId;
         }
 

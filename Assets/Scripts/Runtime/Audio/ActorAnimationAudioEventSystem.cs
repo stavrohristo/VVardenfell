@@ -6,7 +6,6 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
@@ -24,14 +23,15 @@ namespace VVardenfell.Runtime.Audio
         {
             RequireForUpdate<AudioContextState>();
             RequireForUpdate<InteractionAudioRequestState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             _movementLookup = GetComponentLookup<MorrowindMovementState>(isReadOnly: true);
             _equipmentLookup = GetBufferLookup<ActorEquipmentSlot>(isReadOnly: true);
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null || SystemAPI.GetSingleton<AudioContextState>().Mode != AudioPlaybackMode.World)
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (SystemAPI.GetSingleton<AudioContextState>().Mode != AudioPlaybackMode.World)
                 return;
 
             _movementLookup.Update(this);
@@ -49,10 +49,10 @@ namespace VVardenfell.Runtime.Audio
                 if (events.Length == 0)
                     continue;
 
-                ref readonly var actor = ref contentDb.Get(source.ValueRO.Definition);
+                ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, source.ValueRO.Definition);
                 ProcessAnimationEvents(
-                    contentDb,
-                    actor,
+                    ref contentBlob,
+                    ref actor,
                     entity,
                     placedRef.ValueRO.Value,
                     transform.ValueRO.Position,
@@ -63,7 +63,7 @@ namespace VVardenfell.Runtime.Audio
                     ref random);
             }
 
-            ProcessLocalPlayerVisualAudio(contentDb, ref audioState, ref ecb, ref random);
+            ProcessLocalPlayerVisualAudio(ref contentBlob, ref audioState, ref ecb, ref random);
 
             ecb.Playback(EntityManager);
             ecb.Dispose();
@@ -71,7 +71,7 @@ namespace VVardenfell.Runtime.Audio
         }
 
         void ProcessLocalPlayerVisualAudio(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ref InteractionAudioRequestState audioState,
             ref EntityCommandBuffer ecb,
             ref Unity.Mathematics.Random random)
@@ -93,10 +93,10 @@ namespace VVardenfell.Runtime.Audio
                 if (entity != activeVisual || visual.ValueRO.Player == Entity.Null || events.Length == 0)
                     continue;
 
-                ref readonly var actor = ref contentDb.Get(source.ValueRO.Definition);
+                ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, source.ValueRO.Definition);
                 ProcessAnimationEvents(
-                    contentDb,
-                    actor,
+                    ref contentBlob,
+                    ref actor,
                     entity,
                     0u,
                     transform.ValueRO.Position,
@@ -109,8 +109,8 @@ namespace VVardenfell.Runtime.Audio
         }
 
         void ProcessAnimationEvents(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeActorDefBlob actor,
             Entity entity,
             uint placedRefId,
             float3 position,
@@ -126,13 +126,13 @@ namespace VVardenfell.Runtime.Audio
                 if (EqualsAsciiIgnoreCase(animationEvent.Group, "sound"))
                 {
                     string soundId = animationEvent.Value.ToString();
-                    if (contentDb.TryGetSoundHandle(soundId, out var sound) && sound.IsValid)
+                    if (RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(soundId), out var sound) && sound.IsValid)
                         EmitAudioRequest(ref audioState, ref ecb, entity, placedRefId, position, sound, 1f, 1f, spatial);
                 }
                 else if (EqualsAsciiIgnoreCase(animationEvent.Group, "soundgen"))
                 {
                     ParseSoundGeneratorEvent(animationEvent.Value.ToString(), out string typeName, out float volume, out float pitch);
-                    if (TryResolveSoundGenerator(contentDb, actor, entity, typeName, ref random, out var sound) && sound.IsValid)
+                    if (TryResolveSoundGenerator(ref contentBlob, ref actor, entity, typeName, ref random, out var sound) && sound.IsValid)
                         EmitAudioRequest(ref audioState, ref ecb, entity, placedRefId, position, sound, volume, pitch, spatial);
                 }
             }
@@ -207,8 +207,8 @@ namespace VVardenfell.Runtime.Audio
         }
 
         bool TryResolveSoundGenerator(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeActorDefBlob actor,
             Entity actorEntity,
             string typeName,
             ref Unity.Mathematics.Random random,
@@ -216,26 +216,27 @@ namespace VVardenfell.Runtime.Audio
         {
             sound = default;
             if (actor.Kind == ActorDefKind.Npc)
-                return TryResolveNpcSoundGenerator(contentDb, actorEntity, typeName, out sound);
+                return TryResolveNpcSoundGenerator(ref contentBlob, actorEntity, typeName, out sound);
 
             if (!TryResolveSoundGeneratorType(typeName, out int type))
                 return false;
 
-            string actorId = string.IsNullOrWhiteSpace(actor.OriginalId) ? actor.Id : actor.OriginalId;
-            if (TryPickSoundGenerator(contentDb, type, actorId, ref random, out sound))
+            string originalActorId = actor.OriginalId.ToString();
+            string actorId = string.IsNullOrWhiteSpace(originalActorId) ? actor.Id.ToString() : originalActorId;
+            if (TryPickSoundGenerator(ref contentBlob, type, actorId, ref random, out sound))
                 return true;
 
-            string fallbackActorId = ResolveCreatureModelFallback(contentDb, actor);
+            string fallbackActorId = ResolveCreatureModelFallback(ref contentBlob, ref actor);
             if (!string.IsNullOrWhiteSpace(fallbackActorId)
                 && !string.Equals(fallbackActorId, actorId, StringComparison.OrdinalIgnoreCase)
-                && TryPickSoundGenerator(contentDb, type, fallbackActorId, ref random, out sound))
+                && TryPickSoundGenerator(ref contentBlob, type, fallbackActorId, ref random, out sound))
                 return true;
 
-            return TryPickSoundGenerator(contentDb, type, string.Empty, ref random, out sound);
+            return TryPickSoundGenerator(ref contentBlob, type, string.Empty, ref random, out sound);
         }
 
         bool TryResolveNpcSoundGenerator(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             Entity actorEntity,
             string typeName,
             out SoundDefHandle sound)
@@ -250,46 +251,46 @@ namespace VVardenfell.Runtime.Audio
                 bool left = string.Equals(typeName, "left", StringComparison.OrdinalIgnoreCase);
                 var movement = _movementLookup[actorEntity];
                 if (movement.WalkingOnWater)
-                    return TryGetNpcSound(contentDb, left ? "FootWaterLeft" : "FootWaterRight", out sound);
+                    return TryGetNpcSound(ref contentBlob, left ? "FootWaterLeft" : "FootWaterRight", out sound);
                 if (!movement.Grounded)
                     return false;
 
-                return TryResolveNpcFootstepSound(contentDb, actorEntity, left, out sound);
+                return TryResolveNpcFootstepSound(ref contentBlob, actorEntity, left, out sound);
             }
 
             if (string.Equals(typeName, "swimleft", StringComparison.OrdinalIgnoreCase))
-                return TryGetNpcSound(contentDb, "Swim Left", out sound);
+                return TryGetNpcSound(ref contentBlob, "Swim Left", out sound);
             if (string.Equals(typeName, "swimright", StringComparison.OrdinalIgnoreCase))
-                return TryGetNpcSound(contentDb, "Swim Right", out sound);
+                return TryGetNpcSound(ref contentBlob, "Swim Right", out sound);
 
             return false;
         }
 
         bool TryResolveNpcFootstepSound(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             Entity actorEntity,
             bool left,
             out SoundDefHandle sound)
         {
             sound = default;
             if (!_equipmentLookup.HasBuffer(actorEntity))
-                return TryGetNpcSound(contentDb, left ? "FootBareLeft" : "FootBareRight", out sound);
+                return TryGetNpcSound(ref contentBlob, left ? "FootBareLeft" : "FootBareRight", out sound);
 
             var equipment = _equipmentLookup[actorEntity];
             if (!TryGetEquippedBoots(equipment, out var boots)
                 || boots.Content.Kind != ContentReferenceKind.Item)
             {
-                return TryGetNpcSound(contentDb, left ? "FootBareLeft" : "FootBareRight", out sound);
+                return TryGetNpcSound(ref contentBlob, left ? "FootBareLeft" : "FootBareRight", out sound);
             }
 
             var itemHandle = new ItemDefHandle { Value = boots.Content.HandleValue };
-            if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment)
+            if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, itemHandle, out var itemEquipment)
                 || itemEquipment.Kind != ItemEquipmentKind.Armor)
             {
-                return TryGetNpcSound(contentDb, left ? "FootBareLeft" : "FootBareRight", out sound);
+                return TryGetNpcSound(ref contentBlob, left ? "FootBareLeft" : "FootBareRight", out sound);
             }
 
-            if (!TryResolveArmorFootstepClass(contentDb, itemEquipment, out var armorClass))
+            if (!TryResolveArmorFootstepClass(ref contentBlob, itemEquipment, out var armorClass))
                 return false;
 
             string soundId = armorClass switch
@@ -300,7 +301,7 @@ namespace VVardenfell.Runtime.Audio
                 _ => string.Empty,
             };
 
-            return !string.IsNullOrEmpty(soundId) && TryGetNpcSound(contentDb, soundId, out sound);
+            return !string.IsNullOrEmpty(soundId) && TryGetNpcSound(ref contentBlob, soundId, out sound);
         }
 
         static bool TryGetEquippedBoots(
@@ -322,7 +323,7 @@ namespace VVardenfell.Runtime.Audio
         }
 
         static bool TryResolveArmorFootstepClass(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in ItemEquipmentDef equipment,
             out NpcFootstepArmorClass armorClass)
         {
@@ -339,15 +340,14 @@ namespace VVardenfell.Runtime.Audio
                 _ => string.Empty,
             };
 
-            if (string.IsNullOrEmpty(weightSetting)
-                || contentDb == null)
+            if (string.IsNullOrEmpty(weightSetting))
             {
                 return false;
             }
 
-            int typeWeight = contentDb.RequireGameSettingInt(weightSetting);
-            float lightMax = contentDb.RequireGameSettingFloat("fLightMaxMod");
-            float mediumMax = contentDb.RequireGameSettingFloat("fMedMaxMod");
+            int typeWeight = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(weightSetting));
+            float lightMax = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fLightMaxMod);
+            float mediumMax = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fMedMaxMod);
             float baseWeight = math.floor(typeWeight);
             if (equipment.Weight <= baseWeight * lightMax + 0.0005f)
             {
@@ -365,8 +365,8 @@ namespace VVardenfell.Runtime.Audio
             return true;
         }
 
-        static bool TryGetNpcSound(RuntimeContentDatabase contentDb, string soundId, out SoundDefHandle sound)
-            => contentDb.TryGetSoundHandle(soundId, out sound) && sound.IsValid;
+        static bool TryGetNpcSound(ref RuntimeContentBlob contentBlob, string soundId, out SoundDefHandle sound)
+            => RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(soundId), out sound) && sound.IsValid;
 
         enum NpcFootstepArmorClass : byte
         {
@@ -375,43 +375,45 @@ namespace VVardenfell.Runtime.Audio
             Heavy,
         }
 
-        static string ResolveCreatureModelFallback(RuntimeContentDatabase contentDb, in ActorDef actor)
+        static string ResolveCreatureModelFallback(ref RuntimeContentBlob contentBlob, ref RuntimeActorDefBlob actor)
         {
-            if (string.IsNullOrWhiteSpace(actor.Model))
+            string actorModel = actor.Model.ToString();
+            if (string.IsNullOrWhiteSpace(actorModel))
                 return string.Empty;
 
-            string actorId = string.IsNullOrWhiteSpace(actor.OriginalId) ? actor.Id : actor.OriginalId;
-            var actors = contentDb.Data.Actors;
-            for (int i = 0; i < actors.Length; i++)
+            string originalActorId = actor.OriginalId.ToString();
+            string actorId = string.IsNullOrWhiteSpace(originalActorId) ? actor.Id.ToString() : originalActorId;
+            for (int i = 0; i < contentBlob.Actors.Length; i++)
             {
-                var candidate = actors[i];
+                ref var candidate = ref contentBlob.Actors[i];
                 if (candidate.Kind != ActorDefKind.Creature)
                     continue;
-                if (string.Equals(candidate.Id, actorId, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(candidate.OriginalId, actorId, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(candidate.Id.ToString(), actorId, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(candidate.OriginalId.ToString(), actorId, StringComparison.OrdinalIgnoreCase))
                     continue;
-                if (!string.Equals(candidate.Model, actor.Model, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(candidate.Model.ToString(), actorModel, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                return string.IsNullOrWhiteSpace(candidate.OriginalId) ? candidate.Id : candidate.OriginalId;
+                string candidateOriginalId = candidate.OriginalId.ToString();
+                return string.IsNullOrWhiteSpace(candidateOriginalId) ? candidate.Id.ToString() : candidateOriginalId;
             }
 
             return string.Empty;
         }
 
         static bool TryPickSoundGenerator(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             int type,
             string creatureId,
             ref Unity.Mathematics.Random random,
             out SoundDefHandle sound)
         {
             sound = default;
-            var records = contentDb.Data.SoundGenerators;
             int count = 0;
-            for (int i = 0; i < records.Length; i++)
+            for (int i = 0; i < contentBlob.SoundGenerators.Length; i++)
             {
-                if (!MatchesSoundGenerator(records[i], type, creatureId))
+                ref var record = ref contentBlob.SoundGenerators[i];
+                if (!MatchesSoundGenerator(ref record, type, creatureId))
                     continue;
                 count++;
             }
@@ -420,29 +422,30 @@ namespace VVardenfell.Runtime.Audio
                 return false;
 
             int selected = random.NextInt(count);
-            for (int i = 0; i < records.Length; i++)
+            for (int i = 0; i < contentBlob.SoundGenerators.Length; i++)
             {
-                var record = records[i];
-                if (!MatchesSoundGenerator(record, type, creatureId))
+                ref var record = ref contentBlob.SoundGenerators[i];
+                if (!MatchesSoundGenerator(ref record, type, creatureId))
                     continue;
                 if (selected-- != 0)
                     continue;
 
-                return !string.IsNullOrWhiteSpace(record.Text)
-                       && contentDb.TryGetSoundHandle(record.Text, out sound)
+                string soundId = record.Text.ToString();
+                return !string.IsNullOrWhiteSpace(soundId)
+                       && RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(soundId), out sound)
                        && sound.IsValid;
             }
 
             return false;
         }
 
-        static bool MatchesSoundGenerator(in GenericRecordDef record, int type, string creatureId)
+        static bool MatchesSoundGenerator(ref RuntimeGenericRecordDefBlob record, int type, string creatureId)
         {
             if (record.Int0 != type)
                 return false;
             if (string.IsNullOrWhiteSpace(creatureId))
-                return string.IsNullOrWhiteSpace(record.ScriptId);
-            return string.Equals(record.ScriptId, creatureId, StringComparison.OrdinalIgnoreCase);
+                return string.IsNullOrWhiteSpace(record.ScriptId.ToString());
+            return string.Equals(record.ScriptId.ToString(), creatureId, StringComparison.OrdinalIgnoreCase);
         }
 
         static bool TryResolveSoundGeneratorType(string name, out int type)

@@ -5,7 +5,6 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Streaming;
 
@@ -36,7 +35,7 @@ namespace VVardenfell.Runtime.WorldRefs
         public static Entity QueueCreate(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in LogicalRefEntityDescriptor descriptor)
         {
             Entity logicalEntity = ecb.CreateEntity();
@@ -100,7 +99,7 @@ namespace VVardenfell.Runtime.WorldRefs
                 entityManager,
                 ref ecb,
                 logicalEntity,
-                contentDb,
+                ref content,
                 descriptor.ContentReference,
                 descriptor.Position,
                 descriptor.IsInterior,

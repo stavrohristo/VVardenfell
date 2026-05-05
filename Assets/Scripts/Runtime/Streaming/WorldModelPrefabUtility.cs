@@ -43,8 +43,8 @@ namespace VVardenfell.Runtime.Streaming
             var modelDefs = cache?.ModelPrefabCatalog?.Records ?? System.Array.Empty<ModelPrefabDef>();
             var modelLookup = BuildModelDescriptorLookup(modelDefs);
 
-            var contentDb = cache?.ContentDatabase;
-            if (contentDb == null)
+            var contentBlob = cache?.ContentBlob ?? default;
+            if (!contentBlob.IsCreated)
             {
                 WorldResources.SpawnableCreaturePrefabs = System.Array.Empty<WorldResources.RuntimeSpawnPrefabDescriptor>();
                 WorldResources.SpawnableItemPrefabs = System.Array.Empty<WorldResources.RuntimeSpawnPrefabDescriptor>();
@@ -52,28 +52,29 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            var creatures = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.ActorCount];
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            var creatures = new WorldResources.RuntimeSpawnPrefabDescriptor[content.Actors.Length];
             for (int i = 0; i < creatures.Length; i++)
             {
-                ref readonly var actor = ref contentDb.Get(ActorDefHandle.FromIndex(i));
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, ActorDefHandle.FromIndex(i));
                 if (actor.Kind != ActorDefKind.Creature)
                     continue;
 
-                creatures[i] = ResolveModelDescriptor(modelLookup, actor.Model);
+                creatures[i] = ResolveModelDescriptor(modelLookup, actor.Model.ToString());
             }
 
-            var items = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.ItemCount];
+            var items = new WorldResources.RuntimeSpawnPrefabDescriptor[content.Items.Length];
             for (int i = 0; i < items.Length; i++)
             {
-                ref readonly var item = ref contentDb.Get(ItemDefHandle.FromIndex(i));
-                items[i] = ResolveModelDescriptor(modelLookup, item.Model);
+                ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref content, ItemDefHandle.FromIndex(i));
+                items[i] = ResolveModelDescriptor(modelLookup, item.Model.ToString());
             }
 
-            var lights = new WorldResources.RuntimeSpawnPrefabDescriptor[contentDb.LightCount];
+            var lights = new WorldResources.RuntimeSpawnPrefabDescriptor[content.Lights.Length];
             for (int i = 0; i < lights.Length; i++)
             {
-                ref readonly var light = ref contentDb.Get(LightDefHandle.FromIndex(i));
-                lights[i] = ResolveModelDescriptor(modelLookup, light.Model);
+                ref RuntimeLightDefBlob light = ref RuntimeContentBlobUtility.Get(ref content, LightDefHandle.FromIndex(i));
+                lights[i] = ResolveModelDescriptor(modelLookup, light.Model.ToString());
             }
 
             WorldResources.SpawnableCreaturePrefabs = creatures;

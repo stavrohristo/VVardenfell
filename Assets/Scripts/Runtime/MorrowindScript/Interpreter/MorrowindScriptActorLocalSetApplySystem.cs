@@ -3,7 +3,6 @@ using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -21,6 +20,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>());
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptActorLocalSetRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -30,26 +30,26 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(contentDb, requests[i]);
+                ApplyRequest(ref contentBlob, requests[i]);
 
             requests.Clear();
         }
 
-        void ApplyRequest(RuntimeContentDatabase contentDb, in MorrowindScriptActorLocalSetRequest request)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptActorLocalSetRequest request)
         {
             Entity target = ResolveUniqueActor(request.ActorHandleValue);
             if (target == Entity.Null)
             {
-                string actorId = ResolveActorId(contentDb, request.ActorHandleValue);
+                string actorId = ResolveActorId(ref contentBlob, request.ActorHandleValue);
                 throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target '{actorId}' is not exactly one loaded actor.");
             }
 
             var locals = EntityManager.GetBuffer<MorrowindScriptLocalValue>(target);
             if ((uint)request.LocalIndex >= (uint)locals.Length)
             {
-                string actorId = ResolveActorId(contentDb, request.ActorHandleValue);
+                string actorId = ResolveActorId(ref contentBlob, request.ActorHandleValue);
                 throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target '{actorId}' local index {request.LocalIndex} is outside the runtime local buffer.");
             }
 
@@ -76,14 +76,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             return count == 1 ? match : Entity.Null;
         }
 
-        static string ResolveActorId(RuntimeContentDatabase contentDb, int actorHandleValue)
+        static string ResolveActorId(ref RuntimeContentBlob contentBlob, int actorHandleValue)
         {
             var handle = new ActorDefHandle { Value = actorHandleValue };
-            if (contentDb == null || !handle.IsValid || (uint)handle.Index >= (uint)contentDb.ActorCount)
+            if ( !handle.IsValid || (uint)handle.Index >= (uint)contentBlob.Actors.Length)
                 return actorHandleValue.ToString();
 
-            ref readonly var actor = ref contentDb.Get(handle);
-            return string.IsNullOrWhiteSpace(actor.OriginalId) ? actor.Id : actor.OriginalId;
+            ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
+            return string.IsNullOrWhiteSpace(actor.OriginalId.ToString()) ? actor.Id.ToString() : actor.OriginalId.ToString();
         }
     }
 }

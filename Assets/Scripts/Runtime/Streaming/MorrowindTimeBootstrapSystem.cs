@@ -14,15 +14,21 @@ namespace VVardenfell.Runtime.Streaming
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindTimeBootstrapRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Time bootstrap requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+
             if (!SystemAPI.HasSingleton<MorrowindTimeState>())
             {
                 Entity entity = EntityManager.CreateEntity();
                 EntityManager.SetName(entity, "VVardenfell.TimeState");
-                EntityManager.AddComponentData(entity, CreateDefaultTime());
+                EntityManager.AddComponentData(entity, CreateDefaultTime(ref content));
                 EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
             }
             else
@@ -63,17 +69,41 @@ namespace VVardenfell.Runtime.Streaming
 
         public static MorrowindTimeState CreateDefaultTime()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            var contentBlob = RuntimeContentBlobReferenceUtility.RequireBlob("Time bootstrap");
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            return CreateDefaultTime(ref content);
+        }
+
+        public static MorrowindTimeState CreateDefaultTime(ref RuntimeContentBlob content)
+        {
             return new MorrowindTimeState
             {
-                GameHour = ReadGlobalFloat(contentDb, "gamehour", 12f),
-                DaysPassed = ReadGlobalInt(contentDb, "dayspassed", 1),
-                Day = ReadGlobalInt(contentDb, "day", 16),
-                Month = ReadGlobalInt(contentDb, "month", 7),
-                Year = ReadGlobalInt(contentDb, "year", 427),
-                TimeScale = ReadGlobalFloat(contentDb, "timescale", 30f),
+                GameHour = RuntimeContentBlobUtility.RequireGlobalFloatByIdHash(ref content, RuntimeContentKnownHashes.gamehour),
+                DaysPassed = ResolveDaysPassed(ref content),
+                Day = RuntimeContentBlobUtility.RequireGlobalIntByIdHash(ref content, RuntimeContentKnownHashes.day),
+                Month = RuntimeContentBlobUtility.RequireGlobalIntByIdHash(ref content, RuntimeContentKnownHashes.month),
+                Year = RuntimeContentBlobUtility.RequireGlobalIntByIdHash(ref content, RuntimeContentKnownHashes.year),
+                TimeScale = RuntimeContentBlobUtility.RequireGlobalFloatByIdHash(ref content, RuntimeContentKnownHashes.timescale),
                 SimulationTimeScale = 10f,
             };
+        }
+
+        static int ResolveDaysPassed(ref RuntimeContentBlob content)
+        {
+            if (RuntimeContentBlobUtility.TryGetGlobalHandleByIdHash(ref content, RuntimeContentKnownHashes.dayspassed, out var handle)
+                && handle.IsValid)
+            {
+                ref RuntimeGenericRecordDefBlob global = ref RuntimeContentBlobUtility.GetGlobal(ref content, handle);
+                if (global.ValueKind == GenericRecordValueKind.Integer)
+                    return global.Int0;
+                if (global.ValueKind == GenericRecordValueKind.Float)
+                    return (int)global.Float0;
+                if (global.ValueKind == GenericRecordValueKind.None)
+                    return global.Int0;
+                throw new System.InvalidOperationException($"[VVardenfell][ContentBlob] Global hash {RuntimeContentKnownHashes.dayspassed} is not numeric.");
+            }
+
+            return 1;
         }
 
         public static MorrowindWeatherState CreateDefaultWeather()
@@ -93,18 +123,5 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static float ReadGlobalFloat(RuntimeContentDatabase contentDb, string id, float fallback)
-        {
-            if (contentDb != null && contentDb.TryGetGlobalHandle(id, out var handle) && handle.IsValid)
-                return contentDb.GetGlobal(handle).Float0;
-            return fallback;
-        }
-
-        static int ReadGlobalInt(RuntimeContentDatabase contentDb, string id, int fallback)
-        {
-            if (contentDb != null && contentDb.TryGetGlobalHandle(id, out var handle) && handle.IsValid)
-                return contentDb.GetGlobal(handle).Int0;
-            return fallback;
-        }
     }
 }

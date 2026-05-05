@@ -3,7 +3,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
@@ -32,7 +31,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         public static void AddActorItems(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<ActorInventoryItem> inventory,
             ContentReference content,
             FixedString64Bytes soulId,
@@ -42,7 +41,7 @@ namespace VVardenfell.Runtime.Inventory
             if (!content.IsValid || count <= 0)
                 return;
 
-            int condition = InventoryConditionUtility.ResolveInitialCondition(contentDb, content);
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 var entry = inventory[i];

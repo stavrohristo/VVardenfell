@@ -1,7 +1,7 @@
 using System;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.Magic
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<ActorSpellMutationRequest>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -28,22 +29,22 @@ namespace VVardenfell.Runtime.Magic
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell requires active runtime content.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] AddSpell/RemoveSpell requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(contentDb, requests[i], lookup);
+                ApplyRequest(ref content, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(RuntimeContentDatabase contentDb, in ActorSpellMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref RuntimeContentBlob content, in ActorSpellMutationRequest request, in LogicalRefLookup lookup)
         {
             if (!request.Spell.IsValid
-                || contentDb.Data.Spells == null
                 || request.Spell.Index < 0
-                || request.Spell.Index >= contentDb.Data.Spells.Length)
+                || request.Spell.Index >= content.Spells.Length)
             {
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell references invalid spell handle {request.Spell.Value}.");
             }
@@ -70,7 +71,7 @@ namespace VVardenfell.Runtime.Magic
             }
 
             var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target);
-            MorrowindActorMagicUtility.RemoveKnownSpell(contentDb, knownSpells, activeEffects, request.Spell);
+            MorrowindActorMagicUtility.RemoveKnownSpell(ref content, knownSpells, activeEffects, request.Spell);
             EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
         }
     }

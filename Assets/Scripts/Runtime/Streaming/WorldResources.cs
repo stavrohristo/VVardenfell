@@ -10,7 +10,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Animation;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Rendering;
@@ -141,6 +140,85 @@ namespace VVardenfell.Runtime.Streaming
         public static bool TryGetTerrainCollider(int2 coord, out BlobAssetReference<Collider> collider)
         {
             return TerrainColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+        }
+
+        public static bool HasAnyPreloadedCells()
+            => Cells.Count > 0 || InteriorCellsByHash.Count > 0;
+
+        public static int ExteriorCellCount
+            => Cells.Count;
+
+        public static int InteriorCellHashCount
+            => InteriorCellsByHash.Count;
+
+        public static KeyValuePair<int2, CellData>[] CopyExteriorCellEntries()
+        {
+            var entries = new KeyValuePair<int2, CellData>[Cells.Count];
+            int index = 0;
+            foreach (var kv in Cells)
+                entries[index++] = kv;
+            return entries;
+        }
+
+        public static KeyValuePair<ulong, CellData>[] CopyInteriorCellHashEntries()
+        {
+            var entries = new KeyValuePair<ulong, CellData>[InteriorCellsByHash.Count];
+            int index = 0;
+            foreach (var kv in InteriorCellsByHash)
+                entries[index++] = kv;
+            return entries;
+        }
+
+        public static bool TryGetExteriorCell(int2 coord, out CellData cell)
+            => Cells.TryGetValue(coord, out cell) && cell != null;
+
+        public static void ClearPreloadedCells()
+        {
+            Cells.Clear();
+            InteriorCells.Clear();
+            InteriorCellsByHash.Clear();
+            InteriorCellIdsByHash.Clear();
+        }
+
+        public static void EnsurePreloadedCellCapacity(int totalPreloadedCells)
+        {
+            int capacity = System.Math.Max(totalPreloadedCells, 1);
+            Cells.EnsureCapacity(capacity);
+            InteriorCells.EnsureCapacity(capacity);
+            InteriorCellsByHash.EnsureCapacity(capacity);
+            InteriorCellIdsByHash.EnsureCapacity(capacity);
+        }
+
+        public static void RegisterExteriorCell(int2 coord, CellData data)
+        {
+            if (data == null)
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] cannot register null exterior cell ({coord.x},{coord.y}).");
+            Cells[coord] = data;
+        }
+
+        public static bool TryRegisterInteriorCell(string cellId, CellData data, out string collisionId)
+        {
+            collisionId = string.Empty;
+            if (data == null)
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] cannot register null interior cell '{cellId}'.");
+
+            cellId ??= string.Empty;
+            if (!InteriorCells.ContainsKey(cellId))
+                InteriorCells[cellId] = data;
+
+            ulong cellHash = InteriorCellIdHash.Hash(cellId);
+            if (cellHash == 0UL)
+                return true;
+
+            if (InteriorCellsByHash.TryGetValue(cellHash, out var existing) && !ReferenceEquals(existing, data))
+            {
+                collisionId = ResolveInteriorCellId(cellHash);
+                return false;
+            }
+
+            InteriorCellsByHash[cellHash] = data;
+            InteriorCellIdsByHash[cellHash] = cellId;
+            return true;
         }
 
         public static void RegisterExteriorCellEntity(int2 coord, Entity entity)
@@ -305,7 +383,6 @@ namespace VVardenfell.Runtime.Streaming
             SpawnableItemPrefabs = null;
             SpawnableLightPrefabs = null;
             Desc = default;
-            RuntimeContentDatabase.Clear();
             if (PathGridNavigation.IsCreated)
                 PathGridNavigation.Dispose();
             MorrowindScriptCatalog?.Dispose();

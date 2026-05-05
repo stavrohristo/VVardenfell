@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -72,9 +71,9 @@ namespace VVardenfell.Runtime.Pathfinding
     }
 
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    public partial class PathGridPathfindingSystem : SystemBase
+    public partial struct PathGridPathfindingSystem : ISystem
     {
-        sealed class JobEntry : IDisposable
+        struct JobEntry : IDisposable
         {
             public int RequestId;
             public Entity Owner;
@@ -100,84 +99,65 @@ namespace VVardenfell.Runtime.Pathfinding
             }
         }
 
-        sealed class ActiveBatch : IDisposable
-        {
-            public readonly List<JobEntry> Entries = new();
-            public JobHandle CombinedHandle;
-
-            public void Dispose()
-            {
-                for (int i = 0; i < Entries.Count; i++)
-                    Entries[i].Dispose();
-                Entries.Clear();
-            }
-        }
-
-        readonly List<ActiveBatch> _activeBatches = new();
-        readonly Queue<PathGridPathWorkingSet> _workingSetPool = new();
-        readonly Queue<NativeList<int>> _outputPathPool = new();
+        NativeList<JobEntry> _activeEntries;
         Entity _singleton;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            _singleton = EntityManager.CreateEntity();
-            EntityManager.SetName(_singleton, "VVardenfell.PathGridPathfinding");
-            EntityManager.AddComponentData(_singleton, PathGridPathfindingState.Defaults);
-            EntityManager.AddBuffer<PendingPathGridPathRequest>(_singleton);
-            EntityManager.AddBuffer<CompletedPathGridPath>(_singleton);
-            EntityManager.AddBuffer<CompletedPathGridPathNode>(_singleton);
-            EntityManager.AddBuffer<CanceledPathGridPathRequest>(_singleton);
+            _activeEntries = new NativeList<JobEntry>(Allocator.Persistent);
+            _singleton = state.EntityManager.CreateEntity();
+            state.EntityManager.SetName(_singleton, "VVardenfell.PathGridPathfinding");
+            state.EntityManager.AddComponentData(_singleton, PathGridPathfindingState.Defaults);
+            state.EntityManager.AddBuffer<PendingPathGridPathRequest>(_singleton);
+            state.EntityManager.AddBuffer<CompletedPathGridPath>(_singleton);
+            state.EntityManager.AddBuffer<CompletedPathGridPathNode>(_singleton);
+            state.EntityManager.AddBuffer<CanceledPathGridPathRequest>(_singleton);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState state)
         {
-            for (int i = 0; i < _activeBatches.Count; i++)
-            {
-                _activeBatches[i].CombinedHandle.Complete();
-                _activeBatches[i].Dispose();
-            }
-            _activeBatches.Clear();
+            if (!_activeEntries.IsCreated)
+                return;
 
-            while (_workingSetPool.Count > 0)
+            for (int i = 0; i < _activeEntries.Length; i++)
             {
-                var workingSet = _workingSetPool.Dequeue();
-                workingSet.Dispose();
+                var entry = _activeEntries[i];
+                entry.Handle.Complete();
+                entry.Dispose();
             }
 
-            while (_outputPathPool.Count > 0)
-            {
-                var outputPath = _outputPathPool.Dequeue();
-                if (outputPath.IsCreated)
-                    outputPath.Dispose();
-            }
+            _activeEntries.Dispose();
+            _activeEntries = default;
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
-            if (_singleton == Entity.Null || !EntityManager.Exists(_singleton))
+            if (_singleton == Entity.Null || !systemState.EntityManager.Exists(_singleton))
                 return;
 
             double now = SystemAPI.Time.ElapsedTime;
-            var state = EntityManager.GetComponentData<PathGridPathfindingState>(_singleton);
-            var pending = EntityManager.GetBuffer<PendingPathGridPathRequest>(_singleton);
-            var completed = EntityManager.GetBuffer<CompletedPathGridPath>(_singleton);
-            var completedNodes = EntityManager.GetBuffer<CompletedPathGridPathNode>(_singleton);
-            var canceled = EntityManager.GetBuffer<CanceledPathGridPathRequest>(_singleton);
+            var state = systemState.EntityManager.GetComponentData<PathGridPathfindingState>(_singleton);
+            var pending = systemState.EntityManager.GetBuffer<PendingPathGridPathRequest>(_singleton);
+            var completed = systemState.EntityManager.GetBuffer<CompletedPathGridPath>(_singleton);
+            var completedNodes = systemState.EntityManager.GetBuffer<CompletedPathGridPathNode>(_singleton);
+            var canceled = systemState.EntityManager.GetBuffer<CanceledPathGridPathRequest>(_singleton);
 
             CompleteFinishedBatches(ref state, completed, completedNodes, canceled, now);
             RetireCompleted(completed, completedNodes, now, math.max(0f, state.CompletedRetentionSeconds), math.max(1, state.MaxCompletedResults));
             RetireStaleCanceledIds(canceled);
 
-            if (pending.Length > 0 && _activeBatches.Count < math.max(1, state.MaxActiveBatches))
+            int batchSize = math.max(1, state.BatchSize);
+            int maxActiveEntries = batchSize * math.max(1, state.MaxActiveBatches);
+            if (pending.Length > 0 && _activeEntries.Length < maxActiveEntries)
             {
                 if (!WorldResources.PathGridNavigation.IsCreated)
                     FailPendingWithoutGraph(ref state, pending, completed, now);
                 else
-                    SchedulePendingBatch(ref state, pending);
+                    SchedulePendingBatch(ref state, pending, batchSize, maxActiveEntries);
             }
 
-            state.ActiveBatchCount = _activeBatches.Count;
-            EntityManager.SetComponentData(_singleton, state);
+            state.ActiveBatchCount = (_activeEntries.Length + batchSize - 1) / batchSize;
+            systemState.EntityManager.SetComponentData(_singleton, state);
         }
 
         void CompleteFinishedBatches(
@@ -187,46 +167,46 @@ namespace VVardenfell.Runtime.Pathfinding
             DynamicBuffer<CanceledPathGridPathRequest> canceled,
             double now)
         {
-            for (int batchIndex = _activeBatches.Count - 1; batchIndex >= 0; batchIndex--)
+            for (int entryIndex = _activeEntries.Length - 1; entryIndex >= 0; entryIndex--)
             {
-                var batch = _activeBatches[batchIndex];
-                if (!batch.CombinedHandle.IsCompleted)
+                var entry = _activeEntries[entryIndex];
+                if (!entry.Handle.IsCompleted)
                     continue;
 
-                batch.CombinedHandle.Complete();
-                for (int i = 0; i < batch.Entries.Count; i++)
+                entry.Handle.Complete();
+                if (IsCanceled(canceled, entry.RequestId))
                 {
-                    var entry = batch.Entries[i];
-                    if (IsCanceled(canceled, entry.RequestId))
-                    {
-                        state.TotalCanceled++;
-                        continue;
-                    }
-
-                    var result = entry.Result.IsCreated && entry.Result.Length > 0
-                        ? entry.Result[0]
-                        : new PathGridPathResult { Status = PathGridPathStatus.Failed, Cost = float.PositiveInfinity };
-                    PublishResult(
-                        completed,
-                        completedNodes,
-                        entry.RequestId,
-                        entry.Owner,
-                        result,
-                        entry.OutputPath,
-                        now);
-                    state.TotalCompleted++;
+                    state.TotalCanceled++;
+                    entry.Dispose();
+                    _activeEntries.RemoveAtSwapBack(entryIndex);
+                    continue;
                 }
 
-                RecycleCompletedBatch(batch);
-                _activeBatches.RemoveAt(batchIndex);
+                var result = entry.Result.IsCreated && entry.Result.Length > 0
+                    ? entry.Result[0]
+                    : new PathGridPathResult { Status = PathGridPathStatus.Failed, Cost = float.PositiveInfinity };
+                PublishResult(
+                    completed,
+                    completedNodes,
+                    entry.RequestId,
+                    entry.Owner,
+                    result,
+                    entry.OutputPath,
+                    now);
+                state.TotalCompleted++;
+                entry.Dispose();
+                _activeEntries.RemoveAtSwapBack(entryIndex);
             }
         }
 
-        void SchedulePendingBatch(ref PathGridPathfindingState state, DynamicBuffer<PendingPathGridPathRequest> pending)
+        void SchedulePendingBatch(
+            ref PathGridPathfindingState state,
+            DynamicBuffer<PendingPathGridPathRequest> pending,
+            int batchSize,
+            int maxActiveEntries)
         {
-            int count = math.min(math.max(1, state.BatchSize), pending.Length);
-            var batch = new ActiveBatch();
-            JobHandle combined = default;
+            int capacity = math.max(0, maxActiveEntries - _activeEntries.Length);
+            int count = math.min(math.min(batchSize, pending.Length), capacity);
 
             for (int i = 0; i < count; i++)
             {
@@ -237,8 +217,8 @@ namespace VVardenfell.Runtime.Pathfinding
                 {
                     RequestId = pendingRequest.RequestId,
                     Owner = pendingRequest.Owner,
-                    WorkingSet = RentWorkingSet(),
-                    OutputPath = RentOutputPath(),
+                    WorkingSet = WorldResources.PathGridNavigation.CreateWorkingSet(Allocator.Persistent),
+                    OutputPath = new NativeList<int>(Allocator.Persistent),
                     Result = new NativeArray<PathGridPathResult>(1, Allocator.Persistent),
                 };
 
@@ -260,70 +240,8 @@ namespace VVardenfell.Runtime.Pathfinding
                 };
 
                 entry.Handle = job.Schedule();
-                combined = i == 0
-                    ? entry.Handle
-                    : JobHandle.CombineDependencies(combined, entry.Handle);
-                batch.Entries.Add(entry);
+                _activeEntries.Add(entry);
             }
-
-            if (batch.Entries.Count > 0)
-            {
-                batch.CombinedHandle = combined;
-                _activeBatches.Add(batch);
-            }
-            else
-            {
-                batch.Dispose();
-            }
-        }
-
-        PathGridPathWorkingSet RentWorkingSet()
-        {
-            if (_workingSetPool.Count > 0)
-            {
-                var workingSet = _workingSetPool.Dequeue();
-                workingSet.Clear();
-                return workingSet;
-            }
-
-            return WorldResources.PathGridNavigation.CreateWorkingSet(Allocator.Persistent);
-        }
-
-        NativeList<int> RentOutputPath()
-        {
-            if (_outputPathPool.Count > 0)
-            {
-                var outputPath = _outputPathPool.Dequeue();
-                outputPath.Clear();
-                return outputPath;
-            }
-
-            return new NativeList<int>(Allocator.Persistent);
-        }
-
-        void RecycleCompletedBatch(ActiveBatch batch)
-        {
-            for (int i = 0; i < batch.Entries.Count; i++)
-            {
-                var entry = batch.Entries[i];
-                entry.DisposeResult();
-
-                if (entry.WorkingSet.NodeG.IsCreated)
-                {
-                    entry.WorkingSet.Clear();
-                    _workingSetPool.Enqueue(entry.WorkingSet);
-                    entry.WorkingSet = default;
-                }
-
-                if (entry.OutputPath.IsCreated)
-                {
-                    entry.OutputPath.Clear();
-                    _outputPathPool.Enqueue(entry.OutputPath);
-                    entry.OutputPath = default;
-                }
-            }
-
-            batch.Entries.Clear();
         }
 
         void FailPendingWithoutGraph(
@@ -453,14 +371,10 @@ namespace VVardenfell.Runtime.Pathfinding
 
         bool HasActiveRequest(int requestId)
         {
-            for (int batchIndex = 0; batchIndex < _activeBatches.Count; batchIndex++)
+            for (int i = 0; i < _activeEntries.Length; i++)
             {
-                var batch = _activeBatches[batchIndex];
-                for (int i = 0; i < batch.Entries.Count; i++)
-                {
-                    if (batch.Entries[i].RequestId == requestId)
-                        return true;
-                }
+                if (_activeEntries[i].RequestId == requestId)
+                    return true;
             }
 
             return false;

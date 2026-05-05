@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using Unity.Entities;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
@@ -12,7 +13,7 @@ namespace VVardenfell.Runtime.Shell
     public partial class RuntimeHudShellPresentationSystem
     {
         static InventoryWindowViewModel BuildInventoryModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in InventoryWindowState state,
             DynamicBuffer<PlayerInventoryItem> inventory,
             in PlayerPresentationStats playerStats,
@@ -40,7 +41,7 @@ namespace VVardenfell.Runtime.Shell
             {
                 var entry = inventory[i];
                 int count = Math.Max(1, entry.Count);
-                if (RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, entry.Content, out var metadata))
+                if (RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
                 {
                     if (metadata.Weight >= 0f)
                     {
@@ -49,12 +50,12 @@ namespace VVardenfell.Runtime.Shell
                     }
                 }
 
-                if (!InventoryWindowStateSystem.MatchesFilters(contentDb, entry, state))
+                if (!InventoryWindowStateSystem.MatchesFilters(ref contentBlob, entry, state))
                     continue;
 
                 visibleCount++;
                 entries.Add(RuntimeShellCarryableEntryBuilder.Build(
-                    contentDb,
+                    ref contentBlob,
                     entry.Content,
                     entry.Count,
                     i,
@@ -94,7 +95,7 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static ContainerWindowViewModel BuildContainerModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in ContainerWindowState state,
             DynamicBuffer<ContainerSessionItem> items)
         {
@@ -115,7 +116,7 @@ namespace VVardenfell.Runtime.Shell
                     continue;
 
                 entries.Add(RuntimeShellCarryableEntryBuilder.Build(
-                    contentDb,
+                    ref contentBlob,
                     entry.Content,
                     entry.Count,
                     i,

@@ -126,17 +126,15 @@ namespace VVardenfell.Runtime.Streaming
 
                 var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);
-                if (WorldResources.Cells.TryGetValue(defaultCameraCell, out var startCell) && startCell != null)
-                {
-                    progress?.BeginStage("Initial cell", $"Spawning start cell {defaultCameraCell.x},{defaultCameraCell.y}", 1);
-                    WorldSpawner.SpawnExteriorCell(
+                if (WorldSpawner.TrySpawnExteriorCellByCoord(
                         world,
                         defaultCameraCell,
-                        startCell,
                         ref loadedMap,
                         ref logicalRefLookup,
                         active: true,
-                        gateTerrainByRadius: DefaultGateTerrainByRadius);
+                        gateTerrainByRadius: DefaultGateTerrainByRadius))
+                {
+                    progress?.BeginStage("Initial cell", $"Spawning start cell {defaultCameraCell.x},{defaultCameraCell.y}", 1);
                     progress?.Report("Start cell ready", 1, 1);
                     progress?.CompleteStage();
                     yield return null;
@@ -237,9 +235,9 @@ namespace VVardenfell.Runtime.Streaming
             WorldBootstrapStateUtility.Uninstall();
         }
 
-        internal static bool EnsureModelPrefabBuilt(EntityManager em, CacheLoader cache, int modelPrefabIndex)
+        internal static bool EnsureModelPrefabBuilt(EntityManager em, int modelPrefabIndex)
         {
-            return WorldModelPrefabUtility.EnsureModelPrefabBuilt(em, cache, modelPrefabIndex);
+            return WorldModelPrefabUtility.EnsureModelPrefabBuilt(em, WorldResources.Cache, modelPrefabIndex);
         }
     }
 }

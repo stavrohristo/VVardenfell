@@ -2,11 +2,11 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.WorldState;
@@ -126,8 +126,10 @@ namespace VVardenfell.Runtime.Streaming
         {
             RuntimeBootstrapRequestUtility.PublishAll(em);
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
+            var contentBlob = RequireRuntimeContentBlob();
+            ref RuntimeContentBlob content = ref contentBlob.Value;
             ResolveInitialPlayerData(
-                RuntimeContentDatabase.Active,
+                ref content,
                 out var playerStats,
                 out var playerIdentity,
                 out var knownSpells,
@@ -167,14 +169,14 @@ namespace VVardenfell.Runtime.Streaming
         }
 
         static void ResolveInitialPlayerData(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             out ActorRuntimeStatSeed stats,
             out ActorIdentitySet identity,
             out ActorKnownSpell[] knownSpells,
             out PlayerInitialInventoryItem[] initialInventory)
         {
             if (MorrowindActorMovementStats.TryCreatePlayerSeedFromContent(
-                    contentDb,
+                    ref content,
                     out stats,
                     out identity,
                     out knownSpells,
@@ -183,10 +185,18 @@ namespace VVardenfell.Runtime.Streaming
                 return;
             }
 
-            stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed();
+            stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed(ref content);
             identity = ActorIdentitySet.DefaultPlayer();
             knownSpells = System.Array.Empty<ActorKnownSpell>();
             initialInventory = System.Array.Empty<PlayerInitialInventoryItem>();
+        }
+
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
+        {
+            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            if (!blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] World bootstrap initialization requires runtime content blob.");
+            return blob;
         }
 
         static void PopulateInitializationSpellbook(DynamicBuffer<ActorKnownSpell> buffer, ActorKnownSpell[] knownSpells)

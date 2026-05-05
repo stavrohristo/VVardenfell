@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.UI.Shell;
 
@@ -12,7 +11,7 @@ namespace VVardenfell.Runtime.Shell
     public partial class RuntimeHudShellPresentationSystem
     {
         static DialogueWindowViewModel BuildDialogueModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in MorrowindDialogueSession session,
             DynamicBuffer<MorrowindDialogueSessionLine> lines,
@@ -20,19 +19,19 @@ namespace VVardenfell.Runtime.Shell
             DynamicBuffer<MorrowindTopicJournalEntry> topicEntries,
             DynamicBuffer<MorrowindDialogueChoice> choices)
         {
-            if (contentDb == null || session.Active == 0)
+            if (session.Active == 0)
                 return null;
 
             bool topicsEnabled = session.ChoiceActive == 0 && session.Goodbye == 0;
             bool goodbyeEnabled = session.ChoiceActive == 0 || session.Goodbye != 0;
-            int disposition = ResolveDisposition(contentDb, entityManager, session, out bool dispositionVisible);
-            string goodbyeText = ResolveGameSettingString(contentDb, "sGoodbye", "Goodbye");
+            int disposition = ResolveDisposition(ref contentBlob, entityManager, session, out bool dispositionVisible);
+            string goodbyeText = ResolveGameSettingString(ref contentBlob, "sGoodbye", "Goodbye");
 
             return new DialogueWindowViewModel
             {
-                SpeakerName = ResolveSpeakerName(contentDb, session),
-                Lines = BuildDialogueLines(contentDb, lines),
-                Topics = BuildVisibleDialogueTopics(contentDb, entityManager, session, knownTopics, topicEntries),
+                SpeakerName = ResolveSpeakerName(ref contentBlob, session),
+                Lines = BuildDialogueLines(ref contentBlob, lines),
+                Topics = BuildVisibleDialogueTopics(ref contentBlob, entityManager, session, knownTopics, topicEntries),
                 Choices = BuildDialogueChoices(session, choices),
                 DispositionVisible = dispositionVisible,
                 DispositionValue = disposition,
@@ -45,21 +44,21 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static DialogueResponseLineViewModel[] BuildDialogueLines(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<MorrowindDialogueSessionLine> lines)
         {
             var rows = new List<DialogueResponseLineViewModel>(lines.Length);
             for (int i = 0; i < lines.Length; i++)
             {
                 var line = lines[i];
-                if ((uint)line.InfoIndex >= (uint)contentDb.DialogueInfoCount)
+                if ((uint)line.InfoIndex >= (uint)contentBlob.DialogueInfos.Length)
                     continue;
 
                 string title = string.Empty;
-                if (line.ShowTitle != 0 && (uint)line.DialogueIndex < (uint)contentDb.DialogueCount)
-                    title = ResolveDialogueTitle(contentDb, line.DialogueIndex);
+                if (line.ShowTitle != 0 && (uint)line.DialogueIndex < (uint)contentBlob.Dialogues.Length)
+                    title = ResolveRuntimeDialogueTitle(ref contentBlob, line.DialogueIndex);
 
-                string body = contentDb.Data.DialogueInfos[line.InfoIndex].Response;
+                string body = contentBlob.DialogueInfos[line.InfoIndex].Response.ToString();
                 rows.Add(new DialogueResponseLineViewModel
                 {
                     Title = title,
@@ -71,25 +70,25 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static DialogueTopicRowViewModel[] BuildVisibleDialogueTopics(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in MorrowindDialogueSession session,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
             DynamicBuffer<MorrowindTopicJournalEntry> topicEntries)
         {
-            int count = Math.Min(contentDb.DialogueCount, knownTopics.Length);
+            int count = Math.Min(contentBlob.Dialogues.Length, knownTopics.Length);
             var rows = new List<DialogueTopicRowViewModel>();
             for (int dialogueIndex = 0; dialogueIndex < count; dialogueIndex++)
             {
                 if (knownTopics[dialogueIndex].Known == 0)
                     continue;
 
-                ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+                ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
                 if (dialogue.Type != DialogueDefType.Topic)
                     continue;
 
                 if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
-                        contentDb,
+                        ref contentBlob,
                         entityManager,
                         session.SpeakerEntity,
                         session.SpeakerActor,
@@ -102,10 +101,10 @@ namespace VVardenfell.Runtime.Shell
                 rows.Add(new DialogueTopicRowViewModel
                 {
                     DialogueIndex = dialogueIndex,
-                    Title = ResolveDialogueTitle(contentDb, dialogueIndex),
+                    Title = ResolveRuntimeDialogueTitle(ref contentBlob, dialogueIndex),
                     Selected = session.SelectedTopicDialogueIndex == dialogueIndex,
                     VisualState = ResolveTopicVisualState(
-                        contentDb,
+                        ref contentBlob,
                         entityManager,
                         session,
                         knownTopics,
@@ -120,7 +119,7 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static DialogueTopicVisualState ResolveTopicVisualState(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in MorrowindDialogueSession session,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
@@ -128,61 +127,64 @@ namespace VVardenfell.Runtime.Shell
             int dialogueIndex,
             int infoIndex)
         {
-            if (contentDb == null || (uint)infoIndex >= (uint)contentDb.DialogueInfoCount)
+            if ((uint)infoIndex >= (uint)contentBlob.DialogueInfos.Length)
                 return DialogueTopicVisualState.Normal;
 
-            ref readonly DialogueInfoDef info = ref contentDb.Data.DialogueInfos[infoIndex];
+            ref var info = ref contentBlob.DialogueInfos[infoIndex];
             bool inJournal = MorrowindDialogueUtility.ContainsTopicEntry(topicEntries, dialogueIndex, infoIndex);
-            if (!inJournal && IsActorSpecificInfo(contentDb, session, info))
+            if (!inJournal && IsActorSpecificInfo(ref contentBlob, session, ref info))
                 return DialogueTopicVisualState.Specific;
 
             if (inJournal
-                && !ExhaustedTopicRevealsUnknownActorTopic(contentDb, entityManager, session, knownTopics, info.Response))
+                && !ExhaustedTopicRevealsUnknownActorTopic(ref contentBlob, entityManager, session, knownTopics, info.Response.ToString()))
                 return DialogueTopicVisualState.Exhausted;
 
             return DialogueTopicVisualState.Normal;
         }
 
         static bool IsActorSpecificInfo(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in MorrowindDialogueSession session,
-            in DialogueInfoDef info)
+            ref RuntimeDialogueInfoDefBlob info)
         {
-            if (string.IsNullOrWhiteSpace(info.ActorId)
-                || !TryResolveSpeakerActor(contentDb, session, out var actor))
+            string infoActorId = info.ActorId.ToString();
+            if (string.IsNullOrWhiteSpace(infoActorId)
+                || !TryResolveSpeakerActorIndex(ref contentBlob, session, out int actorIndex))
                 return false;
 
-            string normalizedActorId = ContentId.NormalizeId(info.ActorId);
-            return string.Equals(ContentId.NormalizeId(actor.Id), normalizedActorId, StringComparison.Ordinal)
-                   || string.Equals(ContentId.NormalizeId(actor.OriginalId), normalizedActorId, StringComparison.Ordinal);
+            ref var actor = ref contentBlob.Actors[actorIndex];
+            string normalizedActorId = ContentId.NormalizeId(infoActorId);
+            return string.Equals(ContentId.NormalizeId(actor.Id.ToString()), normalizedActorId, StringComparison.Ordinal)
+                   || string.Equals(ContentId.NormalizeId(actor.OriginalId.ToString()), normalizedActorId, StringComparison.Ordinal);
         }
 
         static bool ExhaustedTopicRevealsUnknownActorTopic(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in MorrowindDialogueSession session,
             DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
             string response)
         {
-            if (contentDb == null || string.IsNullOrWhiteSpace(response))
+            if (string.IsNullOrWhiteSpace(response))
                 return false;
 
-            int count = Math.Min(contentDb.DialogueCount, knownTopics.Length);
+            int count = Math.Min(contentBlob.Dialogues.Length, knownTopics.Length);
             for (int dialogueIndex = 0; dialogueIndex < count; dialogueIndex++)
             {
                 if (knownTopics[dialogueIndex].Known != 0)
                     continue;
 
-                ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
+                ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
                 if (dialogue.Type != DialogueDefType.Topic)
                     continue;
 
-                string id = dialogue.StringId ?? dialogue.Id;
+                string stringId = dialogue.StringId.ToString();
+                string id = string.IsNullOrWhiteSpace(stringId) ? dialogue.Id.ToString() : stringId;
                 if (!MorrowindDialogueUtility.ResponseContainsTopicReference(response, id))
                     continue;
 
                 if (MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
-                        contentDb,
+                        ref contentBlob,
                         entityManager,
                         session.SpeakerEntity,
                         session.SpeakerActor,
@@ -218,39 +220,48 @@ namespace VVardenfell.Runtime.Shell
             return rows;
         }
 
-        static string ResolveDialogueTitle(RuntimeContentDatabase contentDb, int dialogueIndex)
+        static string ResolveRuntimeDialogueTitle(ref RuntimeContentBlob contentBlob, int dialogueIndex)
         {
-            if (contentDb == null || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            if ((uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
                 return string.Empty;
 
-            ref readonly DialogueDef dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-            if (!string.IsNullOrWhiteSpace(dialogue.StringId))
-                return dialogue.StringId.Trim();
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            string stringId = dialogue.StringId.ToString();
+            if (!string.IsNullOrWhiteSpace(stringId))
+                return stringId.Trim();
 
-            return string.IsNullOrWhiteSpace(dialogue.Id) ? string.Empty : dialogue.Id.Trim();
+            string id = dialogue.Id.ToString();
+            return string.IsNullOrWhiteSpace(id) ? string.Empty : id.Trim();
         }
 
-        static string ResolveSpeakerName(RuntimeContentDatabase contentDb, in MorrowindDialogueSession session)
+        static string ResolveSpeakerName(ref RuntimeContentBlob contentBlob, in MorrowindDialogueSession session)
         {
-            if (TryResolveSpeakerActor(contentDb, session, out var actor))
+            if (TryResolveSpeakerActorIndex(ref contentBlob, session, out int actorIndex))
             {
-                if (!string.IsNullOrWhiteSpace(actor.Name))
-                    return actor.Name.Trim();
-                if (!string.IsNullOrWhiteSpace(actor.Id))
-                    return actor.Id.Trim();
+                ref var actor = ref contentBlob.Actors[actorIndex];
+                string name = actor.Name.ToString();
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name.Trim();
+                string id = actor.Id.ToString();
+                if (!string.IsNullOrWhiteSpace(id))
+                    return id.Trim();
             }
 
             return session.SpeakerId.ToString();
         }
 
         static int ResolveDisposition(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in MorrowindDialogueSession session,
             out bool visible)
         {
             visible = false;
-            if (!TryResolveSpeakerActor(contentDb, session, out var actor) || actor.Kind != ActorDefKind.Npc)
+            if (!TryResolveSpeakerActorIndex(ref contentBlob, session, out int actorIndex))
+                return 0;
+
+            ref var actor = ref contentBlob.Actors[actorIndex];
+            if (actor.Kind != ActorDefKind.Npc)
                 return 0;
 
             visible = true;
@@ -264,23 +275,23 @@ namespace VVardenfell.Runtime.Shell
             return Math.Clamp(actor.Disposition, 0, 100);
         }
 
-        static bool TryResolveSpeakerActor(RuntimeContentDatabase contentDb, in MorrowindDialogueSession session, out ActorDef actor)
+        static bool TryResolveSpeakerActorIndex(ref RuntimeContentBlob contentBlob, in MorrowindDialogueSession session, out int index)
         {
-            actor = default;
-            if (contentDb == null || !session.SpeakerActor.IsValid)
+            index = -1;
+            if (!session.SpeakerActor.IsValid)
                 return false;
 
-            int index = session.SpeakerActor.Index;
-            if ((uint)index >= (uint)contentDb.ActorCount)
+            index = session.SpeakerActor.Index;
+            if ((uint)index >= (uint)contentBlob.Actors.Length)
                 return false;
 
-            actor = contentDb.Data.Actors[index];
             return true;
         }
 
-        static string ResolveGameSettingString(RuntimeContentDatabase contentDb, string id, string fallback)
+        static string ResolveGameSettingString(ref RuntimeContentBlob contentBlob, string id, string fallback)
         {
-            if (contentDb != null && contentDb.TryGetGameSettingString(id, out string value) && !string.IsNullOrWhiteSpace(value))
+            string value = RuntimeContentBlobUtility.RequireGameSettingStringAllowEmptyByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(id));
+            if (!string.IsNullOrWhiteSpace(value))
                 return value.Trim();
 
             return fallback;

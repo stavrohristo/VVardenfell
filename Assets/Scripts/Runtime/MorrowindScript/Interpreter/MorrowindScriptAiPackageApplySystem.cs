@@ -1,7 +1,7 @@
 using Unity.Entities;
 using Unity.Collections;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -15,13 +15,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             RequireForUpdate<MorrowindScriptAiPackageRequest>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             var requests = EntityManager.GetBuffer<MorrowindScriptAiPackageRequest>(runtimeEntity);
@@ -35,7 +34,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requestCopy.Length; i++)
-                MorrowindScriptAiPackageUtility.TryApplyRequest(contentDb, EntityManager, requestCopy[i], lookup);
+                MorrowindScriptAiPackageUtility.TryApplyRequest(ref contentBlob, EntityManager, requestCopy[i], lookup);
             requestCopy.Dispose();
         }
     }

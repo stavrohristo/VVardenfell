@@ -5,7 +5,6 @@ using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 
@@ -14,7 +13,7 @@ namespace VVardenfell.Runtime.MorrowindScript
     static class MorrowindDialogueFilterUtility
     {
         public static bool TryFindFirstMatchingInfo(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity speakerEntity,
             ActorDefHandle speakerHandle,
@@ -25,21 +24,22 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             infoIndex = -1;
             unsupportedReason = null;
-            if (contentDb == null
-                || !speakerHandle.IsValid
-                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            if (!speakerHandle.IsValid
+                || (uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
                 return false;
 
-            ref readonly var actor = ref contentDb.Get(speakerHandle);
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, speakerHandle);
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            var worldCellBlob = RequireWorldCellBlob(entityManager);
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             for (int i = dialogue.FirstInfoIndex; i < end; i++)
             {
-                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
-                if (!MatchesStaticFilters(contentDb, entityManager, speakerEntity, actor, info, out unsupportedReason))
+                ref var info = ref contentBlob.DialogueInfos[i];
+                if (!MatchesStaticFilters(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, out unsupportedReason))
                     continue;
 
-                if (!MatchesSelectRules(contentDb, entityManager, speakerEntity, actor, info, choice, out unsupportedReason))
+                if (!MatchesSelectRules(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, choice, out unsupportedReason))
                     continue;
 
                 infoIndex = i;
@@ -50,7 +50,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         public static bool TryFindRandomMatchingVoicedInfo(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity speakerEntity,
             ActorDefHandle speakerHandle,
@@ -63,28 +63,29 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             infoIndex = -1;
             unsupportedReason = null;
-            if (contentDb == null
-                || !speakerHandle.IsValid
-                || (uint)dialogueIndex >= (uint)contentDb.DialogueCount)
+            if (!speakerHandle.IsValid
+                || (uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
             {
                 return false;
             }
 
-            ref readonly var actor = ref contentDb.Get(speakerHandle);
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, speakerHandle);
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            var worldCellBlob = RequireWorldCellBlob(entityManager);
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             int matchingVoiceCount = 0;
             int firstMatchingVoiceIndex = -1;
             for (int i = dialogue.FirstInfoIndex; i < end; i++)
             {
-                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
-                if (!MatchesStaticFilters(contentDb, entityManager, speakerEntity, actor, info, out unsupportedReason))
+                ref var info = ref contentBlob.DialogueInfos[i];
+                if (!MatchesStaticFilters(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, out unsupportedReason))
                     continue;
 
-                if (!MatchesSelectRules(contentDb, entityManager, speakerEntity, actor, info, choice, out unsupportedReason))
+                if (!MatchesSelectRules(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, choice, out unsupportedReason))
                     continue;
 
-                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                if (!IsVoiceCandidateAvailable(info.SoundFile.ToString(), isVoiceAvailable))
                     continue;
 
                 matchingVoiceCount++;
@@ -98,16 +99,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return true;
 
             if (firstMatchingVoiceIndex >= 0
-                && TryFindRandomSiblingVoiceInfo(contentDb, dialogueIndex, firstMatchingVoiceIndex, ref randomState, isVoiceAvailable, out infoIndex))
+                && TryFindRandomSiblingVoiceInfo(ref contentBlob, dialogueIndex, firstMatchingVoiceIndex, ref randomState, isVoiceAvailable, out infoIndex))
             {
                 return true;
             }
 
-            return TryFindRandomActorVoiceGroupInfo(contentDb, actor, dialogueIndex, ref randomState, isVoiceAvailable, out infoIndex);
+            return TryFindRandomActorVoiceGroupInfo(ref contentBlob, ref actor, dialogueIndex, ref randomState, isVoiceAvailable, out infoIndex);
         }
 
         static bool TryFindRandomSiblingVoiceInfo(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             int dialogueIndex,
             int selectedInfoIndex,
             ref uint randomState,
@@ -115,20 +116,21 @@ namespace VVardenfell.Runtime.MorrowindScript
             out int infoIndex)
         {
             infoIndex = selectedInfoIndex;
-            ref readonly var selected = ref contentDb.Data.DialogueInfos[selectedInfoIndex];
-            if (!TrySplitVoiceVariationKey(selected.SoundFile, out string selectedDirectory, out string selectedStem))
+            ref var selected = ref contentBlob.DialogueInfos[selectedInfoIndex];
+            if (!TrySplitVoiceVariationKey(selected.SoundFile.ToString(), out string selectedDirectory, out string selectedStem))
                 return false;
 
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             int matchingVoiceCount = 0;
             for (int i = dialogue.FirstInfoIndex; i < end; i++)
             {
-                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
-                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                ref var info = ref contentBlob.DialogueInfos[i];
+                string soundFile = info.SoundFile.ToString();
+                if (!IsVoiceCandidateAvailable(soundFile, isVoiceAvailable))
                     continue;
 
-                if (!TrySplitVoiceVariationKey(info.SoundFile, out string directory, out string stem))
+                if (!TrySplitVoiceVariationKey(soundFile, out string directory, out string stem))
                     continue;
                 if (!string.Equals(directory, selectedDirectory, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(stem, selectedStem, StringComparison.OrdinalIgnoreCase))
@@ -145,29 +147,30 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryFindRandomActorVoiceGroupInfo(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeActorDefBlob actor,
             int dialogueIndex,
             ref uint randomState,
             Func<string, bool> isVoiceAvailable,
             out int infoIndex)
         {
             infoIndex = -1;
-            if (actor.Kind != ActorDefKind.Npc || !TryResolveVoiceRaceFolder(actor.RaceId, out string raceFolder))
+            if (actor.Kind != ActorDefKind.Npc || !TryResolveVoiceRaceFolder(actor.RaceId.ToString(), out string raceFolder))
                 return false;
 
             string genderFolder = (actor.Flags & 0x1u) != 0u ? "f" : "m";
             string targetDirectory = $"vo/{raceFolder}/{genderFolder}";
-            ref readonly var dialogue = ref contentDb.Data.Dialogues[dialogueIndex];
-            int end = Math.Min(contentDb.DialogueInfoCount, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
             int matchingVoiceCount = 0;
             for (int i = dialogue.FirstInfoIndex; i < end; i++)
             {
-                ref readonly var info = ref contentDb.Data.DialogueInfos[i];
-                if (!IsVoiceCandidateAvailable(info.SoundFile, isVoiceAvailable))
+                ref var info = ref contentBlob.DialogueInfos[i];
+                string soundFile = info.SoundFile.ToString();
+                if (!IsVoiceCandidateAvailable(soundFile, isVoiceAvailable))
                     continue;
 
-                if (!TrySplitVoiceVariationKey(info.SoundFile, out string directory, out string stem))
+                if (!TrySplitVoiceVariationKey(soundFile, out string directory, out string stem))
                     continue;
                 if (!string.Equals(directory, targetDirectory, StringComparison.OrdinalIgnoreCase)
                     || !stem.StartsWith("hit_", StringComparison.OrdinalIgnoreCase))
@@ -252,18 +255,19 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool MatchesStaticFilters(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
             EntityManager entityManager,
             Entity speakerEntity,
-            in ActorDef actor,
-            in DialogueInfoDef info,
+            ref RuntimeActorDefBlob actor,
+            ref RuntimeDialogueInfoDefBlob info,
             out string unsupportedReason)
         {
             unsupportedReason = null;
             bool isCreature = actor.Kind != ActorDefKind.Npc;
-            if (!string.IsNullOrWhiteSpace(info.ActorId))
+            if (info.ActorIdHash != 0UL)
             {
-                if (!IdEquals(info.ActorId, actor.Id) && !IdEquals(info.ActorId, actor.OriginalId))
+                if (info.ActorIdHash != actor.IdHash && info.ActorIdHash != actor.OriginalIdHash)
                     return false;
             }
             else if (isCreature)
@@ -271,19 +275,19 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(info.RaceId))
+            if (info.RaceIdHash != 0UL)
             {
                 if (isCreature)
                     return true;
-                if (!IdEquals(info.RaceId, actor.RaceId))
+                if (info.RaceIdHash != actor.RaceIdHash)
                     return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(info.ClassId))
+            if (info.ClassIdHash != 0UL)
             {
                 if (isCreature)
                     return true;
-                if (!IdEquals(info.ClassId, actor.ClassId))
+                if (info.ClassIdHash != actor.ClassIdHash)
                     return false;
             }
 
@@ -291,14 +295,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if (isCreature)
                     return true;
-                if (!string.IsNullOrWhiteSpace(actor.FactionId))
+                if (actor.FactionIdHash != 0UL)
                     return false;
             }
-            else if (!string.IsNullOrWhiteSpace(info.FactionId))
+            else if (info.FactionIdHash != 0UL)
             {
                 if (isCreature)
                     return true;
-                if (!IdEquals(info.FactionId, actor.FactionId))
+                if (info.FactionIdHash != actor.FactionIdHash)
                     return false;
                 if (actor.Rank < info.Rank)
                     return false;
@@ -319,15 +323,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
             }
 
-            if (!MatchesPlayerFactionAndRank(contentDb, entityManager, actor, info))
+            if (!MatchesPlayerFactionAndRank(ref contentBlob, entityManager, ref actor, ref info))
                 return false;
 
-            if (!string.IsNullOrWhiteSpace(info.CellId) && !MatchesPlayerCell(entityManager, info.CellId))
+            string infoCellId = info.CellId.ToString();
+            if (!string.IsNullOrWhiteSpace(infoCellId) && !MatchesPlayerCell(ref worldCells, entityManager, infoCellId))
                 return false;
 
             if (actor.Kind == ActorDefKind.Npc
                 && info.DispositionOrJournalIndex > 0
-                && ResolveBaseDisposition(entityManager, speakerEntity, actor) < info.DispositionOrJournalIndex)
+                && ResolveBaseDisposition(entityManager, speakerEntity, ref actor) < info.DispositionOrJournalIndex)
             {
                 return false;
             }
@@ -335,7 +340,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
-        static int ResolveBaseDisposition(EntityManager entityManager, Entity speakerEntity, in ActorDef actor)
+        static int ResolveBaseDisposition(EntityManager entityManager, Entity speakerEntity, ref RuntimeActorDefBlob actor)
         {
             if (entityManager.Exists(speakerEntity) && entityManager.HasComponent<ActorDispositionState>(speakerEntity))
                 return entityManager.GetComponentData<ActorDispositionState>(speakerEntity).BaseDisposition;
@@ -343,18 +348,17 @@ namespace VVardenfell.Runtime.MorrowindScript
             return actor.Disposition;
         }
 
-        static bool MatchesPlayerFactionAndRank(RuntimeContentDatabase contentDb, EntityManager entityManager, in ActorDef speaker, in DialogueInfoDef info)
+        static bool MatchesPlayerFactionAndRank(ref RuntimeContentBlob contentBlob, EntityManager entityManager, ref RuntimeActorDefBlob speaker, ref RuntimeDialogueInfoDefBlob info)
         {
-            if (string.IsNullOrWhiteSpace(info.PcFactionId) && info.PcRank == -1)
+            if (info.PcFactionIdHash == 0UL && info.PcRank == -1)
                 return true;
 
-            string requiredFaction = !string.IsNullOrWhiteSpace(info.PcFactionId)
-                ? info.PcFactionId
-                : speaker.FactionId;
+            ulong requiredFactionHash = info.PcFactionIdHash != 0UL
+                ? info.PcFactionIdHash
+                : speaker.FactionIdHash;
 
-            if (string.IsNullOrWhiteSpace(requiredFaction)
-                || contentDb == null
-                || !contentDb.TryGetFactionHandle(requiredFaction, out var factionHandle)
+            if (requiredFactionHash == 0UL
+                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, requiredFactionHash, out var factionHandle)
                 || !factionHandle.IsValid)
             {
                 return false;
@@ -390,18 +394,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             return false;
         }
 
-        static bool MatchesPlayerCell(EntityManager entityManager, string cellPrefix)
+        static bool MatchesPlayerCell(ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, string cellPrefix)
         {
             if (string.IsNullOrWhiteSpace(cellPrefix))
                 return true;
 
-            if (!TryReadCurrentPlayerCell(entityManager, out string cellName))
+            if (!TryReadCurrentPlayerCell(ref worldCells, entityManager, out string cellName))
                 return false;
 
             return cellName.StartsWith(cellPrefix, StringComparison.OrdinalIgnoreCase);
         }
 
-        static bool TryReadCurrentPlayerCell(EntityManager entityManager, out string cellName)
+        static bool TryReadCurrentPlayerCell(ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, out string cellName)
         {
             cellName = string.Empty;
             using var transitionQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>());
@@ -420,14 +424,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             var streaming = entityManager.GetComponentData<StreamingConfig>(streamingQuery.GetSingletonEntity());
-            if (!WorldResources.Cells.TryGetValue(streaming.CameraCell, out CellData cell) || cell == null)
+            if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, streaming.CameraCell, out int cellIndex))
                 return false;
 
-            cellName = cell.CellId ?? string.Empty;
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            cellName = cell.CellId.ToString();
             return !string.IsNullOrWhiteSpace(cellName);
         }
 
-        static bool TryReadActorCell(EntityManager entityManager, Entity actorEntity, out string cellName)
+        static bool TryReadActorCell(ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, Entity actorEntity, out string cellName)
         {
             cellName = string.Empty;
             if (!entityManager.Exists(actorEntity))
@@ -442,9 +447,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return !string.IsNullOrWhiteSpace(cellName);
                 }
 
-                if (WorldResources.Cells.TryGetValue(location.ExteriorCell, out CellData cell) && cell != null)
+                if (RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, location.ExteriorCell, out int cellIndex))
                 {
-                    cellName = cell.CellId ?? string.Empty;
+                    ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                    cellName = cell.CellId.ToString();
                     return !string.IsNullOrWhiteSpace(cellName);
                 }
             }
@@ -452,9 +458,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (entityManager.HasComponent<CellLink>(actorEntity))
             {
                 var link = entityManager.GetComponentData<CellLink>(actorEntity);
-                if (WorldResources.Cells.TryGetValue(link.Value, out CellData cell) && cell != null)
+                if (RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, link.Value, out int cellIndex))
                 {
-                    cellName = cell.CellId ?? string.Empty;
+                    ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+                    cellName = cell.CellId.ToString();
                     return !string.IsNullOrWhiteSpace(cellName);
                 }
             }
@@ -463,11 +470,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool MatchesSelectRules(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
             EntityManager entityManager,
             Entity speakerEntity,
-            in ActorDef actor,
-            in DialogueInfoDef info,
+            ref RuntimeActorDefBlob actor,
+            ref RuntimeDialogueInfoDefBlob info,
             int choice,
             out string unsupportedReason)
         {
@@ -475,11 +483,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (info.SelectRuleCount <= 0 || info.FirstSelectRuleIndex < 0)
                 return true;
 
-            int end = Math.Min(contentDb.DialogueConditionCount, info.FirstSelectRuleIndex + info.SelectRuleCount);
+            int end = Math.Min(contentBlob.DialogueConditions.Length, info.FirstSelectRuleIndex + info.SelectRuleCount);
             for (int i = info.FirstSelectRuleIndex; i < end; i++)
             {
-                ref readonly var rule = ref contentDb.Data.DialogueConditions[i];
-                if (!TryEvaluateRule(contentDb, entityManager, speakerEntity, actor, rule, choice, out bool matched, out unsupportedReason))
+                ref var rule = ref contentBlob.DialogueConditions[i];
+                if (!TryEvaluateRule(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref rule, choice, out bool matched, out unsupportedReason))
                     return false;
 
                 if (!matched)
@@ -490,11 +498,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryEvaluateRule(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
             EntityManager entityManager,
             Entity speakerEntity,
-            in ActorDef actor,
-            in DialogueConditionDef rule,
+            ref RuntimeActorDefBlob actor,
+            ref RuntimeDialogueConditionDefBlob rule,
             int choice,
             out bool matched,
             out string unsupportedReason)
@@ -505,73 +514,77 @@ namespace VVardenfell.Runtime.MorrowindScript
             switch (function)
             {
                 case DialogueConditionFunction.Global:
-                    if (!contentDb.TryGetGlobalHandle(rule.Variable, out var globalHandle) || !globalHandle.IsValid)
+                    if (rule.VariableHash == 0UL
+                        || !RuntimeContentBlobUtility.TryGetGlobalHandleByIdHash(ref contentBlob, rule.VariableHash, out var globalHandle)
+                        || !globalHandle.IsValid)
                     {
                         matched = true;
                         return true;
                     }
                     if (!TryReadGlobal(entityManager, globalHandle.Index, out float globalValue))
                         return false;
-                    matched = Compare(globalValue, rule);
+                    matched = Compare(globalValue, ref rule);
                     return true;
 
                 case DialogueConditionFunction.Local:
-                    matched = TryReadLocal(contentDb, entityManager, speakerEntity, actor.ScriptId, rule.Variable, out float localValue)
-                        && Compare(localValue, rule);
+                    matched = TryReadLocal(ref contentBlob, entityManager, speakerEntity, actor.ScriptIdHash, rule.VariableHash, out float localValue)
+                        && Compare(localValue, ref rule);
                     return true;
 
                 case DialogueConditionFunction.NotLocal:
-                    matched = !TryReadLocal(contentDb, entityManager, speakerEntity, actor.ScriptId, rule.Variable, out float notLocalValue)
-                        || !Compare(notLocalValue, rule);
+                    matched = !TryReadLocal(ref contentBlob, entityManager, speakerEntity, actor.ScriptIdHash, rule.VariableHash, out float notLocalValue)
+                        || !Compare(notLocalValue, ref rule);
                     return true;
 
                 case DialogueConditionFunction.Journal:
-                    if (!contentDb.TryGetDialogueHandle(rule.Variable, out var journalHandle) || !journalHandle.IsValid)
+                    if (rule.VariableHash == 0UL
+                        || !RuntimeContentBlobUtility.TryGetDialogueHandleByIdHash(ref contentBlob, rule.VariableHash, out var journalHandle)
+                        || !journalHandle.IsValid)
                         return false;
                     if (!TryReadJournal(entityManager, journalHandle.Index, out int journalIndex))
                         return false;
-                    matched = Compare(journalIndex, rule);
+                    matched = Compare(journalIndex, ref rule);
                     return true;
 
                 case DialogueConditionFunction.Choice:
                     if (choice < 0)
                         return false;
-                    matched = Compare(choice, rule);
+                    matched = Compare(choice, ref rule);
                     return true;
 
                 case DialogueConditionFunction.Fight:
                 case DialogueConditionFunction.Hello:
                 case DialogueConditionFunction.Alarm:
                 case DialogueConditionFunction.Flee:
-                    matched = Compare(ResolveAiSetting(entityManager, speakerEntity, actor, function, rule.Index), rule);
+                    matched = Compare(ResolveAiSetting(entityManager, speakerEntity, ref actor, function, rule.Index), ref rule);
                     return true;
 
                 case DialogueConditionFunction.NotId:
-                    matched = !IdEquals(rule.Variable, actor.Id) && !IdEquals(rule.Variable, actor.OriginalId);
+                    matched = rule.VariableHash != actor.IdHash && rule.VariableHash != actor.OriginalIdHash;
                     return true;
 
                 case DialogueConditionFunction.NotFaction:
-                    matched = !IdEquals(rule.Variable, actor.FactionId);
+                    matched = rule.VariableHash != actor.FactionIdHash;
                     return true;
 
                 case DialogueConditionFunction.NotClass:
-                    matched = !IdEquals(rule.Variable, actor.ClassId);
+                    matched = rule.VariableHash != actor.ClassIdHash;
                     return true;
 
                 case DialogueConditionFunction.NotRace:
-                    matched = !IdEquals(rule.Variable, actor.RaceId);
+                    matched = rule.VariableHash != actor.RaceIdHash;
                     return true;
 
                 case DialogueConditionFunction.NotCell:
-                    if (!TryReadActorCell(entityManager, speakerEntity, out string actorCell))
+                    if (!TryReadActorCell(ref worldCells, entityManager, speakerEntity, out string actorCell))
                         return false;
-                    matched = !actorCell.StartsWith(rule.Variable ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                    matched = !actorCell.StartsWith(rule.Variable.ToString(), StringComparison.OrdinalIgnoreCase);
                     return true;
 
                 case DialogueConditionFunction.PcLevel:
                     if (TryReadPlayerIdentity(entityManager, out var identity))
                     {
-                        matched = Compare(identity.Level, rule);
+                        matched = Compare(identity.Level, ref rule);
                         return true;
                     }
                     return false;
@@ -579,7 +592,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case DialogueConditionFunction.PcReputation:
                     if (TryReadPlayerIdentity(entityManager, out var repIdentity))
                     {
-                        matched = Compare(repIdentity.Reputation, rule);
+                        matched = Compare(repIdentity.Reputation, ref rule);
                         return true;
                     }
                     return false;
@@ -587,31 +600,31 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case DialogueConditionFunction.PcCrimeLevel:
                     if (TryReadPlayerCrime(entityManager, out var crime))
                     {
-                        matched = Compare(crime.Bounty, rule);
+                        matched = Compare(crime.Bounty, ref rule);
                         return true;
                     }
                     return false;
 
                 case DialogueConditionFunction.Alarmed:
-                    matched = Compare(ResolveAlarmed(entityManager, speakerEntity), rule);
+                    matched = Compare(ResolveAlarmed(entityManager, speakerEntity), ref rule);
                     return true;
 
                 case DialogueConditionFunction.Attacked:
-                    matched = Compare(ResolveAttacked(entityManager, speakerEntity), rule);
+                    matched = Compare(ResolveAttacked(entityManager, speakerEntity), ref rule);
                     return true;
 
                 case DialogueConditionFunction.ShouldAttack:
-                    matched = Compare(ResolveShouldAttack(entityManager, speakerEntity), rule);
+                    matched = Compare(ResolveShouldAttack(entityManager, speakerEntity), ref rule);
                     return true;
 
                 case DialogueConditionFunction.TalkedToPc:
-                    matched = Compare(0, rule);
+                    matched = Compare(0, ref rule);
                     return true;
 
                 case DialogueConditionFunction.PcClothingModifier:
-                    if (TryReadPlayerClothingModifier(contentDb, entityManager, out int clothingModifier))
+                    if (TryReadPlayerClothingModifier(ref contentBlob, entityManager, out int clothingModifier))
                     {
-                        matched = Compare(clothingModifier, rule);
+                        matched = Compare(clothingModifier, ref rule);
                         return true;
                     }
                     return false;
@@ -622,24 +635,24 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case DialogueConditionFunction.PcHealthPercent:
                     if (!TryReadPlayerVitals(entityManager, out var vitals))
                         return false;
-                    matched = Compare(ResolvePlayerVital(function, vitals), rule);
+                    matched = Compare(ResolvePlayerVital(function, vitals), ref rule);
                     return true;
 
                 case DialogueConditionFunction.FacReactionLowest:
                 case DialogueConditionFunction.FacReactionHighest:
                     matched = TryResolvePlayerFactionReaction(
-                        contentDb,
+                        ref contentBlob,
                         entityManager,
-                        actor.FactionId,
+                        actor.FactionIdHash,
                         function == DialogueConditionFunction.FacReactionLowest,
                         out int reaction)
-                        && Compare(reaction, rule);
+                        && Compare(reaction, ref rule);
                     return true;
             }
 
             if (TryResolvePlayerAttributeOrSkill(entityManager, function, out float stat))
             {
-                matched = Compare(stat, rule);
+                matched = Compare(stat, ref rule);
                 return true;
             }
 
@@ -657,7 +670,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static int ResolveAiSetting(
             EntityManager entityManager,
             Entity speakerEntity,
-            in ActorDef actor,
+            ref RuntimeActorDefBlob actor,
             DialogueConditionFunction function,
             byte argument)
         {
@@ -714,19 +727,21 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
-        static bool TryReadLocal(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity speakerEntity, string scriptId, string localName, out float value)
+        static bool TryReadLocal(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity speakerEntity, ulong scriptIdHash, ulong localNameHash, out float value)
         {
             value = 0f;
-            if (string.IsNullOrWhiteSpace(scriptId)
-                || !contentDb.TryGetMorrowindScriptProgramHandle(scriptId, out var programHandle)
+            if (scriptIdHash == 0UL
+                || localNameHash == 0UL
+                || !RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref contentBlob, scriptIdHash, out var programHandle)
                 || !programHandle.IsValid)
                 return false;
 
-            var localsDef = contentDb.GetMorrowindScriptLocals(programHandle);
+            ref var localsDef = ref RuntimeContentBlobUtility.GetMorrowindScriptLocals(ref contentBlob, programHandle);
+            ref var program = ref RuntimeContentBlobUtility.Get(ref contentBlob, programHandle);
             int localIndex = -1;
-            for (int i = 0; i < localsDef.Length; i++)
+            for (int i = 0; i < program.LocalCount; i++)
             {
-                if (IdEquals(localsDef[i].Name, localName))
+                if (localsDef[program.FirstLocalIndex + i].NameHash == localNameHash)
                 {
                     localIndex = i;
                     break;
@@ -843,16 +858,15 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryResolvePlayerFactionReaction(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
-            string speakerFactionId,
+            ulong speakerFactionIdHash,
             bool lowest,
             out int value)
         {
             value = 0;
-            if (contentDb == null
-                || string.IsNullOrWhiteSpace(speakerFactionId)
-                || !contentDb.TryGetFactionHandle(speakerFactionId, out var speakerFaction)
+            if (speakerFactionIdHash == 0UL
+                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, speakerFactionIdHash, out var speakerFaction)
                 || !speakerFaction.IsValid)
             {
                 return true;
@@ -874,7 +888,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
 
                 int reaction = MorrowindDialogueUtility.GetFactionReaction(
-                    contentDb,
+                    ref contentBlob,
                     overrides,
                     speakerFaction.Index,
                     playerFactions[i].FactionIndex);
@@ -886,14 +900,11 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool TryReadPlayerClothingModifier(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             out int value)
         {
             value = 0;
-            if (contentDb == null)
-                return false;
-
             using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>());
             if (query.IsEmptyIgnoreFilter)
                 return false;
@@ -909,7 +920,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
 
                 var itemHandle = new ItemDefHandle { Value = slot.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, itemHandle, out var itemEquipment))
                     return false;
 
                 value += itemEquipment.Value;
@@ -994,7 +1005,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             };
         }
 
-        static bool Compare(float actual, in DialogueConditionDef rule)
+        static bool Compare(float actual, ref RuntimeDialogueConditionDefBlob rule)
         {
             float expected = rule.ValueKind == (byte)MorrowindScriptValueKind.Float ? rule.FloatValue : rule.IntValue;
             return (DialogueConditionComparison)rule.Comparison switch
@@ -1011,6 +1022,18 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool IdEquals(string a, string b)
             => string.Equals(ContentId.NormalizeId(a), ContentId.NormalizeId(b), StringComparison.Ordinal);
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob(EntityManager entityManager)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] dialogue filtering requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var reference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!reference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] dialogue filtering requires runtime world cell blob.");
+            return reference.Blob;
+        }
 
     }
 }

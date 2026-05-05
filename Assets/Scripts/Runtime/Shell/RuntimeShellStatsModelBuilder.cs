@@ -12,13 +12,13 @@ namespace VVardenfell.Runtime.Shell
     public partial class RuntimeHudShellPresentationSystem
     {
         static StatsWindowViewModel BuildStatsModel(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in StatsWindowState state,
             in PlayerPresentationStats playerStats)
         {
             var attributes = BuildAttributeRows(playerStats);
-            BuildSkillRows(contentDb, playerStats, out var majorSkills, out var minorSkills, out var miscSkills);
+            BuildSkillRows(ref contentBlob, playerStats, out var majorSkills, out var minorSkills, out var miscSkills);
 
             return new StatsWindowViewModel
             {
@@ -37,13 +37,13 @@ namespace VVardenfell.Runtime.Shell
                     ? $"{playerStats.Vitals.CurrentFatigue:0}/{playerStats.Vitals.ModifiedFatigueBase:0}"
                     : "0/0",
                 LevelText = playerStats.HasPlayer ? Math.Max(1, playerStats.Identity.Level).ToString() : "--",
-                RaceText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveRaceDisplayName(contentDb, playerStats.Identity.RaceName) : "--",
-                ClassText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveClassDisplayName(contentDb, playerStats.Identity.ClassName) : "--",
+                RaceText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveRaceDisplayName(ref contentBlob, playerStats.Identity.RaceName) : "--",
+                ClassText = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ResolveClassDisplayName(ref contentBlob, playerStats.Identity.ClassName) : "--",
                 Attributes = attributes,
                 MajorSkills = majorSkills,
                 MinorSkills = minorSkills,
                 MiscSkills = miscSkills,
-                Factions = BuildFactionRows(contentDb, entityManager, playerStats),
+                Factions = BuildFactionRows(ref contentBlob, entityManager, playerStats),
                 BirthSignName = playerStats.HasPlayer ? RuntimeContentMetadataResolver.ToDisplay(playerStats.Identity.BirthSignName, string.Empty) : string.Empty,
                 ReputationText = playerStats.HasPlayer ? playerStats.Identity.Reputation.ToString() : string.Empty,
             };
@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static void BuildSkillRows(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in PlayerPresentationStats playerStats,
             out StatsWindowSkillRow[] majorSkills,
             out StatsWindowSkillRow[] minorSkills,
@@ -77,10 +77,11 @@ namespace VVardenfell.Runtime.Shell
 
             var assigned = new bool[RuntimeContentMetadataResolver.SkillCount];
             if (playerStats.HasPlayer
-                && RuntimeContentMetadataResolver.TryResolveClass(contentDb, playerStats.Identity.ClassName, out var classDef))
+                && RuntimeContentMetadataResolver.TryResolveClassHandle(ref contentBlob, playerStats.Identity.ClassName, out var classHandle))
             {
-                majorSkills = BuildSkillRows(classDef.MajorSkills, playerStats, assigned);
-                minorSkills = BuildSkillRows(classDef.MinorSkills, playerStats, assigned);
+                ref RuntimeClassDefBlob classDef = ref RuntimeContentBlobUtility.GetClass(ref contentBlob, classHandle);
+                majorSkills = BuildSkillRows(ref contentBlob.ClassMajorSkills, classDef.FirstMajorSkillIndex, classDef.MajorSkillCount, playerStats, assigned);
+                minorSkills = BuildSkillRows(ref contentBlob.ClassMinorSkills, classDef.FirstMinorSkillIndex, classDef.MinorSkillCount, playerStats, assigned);
             }
 
             int miscCount = 0;
@@ -101,16 +102,22 @@ namespace VVardenfell.Runtime.Shell
             }
         }
 
-        static StatsWindowSkillRow[] BuildSkillRows(int[] skillIndices, in PlayerPresentationStats playerStats, bool[] assigned)
+        static StatsWindowSkillRow[] BuildSkillRows(
+            ref BlobArray<int> skillIndices,
+            int first,
+            int count,
+            in PlayerPresentationStats playerStats,
+            bool[] assigned)
         {
-            if (skillIndices == null || skillIndices.Length == 0)
+            RuntimeContentBlobUtility.RequireRange(first, count, skillIndices.Length, "class skill");
+            if (count == 0)
                 return Array.Empty<StatsWindowSkillRow>();
 
-            var rows = new StatsWindowSkillRow[Math.Min(skillIndices.Length, RuntimeContentMetadataResolver.SkillCount)];
+            var rows = new StatsWindowSkillRow[Math.Min(count, RuntimeContentMetadataResolver.SkillCount)];
             int write = 0;
-            for (int i = 0; i < skillIndices.Length; i++)
+            for (int i = 0; i < count; i++)
             {
-                int skillIndex = skillIndices[i];
+                int skillIndex = skillIndices[first + i];
                 if (skillIndex < 0 || skillIndex >= RuntimeContentMetadataResolver.SkillCount || assigned[skillIndex])
                     continue;
 
@@ -136,12 +143,11 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static StatsWindowFactionRow[] BuildFactionRows(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             in PlayerPresentationStats playerStats)
         {
             if (!playerStats.HasPlayer
-                || contentDb == null
                 || playerStats.PlayerEntity == Entity.Null
                 || !entityManager.Exists(playerStats.PlayerEntity)
                 || !entityManager.HasBuffer<PlayerFactionMembership>(playerStats.PlayerEntity))
@@ -153,7 +159,7 @@ namespace VVardenfell.Runtime.Shell
             int count = 0;
             for (int i = 0; i < memberships.Length; i++)
             {
-                if (IsVisibleFactionMembership(contentDb, memberships[i]))
+                if (IsVisibleFactionMembership(ref contentBlob, memberships[i]))
                     count++;
             }
 
@@ -165,30 +171,31 @@ namespace VVardenfell.Runtime.Shell
             for (int i = 0; i < memberships.Length; i++)
             {
                 var membership = memberships[i];
-                if (!IsVisibleFactionMembership(contentDb, membership))
+                if (!IsVisibleFactionMembership(ref contentBlob, membership))
                     continue;
 
-                ref readonly var faction = ref contentDb.Data.Factions[membership.FactionIndex];
+                ref RuntimeFactionDefBlob faction = ref contentBlob.Factions[membership.FactionIndex];
+                string fallback = faction.Id.ToString();
                 rows[write++] = new StatsWindowFactionRow
                 {
-                    Name = RuntimeContentMetadataResolver.ResolveFactionDisplayName(faction, faction.Id),
-                    Rank = RuntimeContentMetadataResolver.ResolveFactionRankName(faction, membership.Rank),
+                    Name = RuntimeContentMetadataResolver.ResolveFactionDisplayName(ref faction, fallback),
+                    Rank = RuntimeContentMetadataResolver.ResolveFactionRankName(ref contentBlob, ref faction, membership.Rank),
                 };
             }
 
             return rows;
         }
 
-        static bool IsVisibleFactionMembership(RuntimeContentDatabase contentDb, in PlayerFactionMembership membership)
+        static bool IsVisibleFactionMembership(ref RuntimeContentBlob contentBlob, in PlayerFactionMembership membership)
         {
             if (membership.Joined == 0
                 || membership.Expelled != 0
-                || (uint)membership.FactionIndex >= (uint)contentDb.FactionCount)
+                || (uint)membership.FactionIndex >= (uint)contentBlob.Factions.Length)
             {
                 return false;
             }
 
-            ref readonly var faction = ref contentDb.Data.Factions[membership.FactionIndex];
+            ref RuntimeFactionDefBlob faction = ref contentBlob.Factions[membership.FactionIndex];
             return faction.Hidden == 0;
         }
 

@@ -1,7 +1,7 @@
 using Unity.Entities;
 using Unity.Profiling;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
@@ -32,6 +32,7 @@ namespace VVardenfell.Runtime.Audio
             RequireForUpdate<AudioTuningState>();
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnDestroy()
@@ -47,7 +48,7 @@ namespace VVardenfell.Runtime.Audio
             CompleteDependency();
             _service ??= new RuntimeAudioService();
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var context = SystemAPI.GetSingleton<AudioContextState>();
             var music = SystemAPI.GetSingleton<MusicState>();
             var interiorAmbient = SystemAPI.GetSingleton<InteriorAmbientState>();
@@ -63,36 +64,36 @@ namespace VVardenfell.Runtime.Audio
             bool runtimePaused = SystemAPI.HasSingleton<MorrowindRuntimePaused>();
 
             using (k_SyncMusic.Auto())
-                _service.SyncMusic(contentDb, music, tuning);
+                _service.SyncMusic(ref contentBlob, music, tuning);
             if (runtimeActive && !runtimePaused)
             {
                 using (k_SyncInteriorAmbient.Auto())
-                    _service.SyncInteriorAmbient(contentDb, interiorAmbient, tuning);
-                _service.SyncWeatherAmbient(contentDb, weatherAmbient, tuning);
-                _service.SyncWeatherRain(contentDb, weatherRain, tuning);
-                _service.SyncNearWater(contentDb, nearWater, tuning);
+                    _service.SyncInteriorAmbient(ref contentBlob, interiorAmbient, tuning);
+                _service.SyncWeatherAmbient(ref contentBlob, weatherAmbient, tuning);
+                _service.SyncWeatherRain(ref contentBlob, weatherRain, tuning);
+                _service.SyncNearWater(ref contentBlob, nearWater, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(context.Mode == AudioPlaybackMode.World && regionAmbient.Region.IsValid);
                 using (k_QueueRegionEvent.Auto())
-                    _service.QueueRegionAmbientEvent(contentDb, regionAmbient, tuning);
+                    _service.QueueRegionAmbientEvent(ref contentBlob, regionAmbient, tuning);
                 using (k_QueueInteractionEvent.Auto())
-                    _service.QueueInteractionAudioEvents(contentDb, interactionRequests, ref interactionState, tuning);
+                    _service.QueueInteractionAudioEvents(ref contentBlob, interactionRequests, ref interactionState, tuning);
                 using (k_QueueScriptEvent.Auto())
-                    ConsumeScriptAudioRequests(contentDb, tuning, consume: true, keepActiveLoops: true);
+                    ConsumeScriptAudioRequests(ref contentBlob, tuning, consume: true, keepActiveLoops: true);
             }
             else
             {
                 using (k_SyncInteriorAmbient.Auto())
-                    _service.SyncInteriorAmbient(contentDb, default, tuning);
-                _service.SyncWeatherAmbient(contentDb, default, tuning);
-                _service.SyncWeatherRain(contentDb, default, tuning);
-                _service.SyncNearWater(contentDb, default, tuning);
+                    _service.SyncInteriorAmbient(ref contentBlob, default, tuning);
+                _service.SyncWeatherAmbient(ref contentBlob, default, tuning);
+                _service.SyncWeatherRain(ref contentBlob, default, tuning);
+                _service.SyncNearWater(ref contentBlob, default, tuning);
                 using (k_SyncRegionContext.Auto())
                     _service.SyncRegionAmbientContext(false);
                 interactionRequests.Clear();
                 interactionState = default;
                 using (k_QueueScriptEvent.Auto())
-                    ConsumeScriptAudioRequests(contentDb, tuning, consume: false, keepActiveLoops: false);
+                    ConsumeScriptAudioRequests(ref contentBlob, tuning, consume: false, keepActiveLoops: false);
             }
 
             _service.Tick(SystemAPI.Time.DeltaTime);
@@ -100,14 +101,14 @@ namespace VVardenfell.Runtime.Audio
             playbackStatus.HasPendingTrack = (byte)(_service.HasPendingMusicTrack ? 1 : 0);
         }
 
-        void ConsumeScriptAudioRequests(RuntimeContentDatabase contentDb, in AudioTuningState tuning, bool consume, bool keepActiveLoops)
+        void ConsumeScriptAudioRequests(ref RuntimeContentBlob contentBlob, in AudioTuningState tuning, bool consume, bool keepActiveLoops)
         {
             _service.BeginScriptAudioFrame();
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             foreach (var (request, entity) in SystemAPI.Query<RefRO<MorrowindScriptAudioRequest>>().WithEntityAccess())
             {
                 if (consume)
-                    _service.QueueScriptAudioEvent(contentDb, request.ValueRO, tuning);
+                    _service.QueueScriptAudioEvent(ref contentBlob, request.ValueRO, tuning);
                 ecb.DestroyEntity(entity);
             }
 

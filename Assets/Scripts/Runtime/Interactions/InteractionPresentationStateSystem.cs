@@ -1,7 +1,7 @@
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
@@ -16,6 +16,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<PlayerInteractionFocus>();
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<InteractionPresentationState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -28,7 +29,8 @@ namespace VVardenfell.Runtime.Interactions
             var focus = SystemAPI.GetSingleton<PlayerInteractionFocus>();
             if (focus.HasTarget != 0 && EntityManager.Exists(focus.TargetEntity))
             {
-                string prompt = BuildFocusPrompt(RuntimeContentDatabase.Active, focus);
+                ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+                string prompt = BuildFocusPrompt(ref contentBlob, focus);
                 if (!string.IsNullOrWhiteSpace(prompt))
                 {
                     presentation.ShowFocus = 1;
@@ -56,9 +58,9 @@ namespace VVardenfell.Runtime.Interactions
             }
         }
 
-        string BuildFocusPrompt(RuntimeContentDatabase contentDb, PlayerInteractionFocus focus)
+        string BuildFocusPrompt(ref RuntimeContentBlob contentBlob, PlayerInteractionFocus focus)
         {
-            return InteractionMetadataResolver.BuildFocusPrompt(contentDb, EntityManager, focus);
+            return InteractionMetadataResolver.BuildFocusPrompt(ref contentBlob, EntityManager, focus);
         }
 
     }

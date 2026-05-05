@@ -70,6 +70,7 @@ namespace VVardenfell.Runtime.Books
             RequireForUpdate<BookSkillGrantRequest>();
             RequireForUpdate<BookReadHistoryEntry>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -78,8 +79,8 @@ namespace VVardenfell.Runtime.Books
             if (request.Pending == 0)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (!RuntimeContentMetadataResolver.TryResolveBook(contentDb, request.Content, out var metadata))
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (!RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, request.Content, out var metadata))
             {
                 request = default;
                 request.InventoryIndex = -1;

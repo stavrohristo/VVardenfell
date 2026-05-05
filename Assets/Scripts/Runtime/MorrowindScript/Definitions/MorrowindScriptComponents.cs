@@ -260,6 +260,15 @@ namespace VVardenfell.Runtime.Components
         public FixedString512Bytes Subtitle;
     }
 
+    public struct MorrowindCombatHitVoiceResolveRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public ActorDefHandle Actor;
+        public int DialogueIndex;
+        public uint RandomState;
+    }
+
     public struct MorrowindScriptActorLocalSetRequest : IBufferElementData
     {
         public int ActorHandleValue;
@@ -298,41 +307,11 @@ namespace VVardenfell.Runtime.Components
         public byte Active;
     }
 
-    public struct MorrowindScriptRefTransformSnapshot
-    {
-        public uint PlacedRefId;
-        public float3 Position;
-        public quaternion Rotation;
-    }
-
-    public struct MorrowindScriptInitialTransformSnapshot
-    {
-        public uint PlacedRefId;
-        public float3 Position;
-        public quaternion Rotation;
-        public float Scale;
-    }
-
     public struct MorrowindScriptLockStateSnapshot
     {
         public uint PlacedRefId;
         public int LockLevel;
         public byte Locked;
-    }
-
-    public struct MorrowindScriptInventoryCountSnapshot
-    {
-        public uint PlacedRefId;
-        public ContentReference Content;
-        public int Count;
-    }
-
-    public struct MorrowindScriptActorDeathSnapshot
-    {
-        public Entity Entity;
-        public uint PlacedRefId;
-        public byte Died;
-        public byte Consumed;
     }
 
     public struct MorrowindScriptActorEventSnapshot

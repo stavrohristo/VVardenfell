@@ -1,6 +1,7 @@
 using System;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
@@ -17,15 +18,18 @@ namespace VVardenfell.Runtime.Combat
         {
             RequireForUpdate<MorrowindDamageAppliedEvent>();
             RequireForUpdate<RuntimeEnemyHealthBarState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][HUD] Enemy health bar has no runtime content database.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][HUD] Enemy health bar damage requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
-            float displaySeconds = contentDb.RequireGameSettingFloat("fNPCHealthBarTime");
-            float fadeSeconds = contentDb.RequireGameSettingFloat("fNPCHealthBarFade");
+            float displaySeconds = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fNPCHealthBarTime);
+            float fadeSeconds = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fNPCHealthBarFade);
             if (displaySeconds < 0f)
                 throw new InvalidOperationException($"[VVardenfell][HUD] GMST 'fNPCHealthBarTime' must be non-negative, got {displaySeconds}.");
             if (fadeSeconds < 0f)
@@ -95,3 +99,5 @@ namespace VVardenfell.Runtime.Combat
             => EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value;
     }
 }
+
+

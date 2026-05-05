@@ -1,7 +1,7 @@
 using Unity.Entities;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
@@ -18,6 +18,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             RequireForUpdate<MorrowindDialogueRequest>();
             RequireForUpdate<MorrowindQuestJournalState>();
             RequireForUpdate<MorrowindTimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -27,7 +28,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var knownTopics = EntityManager.GetBuffer<MorrowindKnownDialogueTopic>(runtimeEntity);
             var topicEntries = EntityManager.GetBuffer<MorrowindTopicJournalEntry>(runtimeEntity);
             ref var dialogueState = ref SystemAPI.GetSingletonRW<MorrowindDialogueState>().ValueRW;
@@ -41,13 +42,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var request = requests[i];
                 if (request.Operation == (byte)MorrowindDialogueRequestOperation.AddTopic)
                 {
-                    if (!MorrowindDialogueUtility.TryAddTopic(contentDb, knownTopics, request.DialogueIndex))
+                    if (!MorrowindDialogueUtility.TryAddTopic(ref contentBlob, knownTopics, request.DialogueIndex))
                         Debug.LogError($"[VVardenfell][Dialogue] invalid AddTopic request dialogueIndex={request.DialogueIndex}.");
                 }
                 else if (request.Operation == (byte)MorrowindDialogueRequestOperation.FillJournal)
                 {
                     if (!MorrowindDialogueUtility.TryFillJournal(
-                            contentDb,
+                            ref contentBlob,
                             ref dialogueState,
                             ref questState,
                             time,

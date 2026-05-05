@@ -1,8 +1,8 @@
 using System;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Shell
 {
@@ -21,12 +21,9 @@ namespace VVardenfell.Runtime.Shell
         public static float HealthPerSleepHour(in ActorAttributeSet attributes)
             => 0.1f * math.max(0f, attributes.Endurance);
 
-        public static float MagickaPerSleepHour(RuntimeContentDatabase contentDb, in ActorAttributeSet attributes)
+        public static float MagickaPerSleepHour(ref RuntimeContentBlob contentBlob, in ActorAttributeSet attributes)
         {
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Rest] Missing content database for fRestMagicMult.");
-
-            return contentDb.RequireGameSettingFloat("fRestMagicMult") * math.max(0f, attributes.Intelligence);
+            return RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fRestMagicMult) * math.max(0f, attributes.Intelligence);
         }
 
         public static bool HasStuntedMagicka(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
@@ -93,13 +90,13 @@ namespace VVardenfell.Runtime.Shell
         }
 
         public static int ComputeUntilHealedHours(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             in ActorVitalSet vitals,
             in ActorAttributeSet attributes,
             bool stuntedMagicka)
         {
             float healthPerHour = HealthPerSleepHour(attributes);
-            float magickaPerHour = MagickaPerSleepHour(contentDb, attributes);
+            float magickaPerHour = MagickaPerSleepHour(ref contentBlob, attributes);
             float healthHours = healthPerHour > 0f
                 ? (vitals.ModifiedHealthBase - vitals.CurrentHealth) / healthPerHour
                 : 1f;

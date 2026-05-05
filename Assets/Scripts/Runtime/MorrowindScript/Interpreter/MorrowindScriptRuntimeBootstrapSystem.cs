@@ -5,7 +5,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
@@ -33,18 +32,24 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
                 RuntimeBootstrapUtility.EnsureBuffer<ActorSpellCastRequest>(EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceResolveRequest>(EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(EntityManager, runtimeEntity);
                 ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
                 RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
                 return;
             }
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
+            if (!SystemAPI.HasSingleton<RuntimeContentBlobReference>())
                 return;
 
+            BlobAssetReference<RuntimeContentBlob> contentBlob = SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob;
+            if (!contentBlob.IsCreated)
+                return;
+
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+
             WorldResources.MorrowindScriptCatalog?.Dispose();
-            WorldResources.MorrowindScriptCatalog = MorrowindScriptRuntimeCatalog.Create(contentDb.Data);
+            WorldResources.MorrowindScriptCatalog = MorrowindScriptRuntimeCatalog.Create(contentBlob);
 
             Entity runtime = EntityManager.CreateEntity(typeof(MorrowindScriptRuntimeState));
             EntityManager.SetName(runtime, "VVardenfell.MorrowindScriptRuntime");
@@ -56,11 +61,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             CreateOrRepairInterpreterScratch(runtime);
 
             var globals = EntityManager.AddBuffer<MorrowindScriptGlobalValue>(runtime);
-            globals.ResizeUninitialized(contentDb.GlobalCount);
-            for (int i = 0; i < contentDb.GlobalCount; i++)
+            globals.ResizeUninitialized(content.Globals.Length);
+            for (int i = 0; i < content.Globals.Length; i++)
             {
-                ref readonly var global = ref contentDb.GetGlobal(GenericRecordDefHandle.FromIndex(i));
-                byte valueKind = ResolveGlobalKind(global);
+                ref RuntimeGenericRecordDefBlob global = ref content.Globals[i];
+                byte valueKind = ResolveGlobalKind(ref global);
                 globals[i] = new MorrowindScriptGlobalValue
                 {
                     IntValue = valueKind == (byte)MorrowindScriptValueKind.Float ? (int)global.Float0 : global.Int0,
@@ -70,17 +75,17 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             var deathCounts = EntityManager.AddBuffer<MorrowindActorDeathCount>(runtime);
-            deathCounts.ResizeUninitialized(contentDb.ActorCount);
+            deathCounts.ResizeUninitialized(content.Actors.Length);
             for (int i = 0; i < deathCounts.Length; i++)
                 deathCounts[i] = default;
 
             EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
             {
-                QuestCount = contentDb.DialogueCount,
+                QuestCount = content.Dialogues.Length,
                 NextEntrySequence = 1u,
             });
             var journal = EntityManager.AddBuffer<MorrowindQuestJournalIndex>(runtime);
-            journal.ResizeUninitialized(contentDb.DialogueCount);
+            journal.ResizeUninitialized(content.Dialogues.Length);
             for (int i = 0; i < journal.Length; i++)
                 journal[i] = default;
             EntityManager.AddBuffer<MorrowindQuestJournalEntry>(runtime);
@@ -88,12 +93,12 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             EntityManager.AddComponentData(runtime, new MorrowindDialogueState
             {
-                DialogueCount = contentDb.DialogueCount,
+                DialogueCount = content.Dialogues.Length,
                 NextTopicEntrySequence = 1u,
                 NextSessionSequence = 1u,
             });
             var topics = EntityManager.AddBuffer<MorrowindKnownDialogueTopic>(runtime);
-            topics.ResizeUninitialized(contentDb.DialogueCount);
+            topics.ResizeUninitialized(content.Dialogues.Length);
             for (int i = 0; i < topics.Length; i++)
                 topics[i] = default;
             EntityManager.AddBuffer<MorrowindTopicJournalEntry>(runtime);
@@ -125,6 +130,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
             EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
+            EntityManager.AddBuffer<MorrowindCombatHitVoiceResolveRequest>(runtime);
             EntityManager.AddBuffer<MorrowindCombatHitVoiceSayRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
             EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
@@ -160,12 +166,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (scratch.IsCreated)
                 return;
 
+            scratch.Dispose();
             EntityManager.SetComponentData(runtimeEntity, MorrowindScriptInterpreterScratch.Create(Allocator.Persistent));
         }
 
-        static byte ResolveGlobalKind(in GenericRecordDef global)
+        static byte ResolveGlobalKind(ref RuntimeGenericRecordDefBlob global)
         {
-            if (!string.IsNullOrWhiteSpace(global.Name) && global.Name[0] == 'f')
+            string name = global.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name) && name[0] == 'f')
                 return (byte)MorrowindScriptValueKind.Float;
 
             return (byte)MorrowindScriptValueKind.Integer;

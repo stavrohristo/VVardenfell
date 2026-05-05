@@ -1,8 +1,8 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Profiling;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Audio
@@ -16,23 +16,18 @@ namespace VVardenfell.Runtime.Audio
         {
             RequireForUpdate<AmbientSettingsState>();
             RequireForUpdate<AudioTuningState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
             using var _ = k_SettingsResolve.Auto();
 
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var tuning = SystemAPI.GetSingleton<AudioTuningState>();
             ref var state = ref SystemAPI.GetSingletonRW<AmbientSettingsState>().ValueRW;
-            if (contentDb == null)
-            {
-                state.MinSecondsBetweenEnvironmentalSounds = math.max(0.05f, tuning.ExteriorAmbientFallbackMinSeconds);
-                state.MaxSecondsBetweenEnvironmentalSounds = math.max(state.MinSecondsBetweenEnvironmentalSounds, tuning.ExteriorAmbientFallbackMaxSeconds);
-                return;
-            }
 
-            var settings = contentDb.GetAmbientSettings();
+            var settings = contentBlob.AmbientSettings;
             state.MinSecondsBetweenEnvironmentalSounds = math.max(
                 0.05f,
                 settings.MinSecondsBetweenEnvironmentalSounds * math.max(0f, tuning.ExteriorAmbientMinIntervalMultiplier));

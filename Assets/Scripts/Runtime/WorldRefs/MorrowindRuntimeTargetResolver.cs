@@ -4,7 +4,6 @@ using Unity.Entities;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 
@@ -28,7 +27,7 @@ namespace VVardenfell.Runtime.WorldRefs
         }
 
         public static bool TryResolveExplicitRefTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             ActiveExplicitRefLookup activeExplicitRefs,
             string target,
             out Entity targetEntity,
@@ -36,19 +35,19 @@ namespace VVardenfell.Runtime.WorldRefs
         {
             targetEntity = Entity.Null;
             targetPlacedRefId = 0u;
-            if (contentDb == null || string.IsNullOrWhiteSpace(target))
+            if (string.IsNullOrWhiteSpace(target))
                 return false;
 
-            if (contentDb.TryGetExplicitRefTarget(target, out targetPlacedRefId) && targetPlacedRefId != 0u)
+            if (RuntimeContentBlobUtility.TryGetExplicitRefTargetByIdHash(ref content, RuntimeContentStableHash.HashId(target), out targetPlacedRefId) && targetPlacedRefId != 0u)
                 return true;
 
-            if (!contentDb.TryResolvePlaceable(target, out var content) || !contentDb.IsValid(content))
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref content, RuntimeContentStableHash.HashId(target), out var contentRef) || !RuntimeContentBlobUtility.IsValid(ref content, contentRef))
                 return false;
 
             if (!activeExplicitRefs.ByContentKey.IsCreated)
                 throw new InvalidOperationException($"[VVardenfell][WorldRefs] active explicit-ref lookup is not initialized for '{target}'.");
 
-            int key = ActiveExplicitRefLookupUtility.Pack(content);
+            int key = ActiveExplicitRefLookupUtility.Pack(contentRef);
             if (!activeExplicitRefs.ByContentKey.TryGetValue(key, out var activeTarget))
                 throw new InvalidOperationException($"[VVardenfell][WorldRefs] explicit reference '{target}' resolved to content, but no active loaded ref was found.");
 
@@ -64,7 +63,7 @@ namespace VVardenfell.Runtime.WorldRefs
         }
 
         public static bool TryResolveActorTarget(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             ActiveExplicitRefLookup activeExplicitRefs,
             string target,
@@ -94,14 +93,14 @@ namespace VVardenfell.Runtime.WorldRefs
                 return targetEntity != Entity.Null && entityManager.Exists(targetEntity);
             }
 
-            if (TryResolveExplicitRefTarget(contentDb, activeExplicitRefs, target, out targetEntity, out targetPlacedRefId))
+            if (TryResolveExplicitRefTarget(ref content, activeExplicitRefs, target, out targetEntity, out targetPlacedRefId))
                 return targetEntity == Entity.Null || entityManager.Exists(targetEntity);
 
-            return TryResolveUniqueActorById(contentDb, entityManager, target, out targetEntity, out targetPlacedRefId);
+            return TryResolveUniqueActorById(ref content, entityManager, target, out targetEntity, out targetPlacedRefId);
         }
 
         public static bool TryResolveDefaultOrUniqueActorById(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             string target,
             Entity defaultEntity,
@@ -120,7 +119,7 @@ namespace VVardenfell.Runtime.WorldRefs
                        && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
             }
 
-            return TryResolveUniqueActorById(contentDb, entityManager, target, out targetEntity, out targetPlacedRefId);
+            return TryResolveUniqueActorById(ref content, entityManager, target, out targetEntity, out targetPlacedRefId);
         }
 
         public static Entity ResolvePlayerEntity(EntityManager entityManager)
@@ -138,7 +137,7 @@ namespace VVardenfell.Runtime.WorldRefs
         }
 
         static bool TryResolveUniqueActorById(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             string target,
             out Entity targetEntity,
@@ -146,9 +145,6 @@ namespace VVardenfell.Runtime.WorldRefs
         {
             targetEntity = Entity.Null;
             targetPlacedRefId = 0u;
-            if (contentDb == null)
-                return false;
-
             string normalizedTarget = ContentId.NormalizeId(target);
             if (string.IsNullOrEmpty(normalizedTarget))
                 return false;
@@ -168,8 +164,8 @@ namespace VVardenfell.Runtime.WorldRefs
                 if (!actorHandle.IsValid)
                     continue;
 
-                ref readonly var actor = ref contentDb.Get(actorHandle);
-                if (!ActorIdMatches(actor, normalizedTarget))
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+                if (!ActorIdMatches(ref actor, normalizedTarget))
                     continue;
 
                 matchCount++;
@@ -187,8 +183,8 @@ namespace VVardenfell.Runtime.WorldRefs
             return true;
         }
 
-        static bool ActorIdMatches(in ActorDef actor, string normalizedTarget)
-            => string.Equals(ContentId.NormalizeId(actor.Id), normalizedTarget, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(ContentId.NormalizeId(actor.OriginalId), normalizedTarget, StringComparison.OrdinalIgnoreCase);
+        static bool ActorIdMatches(ref RuntimeActorDefBlob actor, string normalizedTarget)
+            => string.Equals(ContentId.NormalizeId(actor.Id.ToString()), normalizedTarget, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(ContentId.NormalizeId(actor.OriginalId.ToString()), normalizedTarget, StringComparison.OrdinalIgnoreCase);
     }
 }

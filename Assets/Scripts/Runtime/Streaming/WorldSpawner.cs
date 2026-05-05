@@ -10,7 +10,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.WorldRefs;
 using Collider = Unity.Physics.Collider;
 
@@ -46,12 +45,9 @@ namespace VVardenfell.Runtime.Streaming
         {
             var em = world.EntityManager;
 
-            var cellEntries = new KeyValuePair<int2, CellData>[WorldResources.Cells.Count];
-            int cellIndex = 0;
-            foreach (var kv in WorldResources.Cells)
-                cellEntries[cellIndex++] = kv;
+            var cellEntries = WorldResources.CopyExteriorCellEntries();
 
-            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.Cells.Count);
+            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.ExteriorCellCount);
 
             progress?.BeginStage("Spawn terrain", "Creating terrain entities", cellEntries.Length);
             int terrainBuilt = 0;
@@ -194,7 +190,7 @@ namespace VVardenfell.Runtime.Streaming
                 progress?.BeginStage("Spawn logical refs", "Creating logical placed refs", totalRefs);
                 WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
-                    cache.ContentDatabase,
+                    cache.ContentBlob,
                     refArr,
                     coordArr,
                     spawnedRefEntities,
@@ -249,12 +245,9 @@ namespace VVardenfell.Runtime.Streaming
         public static IEnumerator SpawnAllTerrainIncremental(World world, LoadedCellsMap loaded, RuntimeLoadProgress progress)
         {
             var em = world.EntityManager;
-            var cellEntries = new KeyValuePair<int2, CellData>[WorldResources.Cells.Count];
-            int cellIndex = 0;
-            foreach (var kv in WorldResources.Cells)
-                cellEntries[cellIndex++] = kv;
+            var cellEntries = WorldResources.CopyExteriorCellEntries();
 
-            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.Cells.Count);
+            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.ExteriorCellCount);
 
             progress?.BeginStage("Spawn terrain", "Creating all terrain entities", cellEntries.Length);
             for (int i = 0; i < cellEntries.Length; i++)
@@ -286,6 +279,62 @@ namespace VVardenfell.Runtime.Streaming
         {
             WorldInteriorSpawnUtility.SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
             ActiveExplicitRefLookupLifecycleUtility.MarkDirty(world.EntityManager);
+        }
+
+        public static bool TrySpawnInteriorCellByHash(
+            World world,
+            ulong interiorCellHash,
+            float3 worldOffset,
+            Entity transitionEntity,
+            ref LogicalRefLookup logicalRefs,
+            out FixedString128Bytes interiorCellId)
+        {
+            interiorCellId = default;
+            if (interiorCellHash == 0UL)
+                return false;
+            if (!WorldResources.TryGetInteriorCell(interiorCellHash, out CellData cell) || cell == null)
+                return false;
+
+            interiorCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(cell.CellId);
+            if (interiorCellId.IsEmpty)
+                interiorCellId = WorldResources.ResolveInteriorCellId(interiorCellHash);
+            SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
+            return true;
+        }
+
+        public static bool TryGetInteriorStaticCollider(
+            ulong interiorCellHash,
+            out BlobAssetReference<Collider> collider)
+        {
+            collider = default;
+            if (interiorCellHash == 0UL)
+                return false;
+            if (!WorldResources.TryGetInteriorCell(interiorCellHash, out CellData cell) || cell == null)
+                return false;
+            if (!cell.StaticColliderBlob.IsCreated)
+                return false;
+
+            collider = cell.StaticColliderBlob;
+            return true;
+        }
+
+        public static bool TrySpawnExteriorCellByCoord(
+            World world,
+            int2 coord,
+            ref LoadedCellsMap loaded,
+            ref LogicalRefLookup logicalRefs,
+            bool active,
+            bool gateTerrainByRadius)
+        {
+            return WorldResources.TryGetExteriorCell(coord, out CellData cellData)
+                   && SpawnExteriorCell(
+                       world,
+                       coord,
+                       cellData,
+                       ref loaded,
+                       ref logicalRefs,
+                       active,
+                       gateTerrainByRadius);
         }
 
         public static bool SpawnExteriorCell(
@@ -325,9 +374,12 @@ namespace VVardenfell.Runtime.Streaming
                 for (int i = 0; i < refs.Length; i++)
                     refArray[i] = refs[i];
                 var coordArray = BuildCoordArray(coord, refs.Length);
+                var contentBlob = WorldResources.Cache?.ContentBlob ?? default;
+                if (!contentBlob.IsCreated)
+                    throw new System.InvalidOperationException("[VVardenfell][ContentBlob] WorldSpawner requires runtime content blob for logical refs.");
                 WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
-                    WorldResources.Cache?.ContentDatabase ?? RuntimeContentDatabase.Active,
+                    contentBlob,
                     refArray,
                     coordArray,
                     spawnedRefEntities,

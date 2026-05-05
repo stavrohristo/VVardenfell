@@ -22,7 +22,6 @@ namespace VVardenfell.Runtime.Combat
     public partial class MorrowindOnHitAftermathSystem : SystemBase
     {
         const string HitVoiceDialogueId = "hit";
-        const string OnPcHitMeLocal = "onpchitme";
         const float DamageEpsilon = 0.001f;
         const int FriendlyHitForgivenessLimit = 4;
         static readonly short VampirismEffectId = RequireEffectId("sEffectVampirism");
@@ -33,27 +32,33 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][OnHit] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][OnHit] On-hit aftermath requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
-            int voiceHitOdds = contentDb.RequireGameSettingInt("iVoiceHitOdds");
+            int voiceHitOdds = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iVoiceHitOdds);
             if (voiceHitOdds < 0 || voiceHitOdds > 100)
                 throw new InvalidOperationException($"[VVardenfell][OnHit] GMST 'iVoiceHitOdds' must be between 0 and 100, got {voiceHitOdds}.");
 
-            bool hasHitVoiceDialogue = TryResolveHitVoiceDialogue(contentDb, out int hitDialogueIndex);
+            bool hasHitVoiceDialogue = TryResolveHitVoiceDialogue(ref content, out int hitDialogueIndex);
             Entity scriptRuntimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             if (!EntityManager.HasBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindCombatHitVoiceSayRequest buffer.");
+            if (!EntityManager.HasBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity))
+                throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindCombatHitVoiceResolveRequest buffer.");
             if (!EntityManager.HasBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindScriptActiveSay buffer.");
             if (!EntityManager.HasBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no ActorForceGreetingRequest buffer.");
 
             var hitVoiceRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity);
+            var hitVoiceResolveRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity);
             var activeSays = EntityManager.GetBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity, true);
             var forceGreetingRequests = EntityManager.GetBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity);
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
@@ -67,10 +72,11 @@ namespace VVardenfell.Runtime.Combat
                 ApplyHitMemory(damage.ValueRO);
 
                 bool setOnPcHitMe = ApplySocialHitAftermath(
-                    contentDb,
+                    ref content,
                     damage.ValueRO,
                     activeSays,
                     hitVoiceRequests,
+                    hitVoiceResolveRequests,
                     hitDialogueIndex,
                     hasHitVoiceDialogue,
                     forceGreetingRequests,
@@ -79,7 +85,7 @@ namespace VVardenfell.Runtime.Combat
                     ref randomState);
 
                 if (setOnPcHitMe && IsPlayerAttacker(damage.ValueRO.Attacker))
-                    SetOnPcHitMeIfDeclared(contentDb, damage.ValueRO.Target);
+                    SetOnPcHitMeIfDeclared(ref content, damage.ValueRO.Target);
 
                 if (damage.ValueRO.TargetVital == MorrowindDamageTargetVital.Health
                     && damage.ValueRO.Amount > DamageEpsilon
@@ -91,32 +97,33 @@ namespace VVardenfell.Runtime.Combat
                 if (damage.ValueRO.Amount <= DamageEpsilon || damage.ValueRO.Attacker == Entity.Null)
                     continue;
 
-                ApplyMurderAftermath(contentDb, damage.ValueRO);
+                ApplyMurderAftermath(ref content, damage.ValueRO);
 
-                if (!IsNpcTarget(contentDb, damage.ValueRO.Target, out var targetSource))
+                if (!IsNpcTarget(ref content, damage.ValueRO.Target, out var targetSource))
                     continue;
 
                 uint targetRef = PlacedRefIdOrZero(damage.ValueRO.Target);
-                bool actorSayingOrPending = IsActorSayingOrPending(activeSays, hitVoiceRequests, damage.ValueRO.Target, targetRef);
+                bool actorSayingOrPending = IsActorSayingOrPending(activeSays, hitVoiceRequests, hitVoiceResolveRequests, damage.ValueRO.Target, targetRef);
                 bool shouldQueueHitVoice = hasHitVoiceDialogue && !actorSayingOrPending && ShouldQueueHitVoice(damage.ValueRO, voiceHitOdds, ref randomState);
 
                 if (shouldQueueHitVoice)
                 {
-                    QueueHitVoice(contentDb, hitDialogueIndex, targetSource.Definition, damage.ValueRO.Target, hitVoiceRequests, ref randomState);
+                    QueueHitVoiceResolve(hitDialogueIndex, targetSource.Definition, damage.ValueRO.Target, hitVoiceResolveRequests, randomState);
                 }
             }
 
             for (int i = 0; i < combatStartActors.Length; i++)
-                StartCombatAfterHit(contentDb, combatStartActors[i], combatStartTargets[i]);
+                StartCombatAfterHit(ref content, combatStartActors[i], combatStartTargets[i]);
 
             combatState.RandomState = randomState == 0u ? 1u : randomState;
         }
 
         bool ApplySocialHitAftermath(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in MorrowindDamageAppliedEvent damage,
             DynamicBuffer<MorrowindScriptActiveSay> activeSays,
             DynamicBuffer<MorrowindCombatHitVoiceSayRequest> hitVoiceRequests,
+            DynamicBuffer<MorrowindCombatHitVoiceResolveRequest> hitVoiceResolveRequests,
             int hitDialogueIndex,
             bool hasHitVoiceDialogue,
             DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
@@ -136,20 +143,20 @@ namespace VVardenfell.Runtime.Combat
 
             if (IsFriendlyHit(damage, out bool complain))
             {
-                if (complain && hasHitVoiceDialogue && IsNpcTarget(contentDb, damage.Target, out var friendlyTargetSource))
+                if (complain && hasHitVoiceDialogue && IsNpcTarget(ref content, damage.Target, out var friendlyTargetSource))
                 {
                     uint targetRef = PlacedRefIdOrZero(damage.Target);
-                    if (!IsActorSayingOrPending(activeSays, hitVoiceRequests, damage.Target, targetRef))
-                        QueueHitVoice(contentDb, hitDialogueIndex, friendlyTargetSource.Definition, damage.Target, hitVoiceRequests, ref randomState);
+                    if (!IsActorSayingOrPending(activeSays, hitVoiceRequests, hitVoiceResolveRequests, damage.Target, targetRef))
+                        QueueHitVoiceResolve(hitDialogueIndex, friendlyTargetSource.Definition, damage.Target, hitVoiceResolveRequests, randomState);
                 }
 
                 return false;
             }
 
-            if (CanCommitAssaultCrime(contentDb, damage.Target, damage.Attacker))
-                ApplyAssaultCrime(contentDb, damage.Target, damage.Attacker, forceGreetingRequests);
+            if (CanCommitAssaultCrime(ref content, damage.Target, damage.Attacker))
+                ApplyAssaultCrime(ref content, damage.Target, damage.Attacker, forceGreetingRequests);
 
-            if (ShouldStartCombatAfterHit(contentDb, damage.Target, damage.Attacker))
+            if (ShouldStartCombatAfterHit(ref content, damage.Target, damage.Attacker))
             {
                 combatStartActors.Add(damage.Target);
                 combatStartTargets.Add(damage.Attacker);
@@ -209,9 +216,9 @@ namespace VVardenfell.Runtime.Combat
             return false;
         }
 
-        bool CanCommitAssaultCrime(RuntimeContentDatabase contentDb, Entity target, Entity attacker)
+        bool CanCommitAssaultCrime(ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
-            if (!IsPlayer(attacker) || !IsNpcTarget(contentDb, target, out _))
+            if (!IsPlayer(attacker) || !IsNpcTarget(ref content, target, out _))
                 return false;
 
             RequireSocialCrimeComposition(target);
@@ -222,22 +229,22 @@ namespace VVardenfell.Runtime.Combat
             return MorrowindMeleeCombatMechanics.SumEffectMagnitude(effects, VampirismEffectId) <= 0f;
         }
 
-        void ApplyAssaultCrime(RuntimeContentDatabase contentDb, Entity target, Entity attacker, DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests)
+        void ApplyAssaultCrime(ref RuntimeContentBlob content, Entity target, Entity attacker, DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests)
         {
             if (IsPlayerFollower(target))
                 return;
 
             var settings = EntityManager.GetComponentData<ActorAiSettingsState>(target);
-            if (!IsNpcTarget(contentDb, target, out var source))
+            if (!IsNpcTarget(ref content, target, out var source))
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(target)} is not an NPC.");
 
-            bool isGuard = IsGuardNpc(contentDb, source.Definition);
-            bool reported = TryFindCrimeReporter(contentDb, attacker, target, out Entity reportingGuard);
+            bool isGuard = IsGuardNpc(ref content, source.Definition);
+            bool reported = TryFindCrimeReporter(ref content, attacker, target, out Entity reportingGuard);
             bool setCrimeId = reported;
 
             int dispositionModifier = 0;
-            float victimDisposition = contentDb.RequireGameSettingFloat("fDispAttacking");
-            float witnessDisposition = contentDb.RequireGameSettingFloat("iDispAttackMod");
+            float victimDisposition = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fDispAttacking);
+            float witnessDisposition = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.iDispAttackMod);
             if (!isGuard)
             {
                 dispositionModifier = (int)victimDisposition;
@@ -260,13 +267,13 @@ namespace VVardenfell.Runtime.Combat
             if (!reported && !setCrimeId)
                 return;
 
-            int bounty = reported ? contentDb.RequireGameSettingInt("iCrimeAttack") : 0;
+            int bounty = reported ? RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iCrimeAttack) : 0;
             int crimeId = AddPlayerBountyAndAdvanceCrimeId(bounty);
             SetActorCrimeId(target, crimeId);
 
             if (reported)
             {
-                MarkCrimeWitnesses(contentDb, attacker, target, crimeId);
+                MarkCrimeWitnesses(ref content, attacker, target, crimeId);
                 if (reportingGuard != Entity.Null)
                     QueueForceGreeting(forceGreetingRequests, reportingGuard);
             }
@@ -282,19 +289,19 @@ namespace VVardenfell.Runtime.Combat
             EntityManager.SetComponentData(target, disposition);
         }
 
-        bool IsGuardNpc(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        bool IsGuardNpc(ref RuntimeContentBlob content, ActorDefHandle actorHandle)
         {
-            ref readonly var actor = ref contentDb.Get(actorHandle);
-            return string.Equals(ContentId.NormalizeId(actor.ClassId), "guard", StringComparison.OrdinalIgnoreCase);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+            return actor.ClassIdHash == RuntimeContentKnownHashes.guard;
         }
 
-        bool TryFindCrimeReporter(RuntimeContentDatabase contentDb, Entity player, Entity victim, out Entity guard)
+        bool TryFindCrimeReporter(ref RuntimeContentBlob content, Entity player, Entity victim, out Entity guard)
         {
             guard = Entity.Null;
             if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Assault crime player has no LocalTransform.");
 
-            float radius = contentDb.RequireGameSettingFloat("fAlarmRadius") * WorldScale.MwUnitsToMeters;
+            float radius = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fAlarmRadius) * WorldScale.MwUnitsToMeters;
             float radiusSq = radius * radius;
             float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
             float bestDistanceSq = float.PositiveInfinity;
@@ -311,7 +318,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 if (settings.ValueRO.Alarm < 100)
                     continue;
-                if (!IsNpcActor(contentDb, source.ValueRO.Definition))
+                if (!IsNpcActor(ref content, source.ValueRO.Definition))
                     continue;
                 if (!CanReportCrime(entity, victim, vitals.ValueRO))
                     continue;
@@ -321,7 +328,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
 
                 reported = true;
-                if (!IsGuardNpc(contentDb, source.ValueRO.Definition))
+                if (!IsGuardNpc(ref content, source.ValueRO.Definition))
                     continue;
                 if (distanceSq >= bestDistanceSq)
                     continue;
@@ -333,12 +340,12 @@ namespace VVardenfell.Runtime.Combat
             return reported;
         }
 
-        void MarkCrimeWitnesses(RuntimeContentDatabase contentDb, Entity player, Entity victim, int crimeId)
+        void MarkCrimeWitnesses(ref RuntimeContentBlob content, Entity player, Entity victim, int crimeId)
         {
             if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Crime witness scan player has no LocalTransform.");
 
-            float radius = contentDb.RequireGameSettingFloat("fAlarmRadius") * WorldScale.MwUnitsToMeters;
+            float radius = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fAlarmRadius) * WorldScale.MwUnitsToMeters;
             float radiusSq = radius * radius;
             float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
 
@@ -353,7 +360,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 if (!CanReportCrime(entity, victim, vitals.ValueRO))
                     continue;
-                if (!IsNpcActor(contentDb, source.ValueRO.Definition))
+                if (!IsNpcActor(ref content, source.ValueRO.Definition))
                     continue;
 
                 float distanceSq = math.lengthsq(transform.ValueRO.Position - playerPosition);
@@ -361,7 +368,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
 
                 bool isReporter = settings.ValueRO.Alarm >= 100;
-                bool isGuard = isReporter && IsGuardNpc(contentDb, source.ValueRO.Definition);
+                bool isGuard = isReporter && IsGuardNpc(ref content, source.ValueRO.Definition);
                 bool isVictim = entity == victim;
                 if (!isReporter && !isVictim)
                     continue;
@@ -401,12 +408,12 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool IsNpcActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        bool IsNpcActor(ref RuntimeContentBlob content, ActorDefHandle actorHandle)
         {
             if (!actorHandle.IsValid)
                 throw new InvalidOperationException("[VVardenfell][OnHit] Crime witness has invalid actor definition.");
 
-            ref readonly var actor = ref contentDb.Get(actorHandle);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
             return actor.Kind == ActorDefKind.Npc;
         }
 
@@ -427,7 +434,7 @@ namespace VVardenfell.Runtime.Combat
             });
         }
 
-        bool ShouldStartCombatAfterHit(RuntimeContentDatabase contentDb, Entity target, Entity attacker)
+        bool ShouldStartCombatAfterHit(ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
             if (target == Entity.Null
                 || attacker == Entity.Null
@@ -451,14 +458,14 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Combat target ref={PlacedRefIdOrZero(target)} has no ActorAiSettingsState.");
 
             var settings = EntityManager.GetComponentData<ActorAiSettingsState>(target);
-            return settings.Fight != 0 || !DeclaresOnPcHitMeInteger(contentDb, target);
+            return settings.Fight != 0 || !DeclaresOnPcHitMeInteger(ref content, target);
         }
 
-        void StartCombatAfterHit(RuntimeContentDatabase contentDb, Entity target, Entity attacker)
+        void StartCombatAfterHit(ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
             uint targetPlacedRefId = PlacedRefIdOrZero(target);
             if (!MorrowindCombatTargetUtility.TryStartCombat(
-                    contentDb,
+                    ref content,
                     EntityManager,
                     target,
                     targetPlacedRefId,
@@ -469,7 +476,7 @@ namespace VVardenfell.Runtime.Combat
             }
         }
 
-        void ApplyMurderAftermath(RuntimeContentDatabase contentDb, in MorrowindDamageAppliedEvent damage)
+        void ApplyMurderAftermath(ref RuntimeContentBlob content, in MorrowindDamageAppliedEvent damage)
         {
             if (!IsPlayer(damage.Attacker)
                 || damage.TargetVital != MorrowindDamageTargetVital.Health
@@ -480,7 +487,7 @@ namespace VVardenfell.Runtime.Combat
                 || EntityManager.GetComponentData<ActorVitalSet>(damage.Target).CurrentHealth > 0f
                 || !EntityManager.HasComponent<ActorHitAftermathState>(damage.Target)
                 || EntityManager.GetComponentData<ActorHitAftermathState>(damage.Target).Dead != 0
-                || !IsNpcTarget(contentDb, damage.Target, out _))
+                || !IsNpcTarget(ref content, damage.Target, out _))
             {
                 return;
             }
@@ -490,7 +497,7 @@ namespace VVardenfell.Runtime.Combat
             if (crime.CrimeId < 0)
                 return;
 
-            int bounty = contentDb.RequireGameSettingInt("iCrimeKilling");
+            int bounty = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iCrimeKilling);
             int crimeId = AddPlayerBountyAndAdvanceCrimeId(bounty);
             SetActorCrimeId(damage.Target, crimeId);
 
@@ -540,10 +547,10 @@ namespace VVardenfell.Runtime.Combat
             EntityManager.SetComponentData(target, targetState);
         }
 
-        void SetOnPcHitMeIfDeclared(RuntimeContentDatabase contentDb, Entity target)
+        void SetOnPcHitMeIfDeclared(ref RuntimeContentBlob content, Entity target)
         {
             Entity actor = RequireLiveActorTarget(target, "OnPCHitMe target");
-            if (!TryResolveOnPcHitMeLocal(contentDb, actor, out int localIndex, out int declaredLocalCount))
+            if (!TryResolveOnPcHitMeLocal(ref content, actor, out int localIndex, out int declaredLocalCount))
                 return;
 
             if (!EntityManager.HasBuffer<MorrowindScriptLocalValue>(actor))
@@ -562,11 +569,11 @@ namespace VVardenfell.Runtime.Combat
             locals[localIndex] = local;
         }
 
-        bool DeclaresOnPcHitMeInteger(RuntimeContentDatabase contentDb, Entity target)
-            => TryResolveOnPcHitMeLocal(contentDb, target, out _, out _);
+        bool DeclaresOnPcHitMeInteger(ref RuntimeContentBlob content, Entity target)
+            => TryResolveOnPcHitMeLocal(ref content, target, out _, out _);
 
         bool TryResolveOnPcHitMeLocal(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity actor,
             out int localIndex,
             out int declaredLocalCount)
@@ -578,18 +585,20 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has invalid actor definition.");
 
-            ref readonly var actorDef = ref contentDb.Get(source.Definition);
-            if (string.IsNullOrWhiteSpace(actorDef.ScriptId))
+            ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
+            if (actorDef.ScriptIdHash == 0UL)
                 return false;
 
-            if (!contentDb.TryGetMorrowindScriptProgramHandle(actorDef.ScriptId, out var programHandle) || !programHandle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} script '{actorDef.ScriptId}' has no compiled runtime program.");
+            if (!RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref content, actorDef.ScriptIdHash, out var programHandle) || !programHandle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} script hash 0x{actorDef.ScriptIdHash:X16} has no compiled runtime program.");
 
-            var localDefinitions = contentDb.GetMorrowindScriptLocals(programHandle);
-            declaredLocalCount = localDefinitions.Length;
-            for (int i = 0; i < localDefinitions.Length; i++)
+            ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
+            RuntimeContentBlobUtility.RequireRange(program.FirstLocalIndex, program.LocalCount, content.MorrowindScriptLocals.Length, "script local");
+            declaredLocalCount = program.LocalCount;
+            for (int i = 0; i < program.LocalCount; i++)
             {
-                if (string.Equals(ContentId.NormalizeId(localDefinitions[i].Name), OnPcHitMeLocal, StringComparison.OrdinalIgnoreCase))
+                ref var localDefinition = ref content.MorrowindScriptLocals[program.FirstLocalIndex + i];
+                if (localDefinition.NameHash == RuntimeContentKnownHashes.OnPCHitMe)
                 {
                     localIndex = i;
                     break;
@@ -599,46 +608,25 @@ namespace VVardenfell.Runtime.Combat
             if (localIndex < 0)
                 return false;
 
-            if (localDefinitions[localIndex].ValueKind != (byte)MorrowindScriptValueKind.Integer)
+            if (content.MorrowindScriptLocals[program.FirstLocalIndex + localIndex].ValueKind != (byte)MorrowindScriptValueKind.Integer)
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} local OnPCHitMe is not an integer.");
             return true;
         }
 
-        void QueueHitVoice(
-            RuntimeContentDatabase contentDb,
+        void QueueHitVoiceResolve(
             int hitDialogueIndex,
             ActorDefHandle targetActor,
             Entity target,
-            DynamicBuffer<MorrowindCombatHitVoiceSayRequest> requests,
-            ref uint randomState)
+            DynamicBuffer<MorrowindCombatHitVoiceResolveRequest> requests,
+            uint randomState)
         {
-            if (!MorrowindDialogueFilterUtility.TryFindRandomMatchingVoicedInfo(
-                    contentDb,
-                    EntityManager,
-                    target,
-                    targetActor,
-                    hitDialogueIndex,
-                    choice: 0,
-                    ref randomState,
-                    MorrowindVoiceAudioAvailability.IsVoiceAvailable,
-                    out int infoIndex,
-                    out string unsupportedReason))
-            {
-                if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                    throw new InvalidOperationException($"[VVardenfell][OnHit] Hit voice dialogue for actor ref={PlacedRefIdOrZero(target)} is unsupported: {unsupportedReason}");
-                return;
-            }
-
-            ref readonly var info = ref contentDb.Data.DialogueInfos[infoIndex];
-            if (string.IsNullOrWhiteSpace(info.SoundFile))
-                return;
-
-            requests.Add(new MorrowindCombatHitVoiceSayRequest
+            requests.Add(new MorrowindCombatHitVoiceResolveRequest
             {
                 TargetEntity = target,
                 TargetPlacedRefId = PlacedRefIdOrZero(target),
-                VoicePath = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.SoundFile),
-                Subtitle = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.Response),
+                Actor = targetActor,
+                DialogueIndex = hitDialogueIndex,
+                RandomState = randomState == 0u ? 1u : randomState,
             });
         }
 
@@ -684,7 +672,7 @@ namespace VVardenfell.Runtime.Combat
             return combat.TargetEntity == target || (targetRef != 0u && combat.TargetPlacedRefId == targetRef);
         }
 
-        bool IsNpcTarget(RuntimeContentDatabase contentDb, Entity target, out ActorSpawnSource source)
+        bool IsNpcTarget(ref RuntimeContentBlob content, Entity target, out ActorSpawnSource source)
         {
             source = default;
             if (target == Entity.Null || !EntityManager.Exists(target) || !EntityManager.HasComponent<ActorSpawnSource>(target))
@@ -694,7 +682,7 @@ namespace VVardenfell.Runtime.Combat
             if (!source.Definition.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(target)} has invalid actor definition.");
 
-            ref readonly var actor = ref contentDb.Get(source.Definition);
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actor.Kind == ActorDefKind.Npc;
         }
 
@@ -803,6 +791,7 @@ namespace VVardenfell.Runtime.Combat
         bool IsActorSayingOrPending(
             DynamicBuffer<MorrowindScriptActiveSay> activeSays,
             DynamicBuffer<MorrowindCombatHitVoiceSayRequest> pendingRequests,
+            DynamicBuffer<MorrowindCombatHitVoiceResolveRequest> pendingResolveRequests,
             Entity actor,
             uint placedRefId)
         {
@@ -812,6 +801,13 @@ namespace VVardenfell.Runtime.Combat
             for (int i = 0; i < pendingRequests.Length; i++)
             {
                 var pending = pendingRequests[i];
+                if (pending.TargetEntity == actor || (placedRefId != 0u && pending.TargetPlacedRefId == placedRefId))
+                    return true;
+            }
+
+            for (int i = 0; i < pendingResolveRequests.Length; i++)
+            {
+                var pending = pendingResolveRequests[i];
                 if (pending.TargetEntity == actor || (placedRefId != 0u && pending.TargetPlacedRefId == placedRefId))
                     return true;
             }
@@ -831,13 +827,13 @@ namespace VVardenfell.Runtime.Combat
             return false;
         }
 
-        bool TryResolveHitVoiceDialogue(RuntimeContentDatabase contentDb, out int dialogueIndex)
+        bool TryResolveHitVoiceDialogue(ref RuntimeContentBlob content, out int dialogueIndex)
         {
             dialogueIndex = -1;
-            if (!contentDb.TryGetDialogueHandle(HitVoiceDialogueId, out var handle) || !handle.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetDialogueHandleByIdHash(ref content, RuntimeContentStableHash.HashId(HitVoiceDialogueId), out var handle) || !handle.IsValid)
                 return false;
 
-            ref readonly var dialogue = ref contentDb.Get(handle);
+            ref RuntimeDialogueDefBlob dialogue = ref RuntimeContentBlobUtility.Get(ref content, handle);
             if (dialogue.Type != DialogueDefType.Voice)
                 return false;
 
@@ -871,3 +867,5 @@ namespace VVardenfell.Runtime.Combat
         }
     }
 }
+
+

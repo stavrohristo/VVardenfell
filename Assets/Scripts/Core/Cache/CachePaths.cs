@@ -32,6 +32,7 @@ namespace VVardenfell.Core.Cache
         public static string UiPayloads => Path.Combine(Root, "ui_payloads.bin");
         public static string GameplayContentManifest => Path.Combine(Root, "gameplay_content_manifest.bin");
         public static string GameplayContent => Path.Combine(Root, "gameplay_content.bin");
+        public static string RuntimeContentBlob => Path.Combine(Root, "runtime_content_blob.bin");
         public static string GameplayValidationReport => Path.Combine(Root, "gameplay_content_validation.txt");
         public static string WorldCollisionValidationReport => Path.Combine(Root, "world_collision_validation.txt");
         public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");

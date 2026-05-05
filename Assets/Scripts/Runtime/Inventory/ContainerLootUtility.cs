@@ -5,7 +5,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
@@ -142,14 +141,16 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         public static int AddInventoryStack(
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<PlayerInventoryItem> inventory,
             ContentReference content,
             int count)
         {
-            return AddInventoryStack(inventory, content, default, 0, count);
+            return AddInventoryStack(ref contentBlob, inventory, content, default, 0, count);
         }
 
         public static int AddInventoryStack(
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<PlayerInventoryItem> inventory,
             ContentReference content,
             FixedString64Bytes soulId,
@@ -159,7 +160,7 @@ namespace VVardenfell.Runtime.Inventory
             if (!content.IsValid || count <= 0)
                 return 0;
 
-            int condition = InventoryConditionUtility.ResolveInitialCondition(RuntimeContentDatabase.Active, content);
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob, content);
             for (int i = 0; i < inventory.Length; i++)
             {
                 if (inventory[i].Content.Kind != content.Kind
@@ -187,37 +188,40 @@ namespace VVardenfell.Runtime.Inventory
             return count;
         }
 
-        public static string ResolveContainerTitle(RuntimeContentDatabase contentDb, ContainerDefHandle definition)
+        public static string ResolveContainerTitle(ref RuntimeContentBlob contentBlob, ContainerDefHandle definition)
         {
-            if (contentDb == null || !definition.IsValid)
+            if (!definition.IsValid)
                 return "Container";
 
-            ref readonly var container = ref contentDb.Get(definition);
-            if (!string.IsNullOrWhiteSpace(container.Name))
-                return container.Name.Trim();
-            if (!string.IsNullOrWhiteSpace(container.Id))
-                return container.Id.Trim();
+            ref RuntimeBaseDefBlob container = ref RuntimeContentBlobUtility.Get(ref contentBlob, definition);
+            string name = container.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+            string id = container.Id.ToString();
+            if (!string.IsNullOrWhiteSpace(id))
+                return id.Trim();
             return "Container";
         }
 
         public static void MaterializeContainerContents(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
             ContainerDefHandle definition,
             HashSet<string> diagnostics)
         {
-            if (contentDb == null || placedRefId == 0u || !definition.IsValid)
+            if (placedRefId == 0u || !definition.IsValid)
                 return;
 
-            ReadOnlySpan<ContainerItemDef> authoredItems = contentDb.GetContainerItems(definition);
-            for (int i = 0; i < authoredItems.Length; i++)
+            ref BlobArray<RuntimeContainerItemDefBlob> authoredItems = ref RuntimeContentBlobUtility.GetContainerItems(ref contentBlob, definition, out int firstItemIndex, out int itemCount);
+            for (int i = 0; i < itemCount; i++)
             {
-                ref readonly var authored = ref authoredItems[i];
-                if (authored.Count <= 0 || string.IsNullOrWhiteSpace(authored.ItemId))
+                ref RuntimeContainerItemDefBlob authored = ref authoredItems[firstItemIndex + i];
+                string itemId = authored.ItemId.ToString();
+                if (authored.Count <= 0 || string.IsNullOrWhiteSpace(itemId))
                     continue;
 
-                if (TryResolveDirectCarryable(contentDb, authored.ItemId, out var directContent, out string directDiagnostic))
+                if (TryResolveDirectCarryable(ref contentBlob, itemId, out var directContent, out string directDiagnostic))
                 {
                     AddOrIncrementContainerStack(items, placedRefId, directContent, authored.Count);
                     continue;
@@ -229,18 +233,18 @@ namespace VVardenfell.Runtime.Inventory
                     continue;
                 }
 
-                if (!contentDb.TryGetItemLeveledListHandle(authored.ItemId, out ItemLeveledListDefHandle listHandle))
+                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(itemId), out ItemLeveledListDefHandle listHandle))
                 {
-                    diagnostics?.Add($"missing authored target '{authored.ItemId}'");
+                    diagnostics?.Add($"missing authored target '{itemId}'");
                     continue;
                 }
 
-                ResolveLeveledListIntoContainer(contentDb, listHandle, items, placedRefId, authored.Count, i, diagnostics);
+                ResolveLeveledListIntoContainer(ref contentBlob, listHandle, items, placedRefId, authored.Count, i, diagnostics);
             }
         }
 
         static void ResolveLeveledListIntoContainer(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ItemLeveledListDefHandle listHandle,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
@@ -248,12 +252,12 @@ namespace VVardenfell.Runtime.Inventory
             int authoredEntryIndex,
             HashSet<string> diagnostics)
         {
-            ref readonly var list = ref contentDb.Get(listHandle);
+            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
             bool resolveEach = (list.Flags & ItemLeveledEachFlag) != 0;
 
             if (!resolveEach)
             {
-                if (TryResolveLeveledResult(contentDb, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, 0), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
+                if (TryResolveLeveledResult(ref contentBlob, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, 0), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
                     && content.IsValid)
                 {
                     AddOrIncrementContainerStack(items, placedRefId, content, authoredCount);
@@ -268,7 +272,7 @@ namespace VVardenfell.Runtime.Inventory
 
             for (int iteration = 0; iteration < authoredCount; iteration++)
             {
-                if (TryResolveLeveledResult(contentDb, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, iteration), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
+                if (TryResolveLeveledResult(ref contentBlob, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, iteration), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
                     && content.IsValid)
                 {
                     AddOrIncrementContainerStack(items, placedRefId, content, 1);
@@ -281,7 +285,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         internal static bool TryResolveDirectCarryable(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             string itemId,
             out ContentReference content,
             out string diagnostic)
@@ -289,7 +293,7 @@ namespace VVardenfell.Runtime.Inventory
             content = default;
             diagnostic = null;
 
-            if (!contentDb.TryResolvePlaceable(itemId, out ContentReference resolved))
+            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(itemId), out ContentReference resolved))
                 return false;
 
             switch (resolved.Kind)
@@ -305,14 +309,14 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         internal static bool TryResolveLooseLeveledCarryable(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ItemLeveledListDefHandle listHandle,
             uint placedRefId,
             out ContentReference content,
             out string diagnostic)
         {
             return TryResolveLeveledResult(
-                contentDb,
+                ref contentBlob,
                 listHandle,
                 BuildResolutionSeed(placedRefId, 0, 0),
                 0,
@@ -322,7 +326,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         static bool TryResolveLeveledResult(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             ItemLeveledListDefHandle listHandle,
             uint seed,
             int depth,
@@ -333,7 +337,7 @@ namespace VVardenfell.Runtime.Inventory
             content = default;
             diagnostic = null;
 
-            if (contentDb == null || !listHandle.IsValid)
+            if (!listHandle.IsValid)
                 return false;
 
             if (depth >= MaxLeveledResolutionDepth)
@@ -342,11 +346,12 @@ namespace VVardenfell.Runtime.Inventory
                 return false;
             }
 
-            ref readonly var list = ref contentDb.Get(listHandle);
-            string normalizedId = ContentId.NormalizeId(list.Id);
+            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
+            string listId = list.Id.ToString();
+            string normalizedId = ContentId.NormalizeId(listId);
             if (!visitedLists.Add(normalizedId))
             {
-                diagnostic = $"item leveled-list cycle detected at '{list.Id}'";
+                diagnostic = $"item leveled-list cycle detected at '{listId}'";
                 return false;
             }
 
@@ -355,16 +360,16 @@ namespace VVardenfell.Runtime.Inventory
                 if (RollPercent(seed) < list.ChanceNone)
                     return false;
 
-                ReadOnlySpan<ItemLeveledListEntryDef> entries = contentDb.GetItemLeveledListEntries(listHandle);
-                if (entries.Length == 0)
+                ref BlobArray<RuntimeItemLeveledListEntryDefBlob> entries = ref RuntimeContentBlobUtility.GetItemLeveledListEntries(ref contentBlob, listHandle, out int firstEntryIndex, out int entryCount);
+                if (entryCount == 0)
                     return false;
 
                 bool allLevels = (list.Flags & ItemLeveledAllLevelsFlag) != 0;
                 int highestEligibleLevel = 0;
                 bool hasEligible = false;
-                for (int i = 0; i < entries.Length; i++)
+                for (int i = 0; i < entryCount; i++)
                 {
-                    int level = entries[i].Level;
+                    int level = entries[firstEntryIndex + i].Level;
                     if (level > highestEligibleLevel && level <= FixedLeveledLootPlayerLevel)
                     {
                         highestEligibleLevel = level;
@@ -375,15 +380,16 @@ namespace VVardenfell.Runtime.Inventory
                 if (!hasEligible)
                     return false;
 
-                var candidateIds = new List<string>(entries.Length);
-                for (int i = 0; i < entries.Length; i++)
+                var candidateIds = new List<string>(entryCount);
+                for (int i = 0; i < entryCount; i++)
                 {
-                    int level = entries[i].Level;
+                    ref RuntimeItemLeveledListEntryDefBlob entry = ref entries[firstEntryIndex + i];
+                    int level = entry.Level;
                     if (level > FixedLeveledLootPlayerLevel)
                         continue;
 
                     if (allLevels || level == highestEligibleLevel)
-                        candidateIds.Add(entries[i].ItemId);
+                        candidateIds.Add(entry.ItemId.ToString());
                 }
 
                 if (candidateIds.Count == 0)
@@ -391,7 +397,7 @@ namespace VVardenfell.Runtime.Inventory
 
                 int candidateIndex = NextRandomIndex(ref seed, candidateIds.Count);
                 string resolvedId = candidateIds[candidateIndex];
-                if (TryResolveDirectCarryable(contentDb, resolvedId, out content, out string directDiagnostic))
+                if (TryResolveDirectCarryable(ref contentBlob, resolvedId, out content, out string directDiagnostic))
                     return true;
 
                 if (!string.IsNullOrEmpty(directDiagnostic))
@@ -400,14 +406,14 @@ namespace VVardenfell.Runtime.Inventory
                     return false;
                 }
 
-                if (!contentDb.TryGetItemLeveledListHandle(resolvedId, out ItemLeveledListDefHandle nestedHandle))
+                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(resolvedId), out ItemLeveledListDefHandle nestedHandle))
                 {
-                    diagnostic = $"missing leveled-list target '{resolvedId}' referenced by '{list.Id}'";
+                    diagnostic = $"missing leveled-list target '{resolvedId}' referenced by '{listId}'";
                     return false;
                 }
 
                 seed = MixSeed(seed, (uint)candidateIndex + 1u);
-                return TryResolveLeveledResult(contentDb, nestedHandle, seed, depth + 1, visitedLists, out content, out diagnostic);
+                return TryResolveLeveledResult(ref contentBlob, nestedHandle, seed, depth + 1, visitedLists, out content, out diagnostic);
             }
             finally
             {

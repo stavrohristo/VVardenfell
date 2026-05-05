@@ -3,7 +3,6 @@ using System.Globalization;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Interactions
 {
@@ -25,16 +24,16 @@ namespace VVardenfell.Runtime.Interactions
             };
         }
 
-        public static bool TryBuild(RuntimeContentDatabase contentDb, string scriptId, out DoorMotionState state)
+        public static bool TryBuild(ref RuntimeContentBlob content, string scriptId, out DoorMotionState state)
         {
             state = default;
-            if (contentDb == null || string.IsNullOrWhiteSpace(scriptId))
+            if (string.IsNullOrWhiteSpace(scriptId))
                 return false;
 
-            if (!contentDb.TryGetScriptHandle(scriptId, out GenericRecordDefHandle scriptHandle) || !scriptHandle.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetScriptHandleByIdHash(ref content, RuntimeContentStableHash.HashId(scriptId), out GenericRecordDefHandle scriptHandle) || !scriptHandle.IsValid)
                 return false;
 
-            string text = contentDb.GetScript(scriptHandle).Text ?? string.Empty;
+            string text = RuntimeContentBlobUtility.GetScript(ref content, scriptHandle).Text.ToString();
             if (text.IndexOf("onactivate", StringComparison.OrdinalIgnoreCase) < 0)
                 return false;
 

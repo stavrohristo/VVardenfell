@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
@@ -32,15 +33,18 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<MorrowindCombatSettings>();
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][ElementalShield] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ElementalShield] Elemental shield damage requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
-            float shieldMult = contentDb.RequireGameSettingFloat("fElementalShieldMult");
-            float difficultyMult = contentDb.RequireGameSettingFloat("fDifficultyMult");
+            float shieldMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fElementalShieldMult);
+            float difficultyMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fDifficultyMult);
             if (difficultyMult <= 0f)
                 throw new InvalidOperationException($"[VVardenfell][ElementalShield] GMST fDifficultyMult must be positive; got {difficultyMult}.");
 
@@ -237,3 +241,5 @@ namespace VVardenfell.Runtime.Combat
         }
     }
 }
+
+

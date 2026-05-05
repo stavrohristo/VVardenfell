@@ -4,9 +4,9 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
@@ -26,6 +26,7 @@ namespace VVardenfell.Runtime.Inventory
             RequireForUpdate<RuntimeSpawnState>();
             RequireForUpdate<RuntimeSpawnRequest>();
             RequireForUpdate<LogicalRefLookup>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -35,9 +36,7 @@ namespace VVardenfell.Runtime.Inventory
             if (requests.Length == 0)
                 return;
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Inventory] Drop requested before runtime content database was ready.");
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             Entity spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
@@ -47,7 +46,7 @@ namespace VVardenfell.Runtime.Inventory
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
-                ValidateRequest(contentDb, request);
+                ValidateRequest(ref contentBlob, request);
                 if (request.Count == 0)
                     continue;
 
@@ -73,15 +72,15 @@ namespace VVardenfell.Runtime.Inventory
             requests.Clear();
         }
 
-        static void ValidateRequest(RuntimeContentDatabase contentDb, in ActorInventoryDropRequest request)
+        static void ValidateRequest(ref RuntimeContentBlob contentBlob, in ActorInventoryDropRequest request)
         {
             if (request.Count < 0)
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop count must be non-negative.");
 
-            if (!request.Content.IsValid || !contentDb.IsValid(request.Content))
+            if (!request.Content.IsValid || !RuntimeContentBlobUtility.IsValid(ref contentBlob, request.Content))
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop content reference is invalid.");
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, request.Content, out _))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, request.Content, out _))
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop content is not carryable.");
 
             if (!WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out _))

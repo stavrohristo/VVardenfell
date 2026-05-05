@@ -5,7 +5,6 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -30,17 +29,23 @@ namespace VVardenfell.Runtime.Audio
                 ComponentType.ReadOnly<LocalToWorld>());
             RequireForUpdate<AudioContextState>();
             RequireForUpdate<NearWaterAudioState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] near-water audio resolve requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             ref var state = ref SystemAPI.GetSingletonRW<NearWaterAudioState>().ValueRW;
             state = default;
 
-            if (contentDb == null || SystemAPI.GetSingleton<AudioContextState>().Mode != AudioPlaybackMode.World)
+            if (SystemAPI.GetSingleton<AudioContextState>().Mode != AudioPlaybackMode.World)
                 return;
-            if (!contentDb.TryGetSoundHandle(NearWaterSoundId, out var sound) || !sound.IsValid)
+            if (!RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(NearWaterSoundId), out var sound) || !sound.IsValid)
                 return;
 
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
@@ -49,18 +54,18 @@ namespace VVardenfell.Runtime.Audio
 
             var playerPosition = _playerQuery.GetSingleton<LocalToWorld>().Position;
             bool interior = false;
-            CellData interiorCell = null;
+            int interiorCellIndex = -1;
             if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
                 var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
                 interior = transition.InteriorActive != 0
-                           && WorldResources.TryGetInteriorCell(transition.ActiveInteriorCellHash, out interiorCell)
-                           && interiorCell != null;
+                           && RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, transition.ActiveInteriorCellHash, out interiorCellIndex);
             }
 
             float volume = interior
-                ? ResolveInteriorVolume(interiorCell, playerPosition)
+                ? ResolveInteriorVolume(ref worldCells, interiorCellIndex, playerPosition)
                 : ResolveExteriorVolume(
+                    ref worldCells,
                     playerPosition,
                     SystemAPI.HasSingleton<StreamingConfig>(),
                     SystemAPI.HasSingleton<StreamingConfig>() ? SystemAPI.GetSingleton<StreamingConfig>() : default);
@@ -74,9 +79,10 @@ namespace VVardenfell.Runtime.Audio
             state.IsInterior = (byte)(interior ? 1 : 0);
         }
 
-        static float ResolveInteriorVolume(CellData cell, float3 playerPosition)
+        static float ResolveInteriorVolume(ref RuntimeWorldCellBlob worldCells, int cellIndex, float3 playerPosition)
         {
-            if (cell == null || cell.Environment.HasWater == 0)
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (cell.Environment.HasWater == 0)
                 return 0f;
 
             float waterHeight = cell.Environment.WaterHeight * WorldScale.MwUnitsToMeters;
@@ -85,13 +91,15 @@ namespace VVardenfell.Runtime.Audio
             return distance < tolerance ? (tolerance - distance) / tolerance : 0f;
         }
 
-        static float ResolveExteriorVolume(float3 playerPosition, bool hasStreaming, StreamingConfig streaming)
+        static float ResolveExteriorVolume(ref RuntimeWorldCellBlob worldCells, float3 playerPosition, bool hasStreaming, StreamingConfig streaming)
         {
             if (!hasStreaming)
                 return 0f;
-            if (!WorldResources.Cells.TryGetValue(streaming.CameraCell, out var cell)
-                || cell == null
-                || cell.Environment.HasWater == 0)
+            if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, streaming.CameraCell, out int cellIndex))
+                return 0f;
+
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            if (cell.Environment.HasWater == 0)
                 return 0f;
 
             float tolerance = NearWaterOutdoorToleranceMw * WorldScale.MwUnitsToMeters;
@@ -103,10 +111,10 @@ namespace VVardenfell.Runtime.Audio
             if (playerPosition.y < waterHeight)
                 return 1f;
 
-            return SampleExteriorWaterCoverage(playerPosition);
+            return SampleExteriorWaterCoverage(ref worldCells, playerPosition);
         }
 
-        static float SampleExteriorWaterCoverage(float3 playerPosition)
+        static float SampleExteriorWaterCoverage(ref RuntimeWorldCellBlob worldCells, float3 playerPosition)
         {
             float radius = NearWaterRadiusMw * WorldScale.MwUnitsToMeters;
             float step = radius * 2f / (NearWaterPoints - 1);
@@ -118,7 +126,7 @@ namespace VVardenfell.Runtime.Audio
                 {
                     float sampleX = playerPosition.x - radius + x * step;
                     float sampleZ = playerPosition.z - radius + z * step;
-                    if (TrySampleExteriorTerrainHeight(sampleX, sampleZ, out float terrainHeight)
+                    if (TrySampleExteriorTerrainHeight(ref worldCells, sampleX, sampleZ, out float terrainHeight)
                         && terrainHeight < 0f)
                         underwaterPoints++;
                 }
@@ -127,22 +135,16 @@ namespace VVardenfell.Runtime.Audio
             return underwaterPoints * 2f / (NearWaterPoints * NearWaterPoints);
         }
 
-        static bool TrySampleExteriorTerrainHeight(float worldX, float worldZ, out float height)
+        static bool TrySampleExteriorTerrainHeight(ref RuntimeWorldCellBlob worldCells, float worldX, float worldZ, out float height)
         {
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             int2 coord = new(
                 (int)math.floor(worldX / cellMeters),
                 (int)math.floor(worldZ / cellMeters));
 
-            if (!WorldResources.Cells.TryGetValue(coord, out var cell) || cell == null)
-            {
-                height = 0f;
-                return false;
-            }
-
             float localX = worldX - coord.x * cellMeters;
             float localZ = worldZ - coord.y * cellMeters;
-            return WorldTerrainStaticSpawnUtility.TrySampleTerrainHeight(cell, localX, localZ, out height);
+            return RuntimeWorldCellBlobUtility.TrySampleTerrainHeight(ref worldCells, coord, localX, localZ, out height);
         }
     }
 }

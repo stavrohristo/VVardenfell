@@ -34,6 +34,7 @@ namespace VVardenfell.Runtime.Inventory
 
             RequireForUpdate<InventoryItemActionRequest>();
             RequireForUpdate<InventoryHeldItemState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate(_playerInventoryQuery);
         }
 
@@ -62,11 +63,12 @@ namespace VVardenfell.Runtime.Inventory
                 ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
                 : 0ul;
             ref var held = ref SystemAPI.GetSingletonRW<InventoryHeldItemState>().ValueRW;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             if (processQueue)
             {
                 for (int i = 0; i < queue.Length; i++)
-                    ProcessAction(queue[i], inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+                    ProcessAction(ref contentBlob, queue[i], inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
                 queue.Clear();
             }
 
@@ -92,12 +94,13 @@ namespace VVardenfell.Runtime.Inventory
                 Sequence = request.Sequence,
             };
             request = default;
-            ProcessAction(componentRequest, inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
+            ProcessAction(ref contentBlob, componentRequest, inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
             MarkPlayerEncumbranceDirtyIfChanged(inventory, previousInventorySignature);
             MarkPlayerPresentationEquipmentDirtyIfChanged(hasEquipment, playerEquipmentEntity, equipment, previousEquipmentSignature);
         }
 
         void ProcessAction(
+            ref RuntimeContentBlob contentBlob,
             in InventoryItemActionRequestElement request,
             DynamicBuffer<PlayerInventoryItem> inventory,
             DynamicBuffer<ActorEquipmentSlot> equipment,
@@ -110,19 +113,19 @@ namespace VVardenfell.Runtime.Inventory
             switch (action)
             {
                 case InventoryItemActionKind.BeginDrag:
-                    BeginDrag(source, request.SourceIndex, request.SourcePlacedRefId, request.Count, inventory, equipment, ref held);
+                    BeginDrag(ref contentBlob, source, request.SourceIndex, request.SourcePlacedRefId, request.Count, inventory, equipment, ref held);
                     break;
                 case InventoryItemActionKind.DirectTransfer:
-                    DirectTransfer(source, target, request.SourceIndex, request.SourcePlacedRefId, request.TargetPlacedRefId, request.Count, inventory, equipment);
+                    DirectTransfer(ref contentBlob, source, target, request.SourceIndex, request.SourcePlacedRefId, request.TargetPlacedRefId, request.Count, inventory, equipment);
                     break;
                 case InventoryItemActionKind.DropHeldToInventory:
                     ClearHeld(ref held);
                     break;
                 case InventoryItemActionKind.DropHeldToContainer:
-                    DropHeldToContainer(request.TargetPlacedRefId, inventory, equipment, ref held);
+                    DropHeldToContainer(ref contentBlob, request.TargetPlacedRefId, inventory, equipment, ref held);
                     break;
                 case InventoryItemActionKind.UseHeld:
-                    UseHeld(inventory, equipment, hasEquipment, ref held);
+                    UseHeld(ref contentBlob, inventory, equipment, hasEquipment, ref held);
                     break;
                 case InventoryItemActionKind.ClearHeld:
                     ClearHeld(ref held);
@@ -221,6 +224,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         void BeginDrag(
+            ref RuntimeContentBlob contentBlob,
             InventoryItemOwnerKind source,
             int sourceIndex,
             uint sourcePlacedRefId,
@@ -259,6 +263,7 @@ namespace VVardenfell.Runtime.Inventory
             WorldJournalUtility.AppendContainerDelta(EntityManager, sourcePlacedRefId, containerEntry.Content, -transferCount);
             RemoveContainerCountAt(items, sourceIndex, transferCount);
             ContainerLootUtility.AddInventoryStack(
+                ref contentBlob,
                 inventory,
                 containerEntry.Content,
                 containerEntry.SoulId,
@@ -279,6 +284,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         void DirectTransfer(
+            ref RuntimeContentBlob contentBlob,
             InventoryItemOwnerKind source,
             InventoryItemOwnerKind target,
             int sourceIndex,
@@ -297,7 +303,7 @@ namespace VVardenfell.Runtime.Inventory
                 RemoveCorpseBackingInventory(sourcePlacedRefId, entry, count);
                 WorldJournalUtility.AppendContainerDelta(EntityManager, sourcePlacedRefId, entry.Content, -count);
                 RemoveContainerCountAt(items, sourceIndex, count);
-                ContainerLootUtility.AddInventoryStack(inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
+                ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 return;
             }
 
@@ -309,13 +315,14 @@ namespace VVardenfell.Runtime.Inventory
                 int count = math.clamp(requestedCount, 1, entry.Count);
                 UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-                AddCorpseBackingInventory(targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
+                AddCorpseBackingInventory(ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
                 RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             }
         }
 
         void DropHeldToContainer(
+            ref RuntimeContentBlob contentBlob,
             uint targetPlacedRefId,
             DynamicBuffer<PlayerInventoryItem> inventory,
             DynamicBuffer<ActorEquipmentSlot> equipment,
@@ -334,13 +341,14 @@ namespace VVardenfell.Runtime.Inventory
             int count = math.clamp(held.Count, 1, entry.Count);
             UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-            AddCorpseBackingInventory(targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
+            AddCorpseBackingInventory(ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
             WorldJournalUtility.AppendContainerDelta(EntityManager, targetPlacedRefId, entry.Content, count);
             RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             ClearHeld(ref held);
         }
 
         void UseHeld(
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<PlayerInventoryItem> inventory,
             DynamicBuffer<ActorEquipmentSlot> equipment,
             bool hasEquipment,
@@ -356,8 +364,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
-            var contentDb = RuntimeContentDatabase.Active;
-            if (RuntimeContentMetadataResolver.TryResolveBook(contentDb, entry.Content, out _))
+            if (RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, entry.Content, out _))
             {
                 QueueBookRead(inventoryIndex);
                 ClearHeld(ref held);
@@ -372,7 +379,7 @@ namespace VVardenfell.Runtime.Inventory
             }
 
             var itemHandle = new ItemDefHandle { Value = entry.Content.HandleValue };
-            if (contentDb == null || !contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+            if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, itemHandle, out var itemEquipment))
             {
                 WarnUnsupportedUse(entry.Content);
                 ClearHeld(ref held);
@@ -561,6 +568,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         void AddCorpseBackingInventory(
+            ref RuntimeContentBlob contentBlob,
             uint placedRefId,
             ContentReference content,
             FixedString64Bytes soulId,
@@ -575,7 +583,7 @@ namespace VVardenfell.Runtime.Inventory
                 EntityManager.AddBuffer<ActorInventoryItem>(target);
 
             ActorInventoryBufferMutationUtility.AddActorItems(
-                RuntimeContentDatabase.Active,
+                ref contentBlob,
                 EntityManager.GetBuffer<ActorInventoryItem>(target),
                 content,
                 soulId,

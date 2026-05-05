@@ -1,4 +1,5 @@
 using System;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
@@ -6,7 +7,6 @@ using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Player;
@@ -21,7 +21,6 @@ namespace VVardenfell.Runtime.AI
     [UpdateBefore(typeof(PathGridTraversalRequestSystem))]
     public partial class ActorAiGreetingSystem : SystemBase
     {
-        const string HelloDialogueId = "hello";
         const float InitialGreetingDelaySeconds = 0.5f;
 
         EntityQuery _playerQuery;
@@ -38,19 +37,18 @@ namespace VVardenfell.Runtime.AI
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            var contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
-            int greetDistanceMultiplier = contentDb.RequireGameSettingInt("iGreetDistanceMultiplier");
-            int greetDuration = contentDb.RequireGameSettingInt("iGreetDuration");
-            float greetDistanceResetMw = contentDb.RequireGameSettingFloat("fGreetDistanceReset");
+            int greetDistanceMultiplier = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref contentBlob, RuntimeContentKnownHashes.iGreetDistanceMultiplier);
+            int greetDuration = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref contentBlob, RuntimeContentKnownHashes.iGreetDuration);
+            float greetDistanceResetMw = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fGreetDistanceReset);
 
-            bool hasHelloDialogue = TryResolveHelloVoiceDialogue(contentDb, out int helloDialogueIndex);
+            bool hasHelloDialogue = TryResolveHelloVoiceDialogue(ref contentBlob, out int helloDialogueIndex);
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             var sayRequests = EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
             Entity player = _playerQuery.GetSingletonEntity();
@@ -145,7 +143,7 @@ namespace VVardenfell.Runtime.AI
                 }
 
                 if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
-                        contentDb,
+                        ref contentBlob,
                         EntityManager,
                         entity,
                         source.ValueRO.Definition,
@@ -162,26 +160,27 @@ namespace VVardenfell.Runtime.AI
                     continue;
                 }
 
-                ref readonly var info = ref contentDb.Data.DialogueInfos[infoIndex];
-                if (!string.IsNullOrWhiteSpace(info.SoundFile))
+                ref var info = ref contentBlob.DialogueInfos[infoIndex];
+                FixedString512Bytes soundFile = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.SoundFile);
+                FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
+                if (soundFile.Length > 0)
                 {
                     sayRequests.Add(new ActorAiPassiveGreetingSayRequest
                     {
                         TargetEntity = entity,
                         TargetPlacedRefId = placedRef.ValueRO.Value,
-                        VoicePath = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.SoundFile),
-                        Subtitle = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.Response),
+                        VoicePath = soundFile,
+                        Subtitle = response,
                     });
                 }
                 else if (HudUserPreferences.ShowSubtitles
-                         && !string.IsNullOrWhiteSpace(info.Response)
+                         && response.Length > 0
                          && SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
                 {
-                    var subtitleText = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(info.Response);
                     RuntimeShellStateUtility.ShowSubtitle(
                         ref subtitle.ValueRW,
-                        subtitleText,
-                        RuntimeShellStateUtility.EstimateSubtitleDurationSeconds(subtitleText));
+                        response,
+                        RuntimeShellStateUtility.EstimateSubtitleDurationSeconds(response));
                 }
 
                 greeting.Phase = (byte)ActorAiGreetingPhase.InProgress;
@@ -289,17 +288,16 @@ namespace VVardenfell.Runtime.AI
         static float3 EyePosition(float3 position)
             => position + new float3(0f, 1.5f, 0f);
 
-        static bool TryResolveHelloVoiceDialogue(RuntimeContentDatabase contentDb, out int dialogueIndex)
+        static bool TryResolveHelloVoiceDialogue(ref RuntimeContentBlob contentBlob, out int dialogueIndex)
         {
             dialogueIndex = -1;
-            if (contentDb == null
-                || !contentDb.TryGetDialogueHandle(HelloDialogueId, out var handle)
+            if (!RuntimeContentBlobUtility.TryGetDialogueHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.hello, out var handle)
                 || !handle.IsValid)
             {
                 return false;
             }
 
-            ref readonly var dialogue = ref contentDb.Get(handle);
+            ref var dialogue = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
             if (dialogue.Type != DialogueDefType.Voice)
                 return false;
 

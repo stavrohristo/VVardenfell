@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Physics.Systems;
+using Unity.Profiling;
 using UnityEngine;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
@@ -73,6 +74,11 @@ namespace VVardenfell.Runtime.Physics
         PhysicsSimulationGroup _physicsSimulationGroup;
         SystemHandle _exportPhysicsWorldHandle;
 
+        static readonly ProfilerMarker k_FixedStep = new("VV.Physics.OwnedDriver.FixedStep");
+        static readonly ProfilerMarker k_Initialize = new("VV.Physics.OwnedDriver.Initialize");
+        static readonly ProfilerMarker k_Simulate = new("VV.Physics.OwnedDriver.Simulate");
+        static readonly ProfilerMarker k_Export = new("VV.Physics.OwnedDriver.Export");
+
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindPhysicsFrameState>();
@@ -89,6 +95,7 @@ namespace VVardenfell.Runtime.Physics
 
         protected override void OnUpdate()
         {
+            using var fixedStepScope = k_FixedStep.Auto();
             if (_physicsGroup != null && _physicsGroup.Enabled)
                 _physicsGroup.Enabled = false;
 
@@ -98,10 +105,23 @@ namespace VVardenfell.Runtime.Physics
             frameState.SnapshotTick = fixedTick;
             frameState.BuildSequence++;
 
-            _physicsInitializeGroup?.Update();
-            _physicsSimulationGroup?.Update();
+            using (k_Initialize.Auto())
+            {
+                _physicsInitializeGroup?.Update();
+            }
+
+            using (k_Simulate.Auto())
+            {
+                _physicsSimulationGroup?.Update();
+            }
+
             if (!_exportPhysicsWorldHandle.Equals(SystemHandle.Null))
-                _exportPhysicsWorldHandle.Update(World.Unmanaged);
+            {
+                using (k_Export.Auto())
+                {
+                    _exportPhysicsWorldHandle.Update(World.Unmanaged);
+                }
+            }
         }
     }
 

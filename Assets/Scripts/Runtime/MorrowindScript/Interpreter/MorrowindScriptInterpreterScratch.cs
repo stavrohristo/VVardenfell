@@ -9,11 +9,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public NativeList<MorrowindScriptExternalActorLocalSnapshot> ExternalActorLocals;
         public NativeList<MorrowindScriptActorAiStatusSnapshot> ActorAiStatuses;
         public NativeList<MorrowindScriptActorCombatTargetSnapshot> ActorCombatTargets;
-        public NativeList<MorrowindScriptRefTransformSnapshot> RefTransforms;
-        public NativeList<MorrowindScriptInitialTransformSnapshot> InitialTransforms;
         public NativeList<MorrowindScriptLockStateSnapshot> LockStates;
-        public NativeList<MorrowindScriptInventoryCountSnapshot> InventoryCounts;
-        public NativeList<MorrowindScriptActorDeathSnapshot> ActorDeaths;
         public NativeList<MorrowindScriptActorEventSnapshot> ActorEvents;
         public NativeList<MorrowindScriptActorVitalSnapshot> ActorVitals;
         public NativeList<MorrowindScriptActorAttributeSnapshot> ActorAttributes;
@@ -27,7 +23,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         public NativeParallelHashSet<ulong> ActorLineOfSightPairs;
         public NativeList<MorrowindScriptRunningProgramSnapshot> RunningPrograms;
 
-        public bool IsCreated => RunningPrograms.IsCreated;
+        public bool IsCreated
+            => RunningPrograms.IsCreated;
 
         public static MorrowindScriptInterpreterScratch Create(Allocator allocator)
             => new()
@@ -35,11 +32,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ExternalActorLocals = new NativeList<MorrowindScriptExternalActorLocalSnapshot>(64, allocator),
                 ActorAiStatuses = new NativeList<MorrowindScriptActorAiStatusSnapshot>(64, allocator),
                 ActorCombatTargets = new NativeList<MorrowindScriptActorCombatTargetSnapshot>(64, allocator),
-                RefTransforms = new NativeList<MorrowindScriptRefTransformSnapshot>(256, allocator),
-                InitialTransforms = new NativeList<MorrowindScriptInitialTransformSnapshot>(256, allocator),
                 LockStates = new NativeList<MorrowindScriptLockStateSnapshot>(128, allocator),
-                InventoryCounts = new NativeList<MorrowindScriptInventoryCountSnapshot>(256, allocator),
-                ActorDeaths = new NativeList<MorrowindScriptActorDeathSnapshot>(64, allocator),
                 ActorEvents = new NativeList<MorrowindScriptActorEventSnapshot>(64, allocator),
                 ActorVitals = new NativeList<MorrowindScriptActorVitalSnapshot>(64, allocator),
                 ActorAttributes = new NativeList<MorrowindScriptActorAttributeSnapshot>(64, allocator),
@@ -62,16 +55,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ActorAiStatuses.Dispose();
             if (ActorCombatTargets.IsCreated)
                 ActorCombatTargets.Dispose();
-            if (RefTransforms.IsCreated)
-                RefTransforms.Dispose();
-            if (InitialTransforms.IsCreated)
-                InitialTransforms.Dispose();
             if (LockStates.IsCreated)
                 LockStates.Dispose();
-            if (InventoryCounts.IsCreated)
-                InventoryCounts.Dispose();
-            if (ActorDeaths.IsCreated)
-                ActorDeaths.Dispose();
             if (ActorEvents.IsCreated)
                 ActorEvents.Dispose();
             if (ActorVitals.IsCreated)

@@ -5,7 +5,6 @@ using Unity.Mathematics;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Player;
@@ -33,19 +32,18 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<ShellMessageBoxRequest>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Disease] Runtime content database is not loaded.");
-            if (contentDb.Data.Spells == null)
-                throw new InvalidOperationException("[VVardenfell][Disease] Runtime content has no spell table.");
-            if (contentDb.Data.MagicEffectInstances == null)
-                throw new InvalidOperationException("[VVardenfell][Disease] Runtime content has no spell effect instance table.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Disease transfer requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
-            float transferChance = contentDb.RequireGameSettingFloat("fDiseaseXferChance");
-            string contractDiseaseMessage = contentDb.RequireGameSettingString("sMagicContractDisease");
+            float transferChance = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fDiseaseXferChance);
+            string contractDiseaseMessage = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicContractDisease);
 
             Entity scriptRuntimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
             if (!EntityManager.HasBuffer<ShellMessageBoxRequest>(scriptRuntimeEntity))
@@ -61,7 +59,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
 
                 TryTransferDisease(
-                    contentDb,
+                    ref content,
                     damage.ValueRO.Attacker,
                     damage.ValueRO.Target,
                     transferChance,
@@ -74,7 +72,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         void TryTransferDisease(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             Entity carrier,
             Entity victim,
             float transferChance,
@@ -108,14 +106,14 @@ namespace VVardenfell.Runtime.Combat
             for (int i = 0; i < carrierSpells.Length; i++)
             {
                 var spellHandle = carrierSpells[i].Spell;
-                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= contentDb.Data.Spells.Length)
+                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= content.Spells.Length)
                     throw new InvalidOperationException($"[VVardenfell][Disease] Disease carrier ref={PlacedRefId(carrier)} references invalid spell handle {spellHandle.Value}.");
 
                 if (MorrowindActorMagicUtility.HasKnownSpell(victimSpells, spellHandle))
                     continue;
 
-                ref readonly var spell = ref contentDb.Get(spellHandle);
-                if (!TryResolveDiseaseResistancePair(contentDb, spell, out short resistEffectId, out short weaknessEffectId))
+                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
+                if (!TryResolveDiseaseResistancePair(ref content, ref spell, out short resistEffectId, out short weaknessEffectId))
                     continue;
 
                 float resist = 1f - (0.01f * (ResolveEffectMagnitude(victimEffects, resistEffectId) - ResolveEffectMagnitude(victimEffects, weaknessEffectId)));
@@ -127,7 +125,7 @@ namespace VVardenfell.Runtime.Combat
                 addedDisease = true;
 
                 if (victimIsPlayer)
-                    QueueContractDiseaseMessage(messageBoxes, contractDiseaseMessage, spell);
+                    QueueContractDiseaseMessage(messageBoxes, contractDiseaseMessage, ref spell);
             }
 
             if (addedDisease)
@@ -135,12 +133,12 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static bool TryResolveDiseaseResistancePair(
-            RuntimeContentDatabase contentDb,
-            in SpellDef spell,
+            ref RuntimeContentBlob content,
+            ref RuntimeSpellDefBlob spell,
             out short resistEffectId,
             out short weaknessEffectId)
         {
-            if (HasCorprusEffect(contentDb, spell))
+            if (HasCorprusEffect(ref content, ref spell))
             {
                 resistEffectId = ResistCorprusDiseaseEffectId;
                 weaknessEffectId = WeaknessToCorprusDiseaseEffectId;
@@ -164,14 +162,13 @@ namespace VVardenfell.Runtime.Combat
             }
         }
 
-        static bool HasCorprusEffect(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static bool HasCorprusEffect(ref RuntimeContentBlob content, ref RuntimeSpellDefBlob spell)
         {
-            if (!MorrowindActorMagicUtility.TryGetSpellEffects(contentDb, spell, out var effects))
-                return false;
+            MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
 
-            for (int i = 0; i < effects.Length; i++)
+            for (int i = 0; i < spell.EffectCount; i++)
             {
-                if (effects[i].EffectId == CorprusEffectId)
+                if (content.MagicEffectInstances[spell.EffectStartIndex + i].EffectId == CorprusEffectId)
                     return true;
             }
 
@@ -198,9 +195,11 @@ namespace VVardenfell.Runtime.Combat
         static void QueueContractDiseaseMessage(
             DynamicBuffer<ShellMessageBoxRequest> messageBoxes,
             string contractDiseaseMessage,
-            in SpellDef spell)
+            ref RuntimeSpellDefBlob spell)
         {
-            string spellName = string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim();
+            string spellId = spell.Id.ToString();
+            string blobName = spell.Name.ToString();
+            string spellName = string.IsNullOrWhiteSpace(blobName) ? spellId : blobName.Trim();
             messageBoxes.Add(new ShellMessageBoxRequest
             {
                 Body = RuntimeFixedStringUtility.ToFixed512OrDefault(FormatDiseaseMessage(contractDiseaseMessage, spellName)),

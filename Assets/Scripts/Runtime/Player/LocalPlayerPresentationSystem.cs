@@ -5,7 +5,6 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -15,7 +14,6 @@ namespace VVardenfell.Runtime.Player
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
     public partial class LocalPlayerPresentationSpawnSystem : SystemBase
     {
-        static bool s_MissingPlayerActorWarned;
         EntityQuery _missingPresentationQuery;
 
         protected override void OnCreate()
@@ -34,22 +32,14 @@ namespace VVardenfell.Runtime.Player
 
             RequireForUpdate(_missingPresentationQuery);
             RequireForUpdate<PlayerViewComponent>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
-            if (contentDb == null)
-                return;
-            if (!contentDb.TryGetActorHandle("player", out var actorHandle) || !actorHandle.IsValid)
-            {
-                if (!s_MissingPlayerActorWarned)
-                {
-                    UnityEngine.Debug.LogWarning("[VVardenfell] local player presentation skipped because NPC_ 'player' could not be resolved.");
-                    s_MissingPlayerActorWarned = true;
-                }
-                return;
-            }
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.player, out var actorHandle) || !actorHandle.IsValid)
+                throw new System.InvalidOperationException("[VVardenfell] local player presentation requires NPC_ 'player'.");
 
             Entity player = Entity.Null;
             foreach (var (_, entity) in
@@ -89,8 +79,7 @@ namespace VVardenfell.Runtime.Player
                 firstPerson: true,
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
-                visible: true,
-                contentDb);
+                visible: true);
             Entity thirdPersonVisual = CreatePlayerVisual(
                 ref ecb,
                 player,
@@ -99,8 +88,7 @@ namespace VVardenfell.Runtime.Player
                 firstPerson: false,
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: 0u,
-                visible: false,
-                contentDb);
+                visible: false);
 
             ecb.AddComponent(player, new LocalPlayerPresentationState
             {
@@ -123,8 +111,7 @@ namespace VVardenfell.Runtime.Player
             bool firstPerson,
             bool actorRecipeFirstPerson,
             uint hiddenPartMask,
-            bool visible,
-            RuntimeContentDatabase contentDb)
+            bool visible)
         {
             Entity visual = ecb.CreateEntity();
             ecb.SetName(visual, new FixedString64Bytes(firstPerson

@@ -4,10 +4,8 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Transforms;
-using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Physics;
-using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.Vfx;
 using Collider = Unity.Physics.Collider;
@@ -24,15 +22,12 @@ namespace VVardenfell.Runtime.Projectiles
 
         protected override void OnUpdate()
         {
-            CacheLoader cache = WorldResources.Cache
-                ?? throw new InvalidOperationException("[VVardenfell][Projectile] Runtime cache is not loaded.");
-
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (request, requestEntity) in
                      SystemAPI.Query<RefRO<MorrowindProjectileLaunchRequest>>()
                          .WithEntityAccess())
             {
-                Launch(cache, request.ValueRO, ref ecb);
+                Launch(request.ValueRO, ref ecb);
                 ecb.DestroyEntity(requestEntity);
             }
 
@@ -40,7 +35,7 @@ namespace VVardenfell.Runtime.Projectiles
             ecb.Dispose();
         }
 
-        void Launch(CacheLoader cache, in MorrowindProjectileLaunchRequest request, ref EntityCommandBuffer ecb)
+        void Launch(in MorrowindProjectileLaunchRequest request, ref EntityCommandBuffer ecb)
         {
             RequireLaunchRequest(request);
 
@@ -50,13 +45,7 @@ namespace VVardenfell.Runtime.Projectiles
             if (request.Speed <= 0f || !math.isfinite(request.Speed))
                 throw new InvalidOperationException($"[VVardenfell][Projectile] Launch speed {request.Speed} is invalid.");
 
-            string modelPath = request.ModelPath.ToString();
             float radius = request.CollisionRadius;
-            if (request.UseModelCollisionRadius != 0)
-                radius = MorrowindProjectileModelUtility.RequireModelCollisionRadius(cache, modelPath);
-            else if (radius <= 0f)
-                radius = MorrowindProjectileModelUtility.FixedPhysicalProjectileRadius;
-
             if (radius <= 0f || !math.isfinite(radius))
                 throw new InvalidOperationException($"[VVardenfell][Projectile] Launch radius {radius} is invalid.");
 
@@ -87,8 +76,9 @@ namespace VVardenfell.Runtime.Projectiles
                 Velocity = direction * request.Speed,
                 AttackStrength = request.AttackStrength,
                 Radius = radius,
-                ModelPath = request.ModelPath,
-                TextureOverridePath = request.TextureOverridePath,
+                ModelPrefabIndex = request.ModelPrefabIndex,
+                ModelPathHash = request.ModelPathHash,
+                TextureOverridePathHash = request.TextureOverridePathHash,
                 ExteriorCell = request.ExteriorCell,
                 InteriorCellId = request.InteriorCellId,
                 InteriorCellHash = request.InteriorCellHash,
@@ -112,15 +102,16 @@ namespace VVardenfell.Runtime.Projectiles
 
         void SpawnProjectileVisual(Entity projectile, in MorrowindProjectileLaunchRequest request, ref EntityCommandBuffer ecb)
         {
-            if (request.ModelPath.IsEmpty)
-                throw new InvalidOperationException("[VVardenfell][Projectile] Visual projectile launch has no model path.");
+            if (request.ModelPathHash == 0UL)
+                throw new InvalidOperationException("[VVardenfell][Projectile] Visual projectile launch has no model path hash.");
 
             Entity visual = ecb.CreateEntity();
             ecb.SetName(visual, new FixedString64Bytes("VVardenfell.ProjectileVfxSpawn"));
             ecb.AddComponent(visual, new MorrowindVfxSpawnRequest
             {
-                ModelPath = request.ModelPath,
-                TextureOverridePath = request.TextureOverridePath,
+                ModelPrefabIndex = request.ModelPrefabIndex,
+                ModelPathHash = request.ModelPathHash,
+                TextureOverridePathHash = request.TextureOverridePathHash,
                 Position = request.Position,
                 Rotation = request.Rotation,
                 Scale = 1f,
@@ -142,6 +133,8 @@ namespace VVardenfell.Runtime.Projectiles
                 throw new InvalidOperationException("[VVardenfell][Projectile] Launch caster has no LocalTransform.");
             if (request.SourceKind == MorrowindProjectileSourceKind.None)
                 throw new InvalidOperationException("[VVardenfell][Projectile] Launch source kind is None.");
+            if (request.SpawnVisual != 0 && request.ModelPrefabIndex < 0)
+                throw new InvalidOperationException("[VVardenfell][Projectile] Visual projectile launch has no model prefab index.");
         }
     }
 }

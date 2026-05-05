@@ -1,7 +1,7 @@
 using System;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Combat
@@ -14,12 +14,15 @@ namespace VVardenfell.Runtime.Combat
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindPendingDamageEvent>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
         {
-            RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active
-                ?? throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
+            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+            if (!contentBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][ContentBlob] Normal weapon resistance requires runtime content blob.");
+            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             foreach (var damage in SystemAPI.Query<RefRW<MorrowindPendingDamageEvent>>())
             {
@@ -34,7 +37,7 @@ namespace VVardenfell.Runtime.Combat
 
                 var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
                 damage.ValueRW.Amount = MorrowindMeleeCombatMechanics.ApplyNormalWeaponResistanceEffects(
-                    contentDb,
+                    ref content,
                     targetEffects,
                     damage.ValueRO.Amount);
             }

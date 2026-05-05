@@ -62,6 +62,7 @@ namespace VVardenfell.Runtime.Components
         public float JumpMagnitude;
         public float FeatherMagnitude;
         public float BurdenMagnitude;
+        public float FortifyMaximumMagickaMagnitude;
     }
 
     public struct ActorMagicCastState : IComponentData
@@ -116,6 +117,7 @@ namespace VVardenfell.Runtime.Components
         public ActorActiveSpellFlags Flags;
         public FixedString64Bytes SourceName;
         public FixedString64Bytes SourceId;
+        public ulong SourceIdHash;
     }
 
     public struct ActorUsedPower : IBufferElementData
@@ -148,6 +150,7 @@ namespace VVardenfell.Runtime.Components
         public ActorActiveMagicEffectSourceKind SourceKind;
         public FixedString64Bytes SourceName;
         public FixedString64Bytes SourceId;
+        public ulong SourceIdHash;
     }
 
     public struct ActorDerivedMovementStats : IComponentData

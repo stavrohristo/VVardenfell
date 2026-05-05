@@ -15,9 +15,9 @@ namespace VVardenfell.Runtime.Shell
         const int MagicEffectFlagTargetAttribute = 0x2;
         const int MagicEffectFlagNoMagnitude = 0x8;
 
-        SpellWindowViewModel BuildSpellModel(RuntimeContentDatabase contentDb, in SpellWindowState state, in PlayerPresentationStats playerStats)
+        SpellWindowViewModel BuildSpellModel(ref RuntimeContentBlob contentBlob, in SpellWindowState state, in PlayerPresentationStats playerStats)
         {
-            int spellCount = contentDb?.SpellCount ?? 0;
+            int spellCount = contentBlob.Spells.Length;
             var model = new SpellWindowViewModel
             {
                 NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
@@ -27,10 +27,10 @@ namespace VVardenfell.Runtime.Shell
                 EmptyStateText = "No known spells",
                 SpellSummaryText = $"Known spells: 0   Cached definitions: {spellCount}",
                 EffectSummaryText = "No selected spell",
-                ActiveEffects = BuildActiveEffectIcons(contentDb, playerStats),
+                ActiveEffects = BuildActiveEffectIcons(ref contentBlob, playerStats),
             };
 
-            if (!playerStats.HasPlayer || contentDb == null || !EntityManager.Exists(playerStats.PlayerEntity) || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
+            if (!playerStats.HasPlayer || !EntityManager.Exists(playerStats.PlayerEntity) || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
                 return model;
 
             var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity);
@@ -40,21 +40,21 @@ namespace VVardenfell.Runtime.Shell
             for (int i = 0; i < knownSpells.Length; i++)
             {
                 var spellHandle = knownSpells[i].Spell;
-                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= contentDb.Data.Spells.Length)
+                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= contentBlob.Spells.Length)
                     continue;
 
-                ref readonly var spell = ref contentDb.Get(spellHandle);
-                if (!MatchesSpellFilter(spell, filter))
+                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, spellHandle);
+                if (!MatchesSpellFilter(ref spell, filter))
                     continue;
 
                 entries.Add(new SpellWindowEntryViewModel
                 {
                     SpellIndex = i,
-                    Name = RuntimeContentMetadataResolver.ResolveSpellName(spell),
+                    Name = RuntimeContentMetadataResolver.ResolveSpellName(ref spell),
                     CostText = spell.Cost.ToString(),
                     TypeText = RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType),
-                    EffectTooltipText = BuildSpellEffectTooltip(contentDb, spell),
-                    SpellTooltip = BuildSpellTooltip(contentDb, spell),
+                    EffectTooltipText = BuildSpellEffectTooltip(ref contentBlob, ref spell),
+                    SpellTooltip = BuildSpellTooltip(ref contentBlob, ref spell),
                     Selected = i == selectedIndex,
                 });
             }
@@ -67,71 +67,71 @@ namespace VVardenfell.Runtime.Shell
             if (selectedIndex >= 0 && selectedIndex < knownSpells.Length)
             {
                 var spellHandle = knownSpells[selectedIndex].Spell;
-                if (spellHandle.IsValid && spellHandle.Index >= 0 && spellHandle.Index < contentDb.Data.Spells.Length)
+                if (spellHandle.IsValid && spellHandle.Index >= 0 && spellHandle.Index < contentBlob.Spells.Length)
                 {
-                    ref readonly var spell = ref contentDb.Get(spellHandle);
-                    model.EffectSummaryText = $"{RuntimeContentMetadataResolver.ResolveSpellName(spell)}   Cost {spell.Cost}   {RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType)}";
-                    model.Effects = BuildSpellEffectRows(contentDb, spell);
+                    ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, spellHandle);
+                    model.EffectSummaryText = $"{RuntimeContentMetadataResolver.ResolveSpellName(ref spell)}   Cost {spell.Cost}   {RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType)}";
+                    model.Effects = BuildSpellEffectRows(ref contentBlob, ref spell);
                 }
             }
 
             return model;
         }
 
-        static bool MatchesSpellFilter(in SpellDef spell, string filter)
+        static bool MatchesSpellFilter(ref RuntimeSpellDefBlob spell, string filter)
         {
             if (string.IsNullOrWhiteSpace(filter))
                 return true;
 
             string needle = filter.Trim();
-            if (!string.IsNullOrWhiteSpace(spell.Name) && spell.Name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+            string name = spell.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name) && name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
-            if (!string.IsNullOrWhiteSpace(spell.Id) && spell.Id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+            string id = spell.Id.ToString();
+            if (!string.IsNullOrWhiteSpace(id) && id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
 
             return RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType).IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        static SpellWindowEffectRow[] BuildSpellEffectRows(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static SpellWindowEffectRow[] BuildSpellEffectRows(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
-            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0 || contentDb?.Data.MagicEffectInstances == null)
+            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                 return Array.Empty<SpellWindowEffectRow>();
 
-            int available = Math.Max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
+            int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - spell.EffectStartIndex);
             int count = Math.Min(spell.EffectCount, available);
             var rows = new SpellWindowEffectRow[count];
             for (int i = 0; i < count; i++)
             {
-                var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex + i];
+                var effect = contentBlob.MagicEffectInstances[spell.EffectStartIndex + i];
                 rows[i] = new SpellWindowEffectRow
                 {
                     EffectId = effect.EffectId,
-                    Name = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effect.EffectId),
-                    DetailText = BuildEffectDetail(contentDb, effect),
-                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId),
+                    Name = RuntimeContentMetadataResolver.ResolveMagicEffectName(ref contentBlob, effect.EffectId),
+                    DetailText = BuildEffectDetail(ref contentBlob, effect),
+                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(ref contentBlob, effect.EffectId),
                 };
             }
 
             return rows;
         }
 
-        RuntimeMagicEffectIconViewModel[] BuildActiveEffectIcons(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats)
+        RuntimeMagicEffectIconViewModel[] BuildActiveEffectIcons(ref RuntimeContentBlob contentBlob, in PlayerPresentationStats playerStats)
         {
             if (!playerStats.HasPlayer
-                || contentDb == null
                 || !EntityManager.Exists(playerStats.PlayerEntity)
                 || !EntityManager.HasBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity))
             {
                 return Array.Empty<RuntimeMagicEffectIconViewModel>();
             }
 
-            return BuildActiveEffectIcons(contentDb, EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true));
+            return BuildActiveEffectIcons(ref contentBlob, EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true));
         }
 
-        RuntimeMagicEffectIconViewModel[] BuildHudActiveEffectIcons(RuntimeContentDatabase contentDb, in PlayerPresentationStats playerStats)
+        RuntimeMagicEffectIconViewModel[] BuildHudActiveEffectIcons(ref RuntimeContentBlob contentBlob, in PlayerPresentationStats playerStats)
         {
             if (!playerStats.HasPlayer
-                || contentDb == null
                 || !EntityManager.Exists(playerStats.PlayerEntity)
                 || !EntityManager.HasBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity))
             {
@@ -151,13 +151,13 @@ namespace VVardenfell.Runtime.Shell
 
             if (!_hasCachedHudActiveEffectSignature || signature != _cachedHudActiveEffectSignature)
             {
-                _cachedHudActiveEffects = BuildActiveEffectIcons(contentDb, activeEffects);
+                _cachedHudActiveEffects = BuildActiveEffectIcons(ref contentBlob, activeEffects);
                 _cachedHudActiveEffectSignature = signature;
                 _hasCachedHudActiveEffectSignature = true;
                 return _cachedHudActiveEffects;
             }
 
-            UpdateCachedActiveEffectAlpha(contentDb, activeEffects, _cachedHudActiveEffects);
+            UpdateCachedActiveEffectAlpha(ref contentBlob, activeEffects, _cachedHudActiveEffects);
             return _cachedHudActiveEffects;
         }
 
@@ -191,14 +191,14 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static void UpdateCachedActiveEffectAlpha(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects,
             RuntimeMagicEffectIconViewModel[] cachedEffects)
         {
             if (cachedEffects == null || cachedEffects.Length == 0)
                 return;
 
-            float fadeTime = contentDb.RequireGameSettingFloat("fMagicStartIconBlink");
+            float fadeTime = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fMagicStartIconBlink);
 
             for (int i = 0; i < cachedEffects.Length; i++)
             {
@@ -225,10 +225,10 @@ namespace VVardenfell.Runtime.Shell
         }
 
         static RuntimeMagicEffectIconViewModel[] BuildActiveEffectIcons(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects)
         {
-            if (contentDb == null || activeEffects.Length == 0)
+            if (activeEffects.Length == 0)
                 return Array.Empty<RuntimeMagicEffectIconViewModel>();
 
             var ordered = new List<short>();
@@ -243,27 +243,27 @@ namespace VVardenfell.Runtime.Shell
 
                 if (!groups.TryGetValue(active.EffectId, out var group))
                 {
-                    group = new ActiveEffectIconGroup(contentDb, active.EffectId);
+                    group = new ActiveEffectIconGroup(active.EffectId);
                     groups.Add(active.EffectId, group);
                     ordered.Add(active.EffectId);
                 }
 
-                group.Add(active);
+                group.Add(ref contentBlob, active);
             }
 
             if (ordered.Count == 0)
                 return Array.Empty<RuntimeMagicEffectIconViewModel>();
 
-            float fadeTime = contentDb.RequireGameSettingFloat("fMagicStartIconBlink");
+            float fadeTime = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref contentBlob, RuntimeContentKnownHashes.fMagicStartIconBlink);
 
             var result = new RuntimeMagicEffectIconViewModel[ordered.Count];
             for (int i = 0; i < ordered.Count; i++)
             {
                 short effectId = ordered[i];
                 var group = groups[effectId];
-                string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effectId);
+                string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(ref contentBlob, effectId);
                 var descriptionLines = group.BuildDescriptionLines(displayName);
-                string iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effectId);
+                string iconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(ref contentBlob, effectId);
                 result[i] = new RuntimeMagicEffectIconViewModel
                 {
                     EffectId = effectId,
@@ -286,18 +286,16 @@ namespace VVardenfell.Runtime.Shell
 
         sealed class ActiveEffectIconGroup
         {
-            readonly RuntimeContentDatabase _contentDb;
             readonly short _effectId;
             readonly List<string> _sourceLines = new();
             float _lowestFadeTimeLeft = float.PositiveInfinity;
 
-            public ActiveEffectIconGroup(RuntimeContentDatabase contentDb, short effectId)
+            public ActiveEffectIconGroup(short effectId)
             {
-                _contentDb = contentDb;
                 _effectId = effectId;
             }
 
-            public void Add(in ActorActiveMagicEffect active)
+            public void Add(ref RuntimeContentBlob contentBlob, in ActorActiveMagicEffect active)
             {
                 string source = active.SourceName.ToString();
                 if (string.IsNullOrWhiteSpace(source))
@@ -305,7 +303,7 @@ namespace VVardenfell.Runtime.Shell
                 if (string.IsNullOrWhiteSpace(source))
                     source = $"Effect {_effectId}";
 
-                _sourceLines.Add(BuildActiveEffectSourceLine(_contentDb, _effectId, active, source));
+                _sourceLines.Add(BuildActiveEffectSourceLine(ref contentBlob, _effectId, active, source));
                 if (active.DurationSeconds >= 0f && active.TimeLeftSeconds >= 0f)
                     _lowestFadeTimeLeft = Math.Min(_lowestFadeTimeLeft, active.TimeLeftSeconds);
             }
@@ -322,63 +320,63 @@ namespace VVardenfell.Runtime.Shell
                 => CollapseRedundantDescriptionLines(_sourceLines, displayName);
         }
 
-        static RuntimeSpellTooltipViewModel BuildSpellTooltip(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static RuntimeSpellTooltipViewModel BuildSpellTooltip(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
-            string title = RuntimeContentMetadataResolver.ResolveSpellName(spell);
-            var effects = BuildSpellTooltipEffects(contentDb, spell);
+            string title = RuntimeContentMetadataResolver.ResolveSpellName(ref spell);
+            var effects = BuildSpellTooltipEffects(ref contentBlob, ref spell);
             return new RuntimeSpellTooltipViewModel
             {
                 Title = title,
-                SchoolText = spell.SpellType == 0 ? BuildSpellSchoolText(contentDb, spell) : null,
+                SchoolText = spell.SpellType == 0 ? BuildSpellSchoolText(ref contentBlob, ref spell) : null,
                 Effects = effects,
             };
         }
 
-        static RuntimeSpellTooltipEffectRow[] BuildSpellTooltipEffects(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static RuntimeSpellTooltipEffectRow[] BuildSpellTooltipEffects(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
-            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0 || contentDb?.Data.MagicEffectInstances == null)
+            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                 return Array.Empty<RuntimeSpellTooltipEffectRow>();
 
-            int available = Math.Max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
+            int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - spell.EffectStartIndex);
             int count = Math.Min(spell.EffectCount, available);
             var rows = new RuntimeSpellTooltipEffectRow[count];
             for (int i = 0; i < count; i++)
             {
-                var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex + i];
+                var effect = contentBlob.MagicEffectInstances[spell.EffectStartIndex + i];
                 rows[i] = new RuntimeSpellTooltipEffectRow
                 {
                     EffectId = effect.EffectId,
-                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(contentDb, effect.EffectId),
-                    Text = BuildSpellTooltipEffectText(contentDb, effect),
+                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(ref contentBlob, effect.EffectId),
+                    Text = BuildSpellTooltipEffectText(ref contentBlob, effect),
                 };
             }
 
             return rows;
         }
 
-        static string BuildSpellSchoolText(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static string BuildSpellSchoolText(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
-            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0 || contentDb?.Data.MagicEffectInstances == null)
+            if (spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                 return null;
 
-            int available = Math.Max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
+            int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - spell.EffectStartIndex);
             if (available <= 0)
                 return null;
 
-            short effectId = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex].EffectId;
+            short effectId = contentBlob.MagicEffectInstances[spell.EffectStartIndex].EffectId;
             int school = -1;
-            if (contentDb.TryGetMagicEffectHandle(effectId, out var handle))
+            if (RuntimeContentBlobUtility.TryGetMagicEffectHandleByIndex(ref contentBlob, effectId, out var handle))
             {
-                ref readonly var def = ref contentDb.Get(handle);
+                ref RuntimeMagicEffectDefBlob def = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
                 school = def.School;
             }
 
-            string schoolName = RuntimeContentMetadataResolver.ResolveSchoolName(contentDb, school);
-            string schoolLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sSchool", "School");
+            string schoolName = RuntimeContentMetadataResolver.ResolveSchoolName(ref contentBlob, school);
+            string schoolLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sSchool", "School");
             return string.IsNullOrWhiteSpace(schoolName) ? null : $"{schoolLabel}: {schoolName}";
         }
 
-        static string BuildEffectDetail(RuntimeContentDatabase contentDb, in MagicEffectInstanceDef effect)
+        static string BuildEffectDetail(ref RuntimeContentBlob contentBlob, in MagicEffectInstanceDef effect)
         {
             var parts = new List<string>(4);
             if (effect.MagnitudeMin != 0 || effect.MagnitudeMax != 0)
@@ -399,20 +397,20 @@ namespace VVardenfell.Runtime.Shell
             return string.Join(" ", parts);
         }
 
-        static string BuildSpellTooltipEffectText(RuntimeContentDatabase contentDb, in MagicEffectInstanceDef effect)
+        static string BuildSpellTooltipEffectText(ref RuntimeContentBlob contentBlob, in MagicEffectInstanceDef effect)
         {
-            string name = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effect.EffectId);
+            string name = RuntimeContentMetadataResolver.ResolveMagicEffectName(ref contentBlob, effect.EffectId);
             string argument = ResolveEffectArgumentName(effect);
             if (!string.IsNullOrWhiteSpace(argument))
                 name = $"{name} {argument}";
 
-            string detail = BuildEffectDetail(contentDb, effect);
+            string detail = BuildEffectDetail(ref contentBlob, effect);
             return string.IsNullOrWhiteSpace(detail) ? name : $"{name} {detail}";
         }
 
-        static string BuildSpellEffectTooltip(RuntimeContentDatabase contentDb, in SpellDef spell)
+        static string BuildSpellEffectTooltip(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
-            var effects = BuildSpellEffectRows(contentDb, spell);
+            var effects = BuildSpellEffectRows(ref contentBlob, ref spell);
             if (effects.Length == 0)
                 return string.Empty;
 
@@ -440,28 +438,28 @@ namespace VVardenfell.Runtime.Shell
             => Math.Abs(value) == 1 ? singular : plural;
 
         static string BuildActiveEffectSourceLine(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             short effectId,
             in ActorActiveMagicEffect active,
             string source)
         {
-            string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(contentDb, effectId);
+            string displayName = RuntimeContentMetadataResolver.ResolveMagicEffectName(ref contentBlob, effectId);
             string line = string.IsNullOrWhiteSpace(source)
                 ? displayName
                 : source.Trim();
             string sourceLabel = line;
             string detail = string.Empty;
 
-            if (RuntimeContentMetadataResolver.TryGetMagicEffectDef(contentDb, effectId, out var def))
+            if (RuntimeContentMetadataResolver.TryGetMagicEffectFlags(ref contentBlob, effectId, out int flags))
             {
-                if ((def.Flags & MagicEffectFlagTargetSkill) != 0 && active.Skill >= 0)
+                if ((flags & MagicEffectFlagTargetSkill) != 0 && active.Skill >= 0)
                 {
                     string skillName = RuntimeContentMetadataResolver.ResolveSkillName(active.Skill);
                     if (!string.IsNullOrWhiteSpace(skillName))
                         line += $" ({skillName})";
                 }
 
-                if ((def.Flags & MagicEffectFlagTargetAttribute) != 0 && active.Attribute >= 0)
+                if ((flags & MagicEffectFlagTargetAttribute) != 0 && active.Attribute >= 0)
                 {
                     string attributeName = RuntimeContentMetadataResolver.ResolveAttributeName(active.Attribute);
                     if (!string.IsNullOrWhiteSpace(attributeName))
@@ -469,17 +467,17 @@ namespace VVardenfell.Runtime.Shell
                 }
 
                 sourceLabel = line;
-                detail = FormatActiveEffectMagnitude(contentDb, effectId, active.Magnitude, def.Flags).TrimStart(':', ' ');
+                detail = FormatActiveEffectMagnitude(ref contentBlob, effectId, active.Magnitude, flags).TrimStart(':', ' ');
             }
             else if (Math.Abs(active.Magnitude) > 0.0001f)
             {
-                detail = $"{(int)active.Magnitude} {RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs((int)active.Magnitude) == 1 ? "sPoint" : "sPoints", "pts")}";
+                detail = $"{(int)active.Magnitude} {RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, Math.Abs((int)active.Magnitude) == 1 ? "sPoint" : "sPoints", "pts")}";
             }
 
             if (active.DurationSeconds >= 0f && active.TimeLeftSeconds >= 0f)
                 detail = string.IsNullOrWhiteSpace(detail)
-                    ? BuildActiveEffectDuration(contentDb, active.TimeLeftSeconds).Trim()
-                    : $"{detail} {BuildActiveEffectDuration(contentDb, active.TimeLeftSeconds).Trim()}";
+                    ? BuildActiveEffectDuration(ref contentBlob, active.TimeLeftSeconds).Trim()
+                    : $"{detail} {BuildActiveEffectDuration(ref contentBlob, active.TimeLeftSeconds).Trim()}";
 
             if (string.Equals(sourceLabel, displayName, StringComparison.OrdinalIgnoreCase))
                 return detail;
@@ -522,7 +520,7 @@ namespace VVardenfell.Runtime.Shell
             return string.Join("\n", lines);
         }
 
-        static string FormatActiveEffectMagnitude(RuntimeContentDatabase contentDb, short effectId, float magnitude, int flags)
+        static string FormatActiveEffectMagnitude(ref RuntimeContentBlob contentBlob, short effectId, float magnitude, int flags)
         {
             var displayType = ResolveMagnitudeDisplayType(effectId, flags);
             if (displayType == ActiveEffectMagnitudeDisplayType.None)
@@ -531,7 +529,7 @@ namespace VVardenfell.Runtime.Shell
             int integerMagnitude = (int)magnitude;
             if (displayType == ActiveEffectMagnitudeDisplayType.TimesInt)
             {
-                string unit = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sXTimesINT", "x INT");
+                string unit = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sXTimesINT", "x INT");
                 return $" {(integerMagnitude / 10f):0.0}{unit}";
             }
 
@@ -541,19 +539,19 @@ namespace VVardenfell.Runtime.Shell
 
             result += displayType switch
             {
-                ActiveEffectMagnitudeDisplayType.Feet => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sFeet", "ft"),
-                ActiveEffectMagnitudeDisplayType.Level => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sLevel" : "sLevels", "levels"),
-                ActiveEffectMagnitudeDisplayType.Percentage => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sPercent", "%"),
-                _ => RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, Math.Abs(integerMagnitude) == 1 ? "sPoint" : "sPoints", "pts"),
+                ActiveEffectMagnitudeDisplayType.Feet => RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sFeet", "ft"),
+                ActiveEffectMagnitudeDisplayType.Level => RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, Math.Abs(integerMagnitude) == 1 ? "sLevel" : "sLevels", "levels"),
+                ActiveEffectMagnitudeDisplayType.Percentage => RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sPercent", "%"),
+                _ => RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, Math.Abs(integerMagnitude) == 1 ? "sPoint" : "sPoints", "pts"),
             };
 
             return result;
         }
 
-        static string BuildActiveEffectDuration(RuntimeContentDatabase contentDb, float timeLeftSeconds)
+        static string BuildActiveEffectDuration(ref RuntimeContentBlob contentBlob, float timeLeftSeconds)
         {
             int seconds = Math.Max(0, (int)Math.Ceiling(timeLeftSeconds));
-            string durationLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(contentDb, "sDuration", "Duration");
+            string durationLabel = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sDuration", "Duration");
             return $" {durationLabel}: {seconds}";
         }
 

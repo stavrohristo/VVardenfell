@@ -1,7 +1,7 @@
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -22,6 +22,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindQuestJournalRequest>());
             RequireForUpdate(_runtimeQuery);
             RequireForUpdate<MorrowindTimeState>();
+            RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -35,23 +36,23 @@ namespace VVardenfell.Runtime.MorrowindScript
             var questStates = EntityManager.GetBuffer<MorrowindQuestJournalIndex>(runtimeEntity);
             var entries = EntityManager.GetBuffer<MorrowindQuestJournalEntry>(runtimeEntity);
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
-            var contentDb = RuntimeContentDatabase.Active;
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (state.QuestCount != questStates.Length)
             {
                 Debug.LogError($"[VVardenfell][MWScript] quest journal state count mismatch: state={state.QuestCount} buffer={questStates.Length}.");
                 requests.Clear();
                 return;
             }
-            if (contentDb == null || contentDb.DialogueCount != questStates.Length)
+            if (contentBlob.Dialogues.Length != questStates.Length)
             {
-                Debug.LogError($"[VVardenfell][MWScript] quest journal content mismatch: content={(contentDb == null ? -1 : contentDb.DialogueCount)} buffer={questStates.Length}.");
+                Debug.LogError($"[VVardenfell][MWScript] quest journal content mismatch: content={contentBlob.Dialogues.Length} buffer={questStates.Length}.");
                 requests.Clear();
                 return;
             }
 
             for (int i = 0; i < requests.Length; i++)
             {
-                if (!MorrowindQuestJournalUtility.TryApplyRequest(contentDb, ref state, time, questStates, entries, requests[i]))
+                if (!MorrowindQuestJournalUtility.TryApplyRequest(ref contentBlob, ref state, time, questStates, entries, requests[i]))
                     Debug.LogError($"[VVardenfell][MWScript] invalid quest journal request dialogueIndex={requests[i].DialogueIndex} stage={requests[i].JournalIndex}.");
             }
 

@@ -3,7 +3,6 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 
 namespace VVardenfell.Runtime.Combat
@@ -11,13 +10,12 @@ namespace VVardenfell.Runtime.Combat
     static class MorrowindWeaponConditionUtility
     {
         public static float ResolveEquippedConditionMultiplier(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity attacker,
             in ContentReference weaponContent,
             in ItemEquipmentDef weapon)
         {
-            RequireContentDb(contentDb);
             if (weapon.Health <= 0)
                 return 1f;
 
@@ -27,18 +25,17 @@ namespace VVardenfell.Runtime.Combat
         }
 
         public static void ApplyWeaponConditionDamage(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity attacker,
             in ContentReference weaponContent,
             in ItemEquipmentDef weapon,
             float adjustedWeaponDamage)
         {
-            RequireContentDb(contentDb);
             if (weapon.Health <= 0)
                 return;
 
-            float weaponDamageMult = contentDb.RequireGameSettingFloat("fWeaponDamageMult");
+            float weaponDamageMult = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fWeaponDamageMult);
             int conditionDamage = (int)math.max(1f, weaponDamageMult * math.max(0f, adjustedWeaponDamage));
 
             var equipment = RequireEquipmentBuffer(entityManager, attacker);
@@ -102,11 +99,5 @@ namespace VVardenfell.Runtime.Combat
 
         static bool Matches(in ContentReference lhs, in ContentReference rhs)
             => lhs.Kind == rhs.Kind && lhs.HandleValue == rhs.HandleValue;
-
-        static void RequireContentDb(RuntimeContentDatabase contentDb)
-        {
-            if (contentDb == null)
-                throw new InvalidOperationException("[VVardenfell][Damage] Runtime content database is not loaded.");
-        }
     }
 }

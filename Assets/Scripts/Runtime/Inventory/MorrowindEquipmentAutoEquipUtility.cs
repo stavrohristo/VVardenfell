@@ -3,7 +3,6 @@ using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Content;
 
 namespace VVardenfell.Runtime.Inventory
 {
@@ -12,45 +11,44 @@ namespace VVardenfell.Runtime.Inventory
         const int SlotCapacity = 32;
 
         public static void SelectInitialEquipment(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
-            DynamicBuffer<ActorInventoryItem> inventory,
-            DynamicBuffer<ActorEquipmentSlot> equipment)
-        {
-            var source = new DynamicBufferInventorySource { Buffer = inventory };
-            var sink = new DynamicBufferEquipmentSink { Buffer = equipment };
-            SelectInitialEquipment(contentDb, actor, ref source, ref sink);
-        }
-
-        public static void SelectInitialEquipment(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
             NativeArray<ActorInventoryItem> inventory,
             NativeList<ActorEquipmentSlot> equipment)
         {
             var source = new NativeArrayInventorySource { Items = inventory };
             var sink = new NativeListEquipmentSink { Items = equipment };
-            SelectInitialEquipment(contentDb, actor, ref source, ref sink);
+            SelectInitialEquipment(ref content, ref actor, ref source, ref sink);
+        }
+
+        public static void SelectInitialEquipment(
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
+            DynamicBuffer<ActorInventoryItem> inventory,
+            DynamicBuffer<ActorEquipmentSlot> equipment)
+        {
+            var source = new DynamicBufferInventorySource { Buffer = inventory };
+            var sink = new DynamicBufferEquipmentSink { Buffer = equipment };
+            SelectInitialEquipment(ref content, ref actor, ref source, ref sink);
         }
 
         static void SelectInitialEquipment<TInventory, TEquipment>(
-            RuntimeContentDatabase contentDb,
-            in ActorDef actor,
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
             ref TInventory inventory,
             ref TEquipment equipment)
             where TInventory : struct, IActorInventorySource
             where TEquipment : struct, IActorEquipmentSink
         {
             int inventoryLength = inventory.Length;
-            if (contentDb == null || inventoryLength == 0)
+            if (inventoryLength == 0)
                 return;
 
             Span<int> bestInventoryIndices = stackalloc int[SlotCapacity];
             for (int i = 0; i < SlotCapacity; i++)
                 bestInventoryIndices[i] = -1;
 
-            bool isBeastNpc = actor.Kind == ActorDefKind.Npc
-                               && ActorEquipmentRuntimeUtility.IsBeastRace(contentDb, actor.RaceId);
+            bool isBeastNpc = actor.Kind == ActorDefKind.Npc && IsBeastRace(ref content, actor.RaceIdHash);
             for (int i = 0; i < inventoryLength; i++)
             {
                 var inventoryItem = inventory[i];
@@ -58,9 +56,9 @@ namespace VVardenfell.Runtime.Inventory
                     continue;
 
                 var itemHandle = new ItemDefHandle { Value = inventoryItem.Content.HandleValue };
-                if (!contentDb.TryGetItemEquipment(itemHandle, out var itemEquipment))
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref content, itemHandle, out var itemEquipment))
                     continue;
-                if (!CanAutoEquip(contentDb, itemEquipment, isBeastNpc))
+                if (!CanAutoEquip(ref content, itemEquipment, isBeastNpc))
                     continue;
 
                 int selectionSlot = (int)ResolveSelectionSlot(itemEquipment);
@@ -70,7 +68,7 @@ namespace VVardenfell.Runtime.Inventory
                 int existingIndex = bestInventoryIndices[selectionSlot];
                 if (existingIndex >= 0
                     && existingIndex < inventoryLength
-                    && TryGetEquipment(contentDb, inventory[existingIndex], out var existingEquipment)
+                    && TryGetEquipment(ref content, inventory[existingIndex], out var existingEquipment)
                     && !ShouldReplace(existingEquipment, itemEquipment))
                 {
                     continue;
@@ -86,7 +84,7 @@ namespace VVardenfell.Runtime.Inventory
                     continue;
 
                 var inventoryItem = inventory[inventoryIndex];
-                if (!TryGetEquipment(contentDb, inventoryItem, out var itemEquipment))
+                if (!TryGetEquipment(ref content, inventoryItem, out var itemEquipment))
                     continue;
 
                 equipment.Add(new ActorEquipmentSlot
@@ -105,7 +103,7 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         static bool TryGetEquipment(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             in ActorInventoryItem inventoryItem,
             out ItemEquipmentDef equipment)
         {
@@ -114,16 +112,16 @@ namespace VVardenfell.Runtime.Inventory
                 return false;
 
             var itemHandle = new ItemDefHandle { Value = inventoryItem.Content.HandleValue };
-            return contentDb.TryGetItemEquipment(itemHandle, out equipment);
+            return RuntimeContentBlobUtility.TryGetItemEquipment(ref content, itemHandle, out equipment);
         }
 
-        static bool CanAutoEquip(RuntimeContentDatabase contentDb, in ItemEquipmentDef equipment, bool isBeastNpc)
+        static bool CanAutoEquip(ref RuntimeContentBlob content, in ItemEquipmentDef equipment, bool isBeastNpc)
         {
             if (equipment.Slot == ItemEquipmentSlot.None)
                 return false;
             if (equipment.Kind == ItemEquipmentKind.Armor && equipment.Health == 0)
                 return false;
-            if (isBeastNpc && HasBeastForbiddenPart(contentDb, equipment))
+            if (isBeastNpc && HasBeastForbiddenPart(ref content, equipment))
                 return false;
 
             return equipment.Kind == ItemEquipmentKind.Weapon
@@ -131,12 +129,12 @@ namespace VVardenfell.Runtime.Inventory
                 || equipment.Kind == ItemEquipmentKind.Clothing;
         }
 
-        static bool HasBeastForbiddenPart(RuntimeContentDatabase contentDb, in ItemEquipmentDef equipment)
+        static bool HasBeastForbiddenPart(ref RuntimeContentBlob content, in ItemEquipmentDef equipment)
         {
-            ReadOnlySpan<ItemEquipmentBodyPartDef> parts = contentDb.GetItemEquipmentBodyParts(equipment);
-            for (int i = 0; i < parts.Length; i++)
+            RuntimeContentBlobUtility.RequireRange(equipment.FirstBodyPartIndex, equipment.BodyPartCount, content.ItemEquipmentBodyParts.Length, "item equipment body part");
+            for (int i = 0; i < equipment.BodyPartCount; i++)
             {
-                var part = parts[i].Part;
+                var part = content.ItemEquipmentBodyParts[equipment.FirstBodyPartIndex + i].Part;
                 if (part == ItemEquipmentPartReference.Head
                     || part == ItemEquipmentPartReference.LeftFoot
                     || part == ItemEquipmentPartReference.RightFoot)
@@ -146,6 +144,17 @@ namespace VVardenfell.Runtime.Inventory
             }
 
             return false;
+        }
+
+        static bool IsBeastRace(ref RuntimeContentBlob content, ulong raceIdHash)
+        {
+            if (raceIdHash == 0UL)
+                return false;
+            if (!RuntimeContentBlobUtility.TryGetRaceHandleByIdHash(ref content, raceIdHash, out var raceHandle) || !raceHandle.IsValid)
+                return false;
+
+            ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref content, raceHandle);
+            return ActorVisualContentRules.IsBeastRaceFlags(race.Flags);
         }
 
         static ItemEquipmentSlot ResolveSelectionSlot(in ItemEquipmentDef equipment)

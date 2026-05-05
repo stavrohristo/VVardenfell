@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Collections;
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
@@ -207,8 +208,10 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
+            var contentBlob = RequireRuntimeContentBlob();
+            ref RuntimeContentBlob content = ref contentBlob.Value;
             ResolveInitialPlayerData(
-                RuntimeContentDatabase.Active,
+                ref content,
                 out var playerStats,
                 out var playerIdentity,
                 out var knownSpells,
@@ -246,15 +249,23 @@ namespace VVardenfell.Runtime.Bootstrap
             return profile?.SpawnLocalPlayer ?? true;
         }
 
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
+        {
+            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            if (!blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][Init] Game initialization request requires runtime content blob.");
+            return blob;
+        }
+
         static void ResolveInitialPlayerData(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob content,
             out ActorRuntimeStatSeed stats,
             out ActorIdentitySet identity,
             out ActorKnownSpell[] knownSpells,
             out PlayerInitialInventoryItem[] initialInventory)
         {
             if (MorrowindActorMovementStats.TryCreatePlayerSeedFromContent(
-                    contentDb,
+                    ref content,
                     out stats,
                     out identity,
                     out knownSpells,
@@ -263,7 +274,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 return;
             }
 
-            stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed();
+            stats = MorrowindActorMovementStats.CreateDefaultPlayerSeed(ref content);
             identity = ActorIdentitySet.DefaultPlayer();
             knownSpells = System.Array.Empty<ActorKnownSpell>();
             initialInventory = System.Array.Empty<PlayerInitialInventoryItem>();

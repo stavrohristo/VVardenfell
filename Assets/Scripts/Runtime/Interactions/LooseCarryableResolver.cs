@@ -9,16 +9,16 @@ namespace VVardenfell.Runtime.Interactions
     static class LooseCarryableResolver
     {
         public static bool TryResolveContent(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity logicalEntity,
             out ContentReference content)
         {
-            return TryResolveContent(contentDb, entityManager, logicalEntity, out content, out _);
+            return TryResolveContent(ref contentBlob, entityManager, logicalEntity, out content, out _);
         }
 
         public static bool TryResolveContent(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity logicalEntity,
             out ContentReference content,
@@ -27,7 +27,7 @@ namespace VVardenfell.Runtime.Interactions
             content = default;
             diagnostic = null;
 
-            if (contentDb == null || !entityManager.Exists(logicalEntity))
+            if (!entityManager.Exists(logicalEntity))
                 return false;
 
             if (entityManager.HasComponent<ItemPickupAuthoring>(logicalEntity))
@@ -62,7 +62,7 @@ namespace VVardenfell.Runtime.Interactions
 
                 var authoring = entityManager.GetComponentData<LeveledItemAuthoring>(logicalEntity);
                 return ContainerLootUtility.TryResolveLooseLeveledCarryable(
-                    contentDb,
+                    ref contentBlob,
                     authoring.Definition,
                     placedRefId,
                     out content,
@@ -74,23 +74,23 @@ namespace VVardenfell.Runtime.Interactions
         }
 
         public static bool TryResolveMetadata(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity logicalEntity,
             out CarryableMetadata metadata)
         {
             metadata = default;
-            return TryResolveContent(contentDb, entityManager, logicalEntity, out ContentReference content)
-                && RuntimeContentMetadataResolver.TryResolveCarryable(contentDb, content, out metadata);
+            return TryResolveContent(ref contentBlob, entityManager, logicalEntity, out ContentReference content)
+                && RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, content, out metadata);
         }
 
         public static string ResolveDisplayName(
-            RuntimeContentDatabase contentDb,
+            ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             Entity logicalEntity,
             string fallback = "item")
         {
-            return TryResolveMetadata(contentDb, entityManager, logicalEntity, out CarryableMetadata metadata)
+            return TryResolveMetadata(ref contentBlob, entityManager, logicalEntity, out CarryableMetadata metadata)
                 ? metadata.DisplayName
                 : fallback;
         }
