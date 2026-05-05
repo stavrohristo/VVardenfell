@@ -61,12 +61,13 @@ namespace VVardenfell.Runtime.Interactions
                     return false;
 
                 var authoring = entityManager.GetComponentData<LeveledItemAuthoring>(logicalEntity);
-                return ContainerLootUtility.TryResolveLooseLeveledCarryable(
+                int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(entityManager);
+                return MorrowindLeveledItemResolverUtility.TryResolveOne(
                     ref contentBlob,
                     authoring.Definition,
-                    placedRefId,
-                    out content,
-                    out diagnostic)
+                    playerLevel,
+                    MorrowindLeveledItemResolverUtility.BuildResolutionSeed(placedRefId, 0, 0),
+                    out content)
                     && content.IsValid;
             }
 

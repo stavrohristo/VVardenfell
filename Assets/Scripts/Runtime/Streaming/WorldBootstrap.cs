@@ -118,10 +118,6 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallColliderBlobs(collisionLoad, progress))
                     yield return step;
 
-                var terrainSpawn = WorldSpawner.SpawnAllTerrainIncremental(world, loadedMap, progress);
-                while (terrainSpawn.MoveNext())
-                    yield return terrainSpawn.Current;
-
                 EnsurePhysicsMutationQueueReadyForDirectCellSpawn(world, em);
 
                 var defaultSpawn = options.PlayerStartPosition;

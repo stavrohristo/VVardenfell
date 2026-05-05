@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -10,11 +8,6 @@ namespace VVardenfell.Runtime.Inventory
 {
     static class ContainerLootUtility
     {
-        public const int FixedLeveledLootPlayerLevel = 1;
-        const int MaxLeveledResolutionDepth = 16;
-        const int ItemLeveledEachFlag = 0x01;
-        const int ItemLeveledAllLevelsFlag = 0x02;
-
         public static int FindHeaderIndex(DynamicBuffer<ContainerSessionHeader> headers, uint placedRefId)
         {
             for (int i = 0; i < headers.Length; i++)
@@ -208,79 +201,53 @@ namespace VVardenfell.Runtime.Inventory
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
             ContainerDefHandle definition,
-            HashSet<string> diagnostics)
+            int playerLevel)
         {
             if (placedRefId == 0u || !definition.IsValid)
                 return;
 
             ref BlobArray<RuntimeContainerItemDefBlob> authoredItems = ref RuntimeContentBlobUtility.GetContainerItems(ref contentBlob, definition, out int firstItemIndex, out int itemCount);
-            for (int i = 0; i < itemCount; i++)
+            var resolvedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+            try
             {
-                ref RuntimeContainerItemDefBlob authored = ref authoredItems[firstItemIndex + i];
-                string itemId = authored.ItemId.ToString();
-                if (authored.Count <= 0 || string.IsNullOrWhiteSpace(itemId))
-                    continue;
-
-                if (TryResolveDirectCarryable(ref contentBlob, itemId, out var directContent, out string directDiagnostic))
+                for (int i = 0; i < itemCount; i++)
                 {
-                    AddOrIncrementContainerStack(items, placedRefId, directContent, authored.Count);
-                    continue;
-                }
+                    ref RuntimeContainerItemDefBlob authored = ref authoredItems[firstItemIndex + i];
+                    if (authored.Count == 0)
+                        continue;
+                    if (authored.ItemIdHash == 0UL)
+                        throw new System.InvalidOperationException($"[VVardenfell][Container] Container {definition.Value} has an authored item with no id at offset {i}.");
 
-                if (!string.IsNullOrEmpty(directDiagnostic))
-                {
-                    diagnostics?.Add(directDiagnostic);
-                    continue;
-                }
+                    if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, authored.ItemIdHash, out var directContent))
+                    {
+                        if (authored.Count < 0)
+                            throw new System.InvalidOperationException($"[VVardenfell][Container] Container {definition.Value} has negative count {authored.Count} for direct item hash {authored.ItemIdHash}.");
+                        AddOrIncrementContainerStack(items, placedRefId, directContent, authored.Count);
+                        continue;
+                    }
 
-                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(itemId), out ItemLeveledListDefHandle listHandle))
-                {
-                    diagnostics?.Add($"missing authored target '{itemId}'");
-                    continue;
-                }
+                    if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, authored.ItemIdHash, out ItemLeveledListDefHandle listHandle))
+                        throw new System.InvalidOperationException($"[VVardenfell][Container] Container {definition.Value} references unresolved authored item hash {authored.ItemIdHash}.");
 
-                ResolveLeveledListIntoContainer(ref contentBlob, listHandle, items, placedRefId, authored.Count, i, diagnostics);
+                    resolvedItems.Clear();
+                    MorrowindLeveledItemResolverUtility.ResolveIntoInventory(
+                        ref contentBlob,
+                        listHandle,
+                        playerLevel,
+                        MorrowindLeveledItemResolverUtility.BuildResolutionSeed(placedRefId, i, 0),
+                        authored.Count,
+                        resolvedItems);
+                    for (int resolvedIndex = 0; resolvedIndex < resolvedItems.Length; resolvedIndex++)
+                    {
+                        var resolved = resolvedItems[resolvedIndex];
+                        AddOrIncrementContainerStack(items, placedRefId, resolved.Content, resolved.Count);
+                    }
+                }
             }
-        }
-
-        static void ResolveLeveledListIntoContainer(
-            ref RuntimeContentBlob contentBlob,
-            ItemLeveledListDefHandle listHandle,
-            DynamicBuffer<ContainerSessionItem> items,
-            uint placedRefId,
-            int authoredCount,
-            int authoredEntryIndex,
-            HashSet<string> diagnostics)
-        {
-            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
-            bool resolveEach = (list.Flags & ItemLeveledEachFlag) != 0;
-
-            if (!resolveEach)
+            finally
             {
-                if (TryResolveLeveledResult(ref contentBlob, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, 0), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
-                    && content.IsValid)
-                {
-                    AddOrIncrementContainerStack(items, placedRefId, content, authoredCount);
-                }
-                else if (!string.IsNullOrEmpty(diagnostic))
-                {
-                    diagnostics?.Add(diagnostic);
-                }
-
-                return;
-            }
-
-            for (int iteration = 0; iteration < authoredCount; iteration++)
-            {
-                if (TryResolveLeveledResult(ref contentBlob, listHandle, BuildResolutionSeed(placedRefId, authoredEntryIndex, iteration), 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out ContentReference content, out string diagnostic)
-                    && content.IsValid)
-                {
-                    AddOrIncrementContainerStack(items, placedRefId, content, 1);
-                }
-                else if (!string.IsNullOrEmpty(diagnostic))
-                {
-                    diagnostics?.Add(diagnostic);
-                }
+                if (resolvedItems.IsCreated)
+                    resolvedItems.Dispose();
             }
         }
 
@@ -292,161 +259,10 @@ namespace VVardenfell.Runtime.Inventory
         {
             content = default;
             diagnostic = null;
-
-            if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(itemId), out ContentReference resolved))
-                return false;
-
-            switch (resolved.Kind)
-            {
-                case ContentReferenceKind.Item:
-                case ContentReferenceKind.Light:
-                    content = resolved;
-                    return true;
-                default:
-                    diagnostic = $"unsupported authored target '{itemId}' ({resolved.Kind})";
-                    return false;
-            }
-        }
-
-        internal static bool TryResolveLooseLeveledCarryable(
-            ref RuntimeContentBlob contentBlob,
-            ItemLeveledListDefHandle listHandle,
-            uint placedRefId,
-            out ContentReference content,
-            out string diagnostic)
-        {
-            return TryResolveLeveledResult(
+            return MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(
                 ref contentBlob,
-                listHandle,
-                BuildResolutionSeed(placedRefId, 0, 0),
-                0,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                out content,
-                out diagnostic);
-        }
-
-        static bool TryResolveLeveledResult(
-            ref RuntimeContentBlob contentBlob,
-            ItemLeveledListDefHandle listHandle,
-            uint seed,
-            int depth,
-            HashSet<string> visitedLists,
-            out ContentReference content,
-            out string diagnostic)
-        {
-            content = default;
-            diagnostic = null;
-
-            if (!listHandle.IsValid)
-                return false;
-
-            if (depth >= MaxLeveledResolutionDepth)
-            {
-                diagnostic = $"item leveled-list recursion cap reached at depth {MaxLeveledResolutionDepth}";
-                return false;
-            }
-
-            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
-            string listId = list.Id.ToString();
-            string normalizedId = ContentId.NormalizeId(listId);
-            if (!visitedLists.Add(normalizedId))
-            {
-                diagnostic = $"item leveled-list cycle detected at '{listId}'";
-                return false;
-            }
-
-            try
-            {
-                if (RollPercent(seed) < list.ChanceNone)
-                    return false;
-
-                ref BlobArray<RuntimeItemLeveledListEntryDefBlob> entries = ref RuntimeContentBlobUtility.GetItemLeveledListEntries(ref contentBlob, listHandle, out int firstEntryIndex, out int entryCount);
-                if (entryCount == 0)
-                    return false;
-
-                bool allLevels = (list.Flags & ItemLeveledAllLevelsFlag) != 0;
-                int highestEligibleLevel = 0;
-                bool hasEligible = false;
-                for (int i = 0; i < entryCount; i++)
-                {
-                    int level = entries[firstEntryIndex + i].Level;
-                    if (level > highestEligibleLevel && level <= FixedLeveledLootPlayerLevel)
-                    {
-                        highestEligibleLevel = level;
-                        hasEligible = true;
-                    }
-                }
-
-                if (!hasEligible)
-                    return false;
-
-                var candidateIds = new List<string>(entryCount);
-                for (int i = 0; i < entryCount; i++)
-                {
-                    ref RuntimeItemLeveledListEntryDefBlob entry = ref entries[firstEntryIndex + i];
-                    int level = entry.Level;
-                    if (level > FixedLeveledLootPlayerLevel)
-                        continue;
-
-                    if (allLevels || level == highestEligibleLevel)
-                        candidateIds.Add(entry.ItemId.ToString());
-                }
-
-                if (candidateIds.Count == 0)
-                    return false;
-
-                int candidateIndex = NextRandomIndex(ref seed, candidateIds.Count);
-                string resolvedId = candidateIds[candidateIndex];
-                if (TryResolveDirectCarryable(ref contentBlob, resolvedId, out content, out string directDiagnostic))
-                    return true;
-
-                if (!string.IsNullOrEmpty(directDiagnostic))
-                {
-                    diagnostic = directDiagnostic;
-                    return false;
-                }
-
-                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(resolvedId), out ItemLeveledListDefHandle nestedHandle))
-                {
-                    diagnostic = $"missing leveled-list target '{resolvedId}' referenced by '{listId}'";
-                    return false;
-                }
-
-                seed = MixSeed(seed, (uint)candidateIndex + 1u);
-                return TryResolveLeveledResult(ref contentBlob, nestedHandle, seed, depth + 1, visitedLists, out content, out diagnostic);
-            }
-            finally
-            {
-                visitedLists.Remove(normalizedId);
-            }
-        }
-
-        static uint BuildResolutionSeed(uint placedRefId, int authoredEntryIndex, int iteration)
-        {
-            return math.hash(new uint4(
-                placedRefId,
-                unchecked((uint)authoredEntryIndex + 1u),
-                unchecked((uint)iteration + 1u),
-                0x9E3779B9u));
-        }
-
-        static uint MixSeed(uint seed, uint salt)
-        {
-            return math.hash(new uint2(seed, salt));
-        }
-
-        static int RollPercent(uint seed)
-        {
-            uint state = seed == 0u ? 0xA341316Cu : seed;
-            state = state * 1664525u + 1013904223u;
-            return (int)(state % 100u);
-        }
-
-        static int NextRandomIndex(ref uint seed, int count)
-        {
-            seed = seed == 0u ? 0xC8013EA4u : seed;
-            seed = seed * 1664525u + 1013904223u;
-            return count <= 1 ? 0 : (int)(seed % (uint)count);
+                RuntimeContentStableHash.HashId(itemId),
+                out content);
         }
     }
 }

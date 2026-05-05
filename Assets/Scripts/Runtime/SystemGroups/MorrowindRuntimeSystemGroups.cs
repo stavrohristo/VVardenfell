@@ -43,7 +43,7 @@ namespace VVardenfell.Runtime.Systems
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(FixedStepSimulationSystemGroup))]
-    [UpdateBefore(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     public partial class MorrowindAudioMenuSystemGroup : ComponentSystemGroup
     {
     }
@@ -103,6 +103,13 @@ namespace VVardenfell.Runtime.Systems
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateAfter(typeof(PhysicsSystemGroup))]
     public partial class MorrowindFixedPostPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(FixedStepSimulationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindPreTransformSimulationSystemGroup))]
+    public partial class MorrowindFramePhysicsQuerySystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 

@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
@@ -6,7 +7,7 @@ using VVardenfell.Runtime.Player;
 
 namespace VVardenfell.Runtime.Movement
 {
-    public static partial class MorrowindActorMovementSolver
+    public static partial class MorrowindActorMovementKernel
     {
         readonly struct GroundSupportResult
         {
@@ -17,7 +18,7 @@ namespace VVardenfell.Runtime.Movement
             public readonly Entity StandingOn;
             public readonly float Fraction;
             public readonly float ProbeDistance;
-            public readonly bool RejectedSteep;
+            public readonly byte RejectedSteep;
 
             GroundSupportResult(
                 MorrowindSupportKind kind,
@@ -36,7 +37,7 @@ namespace VVardenfell.Runtime.Movement
                 StandingOn = standingOn;
                 Fraction = fraction;
                 ProbeDistance = probeDistance;
-                RejectedSteep = rejectedSteep;
+                RejectedSteep = rejectedSteep ? (byte)1 : (byte)0;
             }
 
             public static GroundSupportResult None(float3 position, bool rejectedSteep = false)
@@ -59,18 +60,21 @@ namespace VVardenfell.Runtime.Movement
                 || Kind == MorrowindSupportKind.RecoveryFlat;
         }
 
-        static GroundSupportResult FindGroundSupport(
-            EntityManager entityManager,
+        [BurstCompile]
+        static void FindGroundSupport(
             in CollisionWorld world,
             in PhysicsCollider collider,
-            float3 position,
+            in float3 position,
             in MorrowindMovementSettings tuning,
+            in ComponentLookup<PlayerTag> playerLookup,
+            in ComponentLookup<PassiveActorPresence> passiveActorLookup,
             bool wasGrounded,
-            bool allowRecoveryFallback)
+            bool allowRecoveryFallback, out GroundSupportResult gsr)
         {
+            gsr = default;
             if (allowRecoveryFallback)
             {
-                return GroundSupportResult.Create(
+                gsr = GroundSupportResult.Create(
                     MorrowindSupportKind.RecoveryFlat,
                     math.up(),
                     position,
@@ -78,6 +82,8 @@ namespace VVardenfell.Runtime.Movement
                     Entity.Null,
                     0f,
                     0f);
+
+                return;
             }
 
             float dropDistance = 2f * tuning.GroundOffset + (wasGrounded ? tuning.StepSizeDown : 0f);
@@ -88,16 +94,19 @@ namespace VVardenfell.Runtime.Movement
                 quaternion.identity);
 
             if (!world.CastCollider(castInput, out ColliderCastHit hit))
-                return GroundSupportResult.None(position);
+            {
+                
+                gsr = GroundSupportResult.None(position);
+                return;
+            }
 
             float3 hitPosition = position - new float3(0f, dropDistance * hit.Fraction, 0f);
             float3 supportedPosition = hitPosition + new float3(0f, tuning.GroundOffset, 0f);
             bool walkable = IsWalkableSlope(hit.SurfaceNormal, tuning.MaxSlopeCosine);
-            bool actorTop = IsActorSupport(entityManager, hit.Entity);
-
+            bool actorTop = IsActorSupport(hit.Entity, playerLookup, passiveActorLookup);
             if (actorTop)
             {
-                return walkable
+                gsr = walkable
                     ? GroundSupportResult.Create(
                         MorrowindSupportKind.ActorTop,
                         hit.SurfaceNormal,
@@ -107,66 +116,20 @@ namespace VVardenfell.Runtime.Movement
                         hit.Fraction,
                         dropDistance)
                     : GroundSupportResult.None(position, rejectedSteep: true);
+                return;
             }
 
             if (!walkable)
-                return GroundSupportResult.None(position, rejectedSteep: true);
-
-            MorrowindSupportKind kind = hit.SurfaceNormal.y >= SupportSlopeReportingThreshold
-                ? MorrowindSupportKind.FlatGround
-                : MorrowindSupportKind.WalkableSlope;
-
-            return GroundSupportResult.Create(
-                kind,
-                hit.SurfaceNormal,
-                hitPosition,
-                supportedPosition,
-                hit.Entity,
-                hit.Fraction,
-                dropDistance);
-        }
-
-        static GroundSupportResult FindGroundSupportUnmanaged(
-            in CollisionWorld world,
-            in PhysicsCollider collider,
-            float3 position,
-            in MorrowindMovementSettings tuning,
-            bool wasGrounded,
-            bool allowRecoveryFallback)
-        {
-            if (allowRecoveryFallback)
             {
-                return GroundSupportResult.Create(
-                    MorrowindSupportKind.RecoveryFlat,
-                    math.up(),
-                    position,
-                    position,
-                    Entity.Null,
-                    0f,
-                    0f);
+                gsr = GroundSupportResult.None(position, rejectedSteep: true);
+                return;
             }
-
-            float dropDistance = 2f * tuning.GroundOffset + (wasGrounded ? tuning.StepSizeDown : 0f);
-            var castInput = new ColliderCastInput(
-                collider.Value,
-                position,
-                position - new float3(0f, dropDistance, 0f),
-                quaternion.identity);
-
-            if (!world.CastCollider(castInput, out ColliderCastHit hit))
-                return GroundSupportResult.None(position);
-
-            float3 hitPosition = position - new float3(0f, dropDistance * hit.Fraction, 0f);
-            float3 supportedPosition = hitPosition + new float3(0f, tuning.GroundOffset, 0f);
-            bool walkable = IsWalkableSlope(hit.SurfaceNormal, tuning.MaxSlopeCosine);
-            if (!walkable)
-                return GroundSupportResult.None(position, rejectedSteep: true);
 
             MorrowindSupportKind kind = hit.SurfaceNormal.y >= SupportSlopeReportingThreshold
                 ? MorrowindSupportKind.FlatGround
                 : MorrowindSupportKind.WalkableSlope;
 
-            return GroundSupportResult.Create(
+            gsr = GroundSupportResult.Create(
                 kind,
                 hit.SurfaceNormal,
                 hitPosition,
@@ -176,6 +139,7 @@ namespace VVardenfell.Runtime.Movement
                 dropDistance);
         }
 
+        [BurstCompile]
         static void ApplySupportResult(
             in CollisionWorld world,
             in PhysicsCollider collider,
@@ -259,13 +223,16 @@ namespace VVardenfell.Runtime.Movement
             position = (start + settleHitPosition) * 0.5f;
         }
 
-        static bool IsWalkableSlope(float3 normal, float maxSlopeCosine) => normal.y > maxSlopeCosine;
+        static bool IsWalkableSlope(in float3 normal, float maxSlopeCosine) => normal.y > maxSlopeCosine;
 
-        static bool IsActorSupport(EntityManager entityManager, Entity entity)
+        [BurstCompile]
+        static bool IsActorSupport(
+            in Entity entity,
+            in ComponentLookup<PlayerTag> playerLookup,
+            in ComponentLookup<PassiveActorPresence> passiveActorLookup)
         {
             return entity != Entity.Null
-                && entityManager.Exists(entity)
-                && (entityManager.HasComponent<PlayerTag>(entity) || entityManager.HasComponent<PassiveActorPresence>(entity));
+                && (playerLookup.HasComponent(entity) || passiveActorLookup.HasComponent(entity));
         }
     }
 }

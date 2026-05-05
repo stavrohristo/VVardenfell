@@ -16,21 +16,17 @@ using Collider = Unity.Physics.Collider;
 namespace VVardenfell.Runtime.Streaming
 {
     /// <summary>
-    /// Eagerly spawns every cell's entities at bootstrap. Work is split across multiple
-    /// frames so bootstrap still ends with the entire world resident, but the main thread
-    /// no longer pays one monolithic startup stall.
+    /// Spawns exterior cell terrain, static colliders, and refs for the streaming pipeline.
+    /// Bootstrap can still drive the legacy full-world path, while normal runtime loading
+    /// creates cells on demand.
     /// </summary>
     public static class WorldSpawner
     {
-        const int TerrainBatchSize = 64;
         const int StaticBatchSize = 256;
         const int RefGatherBatchSize = 512;
         const int RefSliceSize = 32768;
 
         static readonly ProfilerMarker k_SpawnAll = new("VV.WorldSpawner.SpawnAll");
-        static readonly ProfilerMarker k_TerrainMesh = new("VV.Spawn.Terrain.MeshBuild");
-        static readonly ProfilerMarker k_TerrainMat = new("VV.Spawn.Terrain.MaterialBuild");
-        static readonly ProfilerMarker k_TerrainEntity = new("VV.Spawn.Terrain.EntityCreate");
         static readonly ProfilerMarker k_StatCellEntities = new("VV.Spawn.StatCellEntities");
         static readonly ProfilerMarker k_RefGather = new("VV.Spawn.Refs.Gather");
         static readonly ProfilerMarker k_BulkDisable = new("VV.Spawn.BulkDisableMMI");
@@ -48,44 +44,6 @@ namespace VVardenfell.Runtime.Streaming
             var cellEntries = WorldResources.CopyExteriorCellEntries();
 
             WorldResources.LoadedManaged.EnsureCapacity(WorldResources.ExteriorCellCount);
-
-            progress?.BeginStage("Spawn terrain", "Creating terrain entities", cellEntries.Length);
-            int terrainBuilt = 0;
-            for (int i = 0; i < cellEntries.Length; i++)
-            {
-                var coord = cellEntries[i].Key;
-                var data = cellEntries[i].Value;
-                Entity terrainEntity = Entity.Null;
-
-                if (data.HasTerrain)
-                {
-                    k_TerrainMesh.Begin();
-                    k_TerrainMat.Begin();
-                    k_TerrainEntity.Begin();
-                    try
-                    {
-                        var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active: false);
-                        terrainEntity = terrainResult.Entity;
-                        terrainBuilt += terrainResult.BuiltTerrain;
-                    }
-                    finally
-                    {
-                        k_TerrainEntity.End();
-                        k_TerrainMat.End();
-                        k_TerrainMesh.End();
-                    }
-                }
-
-                loaded.Map[coord] = terrainEntity;
-
-                int completed = i + 1;
-                if (completed == cellEntries.Length || (completed % TerrainBatchSize) == 0)
-                {
-                    progress?.Report($"Creating terrain entities {completed}/{cellEntries.Length}", completed, cellEntries.Length);
-                    yield return null;
-                }
-            }
-            progress?.CompleteStage("Terrain entities ready");
 
             var staticColliderEntries = new KeyValuePair<int2, BlobAssetReference<Collider>>[WorldResources.StaticCellColliders.Count];
             int staticIndex = 0;
@@ -242,39 +200,6 @@ namespace VVardenfell.Runtime.Streaming
             yield return null;
         }
 
-        public static IEnumerator SpawnAllTerrainIncremental(World world, LoadedCellsMap loaded, RuntimeLoadProgress progress)
-        {
-            var em = world.EntityManager;
-            var cellEntries = WorldResources.CopyExteriorCellEntries();
-
-            WorldResources.LoadedManaged.EnsureCapacity(WorldResources.ExteriorCellCount);
-
-            progress?.BeginStage("Spawn terrain", "Creating all terrain entities", cellEntries.Length);
-            for (int i = 0; i < cellEntries.Length; i++)
-            {
-                var coord = cellEntries[i].Key;
-                var data = cellEntries[i].Value;
-                Entity terrainEntity = Entity.Null;
-
-                if (data.HasTerrain)
-                {
-                    var terrainResult = WorldTerrainStaticSpawnUtility.SpawnTerrainCell(em, coord, data, active: false);
-                    terrainEntity = terrainResult.Entity;
-                }
-
-                loaded.Map[coord] = terrainEntity;
-
-                int completed = i + 1;
-                if (completed == cellEntries.Length || (completed % TerrainBatchSize) == 0)
-                {
-                    progress?.Report($"Creating terrain entities {completed}/{cellEntries.Length}", completed, cellEntries.Length);
-                    yield return null;
-                }
-            }
-
-            progress?.CompleteStage("Terrain entities ready");
-        }
-
         public static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
         {
             WorldInteriorSpawnUtility.SpawnInteriorCell(world, cell, worldOffset, transitionEntity, ref logicalRefs);
@@ -401,7 +326,7 @@ namespace VVardenfell.Runtime.Streaming
                 SetExteriorCellActiveState(em, coord, false, gateTerrainByRadius);
             }
 
-            if (loaded.Map.IsCreated)
+            if (loaded.Map.IsCreated && terrainEntity != Entity.Null)
                 loaded.Map[coord] = terrainEntity;
             if (loaded.Streamed.IsCreated)
                 loaded.Streamed.Add(coord);

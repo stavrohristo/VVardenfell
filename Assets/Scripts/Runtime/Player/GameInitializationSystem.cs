@@ -226,7 +226,7 @@ namespace VVardenfell.Runtime.Player
             em.AddComponent<LocalPlayerViewModeDirty>(player);
             var playerInventory = em.AddBuffer<PlayerInventoryItem>(player);
             PopulatePlayerInventory(ref content, em, initEntity, playerInventory);
-            PopulatePlayerEquipment(ref content, em, initEntity, player, playerInventory);
+            PopulatePlayerEquipment(ref content, em, initEntity, player);
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
@@ -291,9 +291,8 @@ namespace VVardenfell.Runtime.Player
             }
 
             ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
-            string factionId = actor.FactionId.ToString();
-            if (string.IsNullOrWhiteSpace(factionId)
-                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, RuntimeContentStableHash.HashId(factionId), out var factionHandle)
+            if (actor.FactionIdHash == 0UL
+                || !RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, actor.FactionIdHash, out var factionHandle)
                 || !factionHandle.IsValid)
             {
                 return;
@@ -342,7 +341,7 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static void PopulatePlayerEquipment(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player, DynamicBuffer<PlayerInventoryItem> inventory)
+        static void PopulatePlayerEquipment(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player)
         {
             var equipment = em.AddBuffer<ActorEquipmentSlot>(player);
             if (em.HasBuffer<ActorEquipmentSlot>(initEntity))
@@ -357,6 +356,7 @@ namespace VVardenfell.Runtime.Player
                 return;
             }
 
+            var inventory = em.GetBuffer<PlayerInventoryItem>(player);
             if (!inventory.IsCreated || inventory.Length == 0)
                 return;
             if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref content, RuntimeContentKnownHashes.player, out var actorHandle))

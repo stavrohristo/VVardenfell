@@ -5,15 +5,11 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Physics
 {
-    [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
-    [UpdateAfter(typeof(VVardenfell.Runtime.Player.PlayerPhysicsViewPoseSystem))]
-    public partial class DeferredPhysicsQueryResolveSystem : SystemBase
+    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateAfter(typeof(MorrowindPhysicsQueryFrameStampSystem))]
+    public partial class FixedDeferredPhysicsQueryResolveSystem : SystemBase
     {
-        static readonly DeferredPhysicsQueryKindMask k_FrameOwnedKinds =
-            DeferredPhysicsQueryKindMask.GenericRay
-            | DeferredPhysicsQueryKindMask.InteractionPick
-            | DeferredPhysicsQueryKindMask.LineOfSight
-            | DeferredPhysicsQueryKindMask.MeleeConfirmation;
+        const DeferredPhysicsQueryKindMask FixedOwnedKinds = DeferredPhysicsQueryKindMask.ProjectileSegment;
 
         protected override void OnCreate()
         {
@@ -39,8 +35,8 @@ namespace VVardenfell.Runtime.Physics
                 SystemAPI.GetSingleton<PhysicsWorldSingleton>(),
                 frame.FixedTick,
                 frame.BuildSequence,
-                k_FrameOwnedKinds,
-                DeferredPhysicsQueryResolveDomain.Frame);
+                FixedOwnedKinds,
+                DeferredPhysicsQueryResolveDomain.Fixed);
         }
     }
 }

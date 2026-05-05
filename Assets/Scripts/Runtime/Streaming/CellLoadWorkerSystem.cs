@@ -37,8 +37,9 @@ namespace VVardenfell.Runtime.Streaming
             // WithAll<IEnableableComponent> *exclude* entities whose enable bit is off.
             // Every ref is spawned disabled at bootstrap, so without WithPresent the query
             // finds zero entities and the re-enable loop is a no-op.
-            // Terrain is viewport-gated by TerrainFrustumVisibilitySystem, so cell loads
-            // only re-enable non-terrain refs and static cell entities.
+            // Terrain rendering is gated by TerrainFrustumVisibilitySystem against
+            // LoadedCellsMap.Active, so cell loads only re-enable non-terrain refs and
+            // static cell entities.
             _refsOnlyQuery = SystemAPI.QueryBuilder()
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()

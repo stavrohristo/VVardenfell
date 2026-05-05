@@ -31,6 +31,7 @@ namespace VVardenfell.Runtime.Streaming
             });
             state.RequireForUpdate<TerrainCameraFrustumSnapshot>();
             state.RequireForUpdate<StreamingConfig>();
+            state.RequireForUpdate<LoadedCellsMap>();
             state.RequireForUpdate(_terrainQuery);
         }
 
@@ -38,6 +39,7 @@ namespace VVardenfell.Runtime.Streaming
         public void OnUpdate(ref SystemState state)
         {
             var config = SystemAPI.GetSingleton<StreamingConfig>();
+            var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
             var snapshot = SystemAPI.GetSingleton<TerrainCameraFrustumSnapshot>();
             bool exteriorPaused = config.ExteriorStreamingPaused;
             if (snapshot.Valid == 0 && !exteriorPaused)
@@ -48,6 +50,7 @@ namespace VVardenfell.Runtime.Streaming
                 CellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters,
                 Frustum = TerrainFrustum.FromSnapshot(snapshot, TerrainFrustumPaddingDegrees),
                 ForceHidden = exteriorPaused,
+                ActiveCells = loaded.Active,
             }.ScheduleParallel(state.Dependency);
             state.Dependency.Complete();
         }
@@ -118,11 +121,12 @@ namespace VVardenfell.Runtime.Streaming
             public float CellMeters;
             public TerrainFrustum Frustum;
             public bool ForceHidden;
+            [Unity.Collections.ReadOnly] public Unity.Collections.NativeHashSet<int2> ActiveCells;
 
             void Execute(in CellCoord cell, in RenderBounds renderBounds, EnabledRefRW<MaterialMeshInfo> materialMesh)
             {
                 bool visible = false;
-                if (!ForceHidden)
+                if (!ForceHidden && ActiveCells.Contains(cell.Value))
                 {
                     float3 cellOrigin = new(cell.Value.x * CellMeters, 0f, cell.Value.y * CellMeters);
                     float3 center = cellOrigin + renderBounds.Value.Center;

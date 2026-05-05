@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -8,17 +9,13 @@ namespace VVardenfell.Runtime.Inventory
     {
         const string Gold001 = "gold_001";
 
-        public static bool TryAddPlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
+        public static bool TryAddPlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count, int playerLevel)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveAddContent(ref contentBlob, itemId, 0u, out var content))
-                return false;
-
-            ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, count);
-            return true;
+            return TryAddResolvedPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel, 0u);
         }
 
         public static bool TryRemovePlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
@@ -34,17 +31,13 @@ namespace VVardenfell.Runtime.Inventory
             return true;
         }
 
-        public static bool TryAddActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count, uint resolutionSeed)
+        public static bool TryAddActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count, int playerLevel, uint resolutionSeed)
         {
             count = NormalizeScriptCount(count);
             if (count == 0)
                 return true;
 
-            if (!TryResolveAddContent(ref contentBlob, itemId, resolutionSeed, out var content))
-                return false;
-
-            AddActorInventoryStack(ref contentBlob, inventory, content, count);
-            return true;
+            return TryAddResolvedActorItem(ref contentBlob, inventory, itemId, count, playerLevel, resolutionSeed);
         }
 
         public static bool TryRemoveActorItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<ActorInventoryItem> inventory, string itemId, int count)
@@ -60,20 +53,76 @@ namespace VVardenfell.Runtime.Inventory
             return true;
         }
 
-        static bool TryResolveAddContent(ref RuntimeContentBlob contentBlob, string itemId, uint resolutionSeed, out ContentReference content)
+        static bool TryAddResolvedPlayerItem(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            string itemId,
+            int count,
+            int playerLevel,
+            uint resolutionSeed)
         {
-            if (TryResolveDirectCarryable(ref contentBlob, itemId, out content))
-                return true;
-
             string normalizedId = NormalizeGoldId(itemId);
-            if (RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(normalizedId), out var listHandle)
-                && ContainerLootUtility.TryResolveLooseLeveledCarryable(ref contentBlob, listHandle, resolutionSeed, out content, out _))
+            ulong idHash = RuntimeContentStableHash.HashId(normalizedId);
+            if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, idHash, out var content))
             {
-                return content.IsValid;
+                ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, count);
+                return true;
             }
 
-            content = default;
-            return false;
+            if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, idHash, out var listHandle))
+                return false;
+
+            using var resolvedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+            MorrowindLeveledItemResolverUtility.ResolveIntoInventory(
+                ref contentBlob,
+                listHandle,
+                playerLevel,
+                MorrowindLeveledItemResolverUtility.BuildResolutionSeed(resolutionSeed, 0, 0),
+                count,
+                resolvedItems);
+            for (int i = 0; i < resolvedItems.Length; i++)
+            {
+                var resolved = resolvedItems[i];
+                ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, resolved.Content, resolved.Count);
+            }
+
+            return resolvedItems.Length > 0;
+        }
+
+        static bool TryAddResolvedActorItem(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<ActorInventoryItem> inventory,
+            string itemId,
+            int count,
+            int playerLevel,
+            uint resolutionSeed)
+        {
+            string normalizedId = NormalizeGoldId(itemId);
+            ulong idHash = RuntimeContentStableHash.HashId(normalizedId);
+            if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, idHash, out var content))
+            {
+                AddActorInventoryStack(ref contentBlob, inventory, content, count);
+                return true;
+            }
+
+            if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, idHash, out var listHandle))
+                return false;
+
+            using var resolvedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+            MorrowindLeveledItemResolverUtility.ResolveIntoInventory(
+                ref contentBlob,
+                listHandle,
+                playerLevel,
+                MorrowindLeveledItemResolverUtility.BuildResolutionSeed(resolutionSeed, 0, 0),
+                count,
+                resolvedItems);
+            for (int i = 0; i < resolvedItems.Length; i++)
+            {
+                var resolved = resolvedItems[i];
+                AddActorInventoryStack(ref contentBlob, inventory, resolved.Content, resolved.Count);
+            }
+
+            return resolvedItems.Length > 0;
         }
 
         static bool TryResolveDirectCarryable(ref RuntimeContentBlob contentBlob, string itemId, out ContentReference content)

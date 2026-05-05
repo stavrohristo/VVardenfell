@@ -4,7 +4,7 @@ using VVardenfell.Core;
 
 namespace VVardenfell.Runtime.Movement
 {
-    public static partial class MorrowindActorMovementSolver
+    public static partial class MorrowindActorMovementKernel
     {
         static void MoveKinematic(
             in CollisionWorld world,
@@ -45,7 +45,7 @@ namespace VVardenfell.Runtime.Movement
 
                 if (stepped)
                 {
-                    scratch.StepSucceeded = true;
+                    scratch.StepSucceeded = 1;
                     continue;
                 }
 

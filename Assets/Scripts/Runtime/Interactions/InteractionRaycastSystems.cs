@@ -217,7 +217,7 @@ namespace VVardenfell.Runtime.Interactions
     }
 
 
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(DeferredPhysicsQueryResolveSystem))]
     [UpdateAfter(typeof(PlayerPhysicsViewPoseSystem))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
@@ -280,7 +280,7 @@ namespace VVardenfell.Runtime.Interactions
         }
     }
 
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionRaycastSystem))]
     public partial class InteractionTargetResolutionSystem : SystemBase
     {

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
@@ -12,7 +11,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionActivationSystem))]
     public partial class ContainerActivationSystem : SystemBase
     {
@@ -70,6 +69,7 @@ namespace VVardenfell.Runtime.Inventory
             var headers = SystemAPI.GetSingletonBuffer<ContainerSessionHeader>();
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var journal = SystemAPI.GetSingletonBuffer<WorldJournalEntry>();
+            int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(EntityManager);
             ContainerDefHandle definition = default;
             string title;
             if (isCorpse)
@@ -82,7 +82,7 @@ namespace VVardenfell.Runtime.Inventory
             {
                 var authoring = EntityManager.GetComponentData<ContainerAuthoring>(target);
                 definition = authoring.Definition;
-                EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, definition);
+                EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, definition, playerLevel);
                 title = ContainerLootUtility.ResolveContainerTitle(ref contentBlob, definition);
             }
 
@@ -111,7 +111,8 @@ namespace VVardenfell.Runtime.Inventory
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
-            ContainerDefHandle definition)
+            ContainerDefHandle definition,
+            int playerLevel)
         {
             if (placedRefId == 0u || !definition.IsValid)
                 return;
@@ -125,31 +126,8 @@ namespace VVardenfell.Runtime.Inventory
                 Definition = definition,
             });
 
-            var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, diagnostics);
+            ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, playerLevel);
             WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
-
-            if (diagnostics.Count > 0)
-            {
-                int shown = 0;
-                var summary = new System.Text.StringBuilder();
-                foreach (string message in diagnostics)
-                {
-                    if (shown >= 4)
-                        break;
-
-                    if (summary.Length > 0)
-                        summary.Append(" | ");
-
-                    summary.Append(message);
-                    shown++;
-                }
-
-                if (diagnostics.Count > shown)
-                    summary.Append($" | +{diagnostics.Count - shown} more");
-
-                Debug.LogWarning($"[VVardenfell][Container] materialization for placedRef=0x{placedRefId:X8} skipped unsupported content: {summary}");
-            }
         }
 
         void ClearFocus()

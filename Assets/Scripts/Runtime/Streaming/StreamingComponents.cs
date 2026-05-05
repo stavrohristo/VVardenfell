@@ -31,18 +31,12 @@ namespace VVardenfell.Runtime.Streaming
     }
 
     /// <summary>
-    /// Resident cell bookkeeping. Terrain is spawned for every exterior cell at bootstrap and
-    /// stays visible in exterior space; refs/static content are spawned lazily and toggled by
-    /// active radius.
-    ///
-    /// Trade-off: terrain memory is paid up-front so the horizon is faithful, while ref memory
-    /// still grows only with the set of cells ever visited.
+    /// Resident exterior cell bookkeeping. Terrain and refs/static content are spawned lazily by
+    /// the cell streamer; loaded terrain remains render-gated by the active streaming radius.
     /// </summary>
-    /// Terrain residency and streamed ref residency are intentionally separate:
-    /// terrain is global for the horizon, refs/static content remain radius-gated.
     public struct LoadedCellsMap : IComponentData
     {
-        /// <summary>Every terrain-resident cell. Value = terrain entity (or Entity.Null).</summary>
+        /// <summary>Cells whose terrain has been spawned. Value = terrain entity.</summary>
         public NativeHashMap<int2, Entity> Map;
 
         /// <summary>Cells whose non-terrain streamable content has been spawned.</summary>

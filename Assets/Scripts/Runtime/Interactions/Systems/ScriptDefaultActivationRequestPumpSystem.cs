@@ -5,7 +5,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
-    [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
+    [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionActivationSystem))]
     [UpdateBefore(typeof(ContainerActivationSystem))]
     public partial class ScriptDefaultActivationRequestPumpSystem : SystemBase

@@ -38,8 +38,9 @@ namespace VVardenfell.Runtime.Streaming
             // WithPresent<MaterialMeshInfo> (not WithAll) — queries with WithAll on an
             // IEnableableComponent filter out entities whose enable bit is off. Mirrors
             // the load worker's query; see its OnCreate for the full reasoning.
-            // Terrain is viewport-gated by TerrainFrustumVisibilitySystem, so streaming
-            // unload only touches non-terrain refs and static cell entities.
+            // Terrain rendering is gated by TerrainFrustumVisibilitySystem against
+            // LoadedCellsMap.Active, so streaming unload only touches non-terrain refs
+            // and static cell entities.
             _refsOnlyQuery = SystemAPI.QueryBuilder()
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()

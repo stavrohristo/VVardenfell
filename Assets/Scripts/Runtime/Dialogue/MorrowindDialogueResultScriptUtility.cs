@@ -1837,6 +1837,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!TryResolveDialogueInventoryCount(ref contentBlob, entityManager, target, remove, itemId, tokens[2], out int count))
                 return false;
 
+            int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(entityManager);
             if (string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
             {
                 Entity playerInventoryEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlayerTag>(entityManager);
@@ -1845,7 +1846,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity);
                 bool changed = add
-                    ? InventoryMutationUtility.TryAddPlayerItem(ref contentBlob, inventory, itemId, count)
+                    ? InventoryMutationUtility.TryAddPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel)
                     : InventoryMutationUtility.TryRemovePlayerItem(ref contentBlob, inventory, itemId, count);
                 if (changed)
                     PlayerEncumbranceDirtyUtility.MarkPlayerDirty(entityManager);
@@ -1861,11 +1862,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     session.SpeakerPlacedRefId,
                     itemId,
                     count,
+                    playerLevel,
                     add);
             }
 
             if (TryResolveAiCommandTarget(ref contentBlob, entityManager, ref session, target, out Entity actorEntity, out uint actorPlacedRefId)
-                && TryApplyActorInventoryResult(ref contentBlob, entityManager, actorEntity, actorPlacedRefId, itemId, count, add))
+                && TryApplyActorInventoryResult(ref contentBlob, entityManager, actorEntity, actorPlacedRefId, itemId, count, playerLevel, add))
             {
                 return true;
             }
@@ -1879,10 +1881,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
             }
 
-            if (TryApplyActorInventoryResult(ref contentBlob, entityManager, explicitEntity, placedRefId, itemId, count, add))
+            if (TryApplyActorInventoryResult(ref contentBlob, entityManager, explicitEntity, placedRefId, itemId, count, playerLevel, add))
                 return true;
 
-            return TryApplyContainerInventoryResult(ref contentBlob, entityManager, explicitEntity, placedRefId, itemId, count, add);
+            return TryApplyContainerInventoryResult(ref contentBlob, entityManager, explicitEntity, placedRefId, itemId, count, playerLevel, add);
         }
 
         static bool TryResolveDialogueInventoryCount(
@@ -1955,6 +1957,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint placedRefId,
             string itemId,
             int count,
+            int playerLevel,
             bool add)
         {
             if (actorEntity == Entity.Null
@@ -1969,7 +1972,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ? placedRefId
                 : unchecked((uint)actorEntity.Index + 1u);
             return add
-                ? InventoryMutationUtility.TryAddActorItem(ref contentBlob, actorInventory, itemId, count, resolutionSeed)
+                ? InventoryMutationUtility.TryAddActorItem(ref contentBlob, actorInventory, itemId, count, playerLevel, resolutionSeed)
                 : InventoryMutationUtility.TryRemoveActorItem(ref contentBlob, actorInventory, itemId, count);
         }
 
@@ -1980,6 +1983,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint placedRefId,
             string itemId,
             int count,
+            int playerLevel,
             bool add)
         {
             if (containerEntity == Entity.Null
@@ -1995,32 +1999,47 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return true;
 
             if (add)
-            {
-                if (!TryResolveContainerAddContent(ref contentBlob, itemId, placedRefId, out ContentReference content))
-                    return false;
-
-                return TryApplyContainerDelta(ref contentBlob, entityManager, containerEntity, placedRefId, content, count);
-            }
+                return TryApplyContainerAddItems(ref contentBlob, entityManager, containerEntity, placedRefId, itemId, count, playerLevel);
 
             if (!ContainerLootUtility.TryResolveDirectCarryable(ref contentBlob, NormalizeGoldId(itemId), out ContentReference removeContent, out _))
                 return false;
 
-            return TryApplyContainerDelta(ref contentBlob, entityManager, containerEntity, placedRefId, removeContent, -count);
+            return TryApplyContainerDelta(ref contentBlob, entityManager, containerEntity, placedRefId, removeContent, -count, playerLevel);
         }
 
-        static bool TryResolveContainerAddContent(ref RuntimeContentBlob contentBlob, string itemId, uint placedRefId, out ContentReference content)
+        static bool TryApplyContainerAddItems(
+            ref RuntimeContentBlob contentBlob,
+            EntityManager entityManager,
+            Entity containerEntity,
+            uint placedRefId,
+            string itemId,
+            int count,
+            int playerLevel)
         {
-            if (ContainerLootUtility.TryResolveDirectCarryable(ref contentBlob, NormalizeGoldId(itemId), out content, out _))
-                return true;
+            string normalizedId = NormalizeGoldId(itemId);
+            ulong idHash = RuntimeContentStableHash.HashId(normalizedId);
+            if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, idHash, out ContentReference directContent))
+                return TryApplyContainerDelta(ref contentBlob, entityManager, containerEntity, placedRefId, directContent, count, playerLevel);
 
-            if (RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(itemId), out ItemLeveledListDefHandle listHandle)
-                && ContainerLootUtility.TryResolveLooseLeveledCarryable(ref contentBlob, listHandle, placedRefId, out content, out _))
+            if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, idHash, out ItemLeveledListDefHandle listHandle))
+                return false;
+
+            bool changed = false;
+            using var resolvedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+            MorrowindLeveledItemResolverUtility.ResolveIntoInventory(
+                ref contentBlob,
+                listHandle,
+                playerLevel,
+                MorrowindLeveledItemResolverUtility.BuildResolutionSeed(placedRefId, 0, 0),
+                count,
+                resolvedItems);
+            for (int i = 0; i < resolvedItems.Length; i++)
             {
-                return content.IsValid;
+                var resolved = resolvedItems[i];
+                changed |= TryApplyContainerDelta(ref contentBlob, entityManager, containerEntity, placedRefId, resolved.Content, resolved.Count, playerLevel);
             }
 
-            content = default;
-            return false;
+            return changed;
         }
 
         static bool TryApplyContainerDelta(
@@ -2029,7 +2048,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity containerEntity,
             uint placedRefId,
             ContentReference content,
-            int deltaCount)
+            int deltaCount,
+            int playerLevel)
         {
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<ContainerSessionItem>(entityManager);
             if (runtimeEntity == Entity.Null
@@ -2043,7 +2063,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             var items = entityManager.GetBuffer<ContainerSessionItem>(runtimeEntity);
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var authoring = entityManager.GetComponentData<ContainerAuthoring>(containerEntity);
-            EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, authoring.Definition);
+            EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, authoring.Definition, playerLevel);
             ContainerLootUtility.ApplyContainerDelta(items, placedRefId, content, deltaCount);
             WorldJournalUtility.AppendContainerDelta(entityManager, placedRefId, content, deltaCount);
             return true;
@@ -2055,7 +2075,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
-            ContainerDefHandle definition)
+            ContainerDefHandle definition,
+            int playerLevel)
         {
             if (ContainerLootUtility.FindHeaderIndex(headers, placedRefId) >= 0)
                 return;
@@ -2066,8 +2087,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Definition = definition,
             });
 
-            var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, diagnostics);
+            ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, playerLevel);
             WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
         }
 

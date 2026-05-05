@@ -22,8 +22,6 @@ namespace VVardenfell.Runtime.Components
 {
     public static class LogicalRefAuthoringUtility
     {
-        const int MaxLeveledResolutionDepth = 16;
-        const int ItemLeveledAllLevelsFlag = 0x02;
         static readonly uint BookRecordTag = MakeTag('B', 'O', 'O', 'K');
 
         public static bool QueueAttach(
@@ -286,7 +284,13 @@ namespace VVardenfell.Runtime.Components
                 }
             }
 
-            QueueActorInventoryAndEquipment(ref ecb, logicalEntity, ref content, actorHandle, placedRefId);
+            QueueActorInventoryAndEquipment(
+                ref ecb,
+                logicalEntity,
+                ref content,
+                actorHandle,
+                placedRefId,
+                MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(entityManager));
         }
 
         static void QueueActorFactionMembership(
@@ -315,13 +319,14 @@ namespace VVardenfell.Runtime.Components
             Entity logicalEntity,
             ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
-            uint placedRefId)
+            uint placedRefId,
+            int playerLevel)
         {
             var inventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
             var equipment = new NativeList<ActorEquipmentSlot>(Allocator.Temp);
             try
             {
-                HydrateActorInventoryAndEquipment(ref content, actorHandle, placedRefId, ref inventory, ref equipment);
+                HydrateActorInventoryAndEquipment(ref content, actorHandle, placedRefId, playerLevel, ref inventory, ref equipment);
 
                 if (inventory.Length > 0)
                 {
@@ -350,6 +355,7 @@ namespace VVardenfell.Runtime.Components
             ref RuntimeContentBlob content,
             ActorDefHandle actorHandle,
             uint placedRefId,
+            int playerLevel,
             ref NativeList<ActorInventoryItem> inventory,
             ref NativeList<ActorEquipmentSlot> equipment)
         {
@@ -362,156 +368,69 @@ namespace VVardenfell.Runtime.Components
                 return;
 
             uint resolutionSeed = placedRefId != 0u ? placedRefId : (uint)actorHandle.Value;
-            for (int i = 0; i < actor.InventoryCount; i++)
+            var resolvedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+            try
             {
-                ref RuntimeContainerItemDefBlob authored = ref content.ActorInventoryItems[actor.FirstInventoryIndex + i];
-                if (authored.Count <= 0)
-                    continue;
-                if (authored.ItemIdHash == 0UL)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} has an authored inventory item with no id at offset {i}.");
-
-                if (!TryResolveActorInventoryContent(ref content, authored.ItemIdHash, resolutionSeed, out var itemContent) || !itemContent.IsValid)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} references unresolved inventory item hash {authored.ItemIdHash}.");
-
-                inventory.Add(new ActorInventoryItem
+                for (int i = 0; i < actor.InventoryCount; i++)
                 {
-                    Content = itemContent,
-                    Count = authored.Count,
-                    Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
-                    AuthoredOrder = i,
-                });
+                    ref RuntimeContainerItemDefBlob authored = ref content.ActorInventoryItems[actor.FirstInventoryIndex + i];
+                    if (authored.Count == 0)
+                        continue;
+                    if (authored.ItemIdHash == 0UL)
+                        throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} has an authored inventory item with no id at offset {i}.");
 
-                if (itemContent.Kind != ContentReferenceKind.Item)
-                    continue;
+                    if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref content, authored.ItemIdHash, out var itemContent))
+                    {
+                        if (authored.Count < 0)
+                            throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} has negative count {authored.Count} for direct inventory item hash {authored.ItemIdHash}.");
+                        AddActorInventoryItem(ref content, itemContent, authored.Count, i, ref inventory);
+                        continue;
+                    }
+
+                    if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref content, authored.ItemIdHash, out var listHandle))
+                        throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} references unresolved inventory item hash {authored.ItemIdHash}.");
+
+                    resolvedItems.Clear();
+                    MorrowindLeveledItemResolverUtility.ResolveIntoInventory(
+                        ref content,
+                        listHandle,
+                        playerLevel,
+                        MorrowindLeveledItemResolverUtility.BuildResolutionSeed(resolutionSeed, i, 0),
+                        authored.Count,
+                        resolvedItems);
+                    for (int resolvedIndex = 0; resolvedIndex < resolvedItems.Length; resolvedIndex++)
+                    {
+                        var resolved = resolvedItems[resolvedIndex];
+                        AddActorInventoryItem(ref content, resolved.Content, resolved.Count, i, ref inventory);
+                    }
+                }
+            }
+            finally
+            {
+                if (resolvedItems.IsCreated)
+                    resolvedItems.Dispose();
             }
 
             MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(ref content, ref actor, inventory.AsArray(), equipment);
         }
 
-        static bool TryResolveActorInventoryContent(
-            ref RuntimeContentBlob contentBlob,
-            ulong itemIdHash,
-            uint resolutionSeed,
-            out ContentReference content)
+        static void AddActorInventoryItem(
+            ref RuntimeContentBlob content,
+            ContentReference itemContent,
+            int count,
+            int authoredOrder,
+            ref NativeList<ActorInventoryItem> inventory)
         {
-            content = default;
-            if (RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, itemIdHash, out content)
-                && (content.Kind == ContentReferenceKind.Item
-                    || content.Kind == ContentReferenceKind.Light
-                    || content.Kind == ContentReferenceKind.LeveledItem))
+            if (!itemContent.IsValid || count <= 0)
+                return;
+
+            inventory.Add(new ActorInventoryItem
             {
-                return true;
-            }
-
-            if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, itemIdHash, out var listHandle))
-                return false;
-
-            var visited = new NativeList<int>(Allocator.Temp);
-            try
-            {
-                return TryResolveLooseLeveledCarryable(ref contentBlob, listHandle, resolutionSeed, 0, ref visited, out content);
-            }
-            finally
-            {
-                if (visited.IsCreated)
-                    visited.Dispose();
-            }
-        }
-
-        static bool TryResolveLooseLeveledCarryable(
-            ref RuntimeContentBlob contentBlob,
-            ItemLeveledListDefHandle listHandle,
-            uint seed,
-            int depth,
-            ref NativeList<int> visited,
-            out ContentReference content)
-        {
-            content = default;
-            if (!listHandle.IsValid)
-                return false;
-            if (depth >= MaxLeveledResolutionDepth)
-                throw new InvalidOperationException($"[VVardenfell][WorldRefs] item leveled-list recursion cap reached at depth {MaxLeveledResolutionDepth}.");
-
-            for (int i = 0; i < visited.Length; i++)
-            {
-                if (visited[i] == listHandle.Value)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] item leveled-list cycle detected at handle {listHandle.Value}.");
-            }
-
-            visited.Add(listHandle.Value);
-            ref RuntimeItemLeveledListDefBlob list = ref RuntimeContentBlobUtility.Get(ref contentBlob, listHandle);
-            RuntimeContentBlobUtility.RequireRange(list.FirstEntryIndex, list.EntryCount, contentBlob.ItemLeveledListEntries.Length, "item leveled-list entry");
-            try
-            {
-                if (RollPercent(seed) < list.ChanceNone || list.EntryCount == 0)
-                    return false;
-
-                bool allLevels = (list.Flags & ItemLeveledAllLevelsFlag) != 0;
-                int highestEligibleLevel = 0;
-                bool hasEligible = false;
-                for (int i = 0; i < list.EntryCount; i++)
-                {
-                    int level = contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + i].Level;
-                    if (level > highestEligibleLevel && level <= ContainerLootUtility.FixedLeveledLootPlayerLevel)
-                    {
-                        highestEligibleLevel = level;
-                        hasEligible = true;
-                    }
-                }
-
-                if (!hasEligible)
-                    return false;
-
-                Span<int> candidateEntryOffsets = stackalloc int[list.EntryCount];
-                int candidateCount = 0;
-                for (int i = 0; i < list.EntryCount; i++)
-                {
-                    int level = contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + i].Level;
-                    if (level > ContainerLootUtility.FixedLeveledLootPlayerLevel)
-                        continue;
-                    if (allLevels || level == highestEligibleLevel)
-                        candidateEntryOffsets[candidateCount++] = i;
-                }
-
-                if (candidateCount == 0)
-                    return false;
-
-                int candidateIndex = NextRandomIndex(ref seed, candidateCount);
-                ref RuntimeItemLeveledListEntryDefBlob selected = ref contentBlob.ItemLeveledListEntries[list.FirstEntryIndex + candidateEntryOffsets[candidateIndex]];
-                if (selected.ItemIdHash == 0UL)
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] leveled-list hash {list.IdHash} has an entry with no item id.");
-
-                if (RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, selected.ItemIdHash, out content)
-                    && (content.Kind == ContentReferenceKind.Item || content.Kind == ContentReferenceKind.Light))
-                {
-                    return true;
-                }
-
-                if (!RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref contentBlob, selected.ItemIdHash, out ItemLeveledListDefHandle nestedHandle))
-                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] missing leveled-list target hash {selected.ItemIdHash} referenced by list hash {list.IdHash}.");
-
-                seed = math.hash(new uint2(seed, (uint)candidateIndex + 1u));
-                return TryResolveLooseLeveledCarryable(ref contentBlob, nestedHandle, seed, depth + 1, ref visited, out content);
-            }
-            finally
-            {
-                if (visited.Length > 0)
-                    visited.RemoveAt(visited.Length - 1);
-            }
-        }
-
-        static int RollPercent(uint seed)
-        {
-            uint state = seed == 0u ? 0xA341316Cu : seed;
-            state = state * 1664525u + 1013904223u;
-            return (int)(state % 100u);
-        }
-
-        static int NextRandomIndex(ref uint seed, int count)
-        {
-            seed = seed == 0u ? 0xC8013EA4u : seed;
-            seed = seed * 1664525u + 1013904223u;
-            return count <= 1 ? 0 : (int)(seed % (uint)count);
+                Content = itemContent,
+                Count = count,
+                Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
+                AuthoredOrder = authoredOrder,
+            });
         }
 
         static void QueueActorCollider(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
