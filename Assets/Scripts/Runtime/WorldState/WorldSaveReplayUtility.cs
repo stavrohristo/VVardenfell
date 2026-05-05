@@ -26,16 +26,17 @@ namespace VVardenfell.Runtime.WorldState
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
             Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
-            Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
+            Entity initEntity = WorldStateEntityQueryUtility.GetSingletonEntity<GameInitializationSingleton>(entityManager);
+            Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonEntity<InteractionRuntimeState>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
-            if (journalEntity == Entity.Null || questJournalEntity == Entity.Null || runtimeEntity == Entity.Null || spawnEntity == Entity.Null)
+            if (journalEntity == Entity.Null || questJournalEntity == Entity.Null || initEntity == Entity.Null || runtimeEntity == Entity.Null || spawnEntity == Entity.Null)
             {
                 error = "Runtime journal state is not ready for continue load.";
                 return false;
             }
 
             ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
-            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, runtimeEntity, spawnEntity, out error))
+            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, initEntity, runtimeEntity, spawnEntity, out error))
                 return false;
 
             init.PlayerPosition = payload.PlayerPosition;
@@ -90,7 +91,7 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
-            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, runtimeEntity, spawnEntity, out error))
+            if (!ApplyPayload(entityManager, payload, journalEntity, questJournalEntity, playerEntity, runtimeEntity, spawnEntity, out error))
                 return false;
             ApplyPlayerPayload(entityManager, playerEntity, viewEntity, payload);
 
@@ -111,6 +112,7 @@ namespace VVardenfell.Runtime.WorldState
         public static void ResetRuntimeForInitialization(World world, EntityManager entityManager, bool preserveShell)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
+            LocalPlayerPresentationLifecycleUtility.QueueDestroyLocalPlayerVisuals(entityManager, ref ecb);
             QueueDestroySingletonEntities<PlayerViewComponent>(entityManager, ref ecb);
             QueueDestroySingletonEntities<PlayerTag>(entityManager, ref ecb);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
@@ -119,7 +121,7 @@ namespace VVardenfell.Runtime.WorldState
 
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
             Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
-            Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
+            Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonEntity<InteractionRuntimeState>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
             if (journalEntity != Entity.Null && questJournalEntity != Entity.Null && runtimeEntity != Entity.Null && spawnEntity != Entity.Null)
                 ClearRuntimeState(entityManager, journalEntity, questJournalEntity, runtimeEntity, spawnEntity);
@@ -231,10 +233,51 @@ namespace VVardenfell.Runtime.WorldState
                     }
                 }
             }
+            if (!entityManager.HasBuffer<ActorActiveSpell>(playerEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorActiveSpell>(playerEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+            if (entityManager.HasBuffer<ActorActiveSpell>(playerEntity))
+            {
+                var activeSpells = entityManager.GetBuffer<ActorActiveSpell>(playerEntity);
+                activeSpells.Clear();
+                if (payload.ActiveSpells != null)
+                {
+                    for (int i = 0; i < payload.ActiveSpells.Length; i++)
+                    {
+                        if (payload.ActiveSpells[i].ActiveSpellId != 0)
+                            activeSpells.Add(payload.ActiveSpells[i]);
+                    }
+                }
+            }
+            if (!entityManager.HasBuffer<ActorUsedPower>(playerEntity))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                ecb.AddBuffer<ActorUsedPower>(playerEntity);
+                WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            }
+            if (entityManager.HasBuffer<ActorUsedPower>(playerEntity))
+            {
+                var usedPowers = entityManager.GetBuffer<ActorUsedPower>(playerEntity);
+                usedPowers.Clear();
+                if (payload.UsedPowers != null)
+                {
+                    for (int i = 0; i < payload.UsedPowers.Length; i++)
+                    {
+                        if (payload.UsedPowers[i].Spell.IsValid)
+                            usedPowers.Add(payload.UsedPowers[i]);
+                    }
+                }
+            }
             if (!entityManager.HasComponent<ActorActiveMagicEffectDirty>(playerEntity))
                 entityManager.AddComponent<ActorActiveMagicEffectDirty>(playerEntity);
             entityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(playerEntity, true);
             PlayerEncumbranceDirtyUtility.EnsureMarker(entityManager, playerEntity, enabled: true);
+            if (!entityManager.HasComponent<LocalPlayerViewModeDirty>(playerEntity))
+                entityManager.AddComponent<LocalPlayerViewModeDirty>(playerEntity);
+            entityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(playerEntity, true);
 
             var character = entityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
             var eyeOffset = new float3(0f, character.StandingEyeHeight, 0f);
@@ -302,6 +345,18 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.ActiveMagicEffects == null)
             {
                 error = "Save payload is missing active magic effect data.";
+                return false;
+            }
+
+            if (payload.ActiveSpells == null)
+            {
+                error = "Save payload is missing active spell source data.";
+                return false;
+            }
+
+            if (payload.UsedPowers == null)
+            {
+                error = "Save payload is missing used power data.";
                 return false;
             }
 
@@ -396,11 +451,11 @@ namespace VVardenfell.Runtime.WorldState
                     "quest journal",
                     "for save replay"))
                 return false;
-            if (!WorldStateEntityQueryUtility.TryGetExactlyOneBufferOwner<PlayerInventoryItem>(
+            if (!WorldStateEntityQueryUtility.TryGetExactlyOne<InteractionRuntimeState>(
                     entityManager,
                     out runtimeEntity,
                     out error,
-                    "runtime inventory",
+                    "interaction runtime",
                     "for save replay"))
                 return false;
             if (!WorldStateEntityQueryUtility.TryGetExactlyOne<RuntimeSpawnState>(
@@ -680,7 +735,6 @@ namespace VVardenfell.Runtime.WorldState
             ClearQuestJournal(entityManager, questJournalEntity);
             ClearDialogue(entityManager, questJournalEntity);
             ClearActorDeathCounts(entityManager, questJournalEntity);
-            entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionItem>(runtimeEntity).Clear();
@@ -700,6 +754,7 @@ namespace VVardenfell.Runtime.WorldState
             in WorldSavePayload payload,
             Entity journalEntity,
             Entity questJournalEntity,
+            Entity playerInventoryEntity,
             Entity runtimeEntity,
             Entity spawnEntity,
             out string error)
@@ -733,17 +788,23 @@ namespace VVardenfell.Runtime.WorldState
             if (!ApplyActorDeathCounts(entityManager, questJournalEntity, payload.ActorDeathCounts, out error))
                 return false;
 
-            var inventory = entityManager.GetBuffer<PlayerInventoryItem>(runtimeEntity);
+            if (!entityManager.HasBuffer<PlayerInventoryItem>(playerInventoryEntity))
+                entityManager.AddBuffer<PlayerInventoryItem>(playerInventoryEntity);
+
+            var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity);
+            inventory.Clear();
             for (int i = 0; i < payload.Inventory.Length; i++)
             {
                 if (payload.Inventory[i].Count > 0 && payload.Inventory[i].Content.IsValid)
                     inventory.Add(payload.Inventory[i]);
             }
 
+            journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var pickedItems = entityManager.GetBuffer<PickedItemRecord>(runtimeEntity);
             WorldJournalUtility.RebuildPickedItemProjection(journal, pickedItems);
 
             RuntimeSpawnProjectionUtility.RebuildRegistryFromJournal(entityManager);
+            journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             uint maxRuntimeOrdinal = RuntimeSpawnProjectionUtility.FindMaxRuntimeOrdinal(journal);
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
             spawnState.NextRuntimeRefId = math.max(payload.NextRuntimeRefId, maxRuntimeOrdinal);

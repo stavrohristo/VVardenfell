@@ -93,6 +93,9 @@ namespace VVardenfell.Runtime.Projectiles
                 InteriorCellId = request.InteriorCellId,
                 InteriorCellHash = request.InteriorCellHash,
                 IsInterior = request.IsInterior,
+                Scripted = request.Scripted,
+                IgnoreReflect = request.IgnoreReflect,
+                IgnoreSpellAbsorption = request.IgnoreSpellAbsorption,
             });
             RuntimeColliderPhysicsUtility.QueueAttachNewSource(
                 EntityManager,

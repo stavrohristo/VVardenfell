@@ -16,7 +16,9 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 25;
+        const int PayloadVersion = 27;
+        const int ActiveSpellSourcePayloadVersion = 27;
+        const int EquipmentConditionPayloadVersion = 26;
         const int InventoryConditionPayloadVersion = 25;
         const int CombatPayloadVersion = 24;
         const int PlayerCrimeSequencePayloadVersion = 23;
@@ -45,6 +47,7 @@ namespace VVardenfell.Runtime.WorldState
             int version = r.ReadInt32();
             if (version != PayloadVersion
                 && version != RegionWeatherOverridePayloadVersion
+                && version != EquipmentConditionPayloadVersion
                 && version != InventoryConditionPayloadVersion
                 && version != CombatPayloadVersion
                 && version != PlayerEquipmentPayloadVersion
@@ -114,6 +117,18 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < payload.ActiveMagicEffects.Length; i++)
                     WriteActiveMagicEffect(w, payload.ActiveMagicEffects[i]);
             }
+            w.Write(payload.ActiveSpells?.Length ?? 0);
+            if (payload.ActiveSpells != null)
+            {
+                for (int i = 0; i < payload.ActiveSpells.Length; i++)
+                    WriteActiveSpell(w, payload.ActiveSpells[i]);
+            }
+            w.Write(payload.UsedPowers?.Length ?? 0);
+            if (payload.UsedPowers != null)
+            {
+                for (int i = 0; i < payload.UsedPowers.Length; i++)
+                    WriteUsedPower(w, payload.UsedPowers[i]);
+            }
             w.Write(payload.ExteriorMapDiscovery?.Length ?? 0);
             if (payload.ExteriorMapDiscovery != null)
             {
@@ -165,6 +180,8 @@ namespace VVardenfell.Runtime.WorldState
             int version = r.ReadInt32();
             if (version != PayloadVersion
                 && version != RegionWeatherOverridePayloadVersion
+                && version != EquipmentConditionPayloadVersion
+                && version != InventoryConditionPayloadVersion
                 && version != CombatPayloadVersion
                 && version != PlayerEquipmentPayloadVersion
                 && version != CapturedSoulInventoryPayloadVersion
@@ -209,7 +226,25 @@ namespace VVardenfell.Runtime.WorldState
             int activeEffectCount = ReadCount(r, "active magic effect");
             payload.ActiveMagicEffects = new ActorActiveMagicEffect[activeEffectCount];
             for (int i = 0; i < activeEffectCount; i++)
-                payload.ActiveMagicEffects[i] = ReadActiveMagicEffect(r);
+                payload.ActiveMagicEffects[i] = ReadActiveMagicEffect(r, version);
+
+            if (version >= ActiveSpellSourcePayloadVersion)
+            {
+                int activeSpellCount = ReadCount(r, "active spell");
+                payload.ActiveSpells = new ActorActiveSpell[activeSpellCount];
+                for (int i = 0; i < activeSpellCount; i++)
+                    payload.ActiveSpells[i] = ReadActiveSpell(r);
+
+                int usedPowerCount = ReadCount(r, "used power");
+                payload.UsedPowers = new ActorUsedPower[usedPowerCount];
+                for (int i = 0; i < usedPowerCount; i++)
+                    payload.UsedPowers[i] = ReadUsedPower(r);
+            }
+            else
+            {
+                SynthesizeLegacyActiveSpellSources(ref payload);
+                payload.UsedPowers = Array.Empty<ActorUsedPower>();
+            }
 
             int mapTileCount = ReadCount(r, "map discovery tile");
             payload.ExteriorMapDiscovery = new LocalMapDiscoveryTilePayload[mapTileCount];
@@ -233,7 +268,7 @@ namespace VVardenfell.Runtime.WorldState
                 int equipmentCount = ReadCount(r, "player equipment");
                 payload.PlayerEquipment = new ActorEquipmentSlot[equipmentCount];
                 for (int i = 0; i < equipmentCount; i++)
-                    payload.PlayerEquipment[i] = ReadEquipmentEntry(r);
+                    payload.PlayerEquipment[i] = ReadEquipmentEntry(r, version);
             }
             else
             {
@@ -562,17 +597,27 @@ namespace VVardenfell.Runtime.WorldState
             w.Write((byte)value.Slot);
             WriteContentReference(w, value.Content);
             w.Write(value.InventoryIndex);
+            w.Write(value.Condition);
             w.Write(value.VisualMode);
         }
 
-        static ActorEquipmentSlot ReadEquipmentEntry(BinaryReader r)
+        static ActorEquipmentSlot ReadEquipmentEntry(BinaryReader r, int version)
         {
+            var slot = (ItemEquipmentSlot)r.ReadByte();
+            var content = ReadContentReference(r);
+            int inventoryIndex = r.ReadInt32();
+            int condition = version >= EquipmentConditionPayloadVersion
+                ? r.ReadInt32()
+                : 0;
+            byte visualMode = r.ReadByte();
+
             return new ActorEquipmentSlot
             {
-                Slot = (ItemEquipmentSlot)r.ReadByte(),
-                Content = ReadContentReference(r),
-                InventoryIndex = r.ReadInt32(),
-                VisualMode = r.ReadByte(),
+                Slot = slot,
+                Content = content,
+                InventoryIndex = inventoryIndex,
+                Condition = condition,
+                VisualMode = visualMode,
             };
         }
 
@@ -987,33 +1032,141 @@ namespace VVardenfell.Runtime.WorldState
 
         static void WriteActiveMagicEffect(BinaryWriter w, in ActorActiveMagicEffect value)
         {
+            w.Write(value.ActiveSpellId);
             w.Write(value.EffectId);
+            w.Write(value.EffectIndex);
             w.Write(value.Skill);
             w.Write(value.Attribute);
             w.Write(value.Magnitude);
+            w.Write(value.MagnitudeMin);
+            w.Write(value.MagnitudeMax);
             w.Write(value.DurationSeconds);
             w.Write(value.TimeLeftSeconds);
             w.Write(value.Applied);
+            w.Write(value.Remove);
+            w.Write(value.IgnoreResistances);
+            w.Write(value.IgnoreReflect);
+            w.Write(value.IgnoreSpellAbsorption);
             w.Write((byte)value.SourceKind);
             w.Write(value.SourceName.ToString());
             w.Write(value.SourceId.ToString());
         }
 
-        static ActorActiveMagicEffect ReadActiveMagicEffect(BinaryReader r)
+        static ActorActiveMagicEffect ReadActiveMagicEffect(BinaryReader r, int version)
         {
+            if (version < ActiveSpellSourcePayloadVersion)
+            {
+                short effectId = r.ReadInt16();
+                sbyte skill = r.ReadSByte();
+                sbyte attribute = r.ReadSByte();
+                float magnitude = r.ReadSingle();
+                return new ActorActiveMagicEffect
+                {
+                    EffectId = effectId,
+                    EffectIndex = -1,
+                    Skill = skill,
+                    Attribute = attribute,
+                    Magnitude = magnitude,
+                    MagnitudeMin = magnitude,
+                    MagnitudeMax = magnitude,
+                    DurationSeconds = r.ReadSingle(),
+                    TimeLeftSeconds = r.ReadSingle(),
+                    Applied = r.ReadByte(),
+                    SourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte(),
+                    SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                    SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                };
+            }
+
             return new ActorActiveMagicEffect
             {
+                ActiveSpellId = r.ReadInt32(),
                 EffectId = r.ReadInt16(),
+                EffectIndex = r.ReadInt16(),
                 Skill = r.ReadSByte(),
                 Attribute = r.ReadSByte(),
                 Magnitude = r.ReadSingle(),
+                MagnitudeMin = r.ReadSingle(),
+                MagnitudeMax = r.ReadSingle(),
                 DurationSeconds = r.ReadSingle(),
                 TimeLeftSeconds = r.ReadSingle(),
                 Applied = r.ReadByte(),
+                Remove = r.ReadByte(),
+                IgnoreResistances = r.ReadByte(),
+                IgnoreReflect = r.ReadByte(),
+                IgnoreSpellAbsorption = r.ReadByte(),
                 SourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte(),
                 SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
             };
+        }
+
+        static void WriteActiveSpell(BinaryWriter w, in ActorActiveSpell value)
+        {
+            w.Write(value.ActiveSpellId);
+            w.Write(value.CasterPlacedRefId);
+            w.Write(value.Spell.Value);
+            WriteContentReference(w, value.SourceContent);
+            w.Write((byte)value.SourceKind);
+            w.Write((ushort)value.Flags);
+            w.Write(value.SourceName.ToString());
+            w.Write(value.SourceId.ToString());
+        }
+
+        static ActorActiveSpell ReadActiveSpell(BinaryReader r)
+        {
+            return new ActorActiveSpell
+            {
+                ActiveSpellId = r.ReadInt32(),
+                CasterPlacedRefId = r.ReadUInt32(),
+                Spell = new SpellDefHandle { Value = r.ReadInt32() },
+                SourceContent = ReadContentReference(r),
+                SourceKind = (ActorActiveSpellSourceKind)r.ReadByte(),
+                Flags = (ActorActiveSpellFlags)r.ReadUInt16(),
+                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+            };
+        }
+
+        static void WriteUsedPower(BinaryWriter w, in ActorUsedPower value)
+        {
+            w.Write(value.Spell.Value);
+            w.Write(value.LastUsedTotalGameHours);
+        }
+
+        static ActorUsedPower ReadUsedPower(BinaryReader r)
+        {
+            return new ActorUsedPower
+            {
+                Spell = new SpellDefHandle { Value = r.ReadInt32() },
+                LastUsedTotalGameHours = r.ReadSingle(),
+            };
+        }
+
+        static void SynthesizeLegacyActiveSpellSources(ref WorldSavePayload payload)
+        {
+            if (payload.ActiveMagicEffects == null || payload.ActiveMagicEffects.Length == 0)
+            {
+                payload.ActiveSpells = Array.Empty<ActorActiveSpell>();
+                return;
+            }
+
+            payload.ActiveSpells = new ActorActiveSpell[payload.ActiveMagicEffects.Length];
+            for (int i = 0; i < payload.ActiveMagicEffects.Length; i++)
+            {
+                var effect = payload.ActiveMagicEffects[i];
+                int activeSpellId = i + 1;
+                effect.ActiveSpellId = activeSpellId;
+                payload.ActiveMagicEffects[i] = effect;
+                payload.ActiveSpells[i] = new ActorActiveSpell
+                {
+                    ActiveSpellId = activeSpellId,
+                    SourceKind = effect.SourceKind == ActorActiveMagicEffectSourceKind.PassiveSpell ? ActorActiveSpellSourceKind.PassiveSpell : ActorActiveSpellSourceKind.Spell,
+                    SourceName = effect.SourceName,
+                    SourceId = effect.SourceId,
+                    Flags = effect.SourceKind == ActorActiveMagicEffectSourceKind.PassiveSpell ? ActorActiveSpellFlags.SpellStore | ActorActiveSpellFlags.IgnoreResistances : ActorActiveSpellFlags.Temporary,
+                };
+            }
         }
 
         static void WriteMapDiscoveryTile(BinaryWriter w, in LocalMapDiscoveryTilePayload value)

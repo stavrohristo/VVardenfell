@@ -19,12 +19,18 @@ namespace VVardenfell.Runtime.Inventory
     public partial class ContainerTransferSystem : SystemBase
     {
         readonly HashSet<uint> _loggedMissingInteractionSounds = new();
+        EntityQuery _playerInventoryQuery;
 
         protected override void OnCreate()
         {
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<PlayerInventoryItem>());
+
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<ContainerWindowState>();
             RequireForUpdate<ContainerWindowRequest>();
+            RequireForUpdate(_playerInventoryQuery);
         }
 
         protected override void OnUpdate()
@@ -54,7 +60,8 @@ namespace VVardenfell.Runtime.Inventory
 
             uint placedRefId = state.OpenPlacedRefId;
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             int transferredStacks = 0;
 
             if (request.PendingTakeAll != 0)
@@ -190,8 +197,8 @@ namespace VVardenfell.Runtime.Inventory
             if (!SystemAPI.HasSingleton<ContainerSessionItem>())
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one ContainerSessionItem buffer.");
 
-            if (!SystemAPI.HasSingleton<PlayerInventoryItem>())
-                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one PlayerInventoryItem buffer.");
+            if (_playerInventoryQuery.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one player inventory entity.");
 
             if (!WorldJournalUtility.TryGetJournalEntity(EntityManager, out _))
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one world journal entity.");

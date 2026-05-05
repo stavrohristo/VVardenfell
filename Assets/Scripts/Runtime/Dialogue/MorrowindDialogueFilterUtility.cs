@@ -3,6 +3,7 @@ using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Player;
@@ -591,6 +592,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                     }
                     return false;
 
+                case DialogueConditionFunction.Alarmed:
+                    matched = Compare(ResolveAlarmed(entityManager, speakerEntity), rule);
+                    return true;
+
+                case DialogueConditionFunction.Attacked:
+                    matched = Compare(ResolveAttacked(entityManager, speakerEntity), rule);
+                    return true;
+
+                case DialogueConditionFunction.ShouldAttack:
+                    matched = Compare(ResolveShouldAttack(entityManager, speakerEntity), rule);
+                    return true;
+
                 case DialogueConditionFunction.TalkedToPc:
                     matched = Compare(0, rule);
                     return true;
@@ -757,6 +770,65 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (query.IsEmptyIgnoreFilter)
                 return false;
             crime = entityManager.GetComponentData<PlayerCrimeState>(query.GetSingletonEntity());
+            return true;
+        }
+
+        static int ResolveAlarmed(EntityManager entityManager, Entity speakerEntity)
+        {
+            if (speakerEntity == Entity.Null
+                || !entityManager.Exists(speakerEntity)
+                || !entityManager.HasComponent<ActorCrimeState>(speakerEntity))
+            {
+                return 0;
+            }
+
+            return entityManager.GetComponentData<ActorCrimeState>(speakerEntity).Alarmed != 0 ? 1 : 0;
+        }
+
+        static int ResolveAttacked(EntityManager entityManager, Entity speakerEntity)
+        {
+            if (speakerEntity == Entity.Null
+                || !entityManager.Exists(speakerEntity)
+                || !entityManager.HasComponent<ActorScriptEventState>(speakerEntity))
+            {
+                return 0;
+            }
+
+            return entityManager.GetComponentData<ActorScriptEventState>(speakerEntity).Attacked != 0 ? 1 : 0;
+        }
+
+        static int ResolveShouldAttack(EntityManager entityManager, Entity speakerEntity)
+        {
+            if (speakerEntity == Entity.Null || !entityManager.Exists(speakerEntity))
+                return 0;
+
+            if (TryReadPlayerEntity(entityManager, out Entity player)
+                && entityManager.HasComponent<ActorCombatTargetState>(speakerEntity))
+            {
+                var combat = entityManager.GetComponentData<ActorCombatTargetState>(speakerEntity);
+                uint playerRef = player != Entity.Null && entityManager.HasComponent<PlacedRefIdentity>(player)
+                    ? entityManager.GetComponentData<PlacedRefIdentity>(player).Value
+                    : 0u;
+                if (combat.Active != 0 && (combat.TargetEntity == player || (playerRef != 0u && combat.TargetPlacedRefId == playerRef)))
+                    return 1;
+            }
+
+            if (!entityManager.HasComponent<ActorAiSettingsState>(speakerEntity))
+                return 0;
+
+            return entityManager.GetComponentData<ActorAiSettingsState>(speakerEntity).Fight >= 100 ? 1 : 0;
+        }
+
+        static bool TryReadPlayerEntity(EntityManager entityManager, out Entity player)
+        {
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            if (query.IsEmptyIgnoreFilter)
+            {
+                player = Entity.Null;
+                return false;
+            }
+
+            player = query.GetSingletonEntity();
             return true;
         }
 

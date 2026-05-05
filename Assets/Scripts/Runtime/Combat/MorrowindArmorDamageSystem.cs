@@ -29,8 +29,12 @@ namespace VVardenfell.Runtime.Combat
 
             foreach (var damage in SystemAPI.Query<RefRW<MorrowindPendingDamageEvent>>())
             {
-                if (damage.ValueRO.TargetVital != MorrowindDamageTargetVital.Health || damage.ValueRO.Amount <= 0f)
+                if (!IsArmorMitigatedDamage(damage.ValueRO.SourceKind)
+                    || damage.ValueRO.TargetVital != MorrowindDamageTargetVital.Health
+                    || damage.ValueRO.Amount <= 0f)
+                {
                     continue;
+                }
 
                 float original = damage.ValueRO.Amount;
                 damage.ValueRW.Amount = MorrowindArmorDamageUtility.ApplyArmorToHealthDamage(
@@ -66,5 +70,9 @@ namespace VVardenfell.Runtime.Combat
             ref readonly var actor = ref contentDb.Get(source.Definition);
             return actor.Kind == ActorDefKind.Creature;
         }
+
+        static bool IsArmorMitigatedDamage(MorrowindDamageSourceKind sourceKind)
+            => sourceKind == MorrowindDamageSourceKind.Weapon
+               || sourceKind == MorrowindDamageSourceKind.HandToHand;
     }
 }

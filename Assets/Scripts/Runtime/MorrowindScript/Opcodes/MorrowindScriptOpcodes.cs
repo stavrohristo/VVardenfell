@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int DeathCountCount;
         public MorrowindQuestJournalIndex* QuestJournal;
         public int QuestJournalCount;
+        public ulong PreparedRequirements;
         public NativeParallelHashMap<uint, byte> RefDisabledStates;
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> ActiveExplicitRefs;
         public NativeParallelHashMap<int, ActiveExplicitRefTarget> AllExplicitRefs;
@@ -2633,6 +2634,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void GetPCCrimeLevel(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
+            if ((context->PreparedRequirements & (ulong)MorrowindScriptRequirementMask.PlayerCrime) == 0UL)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
             int bounty = math.max(0, context->PlayerCrimeLevel);
             Push(context, new MorrowindScriptStackValue
             {
@@ -2645,6 +2652,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void SetPCCrimeLevel(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
+            if ((context->PreparedRequirements & (ulong)MorrowindScriptRequirementMask.PlayerCrime) == 0UL)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
             if (!Pop(context, out var value))
                 return;
 
@@ -2673,6 +2686,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         [BurstCompile]
         static void PayFine(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
+            if ((context->PreparedRequirements & (ulong)MorrowindScriptRequirementMask.PlayerCrime) == 0UL)
+            {
+                context->Faulted = 1;
+                return;
+            }
+
             if (context->PlayerEntity == Entity.Null)
             {
                 context->Faulted = 1;
@@ -3533,18 +3552,23 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            if ((sourcePlacedRefId != 0u && !IsLoadedPlacedRef(context, sourcePlacedRefId))
-                || (targetPlacedRefId != 0u && !IsLoadedPlacedRef(context, targetPlacedRefId))
-                || (context->ActorLineOfSight == null && context->ActorLineOfSightCount > 0)
+            if ((context->ActorLineOfSight == null && context->ActorLineOfSightCount > 0)
                 || context->ActorLineOfSightCount < 0)
             {
                 context->Faulted = 1;
                 return;
             }
 
-            int value = sourcePlacedRefId == targetPlacedRefId
-                ? 1
-                : FindLineOfSightSnapshot(context, sourcePlacedRefId, targetPlacedRefId);
+            int value;
+            if (sourcePlacedRefId == targetPlacedRefId)
+            {
+                value = 1;
+            }
+            else if (!TryFindLineOfSightSnapshot(context, sourcePlacedRefId, targetPlacedRefId, out value))
+            {
+                value = 0;
+            }
+
             Push(context, new MorrowindScriptStackValue
             {
                 IntValue = value,
@@ -3553,19 +3577,25 @@ namespace VVardenfell.Runtime.MorrowindScript
             });
         }
 
-        static int FindLineOfSightSnapshot(MorrowindScriptExecutionContext* context, uint sourcePlacedRefId, uint targetPlacedRefId)
+        static bool TryFindLineOfSightSnapshot(
+            MorrowindScriptExecutionContext* context,
+            uint sourcePlacedRefId,
+            uint targetPlacedRefId,
+            out int value)
         {
+            value = 0;
             for (int i = 0; i < context->ActorLineOfSightCount; i++)
             {
                 var snapshot = context->ActorLineOfSight[i];
                 if (snapshot.SourcePlacedRefId == sourcePlacedRefId
                     && snapshot.TargetPlacedRefId == targetPlacedRefId)
                 {
-                    return snapshot.HasLineOfSight != 0 ? 1 : 0;
+                    value = snapshot.HasLineOfSight != 0 ? 1 : 0;
+                    return true;
                 }
             }
 
-            return 0;
+            return false;
         }
 
         [BurstCompile]
@@ -4254,6 +4284,12 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool IsCurrentActivationTarget(MorrowindScriptExecutionContext* context)
         {
+            if (context->ActivationEventCount < 0)
+            {
+                context->Faulted = 1;
+                return false;
+            }
+
             if (context->ActivationEvents == null || context->ActivationEventCount <= 0)
                 return false;
 

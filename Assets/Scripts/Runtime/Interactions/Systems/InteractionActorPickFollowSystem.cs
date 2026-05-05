@@ -8,6 +8,19 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
     public partial class InteractionActorPickFollowSystem : SystemBase
     {
+        EntityQuery _pickSurfaceQuery;
+
+        protected override void OnCreate()
+        {
+            _pickSurfaceQuery = GetEntityQuery(
+                ComponentType.ReadOnly<InteractionActorPickSurfaceTag>(),
+                ComponentType.ReadOnly<LogicalRefParent>(),
+                ComponentType.ReadWrite<LocalTransform>(),
+                ComponentType.ReadWrite<LocalToWorld>());
+
+            RequireForUpdate(_pickSurfaceQuery);
+        }
+
         protected override void OnUpdate()
         {
             EntityManager.CompleteDependencyBeforeRO<LocalTransform>();

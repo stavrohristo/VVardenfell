@@ -14,6 +14,40 @@ namespace VVardenfell.Runtime.MorrowindScript
         public int FirstLocalIndex;
         public int LocalCount;
         public int MaxStack;
+        public ulong RequirementMask;
+    }
+
+    [Flags]
+    public enum MorrowindScriptRequirementMask : ulong
+    {
+        None = 0,
+        PlayingSounds = 1UL << 0,
+        ActiveSays = 1UL << 1,
+        ActivationEvents = 1UL << 2,
+        PlayerInventory = 1UL << 3,
+        PlayerKnownSpells = 1UL << 4,
+        PlayerFactions = 1UL << 5,
+        PlayerSkills = 1UL << 6,
+        PlayerCrime = 1UL << 7,
+        ExternalActorLocals = 1UL << 8,
+        ActorAiStatuses = 1UL << 9,
+        ActorCombatTargets = 1UL << 10,
+        RefTransforms = 1UL << 11,
+        InitialTransforms = 1UL << 12,
+        LockStates = 1UL << 13,
+        InventoryCounts = 1UL << 14,
+        ActorDeaths = 1UL << 15,
+        ActorEvents = 1UL << 16,
+        ActorVitals = 1UL << 17,
+        ActorAttributes = 1UL << 18,
+        ActorActiveEffects = 1UL << 19,
+        ActorDiseases = 1UL << 20,
+        ActorIdentities = 1UL << 21,
+        ActorAiSettings = 1UL << 22,
+        ActorDispositions = 1UL << 23,
+        ActorLineOfSight = 1UL << 24,
+        ActorKnownSpellSnapshots = 1UL << 25,
+        RunningPrograms = 1UL << 26,
     }
 
     public struct MorrowindScriptInstructionRuntime
@@ -105,7 +139,112 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int i = 0; i < catalog.Messages.Length; i++)
                 catalog.Messages[i] = RuntimeFixedStringUtility.ToFixed512OrDefault(data.MorrowindScriptMessages[i].Text);
 
+            for (int i = 0; i < catalog.Programs.Length; i++)
+            {
+                var program = catalog.Programs[i];
+                program.RequirementMask = (ulong)CalculateRequirementMask(catalog.Instructions, program);
+                catalog.Programs[i] = program;
+            }
+
             return catalog;
+        }
+
+        static MorrowindScriptRequirementMask CalculateRequirementMask(
+            NativeArray<MorrowindScriptInstructionRuntime> instructions,
+            in MorrowindScriptProgramRuntime program)
+        {
+            if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled || program.InstructionCount <= 0)
+                return MorrowindScriptRequirementMask.None;
+
+            var mask = MorrowindScriptRequirementMask.None;
+            int end = program.FirstInstructionIndex + program.InstructionCount;
+            for (int i = program.FirstInstructionIndex; i < end; i++)
+                mask |= GetInstructionRequirementMask((MorrowindScriptOpcode)instructions[i].Opcode);
+
+            return mask;
+        }
+
+        public static MorrowindScriptRequirementMask GetInstructionRequirementMask(MorrowindScriptOpcode opcode)
+        {
+            switch (opcode)
+            {
+                case MorrowindScriptOpcode.GetSoundPlaying:
+                    return MorrowindScriptRequirementMask.PlayingSounds;
+                case MorrowindScriptOpcode.SayDone:
+                    return MorrowindScriptRequirementMask.ActiveSays;
+                case MorrowindScriptOpcode.GetOnActivate:
+                case MorrowindScriptOpcode.OnActivateStatement:
+                case MorrowindScriptOpcode.Activate:
+                    return MorrowindScriptRequirementMask.ActivationEvents;
+                case MorrowindScriptOpcode.GetPlayerItemCount:
+                case MorrowindScriptOpcode.HasSoulGem:
+                    return MorrowindScriptRequirementMask.PlayerInventory;
+                case MorrowindScriptOpcode.GetPlayerSpell:
+                    return MorrowindScriptRequirementMask.PlayerKnownSpells;
+                case MorrowindScriptOpcode.GetPCRank:
+                case MorrowindScriptOpcode.PCExpelled:
+                    return MorrowindScriptRequirementMask.PlayerFactions;
+                case MorrowindScriptOpcode.GetPlayerSkill:
+                    return MorrowindScriptRequirementMask.PlayerSkills;
+                case MorrowindScriptOpcode.GetPCCrimeLevel:
+                case MorrowindScriptOpcode.SetPCCrimeLevel:
+                case MorrowindScriptOpcode.PayFine:
+                    return MorrowindScriptRequirementMask.PlayerCrime;
+                case MorrowindScriptOpcode.GetActorLocal:
+                case MorrowindScriptOpcode.SetActorLocalInt:
+                case MorrowindScriptOpcode.SetActorLocalFloat:
+                    return MorrowindScriptRequirementMask.ExternalActorLocals;
+                case MorrowindScriptOpcode.GetAiPackageDone:
+                case MorrowindScriptOpcode.GetCurrentAiPackage:
+                    return MorrowindScriptRequirementMask.ActorAiStatuses;
+                case MorrowindScriptOpcode.GetTarget:
+                    return MorrowindScriptRequirementMask.ActorCombatTargets;
+                case MorrowindScriptOpcode.GetDistance:
+                case MorrowindScriptOpcode.GetPos:
+                case MorrowindScriptOpcode.SetPos:
+                case MorrowindScriptOpcode.MoveWorld:
+                case MorrowindScriptOpcode.Move:
+                    return MorrowindScriptRequirementMask.RefTransforms;
+                case MorrowindScriptOpcode.GetStartingAngle:
+                case MorrowindScriptOpcode.SetAtStart:
+                    return MorrowindScriptRequirementMask.InitialTransforms;
+                case MorrowindScriptOpcode.GetLocked:
+                    return MorrowindScriptRequirementMask.LockStates;
+                case MorrowindScriptOpcode.GetItemCount:
+                    return MorrowindScriptRequirementMask.InventoryCounts;
+                case MorrowindScriptOpcode.GetOnDeath:
+                    return MorrowindScriptRequirementMask.ActorDeaths;
+                case MorrowindScriptOpcode.GetAttacked:
+                case MorrowindScriptOpcode.OnMurder:
+                case MorrowindScriptOpcode.OnKnockout:
+                case MorrowindScriptOpcode.HitOnMe:
+                    return MorrowindScriptRequirementMask.ActorEvents;
+                case MorrowindScriptOpcode.GetHealth:
+                    return MorrowindScriptRequirementMask.ActorVitals;
+                case MorrowindScriptOpcode.GetActorAttribute:
+                    return MorrowindScriptRequirementMask.ActorAttributes;
+                case MorrowindScriptOpcode.GetEffect:
+                case MorrowindScriptOpcode.GetSpellEffects:
+                    return MorrowindScriptRequirementMask.ActorActiveEffects;
+                case MorrowindScriptOpcode.GetCommonDisease:
+                case MorrowindScriptOpcode.GetBlightDisease:
+                    return MorrowindScriptRequirementMask.ActorDiseases;
+                case MorrowindScriptOpcode.GetRace:
+                    return MorrowindScriptRequirementMask.ActorIdentities;
+                case MorrowindScriptOpcode.GetActorAiSetting:
+                    return MorrowindScriptRequirementMask.ActorAiSettings;
+                case MorrowindScriptOpcode.GetDisposition:
+                    return MorrowindScriptRequirementMask.ActorDispositions;
+                case MorrowindScriptOpcode.GetLOS:
+                case MorrowindScriptOpcode.GetDetected:
+                    return MorrowindScriptRequirementMask.ActorLineOfSight;
+                case MorrowindScriptOpcode.GetSpell:
+                    return MorrowindScriptRequirementMask.ActorKnownSpellSnapshots;
+                case MorrowindScriptOpcode.ScriptRunning:
+                    return MorrowindScriptRequirementMask.RunningPrograms;
+                default:
+                    return MorrowindScriptRequirementMask.None;
+            }
         }
 
         static void ValidateProgram(GameplayContentData data, int programIndex, in MorrowindScriptProgramDef program)

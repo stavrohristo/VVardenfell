@@ -20,6 +20,7 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
                 ComponentType.ReadWrite<PlayerCharacterState>(),
+                ComponentType.ReadWrite<ActorMagicCastState>(),
                 ComponentType.ReadWrite<MorrowindMovementInput>());
             RequireForUpdate(_playerQuery);
             RequireForUpdate<FixedTickSystem.Singleton>();
@@ -41,14 +42,17 @@ namespace VVardenfell.Runtime.Player
         {
             uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick;
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
+            Entity player = _playerQuery.GetSingletonEntity();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
             var inputRef = _playerQuery.GetSingletonRW<MorrowindMovementInput>();
             var stateRef = _playerQuery.GetSingletonRW<PlayerCharacterState>();
+            var magicRef = _playerQuery.GetSingletonRW<ActorMagicCastState>();
             var kb = Keyboard.current;
             var mouse = Mouse.current;
             ref var control = ref controlRef.ValueRW;
             ref var movementInput = ref inputRef.ValueRW;
             ref var state = ref stateRef.ValueRW;
+            ref var magic = ref magicRef.ValueRW;
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
 
             bool gameplayInputAllowed = !GameplayInputGate.BlocksGameplayInput;
@@ -64,6 +68,8 @@ namespace VVardenfell.Runtime.Player
                 control.InteractPressed = false;
                 control.ToggleViewPressed = false;
                 control.ReadyWeaponTogglePressed = false;
+                control.ReadyMagicTogglePressed = false;
+                control.CastMagicPressed = false;
                 control.AttackHeld = false;
                 control.AttackPressed = false;
                 control.AttackReleased = false;
@@ -87,6 +93,7 @@ namespace VVardenfell.Runtime.Player
             bool interactPressedThisFrame = kb.eKey.wasPressedThisFrame;
             bool toggleViewPressedThisFrame = kb.vKey.wasPressedThisFrame;
             bool readyWeaponTogglePressedThisFrame = kb.fKey.wasPressedThisFrame;
+            bool readyMagicTogglePressedThisFrame = kb.rKey.wasPressedThisFrame;
             bool attackHeld = mouse != null && mouse.leftButton.isPressed;
             bool attackPressedThisFrame = mouse != null && mouse.leftButton.wasPressedThisFrame;
             bool attackReleasedThisFrame = mouse != null && mouse.leftButton.wasReleasedThisFrame;
@@ -97,6 +104,17 @@ namespace VVardenfell.Runtime.Player
             if (shell.PlayerFightingDisabled != 0)
             {
                 readyWeaponTogglePressedThisFrame = false;
+            }
+            if (shell.PlayerMagicDisabled != 0)
+                readyMagicTogglePressedThisFrame = false;
+
+            if (readyMagicTogglePressedThisFrame)
+                magic.MagicReadied = magic.MagicReadied == 0 ? (byte)1 : (byte)0;
+
+            bool magicConsumesAttack = magic.MagicReadied != 0 && shell.PlayerMagicDisabled == 0;
+            bool castMagicPressedThisFrame = magicConsumesAttack && attackPressedThisFrame;
+            if (shell.PlayerFightingDisabled != 0 || magicConsumesAttack)
+            {
                 attackHeld = false;
                 attackPressedThisFrame = false;
                 attackReleasedThisFrame = false;
@@ -109,7 +127,11 @@ namespace VVardenfell.Runtime.Player
             control.CrouchHeld = kb.leftCtrlKey.isPressed || kb.cKey.isPressed;
             control.InteractPressed |= interactPressedThisFrame;
             control.ToggleViewPressed |= toggleViewPressedThisFrame;
+            if (toggleViewPressedThisFrame)
+                EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(player, true);
             control.ReadyWeaponTogglePressed |= readyWeaponTogglePressedThisFrame;
+            control.ReadyMagicTogglePressed |= readyMagicTogglePressedThisFrame;
+            control.CastMagicPressed |= castMagicPressedThisFrame;
             control.AttackHeld = attackHeld;
             control.AttackPressed |= attackPressedThisFrame;
             control.AttackReleased |= attackReleasedThisFrame;

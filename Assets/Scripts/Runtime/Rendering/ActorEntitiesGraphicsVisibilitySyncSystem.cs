@@ -11,13 +11,24 @@ namespace VVardenfell.Runtime.Rendering
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial struct ActorEntitiesGraphicsVisibilitySyncSystem : ISystem
     {
+        EntityQuery _renderMeshQuery;
         ComponentLookup<ActorRenderVisible> _visibleLookup;
         ComponentLookup<LocalPlayerVisual> _localPlayerVisualLookup;
 
         public void OnCreate(ref SystemState state)
         {
+            _renderMeshQuery = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<ActorRenderMeshInstance>(),
+                    ComponentType.ReadWrite<MaterialMeshInfo>(),
+                },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
+            });
             _visibleLookup = state.GetComponentLookup<ActorRenderVisible>(isReadOnly: true);
             _localPlayerVisualLookup = state.GetComponentLookup<LocalPlayerVisual>(isReadOnly: true);
+            state.RequireForUpdate(_renderMeshQuery);
         }
 
         [BurstCompile]

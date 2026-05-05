@@ -10,5 +10,6 @@ namespace VVardenfell.Runtime.Combat
     {
         Weapon = 0,
         HandToHand = 1,
+        ElementalShield = 2,
     }
 }

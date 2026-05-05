@@ -22,7 +22,6 @@ namespace VVardenfell.Runtime.WorldState
             Entity journalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<WorldJournalState>(entityManager);
             Entity questJournalEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindQuestJournalState>(entityManager);
             Entity dialogueEntity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindDialogueState>(entityManager);
-            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
             Entity transitionEntity = WorldStateEntityQueryUtility.GetSingletonEntity<InteriorTransitionState>(entityManager);
             Entity spawnEntity = WorldStateEntityQueryUtility.GetSingletonEntity<RuntimeSpawnState>(entityManager);
             if (playerEntity == Entity.Null
@@ -30,7 +29,7 @@ namespace VVardenfell.Runtime.WorldState
                 || journalEntity == Entity.Null
                 || questJournalEntity == Entity.Null
                 || dialogueEntity == Entity.Null
-                || inventoryEntity == Entity.Null
+                || !entityManager.HasBuffer<PlayerInventoryItem>(playerEntity)
                 || transitionEntity == Entity.Null
                 || spawnEntity == Entity.Null)
             {
@@ -69,7 +68,7 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < journal.Length; i++)
                 journalEntries[i] = journal[i];
 
-            var inventory = entityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+            var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerEntity);
             var inventoryEntries = new PlayerInventoryItem[inventory.Length];
             for (int i = 0; i < inventory.Length; i++)
                 inventoryEntries[i] = inventory[i];
@@ -99,6 +98,22 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < effectBuffer.Length; i++)
                     activeMagicEffects[i] = effectBuffer[i];
             }
+            ActorActiveSpell[] activeSpells = Array.Empty<ActorActiveSpell>();
+            if (entityManager.HasBuffer<ActorActiveSpell>(playerEntity))
+            {
+                var activeSpellBuffer = entityManager.GetBuffer<ActorActiveSpell>(playerEntity);
+                activeSpells = new ActorActiveSpell[activeSpellBuffer.Length];
+                for (int i = 0; i < activeSpellBuffer.Length; i++)
+                    activeSpells[i] = activeSpellBuffer[i];
+            }
+            ActorUsedPower[] usedPowers = Array.Empty<ActorUsedPower>();
+            if (entityManager.HasBuffer<ActorUsedPower>(playerEntity))
+            {
+                var usedPowerBuffer = entityManager.GetBuffer<ActorUsedPower>(playerEntity);
+                usedPowers = new ActorUsedPower[usedPowerBuffer.Length];
+                for (int i = 0; i < usedPowerBuffer.Length; i++)
+                    usedPowers[i] = usedPowerBuffer[i];
+            }
             var exteriorMapDiscovery = CaptureExteriorMapDiscovery(entityManager);
             var globalMapOverlay = GlobalMapPresentationCache.CaptureOverlayPayload();
 
@@ -122,7 +137,9 @@ namespace VVardenfell.Runtime.WorldState
                 Inventory = inventoryEntries,
                 PlayerEquipment = playerEquipment,
                 KnownSpells = knownSpells,
+                ActiveSpells = activeSpells,
                 ActiveMagicEffects = activeMagicEffects,
+                UsedPowers = usedPowers,
                 ExteriorMapDiscovery = exteriorMapDiscovery,
                 GlobalMapOverlay = globalMapOverlay,
                 Time = timePayload,

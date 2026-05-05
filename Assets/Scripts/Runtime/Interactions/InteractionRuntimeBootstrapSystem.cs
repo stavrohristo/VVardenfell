@@ -51,7 +51,6 @@ namespace VVardenfell.Runtime.Interactions
             }, ref ecb, created);
             RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InteriorTransitionState(), ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<InteriorSpawnedEntity>(EntityManager, runtimeEntity, ref ecb, created);
-            RuntimeBootstrapUtility.EnsureBuffer<PlayerInventoryItem>(EntityManager, runtimeEntity, ref ecb, created);
             RuntimeBootstrapUtility.EnsureBuffer<PickedItemRecord>(EntityManager, runtimeEntity, ref ecb, created);
             ecb.Playback(EntityManager);
             ecb.Dispose();

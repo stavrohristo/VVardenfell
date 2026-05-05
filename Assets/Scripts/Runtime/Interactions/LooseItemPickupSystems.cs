@@ -35,11 +35,15 @@ namespace VVardenfell.Runtime.Interactions
 
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
+        EntityQuery _playerInventoryQuery;
 
         protected override void OnCreate()
         {
             _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
             _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<PlayerInventoryItem>());
 
             RequireForUpdate(_requestQuery);
             RequireForUpdate(_focusQuery);
@@ -47,7 +51,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<InteractionAudioRequestState>();
             RequireForUpdate<InteractionAudioRequest>();
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<PickedItemRecord>();
             RequireForUpdate<WorldJournalEntry>();
         }
@@ -88,7 +92,8 @@ namespace VVardenfell.Runtime.Interactions
                 ? metadata.DisplayName
                 : "item";
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             AddInventoryItem(inventory, content, target);
             PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
             if (!isRuntimeSpawnedItem)

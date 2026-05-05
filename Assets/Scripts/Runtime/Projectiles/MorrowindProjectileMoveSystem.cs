@@ -123,6 +123,9 @@ namespace VVardenfell.Runtime.Projectiles
                 HitNormal = hit.Normal,
                 ModelPath = projectile.ModelPath,
                 TextureOverridePath = projectile.TextureOverridePath,
+                Scripted = projectile.Scripted,
+                IgnoreReflect = projectile.IgnoreReflect,
+                IgnoreSpellAbsorption = projectile.IgnoreSpellAbsorption,
             });
         }
 

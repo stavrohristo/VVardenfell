@@ -15,10 +15,23 @@ namespace VVardenfell.Runtime.Streaming
         const float TerrainFrustumPaddingDegrees = 2f;
         const float TerrainBoundsPaddingMeters = 2f;
 
+        EntityQuery _terrainQuery;
+
         public void OnCreate(ref SystemState state)
         {
+            _terrainQuery = state.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<CellCoord>(),
+                    ComponentType.ReadOnly<RenderBounds>(),
+                    ComponentType.ReadWrite<MaterialMeshInfo>(),
+                },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
+            });
             state.RequireForUpdate<TerrainCameraFrustumSnapshot>();
             state.RequireForUpdate<StreamingConfig>();
+            state.RequireForUpdate(_terrainQuery);
         }
 
         [BurstCompile]

@@ -41,6 +41,9 @@ namespace VVardenfell.Runtime.Projectiles
         public FixedString512Bytes ModelPath;
         public FixedString512Bytes TextureOverridePath;
         public byte SpawnVisual;
+        public byte Scripted;
+        public byte IgnoreReflect;
+        public byte IgnoreSpellAbsorption;
         public int2 ExteriorCell;
         public FixedString128Bytes InteriorCellId;
         public ulong InteriorCellHash;
@@ -64,6 +67,9 @@ namespace VVardenfell.Runtime.Projectiles
         public FixedString128Bytes InteriorCellId;
         public ulong InteriorCellHash;
         public byte IsInterior;
+        public byte Scripted;
+        public byte IgnoreReflect;
+        public byte IgnoreSpellAbsorption;
         public uint PendingQuerySequence;
         public uint PendingQueryFixedTick;
     }
@@ -83,5 +89,8 @@ namespace VVardenfell.Runtime.Projectiles
         public float3 HitNormal;
         public FixedString512Bytes ModelPath;
         public FixedString512Bytes TextureOverridePath;
+        public byte Scripted;
+        public byte IgnoreReflect;
+        public byte IgnoreSpellAbsorption;
     }
 }

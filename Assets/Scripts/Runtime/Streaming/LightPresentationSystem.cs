@@ -154,6 +154,7 @@ namespace VVardenfell.Runtime.Streaming
                 LocalToWorldHandle = GetComponentTypeHandle<LocalToWorld>(isReadOnly: true),
                 StateHandle = GetComponentTypeHandle<LightInstanceState>(isReadOnly: true),
                 FlagsHandle = GetComponentTypeHandle<LightInstanceFlags>(isReadOnly: true),
+                OffsetHandle = GetComponentTypeHandle<LightPresentationOffset>(isReadOnly: true),
                 LocationHandle = GetComponentTypeHandle<LogicalRefLocation>(isReadOnly: true),
                 ActiveExteriorCells = activeExteriorCells,
                 CameraPosition = cameraPosition,
@@ -306,6 +307,7 @@ namespace VVardenfell.Runtime.Streaming
             [ReadOnly] public ComponentTypeHandle<LocalToWorld> LocalToWorldHandle;
             [ReadOnly] public ComponentTypeHandle<LightInstanceState> StateHandle;
             [ReadOnly] public ComponentTypeHandle<LightInstanceFlags> FlagsHandle;
+            [ReadOnly] public ComponentTypeHandle<LightPresentationOffset> OffsetHandle;
             [ReadOnly] public ComponentTypeHandle<LogicalRefLocation> LocationHandle;
             [ReadOnly] public NativeHashSet<int2> ActiveExteriorCells;
             public float3 CameraPosition;
@@ -321,6 +323,10 @@ namespace VVardenfell.Runtime.Streaming
                 var states = chunk.GetNativeArray(ref StateHandle);
                 var flags = chunk.GetNativeArray(ref FlagsHandle);
                 var locations = chunk.GetNativeArray(ref LocationHandle);
+                bool hasOffsets = chunk.Has(ref OffsetHandle);
+                NativeArray<LightPresentationOffset> offsets = hasOffsets
+                    ? chunk.GetNativeArray(ref OffsetHandle)
+                    : default;
 
                 var enumerator = new ChunkEntityEnumerator(useEnabledMask, chunkEnabledMask, chunk.Count);
                 while (enumerator.NextEntityIndex(out int i))
@@ -344,6 +350,8 @@ namespace VVardenfell.Runtime.Streaming
                     }
 
                     float3 position = localToWorlds[i].Value.c3.xyz;
+                    if (hasOffsets)
+                        position = math.transform(localToWorlds[i].Value, offsets[i].LocalPosition);
                     float cullRange = math.max(48f, state.CurrentRange * 4f);
                     float distanceSq = math.distancesq(position, CameraPosition);
                     if (distanceSq > cullRange * cullRange)

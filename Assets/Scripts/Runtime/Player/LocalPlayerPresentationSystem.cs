@@ -6,7 +6,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
-using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -17,18 +16,28 @@ namespace VVardenfell.Runtime.Player
     public partial class LocalPlayerPresentationSpawnSystem : SystemBase
     {
         static bool s_MissingPlayerActorWarned;
+        EntityQuery _missingPresentationQuery;
 
         protected override void OnCreate()
         {
-            RequireForUpdate<PlayerTag>();
+            _missingPresentationQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<PlayerTag>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<LocalPlayerPresentationState>(),
+                },
+            });
+
+            RequireForUpdate(_missingPresentationQuery);
             RequireForUpdate<PlayerViewComponent>();
-            RequireForUpdate<PlayerInventoryItem>();
         }
 
         protected override void OnUpdate()
         {
-            CleanupOrphanVisuals();
-
             RuntimeContentDatabase contentDb = RuntimeContentDatabase.Active;
             if (contentDb == null)
                 return;
@@ -70,7 +79,6 @@ namespace VVardenfell.Runtime.Player
             if (view == Entity.Null)
                 return;
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             Entity firstPersonVisual = CreatePlayerVisual(
@@ -82,8 +90,7 @@ namespace VVardenfell.Runtime.Player
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
                 visible: true,
-                contentDb,
-                inventory);
+                contentDb);
             Entity thirdPersonVisual = CreatePlayerVisual(
                 ref ecb,
                 player,
@@ -93,8 +100,7 @@ namespace VVardenfell.Runtime.Player
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: 0u,
                 visible: false,
-                contentDb,
-                inventory);
+                contentDb);
 
             ecb.AddComponent(player, new LocalPlayerPresentationState
             {
@@ -118,8 +124,7 @@ namespace VVardenfell.Runtime.Player
             bool actorRecipeFirstPerson,
             uint hiddenPartMask,
             bool visible,
-            RuntimeContentDatabase contentDb,
-            DynamicBuffer<PlayerInventoryItem> inventory)
+            RuntimeContentDatabase contentDb)
         {
             Entity visual = ecb.CreateEntity();
             ecb.SetName(visual, new FixedString64Bytes(firstPerson
@@ -180,34 +185,21 @@ namespace VVardenfell.Runtime.Player
             };
         }
 
-        void CleanupOrphanVisuals()
-        {
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            foreach (var (visual, entity) in
-                     SystemAPI.Query<RefRO<LocalPlayerVisual>>()
-                         .WithEntityAccess())
-            {
-                if (visual.ValueRO.Player == Entity.Null
-                    || !EntityManager.Exists(visual.ValueRO.Player)
-                    || visual.ValueRO.View == Entity.Null
-                    || !EntityManager.Exists(visual.ValueRO.View))
-                {
-                    ecb.DestroyEntity(entity);
-                }
-            }
-
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
-        }
-
     }
 
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
     [UpdateAfter(typeof(PlayerInputReceivingSystem))]
     public partial class LocalPlayerViewModeSystem : SystemBase
     {
+        EntityQuery _dirtyQuery;
+
         protected override void OnCreate()
         {
+            _dirtyQuery = GetEntityQuery(
+                ComponentType.ReadOnly<LocalPlayerPresentationState>(),
+                ComponentType.ReadOnly<LocalPlayerViewModeDirty>());
+
+            RequireForUpdate(_dirtyQuery);
             RequireForUpdate<LocalPlayerPresentationState>();
             RequireForUpdate<PlayerCharacterControl>();
         }
@@ -215,6 +207,9 @@ namespace VVardenfell.Runtime.Player
         protected override void OnUpdate()
         {
             var stateEntity = SystemAPI.GetSingletonEntity<LocalPlayerPresentationState>();
+            if (!SystemAPI.IsComponentEnabled<LocalPlayerViewModeDirty>(stateEntity))
+                return;
+
             var state = EntityManager.GetComponentData<LocalPlayerPresentationState>(stateEntity);
             var controlEntity = SystemAPI.GetSingletonEntity<PlayerCharacterControl>();
             var control = EntityManager.GetComponentData<PlayerCharacterControl>(controlEntity);
@@ -231,6 +226,7 @@ namespace VVardenfell.Runtime.Player
 
             SetVisualGpuActive(state.FirstPersonVisual);
             SetVisualGpuActive(state.ThirdPersonVisual);
+            EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(stateEntity, false);
         }
 
         void SetVisualGpuActive(Entity entity)

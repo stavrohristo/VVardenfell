@@ -64,6 +64,11 @@ namespace VVardenfell.Runtime.Components
         public float BurdenMagnitude;
     }
 
+    public struct ActorMagicCastState : IComponentData
+    {
+        public byte MagicReadied;
+    }
+
     public struct ActorDispositionState : IComponentData
     {
         public int BaseDisposition;
@@ -74,14 +79,61 @@ namespace VVardenfell.Runtime.Components
         Unknown = 0,
         PassiveSpell = 1,
         TimedSpell = 2,
+        ScriptedSpell = 3,
+    }
+
+    public enum ActorActiveSpellSourceKind : byte
+    {
+        Unknown = 0,
+        Spell = 1,
+        PassiveSpell = 2,
+        ScriptedSpell = 3,
+        Enchantment = 4,
+        Potion = 5,
+    }
+
+    [System.Flags]
+    public enum ActorActiveSpellFlags : ushort
+    {
+        None = 0,
+        Temporary = 1 << 0,
+        Stackable = 1 << 1,
+        SpellStore = 1 << 2,
+        IgnoreResistances = 1 << 3,
+        IgnoreReflect = 1 << 4,
+        IgnoreSpellAbsorption = 1 << 5,
+        Scripted = 1 << 6,
+    }
+
+    public struct ActorActiveSpell : IBufferElementData
+    {
+        public int ActiveSpellId;
+        public Entity CasterEntity;
+        public uint CasterPlacedRefId;
+        public SpellDefHandle Spell;
+        public ContentReference SourceContent;
+        public ActorActiveSpellSourceKind SourceKind;
+        public ActorActiveSpellFlags Flags;
+        public FixedString64Bytes SourceName;
+        public FixedString64Bytes SourceId;
+    }
+
+    public struct ActorUsedPower : IBufferElementData
+    {
+        public SpellDefHandle Spell;
+        public float LastUsedTotalGameHours;
     }
 
     public struct ActorActiveMagicEffect : IBufferElementData
     {
+        public int ActiveSpellId;
         public short EffectId;
+        public short EffectIndex;
         public sbyte Skill;
         public sbyte Attribute;
         public float Magnitude;
+        public float MagnitudeMin;
+        public float MagnitudeMax;
         /// <summary>
         /// Permanent effects use -1 for both duration and time-left, matching OpenMW's
         /// active effect convention for effects without an expiry.
@@ -89,6 +141,10 @@ namespace VVardenfell.Runtime.Components
         public float DurationSeconds;
         public float TimeLeftSeconds;
         public byte Applied;
+        public byte Remove;
+        public byte IgnoreResistances;
+        public byte IgnoreReflect;
+        public byte IgnoreSpellAbsorption;
         public ActorActiveMagicEffectSourceKind SourceKind;
         public FixedString64Bytes SourceName;
         public FixedString64Bytes SourceId;

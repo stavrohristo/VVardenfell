@@ -94,6 +94,11 @@ namespace VVardenfell.Runtime.Inventory
                     Slot = itemEquipment.Slot,
                     Content = inventoryItem.Content,
                     InventoryIndex = inventoryIndex,
+                    Condition = ActorEquipmentConditionUtility.ResolveInitialCondition(
+                        itemEquipment,
+                        inventoryItem.Count,
+                        inventoryItem.Condition,
+                        inventoryItem.Content),
                     VisualMode = ActorEquipmentRuntimeUtility.ResolveEquipmentVisualMode(itemEquipment),
                 });
             }

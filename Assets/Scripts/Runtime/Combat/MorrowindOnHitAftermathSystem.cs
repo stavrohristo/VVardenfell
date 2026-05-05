@@ -1,6 +1,8 @@
 using System;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
@@ -48,9 +50,12 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindCombatHitVoiceSayRequest buffer.");
             if (!EntityManager.HasBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindScriptActiveSay buffer.");
+            if (!EntityManager.HasBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity))
+                throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no ActorForceGreetingRequest buffer.");
 
             var hitVoiceRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity);
             var activeSays = EntityManager.GetBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity, true);
+            var forceGreetingRequests = EntityManager.GetBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity);
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             uint randomState = combatState.RandomState;
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -68,6 +73,7 @@ namespace VVardenfell.Runtime.Combat
                     hitVoiceRequests,
                     hitDialogueIndex,
                     hasHitVoiceDialogue,
+                    forceGreetingRequests,
                     combatStartActors,
                     combatStartTargets,
                     ref randomState);
@@ -113,6 +119,7 @@ namespace VVardenfell.Runtime.Combat
             DynamicBuffer<MorrowindCombatHitVoiceSayRequest> hitVoiceRequests,
             int hitDialogueIndex,
             bool hasHitVoiceDialogue,
+            DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests,
             NativeList<Entity> combatStartActors,
             NativeList<Entity> combatStartTargets,
             ref uint randomState)
@@ -140,7 +147,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             if (CanCommitAssaultCrime(contentDb, damage.Target, damage.Attacker))
-                ApplyAssaultCrime(contentDb, damage.Target);
+                ApplyAssaultCrime(contentDb, damage.Target, damage.Attacker, forceGreetingRequests);
 
             if (ShouldStartCombatAfterHit(contentDb, damage.Target, damage.Attacker))
             {
@@ -215,7 +222,7 @@ namespace VVardenfell.Runtime.Combat
             return MorrowindMeleeCombatMechanics.SumEffectMagnitude(effects, VampirismEffectId) <= 0f;
         }
 
-        void ApplyAssaultCrime(RuntimeContentDatabase contentDb, Entity target)
+        void ApplyAssaultCrime(RuntimeContentDatabase contentDb, Entity target, Entity attacker, DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests)
         {
             if (IsPlayerFollower(target))
                 return;
@@ -225,18 +232,23 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(target)} is not an NPC.");
 
             bool isGuard = IsGuardNpc(contentDb, source.Definition);
-            bool reported = settings.Alarm >= 100;
+            bool reported = TryFindCrimeReporter(contentDb, attacker, target, out Entity reportingGuard);
             bool setCrimeId = reported;
 
             int dispositionModifier = 0;
-            float attackingDisposition = contentDb.RequireGameSettingFloat("fDispAttacking");
+            float victimDisposition = contentDb.RequireGameSettingFloat("fDispAttacking");
+            float witnessDisposition = contentDb.RequireGameSettingFloat("iDispAttackMod");
             if (!isGuard)
             {
-                dispositionModifier = (int)attackingDisposition;
+                dispositionModifier = (int)victimDisposition;
             }
             else if (!reported)
             {
-                dispositionModifier = (int)(attackingDisposition * (settings.Alarm * 0.01f));
+                dispositionModifier = (int)(victimDisposition * (settings.Alarm * 0.01f));
+            }
+            else
+            {
+                dispositionModifier = (int)witnessDisposition;
             }
 
             if (dispositionModifier != 0)
@@ -251,6 +263,13 @@ namespace VVardenfell.Runtime.Combat
             int bounty = reported ? contentDb.RequireGameSettingInt("iCrimeAttack") : 0;
             int crimeId = AddPlayerBountyAndAdvanceCrimeId(bounty);
             SetActorCrimeId(target, crimeId);
+
+            if (reported)
+            {
+                MarkCrimeWitnesses(contentDb, attacker, target, crimeId);
+                if (reportingGuard != Entity.Null)
+                    QueueForceGreeting(forceGreetingRequests, reportingGuard);
+            }
         }
 
         void ApplyAssaultDispositionPenalty(Entity target, int penalty)
@@ -267,6 +286,145 @@ namespace VVardenfell.Runtime.Combat
         {
             ref readonly var actor = ref contentDb.Get(actorHandle);
             return string.Equals(ContentId.NormalizeId(actor.ClassId), "guard", StringComparison.OrdinalIgnoreCase);
+        }
+
+        bool TryFindCrimeReporter(RuntimeContentDatabase contentDb, Entity player, Entity victim, out Entity guard)
+        {
+            guard = Entity.Null;
+            if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
+                throw new InvalidOperationException("[VVardenfell][OnHit] Assault crime player has no LocalTransform.");
+
+            float radius = contentDb.RequireGameSettingFloat("fAlarmRadius") * WorldScale.MwUnitsToMeters;
+            float radiusSq = radius * radius;
+            float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
+            float bestDistanceSq = float.PositiveInfinity;
+            bool reported = false;
+
+            foreach (var (source, settings, vitals, transform, entity) in
+                     SystemAPI.Query<
+                             RefRO<ActorSpawnSource>,
+                             RefRO<ActorAiSettingsState>,
+                             RefRO<ActorVitalSet>,
+                             RefRO<LocalTransform>>()
+                         .WithNone<PlayerTag>()
+                         .WithEntityAccess())
+            {
+                if (settings.ValueRO.Alarm < 100)
+                    continue;
+                if (!IsNpcActor(contentDb, source.ValueRO.Definition))
+                    continue;
+                if (!CanReportCrime(entity, victim, vitals.ValueRO))
+                    continue;
+
+                float distanceSq = math.lengthsq(transform.ValueRO.Position - playerPosition);
+                if (entity != victim && distanceSq > radiusSq)
+                    continue;
+
+                reported = true;
+                if (!IsGuardNpc(contentDb, source.ValueRO.Definition))
+                    continue;
+                if (distanceSq >= bestDistanceSq)
+                    continue;
+
+                bestDistanceSq = distanceSq;
+                guard = entity;
+            }
+
+            return reported;
+        }
+
+        void MarkCrimeWitnesses(RuntimeContentDatabase contentDb, Entity player, Entity victim, int crimeId)
+        {
+            if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
+                throw new InvalidOperationException("[VVardenfell][OnHit] Crime witness scan player has no LocalTransform.");
+
+            float radius = contentDb.RequireGameSettingFloat("fAlarmRadius") * WorldScale.MwUnitsToMeters;
+            float radiusSq = radius * radius;
+            float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
+
+            foreach (var (source, settings, vitals, transform, entity) in
+                     SystemAPI.Query<
+                             RefRO<ActorSpawnSource>,
+                             RefRO<ActorAiSettingsState>,
+                             RefRO<ActorVitalSet>,
+                             RefRO<LocalTransform>>()
+                         .WithNone<PlayerTag>()
+                         .WithEntityAccess())
+            {
+                if (!CanReportCrime(entity, victim, vitals.ValueRO))
+                    continue;
+                if (!IsNpcActor(contentDb, source.ValueRO.Definition))
+                    continue;
+
+                float distanceSq = math.lengthsq(transform.ValueRO.Position - playerPosition);
+                if (entity != victim && distanceSq > radiusSq)
+                    continue;
+
+                bool isReporter = settings.ValueRO.Alarm >= 100;
+                bool isGuard = isReporter && IsGuardNpc(contentDb, source.ValueRO.Definition);
+                bool isVictim = entity == victim;
+                if (!isReporter && !isVictim)
+                    continue;
+
+                SetActorCrimeId(entity, crimeId);
+                if (isGuard)
+                    SetActorAlarmed(entity);
+            }
+        }
+
+        bool CanReportCrime(Entity actor, Entity victim, in ActorVitalSet vitals)
+        {
+            if (actor == Entity.Null || !EntityManager.Exists(actor))
+                return false;
+            if (EntityManager.HasComponent<PlayerTag>(actor))
+                return false;
+            if (!EntityManager.HasComponent<ActorSpawnSource>(actor))
+                return false;
+            if (vitals.CurrentHealth <= 0f)
+                return false;
+            if (EntityManager.HasComponent<PlacedRefRuntimeState>(actor)
+                && EntityManager.GetComponentData<PlacedRefRuntimeState>(actor).Disabled != 0)
+            {
+                return false;
+            }
+            if (EntityManager.HasComponent<ActorHitAftermathState>(actor))
+            {
+                var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(actor);
+                if (aftermath.Dead != 0 || aftermath.KnockedDown != 0 || aftermath.KnockedOut != 0)
+                    return false;
+            }
+            if (IsInCombatWith(actor, victim))
+                return false;
+            if (IsPlayerFollower(actor))
+                return false;
+
+            return true;
+        }
+
+        bool IsNpcActor(RuntimeContentDatabase contentDb, ActorDefHandle actorHandle)
+        {
+            if (!actorHandle.IsValid)
+                throw new InvalidOperationException("[VVardenfell][OnHit] Crime witness has invalid actor definition.");
+
+            ref readonly var actor = ref contentDb.Get(actorHandle);
+            return actor.Kind == ActorDefKind.Npc;
+        }
+
+        void QueueForceGreeting(DynamicBuffer<ActorForceGreetingRequest> requests, Entity guard)
+        {
+            uint placedRefId = PlacedRefIdOrZero(guard);
+            for (int i = 0; i < requests.Length; i++)
+            {
+                var request = requests[i];
+                if (request.TargetEntity == guard || (placedRefId != 0u && request.TargetPlacedRefId == placedRefId))
+                    return;
+            }
+
+            requests.Add(new ActorForceGreetingRequest
+            {
+                TargetEntity = guard,
+                TargetPlacedRefId = placedRefId,
+            });
         }
 
         bool ShouldStartCombatAfterHit(RuntimeContentDatabase contentDb, Entity target, Entity attacker)
@@ -610,6 +768,16 @@ namespace VVardenfell.Runtime.Combat
 
             var crime = EntityManager.GetComponentData<ActorCrimeState>(actor);
             crime.CrimeId = crimeId;
+            EntityManager.SetComponentData(actor, crime);
+        }
+
+        void SetActorAlarmed(Entity actor)
+        {
+            if (!EntityManager.HasComponent<ActorCrimeState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorCrimeState.");
+
+            var crime = EntityManager.GetComponentData<ActorCrimeState>(actor);
+            crime.Alarmed = 1;
             EntityManager.SetComponentData(actor, crime);
         }
 

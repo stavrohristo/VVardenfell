@@ -5,6 +5,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
@@ -14,12 +15,18 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class InventoryWindowStateSystem : SystemBase
     {
+        EntityQuery _playerInventoryQuery;
+
         protected override void OnCreate()
         {
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<PlayerInventoryItem>());
+
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<InventoryWindowState>();
             RequireForUpdate<InventoryWindowRequest>();
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_playerInventoryQuery);
         }
 
         protected override void OnUpdate()
@@ -27,7 +34,8 @@ namespace VVardenfell.Runtime.Inventory
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<InventoryWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<InventoryWindowRequest>().ValueRW;
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity playerInventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
             var contentDb = RuntimeContentDatabase.Active;
 
             ApplyRequests(ref state, ref request);

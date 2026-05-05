@@ -41,6 +41,11 @@ namespace VVardenfell.Runtime.Components
         public int Slot;
     }
 
+    public struct LightPresentationOffset : IComponentData
+    {
+        public float3 LocalPosition;
+    }
+
     public struct MorrowindDayCycleState : IComponentData
     {
         public float SunriseTime;

@@ -123,6 +123,8 @@ namespace VVardenfell.Runtime.Components
                     ecb.AddComponent(logicalEntity, BuildLightInstanceState(def));
                     if (IsAnimatedLight(flags))
                         ecb.AddComponent<LightInstanceAnimated>(logicalEntity);
+                    if (LightPresentationOffsetUtility.TryResolveAttachLightOffset(contentDb, handle, out float3 lightOffset))
+                        ecb.AddComponent(logicalEntity, new LightPresentationOffset { LocalPosition = lightOffset });
                     ecb.AddComponent(logicalEntity, new LightPresentationLink { Slot = -1 });
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, contentDb, def.SoundId, null);
                     return true;
@@ -235,6 +237,9 @@ namespace VVardenfell.Runtime.Components
             for (int i = 0; i < actorSpells.Length; i++)
                 knownSpells.Add(actorSpells[i]);
             ecb.AddBuffer<ActorActiveMagicEffect>(logicalEntity);
+            ecb.AddBuffer<ActorActiveSpell>(logicalEntity);
+            ecb.AddBuffer<ActorUsedPower>(logicalEntity);
+            ecb.AddComponent(logicalEntity, new ActorMagicCastState());
             ecb.AddComponent<ActorActiveMagicEffectDirty>(logicalEntity);
             QueueActorFactionMembership(ref ecb, logicalEntity, contentDb, actor);
 

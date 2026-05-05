@@ -1840,8 +1840,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (string.Equals(target, "player", StringComparison.OrdinalIgnoreCase))
             {
-                Entity playerInventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(entityManager);
-                if (playerInventoryEntity == Entity.Null)
+                Entity playerInventoryEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlayerTag>(entityManager);
+                if (playerInventoryEntity == Entity.Null || !entityManager.HasBuffer<PlayerInventoryItem>(playerInventoryEntity))
                     return false;
 
                 var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity);

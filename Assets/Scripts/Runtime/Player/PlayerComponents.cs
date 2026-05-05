@@ -33,6 +33,8 @@ namespace VVardenfell.Runtime.Player
         public bool InteractPressed;
         public bool ToggleViewPressed;
         public bool ReadyWeaponTogglePressed;
+        public bool ReadyMagicTogglePressed;
+        public bool CastMagicPressed;
         public bool AttackHeld;
         public bool AttackPressed;
         public bool AttackReleased;

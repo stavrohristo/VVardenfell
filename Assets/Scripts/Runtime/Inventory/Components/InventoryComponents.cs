@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Components
         public ItemEquipmentSlot Slot;
         public ContentReference Content;
         public int InventoryIndex;
+        public int Condition;
         public byte VisualMode;
     }
 

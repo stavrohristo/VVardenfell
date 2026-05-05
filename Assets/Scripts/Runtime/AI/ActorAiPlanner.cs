@@ -347,6 +347,7 @@ namespace VVardenfell.Runtime.AI
             _traversalAwaitingResultHandle = state.GetComponentTypeHandle<PathGridTraversalAwaitingResult>(isReadOnly: false);
             _packageHandle = state.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: false);
             _targetTransformLookup = state.GetComponentLookup<LocalTransform>(isReadOnly: true);
+            state.RequireForUpdate(_query);
             state.RequireForUpdate<MorrowindTimeState>();
         }
 

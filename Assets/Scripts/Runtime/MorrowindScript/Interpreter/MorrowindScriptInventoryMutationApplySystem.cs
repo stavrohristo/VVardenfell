@@ -15,8 +15,14 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class MorrowindScriptInventoryMutationApplySystem : SystemBase
     {
+        EntityQuery _playerInventoryQuery;
+
         protected override void OnCreate()
         {
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<PlayerInventoryItem>());
+
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptInventoryMutationRequest>();
             RequireForUpdate<LogicalRefLookup>();
@@ -53,10 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (request.TargetMode == (byte)MorrowindScriptRefTargetMode.Player)
             {
-                Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(EntityManager);
-                if (inventoryEntity == Entity.Null || !EntityManager.HasBuffer<PlayerInventoryItem>(inventoryEntity))
-                    throw new InvalidOperationException("[VVardenfell][MWScript] Player inventory mutation requested before player inventory was bootstrapped.");
-
+                Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] Player inventory mutation requested before player inventory was bootstrapped.");
                 var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
                 if (request.Operation == 0)
                     AddPlayerItem(inventory, request.Content, count);
@@ -85,12 +88,19 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (request.TargetMode != (byte)MorrowindScriptRefTargetMode.Player || request.SoulActorHandleValue <= 0)
                 throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem supports only explicit Player targets with a known soul actor.");
 
-            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(EntityManager);
-            if (inventoryEntity == Entity.Null || !EntityManager.HasBuffer<PlayerInventoryItem>(inventoryEntity))
-                throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
+            Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
 
             RemovePlayerSoulGem(EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
             PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+        }
+
+        Entity RequirePlayerInventoryEntity(string error)
+        {
+            int count = _playerInventoryQuery.CalculateEntityCount();
+            if (count != 1)
+                throw new InvalidOperationException($"{error} Found {count} player inventory entities.");
+
+            return _playerInventoryQuery.GetSingletonEntity();
         }
 
         Entity ResolveTarget(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)

@@ -10,9 +10,18 @@ namespace VVardenfell.Runtime.Streaming
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial class ModelBillboardSystem : SystemBase
     {
+        EntityQuery _billboardQuery;
+
         protected override void OnCreate()
         {
+            _billboardQuery = GetEntityQuery(
+                ComponentType.ReadWrite<LocalTransform>(),
+                ComponentType.ReadOnly<LocalToWorld>(),
+                ComponentType.ReadOnly<ModelBillboardState>(),
+                ComponentType.ReadOnly<ModelBillboardTag>());
+
             RequireForUpdate<MainCameraSingleton>();
+            RequireForUpdate(_billboardQuery);
         }
 
         protected override void OnUpdate()

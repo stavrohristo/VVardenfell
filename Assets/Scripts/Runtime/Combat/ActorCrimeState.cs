@@ -5,6 +5,7 @@ namespace VVardenfell.Runtime.Combat
     public struct ActorCrimeState : IComponentData
     {
         public int CrimeId;
+        public byte Alarmed;
 
         public static ActorCrimeState Default => new()
         {

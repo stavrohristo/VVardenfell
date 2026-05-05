@@ -66,7 +66,6 @@ namespace VVardenfell.Runtime.Player
             RequireForUpdate<RuntimeSpawnedRef>();
             RequireForUpdate<ContainerSessionHeader>();
             RequireForUpdate<ContainerSessionItem>();
-            RequireForUpdate<PlayerInventoryItem>();
             RequireForUpdate<PickedItemRecord>();
             RequireForUpdate<InteriorTransitionState>();
             RequireForUpdate<InteriorSpawnedEntity>();
@@ -98,9 +97,6 @@ namespace VVardenfell.Runtime.Player
                 return;
             }
 
-            if (hasNewGameRequest)
-                SeedInitialPlayerInventory(em, initEntity);
-
             if (hasLoadRequest)
             {
                 var loadRequest = SystemAPI.GetSingleton<LoadGameInitializationSingleton>();
@@ -119,9 +115,12 @@ namespace VVardenfell.Runtime.Player
                 init.PlayerCrime = payload.PlayerCrime;
                 if (payload.PlayerFactions != null)
                     PopulateInitializationFactions(em, initEntity, payload.PlayerFactions);
+                PopulateInitializationInventory(em, initEntity, payload.Inventory);
                 PopulateInitializationEquipment(em, initEntity, payload.PlayerEquipment);
                 PopulateInitializationSpellbook(em, initEntity, payload.KnownSpells);
+                PopulateInitializationActiveSpells(em, initEntity, payload.ActiveSpells);
                 PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
+                PopulateInitializationUsedPowers(em, initEntity, payload.UsedPowers);
                 WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
                 if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] load slot location restore failed. {locationError}");
@@ -162,6 +161,7 @@ namespace VVardenfell.Runtime.Player
             });
             em.AddComponentData(player, init.PlayerSettings);
             em.AddComponentData(player, new PlayerCharacterControl());
+            em.AddComponentData(player, new ActorMagicCastState());
             em.AddComponentData(player, new PlayerCharacterState());
             em.AddComponentData(player, new MorrowindMovementInput());
             em.AddComponentData(player, new MorrowindMovementState
@@ -204,8 +204,25 @@ namespace VVardenfell.Runtime.Player
                 }
             }
             em.AddComponent<ActorActiveMagicEffectDirty>(player);
+            var activeSpells = em.AddBuffer<ActorActiveSpell>(player);
+            if (em.HasBuffer<ActorActiveSpell>(initEntity))
+            {
+                var initActiveSpells = em.GetBuffer<ActorActiveSpell>(initEntity);
+                for (int i = 0; i < initActiveSpells.Length; i++)
+                    activeSpells.Add(initActiveSpells[i]);
+            }
+            var usedPowers = em.AddBuffer<ActorUsedPower>(player);
+            if (em.HasBuffer<ActorUsedPower>(initEntity))
+            {
+                var initUsedPowers = em.GetBuffer<ActorUsedPower>(initEntity);
+                for (int i = 0; i < initUsedPowers.Length; i++)
+                    usedPowers.Add(initUsedPowers[i]);
+            }
             PlayerEncumbranceDirtyUtility.EnsureMarker(em, player, enabled: true);
-            PopulatePlayerEquipment(em, initEntity, player);
+            em.AddComponent<LocalPlayerViewModeDirty>(player);
+            var playerInventory = em.AddBuffer<PlayerInventoryItem>(player);
+            PopulatePlayerInventory(em, initEntity, playerInventory);
+            PopulatePlayerEquipment(em, initEntity, player, playerInventory);
             em.AddComponentData(player, new PlayerStanceColliders
             {
                 Standing = standingBlob,
@@ -305,7 +322,24 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        static void PopulatePlayerEquipment(EntityManager em, Entity initEntity, Entity player)
+        static void PopulateInitializationInventory(EntityManager em, Entity initEntity, PlayerInventoryItem[] inventory)
+        {
+            if (inventory == null)
+                throw new System.InvalidOperationException("[VVardenfell][Save] load payload is missing player inventory data.");
+
+            var buffer = em.HasBuffer<PlayerInventoryItem>(initEntity)
+                ? em.GetBuffer<PlayerInventoryItem>(initEntity)
+                : em.AddBuffer<PlayerInventoryItem>(initEntity);
+
+            buffer.Clear();
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                if (inventory[i].Count > 0 && inventory[i].Content.IsValid)
+                    buffer.Add(inventory[i]);
+            }
+        }
+
+        static void PopulatePlayerEquipment(EntityManager em, Entity initEntity, Entity player, DynamicBuffer<PlayerInventoryItem> inventory)
         {
             var equipment = em.AddBuffer<ActorEquipmentSlot>(player);
             if (em.HasBuffer<ActorEquipmentSlot>(initEntity))
@@ -320,14 +354,12 @@ namespace VVardenfell.Runtime.Player
                 return;
             }
 
-            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(em);
-            if (inventoryEntity == Entity.Null || !em.HasBuffer<PlayerInventoryItem>(inventoryEntity))
+            if (!inventory.IsCreated || inventory.Length == 0)
                 return;
             if (RuntimeContentDatabase.Active == null || !RuntimeContentDatabase.Active.TryGetActorHandle("player", out var actorHandle))
                 return;
 
             ref readonly var actor = ref RuntimeContentDatabase.Active.Get(actorHandle);
-            var inventory = em.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             using var actorInventory = new NativeList<ActorInventoryItem>(Allocator.Temp);
             for (int i = 0; i < inventory.Length; i++)
             {
@@ -384,20 +416,28 @@ namespace VVardenfell.Runtime.Player
             EntityManager.DestroyEntity(initEntity);
         }
 
-        static void SeedInitialPlayerInventory(EntityManager em, Entity initEntity)
+        static void PopulatePlayerInventory(EntityManager em, Entity initEntity, DynamicBuffer<PlayerInventoryItem> playerInventory)
         {
-            if (!em.HasBuffer<PlayerInitialInventoryItem>(initEntity))
-                return;
+            playerInventory.Clear();
+            if (em.HasBuffer<PlayerInventoryItem>(initEntity))
+            {
+                var savedInventory = em.GetBuffer<PlayerInventoryItem>(initEntity);
+                for (int i = 0; i < savedInventory.Length; i++)
+                {
+                    if (savedInventory[i].Count > 0 && savedInventory[i].Content.IsValid)
+                        playerInventory.Add(savedInventory[i]);
+                }
 
-            Entity inventoryEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<PlayerInventoryItem>(em);
-            if (inventoryEntity == Entity.Null || !em.HasBuffer<PlayerInventoryItem>(inventoryEntity))
+                return;
+            }
+
+            if (!em.HasBuffer<PlayerInitialInventoryItem>(initEntity))
                 return;
 
             var initialInventory = em.GetBuffer<PlayerInitialInventoryItem>(initEntity);
             if (initialInventory.Length == 0)
                 return;
 
-            var playerInventory = em.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             for (int i = 0; i < initialInventory.Length; i++)
             {
                 var item = initialInventory[i];
@@ -461,6 +501,40 @@ namespace VVardenfell.Runtime.Player
             {
                 if (activeEffects[i].Applied != 0)
                     buffer.Add(activeEffects[i]);
+            }
+        }
+
+        static void PopulateInitializationActiveSpells(EntityManager em, Entity initEntity, ActorActiveSpell[] activeSpells)
+        {
+            var buffer = em.HasBuffer<ActorActiveSpell>(initEntity)
+                ? em.GetBuffer<ActorActiveSpell>(initEntity)
+                : em.AddBuffer<ActorActiveSpell>(initEntity);
+
+            buffer.Clear();
+            if (activeSpells == null)
+                return;
+
+            for (int i = 0; i < activeSpells.Length; i++)
+            {
+                if (activeSpells[i].ActiveSpellId != 0)
+                    buffer.Add(activeSpells[i]);
+            }
+        }
+
+        static void PopulateInitializationUsedPowers(EntityManager em, Entity initEntity, ActorUsedPower[] usedPowers)
+        {
+            var buffer = em.HasBuffer<ActorUsedPower>(initEntity)
+                ? em.GetBuffer<ActorUsedPower>(initEntity)
+                : em.AddBuffer<ActorUsedPower>(initEntity);
+
+            buffer.Clear();
+            if (usedPowers == null)
+                return;
+
+            for (int i = 0; i < usedPowers.Length; i++)
+            {
+                if (usedPowers[i].Spell.IsValid)
+                    buffer.Add(usedPowers[i]);
             }
         }
 

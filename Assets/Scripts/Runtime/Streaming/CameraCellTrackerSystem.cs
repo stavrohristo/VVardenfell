@@ -25,6 +25,7 @@ namespace VVardenfell.Runtime.Streaming
                 ComponentType.ReadOnly<PlayerViewComponent>(),
                 ComponentType.ReadOnly<LocalToWorld>());
             RequireForUpdate(_configQuery);
+            RequireForUpdate(_viewQuery);
         }
 
         protected override void OnUpdate()
@@ -43,6 +44,9 @@ namespace VVardenfell.Runtime.Streaming
             var coord = new int2(
                 (int)math.floor(p.x / cellM),
                 (int)math.floor(p.z / cellM));
+
+            if (math.all(cfg.ValueRO.CameraCell == coord))
+                return;
 
             cfg.ValueRW.CameraCell = coord;
         }

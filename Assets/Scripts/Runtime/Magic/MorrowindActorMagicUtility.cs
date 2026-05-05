@@ -15,9 +15,9 @@ namespace VVardenfell.Runtime.Magic
         public const short CureBlightDiseaseEffectId = 70;
 
         const int SpellTypeAbility = 1;
-        const int SpellTypeBlight = 2;
-        const int SpellTypeDisease = 3;
-        const int SpellTypeCurse = 4;
+        public const int SpellTypeBlight = 2;
+        public const int SpellTypeDisease = 3;
+        public const int SpellTypeCurse = 4;
 
         public static bool AddKnownSpell(DynamicBuffer<ActorKnownSpell> knownSpells, SpellDefHandle spellHandle)
         {
@@ -110,21 +110,10 @@ namespace VVardenfell.Runtime.Magic
         public static bool IsPassiveSpellType(int spellType)
             => spellType is SpellTypeAbility or SpellTypeBlight or SpellTypeDisease or SpellTypeCurse;
 
-        static bool CanRepresentScriptedEffect(short effectId)
-            => effectId is CureCommonDiseaseEffectId or CureBlightDiseaseEffectId;
+        public static bool HasKnownSpell(DynamicBuffer<ActorKnownSpell> knownSpells, SpellDefHandle spellHandle)
+            => FindKnownSpellIndex(knownSpells, spellHandle) >= 0;
 
-        static int FindKnownSpellIndex(DynamicBuffer<ActorKnownSpell> knownSpells, SpellDefHandle spellHandle)
-        {
-            for (int i = 0; i < knownSpells.Length; i++)
-            {
-                if (knownSpells[i].Spell.Value == spellHandle.Value)
-                    return i;
-            }
-
-            return -1;
-        }
-
-        static bool TryGetSpellEffects(
+        public static bool TryGetSpellEffects(
             RuntimeContentDatabase contentDb,
             in SpellDef spell,
             out ReadOnlySpan<MagicEffectInstanceDef> effects)
@@ -140,6 +129,20 @@ namespace VVardenfell.Runtime.Magic
 
             effects = new ReadOnlySpan<MagicEffectInstanceDef>(contentDb.Data.MagicEffectInstances, spell.EffectStartIndex, count);
             return true;
+        }
+
+        static bool CanRepresentScriptedEffect(short effectId)
+            => effectId is CureCommonDiseaseEffectId or CureBlightDiseaseEffectId;
+
+        static int FindKnownSpellIndex(DynamicBuffer<ActorKnownSpell> knownSpells, SpellDefHandle spellHandle)
+        {
+            for (int i = 0; i < knownSpells.Length; i++)
+            {
+                if (knownSpells[i].Spell.Value == spellHandle.Value)
+                    return i;
+            }
+
+            return -1;
         }
 
         static void AppendRepresentedEffect(

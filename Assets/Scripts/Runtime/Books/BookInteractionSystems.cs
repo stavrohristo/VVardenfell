@@ -5,6 +5,7 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Books
@@ -86,11 +87,17 @@ namespace VVardenfell.Runtime.Books
     [UpdateBefore(typeof(BookReadRequestSystem))]
     public partial class InventoryBookReadRequestSystem : SystemBase
     {
+        EntityQuery _playerInventoryQuery;
+
         protected override void OnCreate()
         {
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<PlayerInventoryItem>());
+
             RequireForUpdate<BookInventoryReadRequest>();
             RequireForUpdate<BookReadRequest>();
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_playerInventoryQuery);
         }
 
         protected override void OnUpdate()
@@ -104,7 +111,8 @@ namespace VVardenfell.Runtime.Books
             inventoryRequest = default;
             inventoryRequest.InventoryIndex = -1;
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity, true);
             if (inventoryIndex < 0 || inventoryIndex >= inventory.Length)
                 return;
 

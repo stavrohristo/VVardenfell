@@ -22,7 +22,7 @@ namespace VVardenfell.Runtime.Combat
                 return 1f;
 
             var equipped = RequireEquippedWeaponSlot(entityManager, attacker, weaponContent);
-            int condition = ResolveEquippedWeaponCondition(contentDb, entityManager, attacker, equipped, weapon);
+            int condition = ActorEquipmentConditionUtility.RequireEquippedCondition(equipped, weapon);
             return condition / (float)weapon.Health;
         }
 
@@ -40,37 +40,15 @@ namespace VVardenfell.Runtime.Combat
 
             float weaponDamageMult = contentDb.RequireGameSettingFloat("fWeaponDamageMult");
             int conditionDamage = (int)math.max(1f, weaponDamageMult * math.max(0f, adjustedWeaponDamage));
-            var equipped = RequireEquippedWeaponSlot(entityManager, attacker, weaponContent);
 
-            if (entityManager.HasBuffer<PlayerInventoryItem>(attacker))
-            {
-                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(attacker);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Player equipped weapon inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(ref item, weaponContent, weapon, conditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedWeaponSlot(entityManager, attacker, weaponContent);
-                return;
-            }
-
-            if (entityManager.HasBuffer<ActorInventoryItem>(attacker))
-            {
-                var inventory = entityManager.GetBuffer<ActorInventoryItem>(attacker);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor equipped weapon inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(ref item, weaponContent, weapon, conditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedWeaponSlot(entityManager, attacker, weaponContent);
-                return;
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Equipped weapon attacker entity={attacker.Index}:{attacker.Version} has no inventory buffer.");
+            var equipment = RequireEquipmentBuffer(entityManager, attacker);
+            int slotIndex = RequireEquippedWeaponSlotIndex(equipment, attacker, weaponContent);
+            var equipped = equipment[slotIndex];
+            ActorEquipmentConditionUtility.ApplyConditionDamage(ref equipped, weapon, conditionDamage);
+            if (equipped.Condition <= 0)
+                equipment.RemoveAt(slotIndex);
+            else
+                equipment[slotIndex] = equipped;
         }
 
         static ActorEquipmentSlot RequireEquippedWeaponSlot(
@@ -78,112 +56,48 @@ namespace VVardenfell.Runtime.Combat
             Entity attacker,
             in ContentReference weaponContent)
         {
+            var equipment = RequireEquipmentBuffer(entityManager, attacker, true);
+            return equipment[RequireEquippedWeaponSlotIndex(equipment, attacker, weaponContent)];
+        }
+
+        static DynamicBuffer<ActorEquipmentSlot> RequireEquipmentBuffer(
+            EntityManager entityManager,
+            Entity attacker,
+            bool readOnly = false)
+        {
             if (attacker == Entity.Null || !entityManager.Exists(attacker))
                 throw new InvalidOperationException("[VVardenfell][Damage] Equipped weapon attacker entity is missing.");
             if (!entityManager.HasBuffer<ActorEquipmentSlot>(attacker))
                 throw new InvalidOperationException($"[VVardenfell][Damage] Equipped weapon attacker entity={attacker.Index}:{attacker.Version} has no ActorEquipmentSlot buffer.");
 
-            var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(attacker, true);
-            bool found = false;
-            ActorEquipmentSlot result = default;
+            return entityManager.GetBuffer<ActorEquipmentSlot>(attacker, readOnly);
+        }
+
+        static int RequireEquippedWeaponSlotIndex(
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            Entity attacker,
+            in ContentReference weaponContent)
+        {
+            int result = -1;
             for (int i = 0; i < equipment.Length; i++)
             {
                 var candidate = equipment[i];
                 if (candidate.Slot != ItemEquipmentSlot.Weapon)
                     continue;
-                if (found)
+                if (result >= 0)
                     throw new InvalidOperationException($"[VVardenfell][Damage] Attacker entity={attacker.Index}:{attacker.Version} has multiple equipped weapon slots.");
                 if (!Matches(candidate.Content, weaponContent))
                     throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit weapon {weaponContent.Kind}:{weaponContent.HandleValue} does not match equipped weapon content {candidate.Content.Kind}:{candidate.Content.HandleValue}.");
 
-                result = candidate;
-                found = true;
+                result = i;
             }
 
-            if (!found)
+            if (result < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit weapon {weaponContent.Kind}:{weaponContent.HandleValue} is not equipped in the weapon slot.");
-            if (result.InventoryIndex < 0)
-                throw new InvalidOperationException($"[VVardenfell][Damage] Equipped weapon has invalid inventory index {result.InventoryIndex}.");
+            if (equipment[result].InventoryIndex < 0)
+                throw new InvalidOperationException($"[VVardenfell][Damage] Equipped weapon has invalid inventory index {equipment[result].InventoryIndex}.");
 
             return result;
-        }
-
-        static int ResolveEquippedWeaponCondition(
-            RuntimeContentDatabase contentDb,
-            EntityManager entityManager,
-            Entity attacker,
-            in ActorEquipmentSlot equipped,
-            in ItemEquipmentDef weapon)
-        {
-            if (entityManager.HasBuffer<PlayerInventoryItem>(attacker))
-            {
-                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(attacker, true);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Player equipped weapon inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                return InventoryConditionUtility.RequireEquippedSingleConditionableStack(
-                    inventory[equipped.InventoryIndex].Count,
-                    inventory[equipped.InventoryIndex].Condition,
-                    weapon,
-                    equipped.Content);
-            }
-
-            if (entityManager.HasBuffer<ActorInventoryItem>(attacker))
-            {
-                var inventory = entityManager.GetBuffer<ActorInventoryItem>(attacker, true);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor equipped weapon inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                return InventoryConditionUtility.RequireEquippedSingleConditionableStack(
-                    inventory[equipped.InventoryIndex].Count,
-                    inventory[equipped.InventoryIndex].Condition,
-                    weapon,
-                    equipped.Content);
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Equipped weapon attacker entity={attacker.Index}:{attacker.Version} has no inventory buffer.");
-        }
-
-        static void ApplyConditionDamage(
-            ref PlayerInventoryItem item,
-            in ContentReference weaponContent,
-            in ItemEquipmentDef weapon,
-            int conditionDamage)
-        {
-            int condition = InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, weapon, weaponContent);
-            item.Condition = math.max(0, condition - conditionDamage);
-        }
-
-        static void ApplyConditionDamage(
-            ref ActorInventoryItem item,
-            in ContentReference weaponContent,
-            in ItemEquipmentDef weapon,
-            int conditionDamage)
-        {
-            int condition = InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, weapon, weaponContent);
-            item.Condition = math.max(0, condition - conditionDamage);
-        }
-
-        static void RemoveEquippedWeaponSlot(
-            EntityManager entityManager,
-            Entity attacker,
-            in ContentReference weaponContent)
-        {
-            if (!entityManager.HasBuffer<ActorEquipmentSlot>(attacker))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Broken equipped weapon attacker entity={attacker.Index}:{attacker.Version} has no equipment buffer.");
-
-            var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(attacker);
-            for (int i = equipment.Length - 1; i >= 0; i--)
-            {
-                var candidate = equipment[i];
-                if (candidate.Slot == ItemEquipmentSlot.Weapon && Matches(candidate.Content, weaponContent))
-                {
-                    equipment.RemoveAt(i);
-                    return;
-                }
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Broken equipped weapon {weaponContent.Kind}:{weaponContent.HandleValue} was not found on attacker entity={attacker.Index}:{attacker.Version}.");
         }
 
         static bool Matches(in ContentReference lhs, in ContentReference rhs)

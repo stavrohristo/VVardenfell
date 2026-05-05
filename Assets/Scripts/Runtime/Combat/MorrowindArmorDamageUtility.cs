@@ -55,35 +55,7 @@ namespace VVardenfell.Runtime.Combat
             if (equipped.InventoryIndex < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor slot {impact.Slot} has invalid inventory index {equipped.InventoryIndex}.");
 
-            if (entityManager.HasBuffer<PlayerInventoryItem>(impact.Target))
-            {
-                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(impact.Target);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Player equipped armor inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(contentDb, ref item, impact.Content, impact.ConditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedSlot(entityManager, impact.Target, impact.Slot, impact.Content);
-                return;
-            }
-
-            if (entityManager.HasBuffer<ActorInventoryItem>(impact.Target))
-            {
-                var inventory = entityManager.GetBuffer<ActorInventoryItem>(impact.Target);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor equipped armor inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(contentDb, ref item, impact.Content, impact.ConditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedSlot(entityManager, impact.Target, impact.Slot, impact.Content);
-                return;
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Armor condition target entity={impact.Target.Index}:{impact.Target.Version} has no inventory buffer.");
+            ApplyEquippedSlotConditionDamage(contentDb, entityManager, impact.Target, impact.Slot, impact.Content, impact.ConditionDamage);
         }
 
         public static void ApplyShieldBlockConditionDamage(
@@ -104,35 +76,7 @@ namespace VVardenfell.Runtime.Combat
             if (equipped.InventoryIndex < 0)
                 throw new InvalidOperationException($"[VVardenfell][Damage] Block shield has invalid inventory index {equipped.InventoryIndex}.");
 
-            if (entityManager.HasBuffer<PlayerInventoryItem>(target))
-            {
-                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(target);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Player block shield inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(contentDb, ref item, shieldContent, conditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedSlot(entityManager, target, ItemEquipmentSlot.Shield, shieldContent);
-                return;
-            }
-
-            if (entityManager.HasBuffer<ActorInventoryItem>(target))
-            {
-                var inventory = entityManager.GetBuffer<ActorInventoryItem>(target);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor block shield inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-
-                var item = inventory[equipped.InventoryIndex];
-                ApplyConditionDamage(contentDb, ref item, shieldContent, conditionDamage);
-                inventory[equipped.InventoryIndex] = item;
-                if (item.Condition <= 0)
-                    RemoveEquippedSlot(entityManager, target, ItemEquipmentSlot.Shield, shieldContent);
-                return;
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Shield block target entity={target.Index}:{target.Version} has no inventory buffer.");
+            ApplyEquippedSlotConditionDamage(contentDb, entityManager, target, ItemEquipmentSlot.Shield, shieldContent, conditionDamage);
         }
 
         static float ComputeArmorRating(RuntimeContentDatabase contentDb, EntityManager entityManager, Entity actor)
@@ -314,39 +258,8 @@ namespace VVardenfell.Runtime.Combat
             if (armor.Health <= 0)
                 return 1f;
 
-            int condition = ResolveEquippedCondition(contentDb, entityManager, actor, equipped, armor);
+            int condition = ActorEquipmentConditionUtility.RequireEquippedCondition(equipped, armor);
             return condition / (float)armor.Health;
-        }
-
-        static int ResolveEquippedCondition(
-            RuntimeContentDatabase contentDb,
-            EntityManager entityManager,
-            Entity actor,
-            in ActorEquipmentSlot equipped,
-            in ItemEquipmentDef armor)
-        {
-            if (equipped.InventoryIndex < 0)
-                throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor slot {equipped.Slot} has invalid inventory index {equipped.InventoryIndex}.");
-
-            if (entityManager.HasBuffer<PlayerInventoryItem>(actor))
-            {
-                var inventory = entityManager.GetBuffer<PlayerInventoryItem>(actor, true);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Player equipped armor inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-                var item = inventory[equipped.InventoryIndex];
-                return InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, armor, equipped.Content);
-            }
-
-            if (entityManager.HasBuffer<ActorInventoryItem>(actor))
-            {
-                var inventory = entityManager.GetBuffer<ActorInventoryItem>(actor, true);
-                if ((uint)equipped.InventoryIndex >= (uint)inventory.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Damage] Actor equipped armor inventory index {equipped.InventoryIndex} is outside inventory length {inventory.Length}.");
-                var item = inventory[equipped.InventoryIndex];
-                return InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, armor, equipped.Content);
-            }
-
-            throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor target entity={actor.Index}:{actor.Version} has no inventory buffer.");
         }
 
         static bool TryGetEquippedSlot(
@@ -376,6 +289,31 @@ namespace VVardenfell.Runtime.Combat
             return false;
         }
 
+        static void ApplyEquippedSlotConditionDamage(
+            RuntimeContentDatabase contentDb,
+            EntityManager entityManager,
+            Entity actor,
+            ItemEquipmentSlot slot,
+            in ContentReference content,
+            int conditionDamage)
+        {
+            if (!entityManager.HasBuffer<ActorEquipmentSlot>(actor))
+                throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor target entity={actor.Index}:{actor.Version} has no equipment buffer.");
+
+            var equipment = entityManager.GetBuffer<ActorEquipmentSlot>(actor);
+            int slotIndex = FindEquippedSlotIndex(equipment, slot, content);
+            if (slotIndex < 0)
+                throw new InvalidOperationException($"[VVardenfell][Damage] Equipped armor slot {slot} was not found on target entity={actor.Index}:{actor.Version}.");
+
+            var equipped = equipment[slotIndex];
+            var equipmentDef = RequireArmorEquipment(contentDb, content);
+            ActorEquipmentConditionUtility.ApplyConditionDamage(ref equipped, equipmentDef, conditionDamage);
+            if (equipmentDef.Health > 0 && equipped.Condition <= 0)
+                equipment.RemoveAt(slotIndex);
+            else
+                equipment[slotIndex] = equipped;
+        }
+
         static void RemoveEquippedSlot(
             EntityManager entityManager,
             Entity actor,
@@ -401,26 +339,23 @@ namespace VVardenfell.Runtime.Combat
             throw new InvalidOperationException($"[VVardenfell][Damage] Broken equipped armor slot {slot} was not found on target entity={actor.Index}:{actor.Version}.");
         }
 
-        static void ApplyConditionDamage(
-            RuntimeContentDatabase contentDb,
-            ref PlayerInventoryItem item,
-            in ContentReference content,
-            int conditionDamage)
+        static int FindEquippedSlotIndex(
+            DynamicBuffer<ActorEquipmentSlot> equipment,
+            ItemEquipmentSlot slot,
+            in ContentReference content)
         {
-            var equipment = RequireArmorEquipment(contentDb, content);
-            int condition = InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, equipment, content);
-            item.Condition = math.max(0, condition - conditionDamage);
-        }
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var candidate = equipment[i];
+                if (candidate.Slot == slot
+                    && candidate.Content.Kind == content.Kind
+                    && candidate.Content.HandleValue == content.HandleValue)
+                {
+                    return i;
+                }
+            }
 
-        static void ApplyConditionDamage(
-            RuntimeContentDatabase contentDb,
-            ref ActorInventoryItem item,
-            in ContentReference content,
-            int conditionDamage)
-        {
-            var equipment = RequireArmorEquipment(contentDb, content);
-            int condition = InventoryConditionUtility.RequireEquippedSingleConditionableStack(item.Count, item.Condition, equipment, content);
-            item.Condition = math.max(0, condition - conditionDamage);
+            return -1;
         }
 
         static ItemEquipmentDef RequireArmorEquipment(RuntimeContentDatabase contentDb, in ContentReference content)

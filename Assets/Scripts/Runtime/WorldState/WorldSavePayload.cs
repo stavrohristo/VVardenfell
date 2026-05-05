@@ -19,7 +19,9 @@ namespace VVardenfell.Runtime.WorldState
         public PlayerInventoryItem[] Inventory;
         public ActorEquipmentSlot[] PlayerEquipment;
         public ActorKnownSpell[] KnownSpells;
+        public ActorActiveSpell[] ActiveSpells;
         public ActorActiveMagicEffect[] ActiveMagicEffects;
+        public ActorUsedPower[] UsedPowers;
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
         public GlobalMapOverlayPayload GlobalMapOverlay;
         public WorldJournalEntry[] JournalEntries;

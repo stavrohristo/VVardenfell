@@ -75,7 +75,9 @@ namespace VVardenfell.Runtime.Combat
                 }
                 else if (damage.TargetVital == MorrowindDamageTargetVital.Health)
                 {
-                    if (aftermath.KnockedDown == 0 && aftermath.KnockedOut == 0)
+                    if (damage.SourceKind != MorrowindDamageSourceKind.ElementalShield
+                        && aftermath.KnockedDown == 0
+                        && aftermath.KnockedOut == 0)
                     {
                         var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
                         float agility = math.max(0f, attributes.Agility);

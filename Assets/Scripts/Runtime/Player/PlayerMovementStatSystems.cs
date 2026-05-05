@@ -25,7 +25,9 @@ namespace VVardenfell.Runtime.Player
             _actorQuery = GetEntityQuery(
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
+                ComponentType.ReadWrite<ActorActiveSpell>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>(),
+                ComponentType.ReadWrite<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
             RequireForUpdate(_actorQuery);
@@ -33,17 +35,23 @@ namespace VVardenfell.Runtime.Player
 
         protected override void OnUpdate()
         {
-            foreach (var (knownSpells, activeEffects, modifiers, entity) in
-                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, RefRW<ActorEffectStatModifiers>>()
-                         .WithAll<ActorActiveMagicEffectDirty>()
+            float dt = math.max(0f, SystemAPI.Time.DeltaTime);
+            foreach (var (knownSpells, activeEffects, activeSpells, modifiers, vitals, entity) in
+                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>, RefRW<ActorVitalSet>>()
                          .WithEntityAccess())
             {
-                RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeEffects);
+                bool dirty = EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity);
+                if (dirty)
+                    RebuildPassiveSpellEffects(RuntimeContentDatabase.Active, knownSpells, activeSpells, activeEffects);
                 InjectDebugActiveEffects(activeEffects);
+                bool changed = ApplyAndTickActiveEffects(RuntimeContentDatabase.Active, entity, activeSpells, activeEffects, dt);
 
-                modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
-                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, entity);
-                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
+                if (dirty || changed)
+                {
+                    modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
+                    PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, entity);
+                    EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
+                }
             }
         }
 
@@ -93,12 +101,19 @@ namespace VVardenfell.Runtime.Player
         static void RebuildPassiveSpellEffects(
             RuntimeContentDatabase contentDb,
             DynamicBuffer<ActorKnownSpell> knownSpells,
+            DynamicBuffer<ActorActiveSpell> activeSpells,
             DynamicBuffer<ActorActiveMagicEffect> activeEffects)
         {
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
                 if (activeEffects[i].SourceKind == ActorActiveMagicEffectSourceKind.PassiveSpell)
                     activeEffects.RemoveAt(i);
+            }
+
+            for (int i = activeSpells.Length - 1; i >= 0; i--)
+            {
+                if (activeSpells[i].SourceKind == ActorActiveSpellSourceKind.PassiveSpell)
+                    activeSpells.RemoveAt(i);
             }
 
             if (contentDb?.Data.Spells == null || contentDb.Data.MagicEffectInstances == null)
@@ -114,6 +129,17 @@ namespace VVardenfell.Runtime.Player
                 if (!MorrowindActorMagicUtility.IsPassiveSpellType(spell.SpellType) || spell.EffectStartIndex < 0 || spell.EffectCount <= 0)
                     continue;
 
+                int activeSpellId = -(i + 1);
+                activeSpells.Add(new ActorActiveSpell
+                {
+                    ActiveSpellId = activeSpellId,
+                    Spell = handle,
+                    SourceKind = ActorActiveSpellSourceKind.PassiveSpell,
+                    Flags = ActorActiveSpellFlags.SpellStore | ActorActiveSpellFlags.IgnoreResistances | ActorActiveSpellFlags.IgnoreReflect | ActorActiveSpellFlags.IgnoreSpellAbsorption,
+                    SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
+                    SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
+                });
+
                 int available = math.max(0, contentDb.Data.MagicEffectInstances.Length - spell.EffectStartIndex);
                 int count = math.min(spell.EffectCount, available);
                 for (int effectIndex = 0; effectIndex < count; effectIndex++)
@@ -121,13 +147,20 @@ namespace VVardenfell.Runtime.Player
                     var effect = contentDb.Data.MagicEffectInstances[spell.EffectStartIndex + effectIndex];
                     activeEffects.Add(new ActorActiveMagicEffect
                     {
+                        ActiveSpellId = activeSpellId,
                         EffectId = effect.EffectId,
+                        EffectIndex = (short)effectIndex,
                         Skill = effect.Skill,
                         Attribute = effect.Attribute,
                         Magnitude = math.max(effect.MagnitudeMin, effect.MagnitudeMax),
+                        MagnitudeMin = effect.MagnitudeMin,
+                        MagnitudeMax = effect.MagnitudeMax,
                         DurationSeconds = -1f,
                         TimeLeftSeconds = -1f,
                         Applied = 1,
+                        IgnoreResistances = 1,
+                        IgnoreReflect = 1,
+                        IgnoreSpellAbsorption = 1,
                         SourceKind = ActorActiveMagicEffectSourceKind.PassiveSpell,
                         SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(string.IsNullOrWhiteSpace(spell.Name) ? spell.Id : spell.Name.Trim()),
                         SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(spell.Id),
@@ -164,51 +197,73 @@ namespace VVardenfell.Runtime.Player
             return modifiers;
         }
 
+        bool ApplyAndTickActiveEffects(RuntimeContentDatabase contentDb, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
+        {
+            if (contentDb == null)
+                throw new System.InvalidOperationException("[VVardenfell][Magic] Active magic effect update requires active runtime content.");
+
+            bool changed = false;
+            for (int i = 0; i < activeEffects.Length; i++)
+                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(EntityManager, contentDb, entity, activeSpells, activeEffects, i, deltaSeconds);
+
+            for (int i = activeEffects.Length - 1; i >= 0; i--)
+            {
+                if (activeEffects[i].Remove != 0)
+                {
+                    activeEffects.RemoveAt(i);
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
     }
 
     [UpdateAfter(typeof(ActorActiveMagicEffectSystem))]
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
     public partial class PlayerActorEncumbranceSystem : SystemBase
     {
-        EntityQuery _playerQuery;
+        EntityQuery _dirtyPlayerQuery;
 
         protected override void OnCreate()
         {
-            _playerQuery = GetEntityQuery(
+            _dirtyPlayerQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorAttributeSet>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>(),
                 ComponentType.ReadWrite<ActorDerivedMovementStats>(),
+                ComponentType.ReadOnly<PlayerInventoryItem>(),
                 ComponentType.ReadOnly<PlayerEncumbranceDirty>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_dirtyPlayerQuery);
         }
 
         protected override void OnUpdate()
         {
-            if (_playerQuery.IsEmptyIgnoreFilter)
-                return;
-
             var contentDb = RuntimeContentDatabase.Active;
             if (contentDb == null)
                 return;
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
-            float inventoryWeight = SumInventoryWeight(contentDb, inventory);
-            Entity player = SystemAPI.GetSingletonEntity<PlayerTag>();
-            var attributes = SystemAPI.GetComponent<ActorAttributeSet>(player);
-            var effectModifiers = SystemAPI.GetComponent<ActorEffectStatModifiers>(player);
-            var derived = SystemAPI.GetComponent<ActorDerivedMovementStats>(player);
+            foreach (var (attributes, effectModifiers, derived, inventory, entity) in
+                     SystemAPI.Query<
+                             RefRO<ActorAttributeSet>,
+                             RefRO<ActorEffectStatModifiers>,
+                             RefRW<ActorDerivedMovementStats>,
+                             DynamicBuffer<PlayerInventoryItem>>()
+                         .WithAll<PlayerTag, PlayerEncumbranceDirty>()
+                         .WithEntityAccess())
+            {
+                float inventoryWeight = SumInventoryWeight(contentDb, inventory);
 
-            derived.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(contentDb, attributes);
-            derived.Encumbrance = MorrowindActorMovementStats.ComputeEncumbrance(effectModifiers, inventoryWeight);
-            derived.NormalizedEncumbrance = MorrowindActorMovementStats.ComputeNormalizedEncumbrance(
-                derived.Encumbrance,
-                derived.CarryCapacity);
+                derived.ValueRW.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(contentDb, attributes.ValueRO);
+                derived.ValueRW.Encumbrance = MorrowindActorMovementStats.ComputeEncumbrance(effectModifiers.ValueRO, inventoryWeight);
+                derived.ValueRW.NormalizedEncumbrance = MorrowindActorMovementStats.ComputeNormalizedEncumbrance(
+                    derived.ValueRO.Encumbrance,
+                    derived.ValueRO.CarryCapacity);
 
-            SystemAPI.SetComponent(player, derived);
-            EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(player, false);
+                EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(entity, false);
+            }
         }
 
         static float SumInventoryWeight(RuntimeContentDatabase contentDb, DynamicBuffer<PlayerInventoryItem> inventory)

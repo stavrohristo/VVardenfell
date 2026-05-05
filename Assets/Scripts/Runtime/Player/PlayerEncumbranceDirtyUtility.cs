@@ -32,20 +32,16 @@ namespace VVardenfell.Runtime.Player
 
         static Entity RequirePlayerEntity(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(new EntityQueryDesc
-            {
-                All = new[]
-                {
-                    ComponentType.ReadOnly<PlayerTag>(),
-                    ComponentType.ReadOnly<PlayerEncumbranceDirty>(),
-                },
-                Options = EntityQueryOptions.IgnoreComponentEnabledState,
-            });
+            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             int count = query.CalculateEntityCount();
             if (count != 1)
-                throw new InvalidOperationException($"[VVardenfell][Player] Expected exactly one player with PlayerEncumbranceDirty marker; found {count}.");
+                throw new InvalidOperationException($"[VVardenfell][Player] Expected exactly one player entity; found {count}.");
 
-            return query.GetSingletonEntity();
+            Entity player = query.GetSingletonEntity();
+            if (!entityManager.HasComponent<PlayerEncumbranceDirty>(player))
+                throw new InvalidOperationException("[VVardenfell][Player] Player entity is missing PlayerEncumbranceDirty marker.");
+
+            return player;
         }
     }
 }

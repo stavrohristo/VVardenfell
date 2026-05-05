@@ -20,11 +20,21 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial class InventoryItemActionSystem : SystemBase
     {
+        EntityQuery _playerInventoryQuery;
+        EntityQuery _playerEquipmentQuery;
+
         protected override void OnCreate()
         {
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<PlayerInventoryItem>());
+            _playerEquipmentQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<ActorEquipmentSlot>());
+
             RequireForUpdate<InventoryItemActionRequest>();
             RequireForUpdate<InventoryHeldItemState>();
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_playerInventoryQuery);
         }
 
         protected override void OnUpdate()
@@ -43,7 +53,8 @@ namespace VVardenfell.Runtime.Inventory
 
             CompleteDependency();
 
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             ulong previousInventorySignature = BuildInventoryWeightSignature(inventory);
             DynamicBuffer<ActorEquipmentSlot> equipment = default;
             bool hasEquipment = TryGetPlayerEquipment(out equipment, out Entity playerEquipmentEntity);
@@ -124,17 +135,14 @@ namespace VVardenfell.Runtime.Inventory
 
         bool TryGetPlayerEquipment(out DynamicBuffer<ActorEquipmentSlot> equipment, out Entity player)
         {
-            using var query = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<ActorEquipmentSlot>());
-            if (query.CalculateEntityCount() != 1)
+            if (_playerEquipmentQuery.CalculateEntityCount() != 1)
             {
                 equipment = default;
                 player = Entity.Null;
                 return false;
             }
 
-            player = query.GetSingletonEntity();
+            player = _playerEquipmentQuery.GetSingletonEntity();
             equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player);
             return true;
         }
@@ -371,7 +379,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
-            ToggleEquipment(equipment, inventoryIndex, entry.Content, itemEquipment);
+            ToggleEquipment(equipment, inventoryIndex, entry, itemEquipment);
             ClearHeld(ref held);
         }
 
@@ -401,15 +409,15 @@ namespace VVardenfell.Runtime.Inventory
         static void ToggleEquipment(
             DynamicBuffer<ActorEquipmentSlot> equipment,
             int inventoryIndex,
-            ContentReference content,
+            in PlayerInventoryItem entry,
             in ItemEquipmentDef itemEquipment)
         {
             for (int i = equipment.Length - 1; i >= 0; i--)
             {
                 var slot = equipment[i];
                 if (slot.InventoryIndex == inventoryIndex
-                    && slot.Content.Kind == content.Kind
-                    && slot.Content.HandleValue == content.HandleValue)
+                    && slot.Content.Kind == entry.Content.Kind
+                    && slot.Content.HandleValue == entry.Content.HandleValue)
                 {
                     equipment.RemoveAt(i);
                     return;
@@ -420,8 +428,13 @@ namespace VVardenfell.Runtime.Inventory
             equipment.Add(new ActorEquipmentSlot
             {
                 Slot = itemEquipment.Slot,
-                Content = content,
+                Content = entry.Content,
                 InventoryIndex = inventoryIndex,
+                Condition = ActorEquipmentConditionUtility.ResolveInitialCondition(
+                    itemEquipment,
+                    entry.Count,
+                    entry.Condition,
+                    entry.Content),
                 VisualMode = ActorEquipmentRuntimeUtility.ResolveEquipmentVisualMode(itemEquipment),
             });
         }

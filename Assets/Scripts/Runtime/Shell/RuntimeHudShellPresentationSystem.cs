@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.Shell
     public partial class RuntimeHudShellPresentationSystem : SystemBase
     {
         EntityQuery _playerStatsQuery;
+        EntityQuery _playerInventoryQuery;
         RuntimeHudShellView _view;
         readonly RuntimeHudViewModel _hudModel = new();
         readonly LocalMapViewModel _hudLocalMapModel = LocalMapPresentationCache.CreateReusableViewModel();
@@ -60,6 +61,9 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffect>());
+            _playerInventoryQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<PlayerInventoryItem>());
 
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<InteractionPresentationState>();
@@ -72,7 +76,7 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<MorrowindQuestJournalState>();
             RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<MorrowindTimeState>();
-            RequireForUpdate<PlayerInventoryItem>();
+            RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<ContainerSessionItem>();
         }
 
@@ -115,7 +119,8 @@ namespace VVardenfell.Runtime.Shell
             var mapState = SystemAPI.GetSingleton<MapWindowState>();
             var journalState = SystemAPI.GetSingleton<JournalWindowState>();
             var saveLoadState = SystemAPI.GetSingleton<SaveLoadBrowserState>();
-            var inventory = SystemAPI.GetSingletonBuffer<PlayerInventoryItem>();
+            Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity, true);
             var containerItems = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var enemyHealth = SystemAPI.TryGetSingleton<RuntimeEnemyHealthBarState>(out var enemyHealthState)
                 ? enemyHealthState
