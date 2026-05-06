@@ -67,23 +67,7 @@ namespace VVardenfell.Runtime.WorldRefs
                 return;
 
             var transform = entityManager.GetComponentData<LocalTransform>(logicalEntity);
-            quaternion current = SafeNormalize(transform.Rotation);
-            float3 sourceAngles = ExtractSourceAngles(current);
-            switch (axis)
-            {
-                case 1:
-                    sourceAngles.y = radians;
-                    break;
-                case 2:
-                    sourceAngles.z = radians;
-                    break;
-                default:
-                    sourceAngles.x = radians;
-                    break;
-            }
-
-            quaternion target = ComposeSourceAngles(sourceAngles);
-            quaternion delta = math.normalize(math.mul(target, math.inverse(current)));
+            quaternion delta = ComputeSetAngleDelta(transform.Rotation, axis, radians);
             ApplyDelta(entityManager, logicalEntity, delta);
         }
 
@@ -106,6 +90,27 @@ namespace VVardenfell.Runtime.WorldRefs
                 2 => new float3(0f, 1f, 0f),
                 _ => new float3(1f, 0f, 0f),
             };
+        }
+
+        static quaternion ComputeSetAngleDelta(quaternion rotation, byte axis, float radians)
+        {
+            quaternion current = SafeNormalize(rotation);
+            float3 sourceAngles = ExtractSourceAngles(current);
+            switch (axis)
+            {
+                case 1:
+                    sourceAngles.y = radians;
+                    break;
+                case 2:
+                    sourceAngles.z = radians;
+                    break;
+                default:
+                    sourceAngles.x = radians;
+                    break;
+            }
+
+            quaternion target = ComposeSourceAngles(sourceAngles);
+            return SafeNormalize(math.mul(target, math.inverse(current)));
         }
 
         static void RotateEntity(EntityManager entityManager, Entity entity, quaternion delta)

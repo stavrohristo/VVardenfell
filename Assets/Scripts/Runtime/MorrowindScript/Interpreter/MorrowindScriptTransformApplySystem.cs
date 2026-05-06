@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -18,11 +19,13 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
+    [BurstCompile]
     public partial struct MorrowindScriptTransformApplySystem : ISystem
     {
         EntityQuery _runtimeQuery;
         EntityQuery _standingActorQuery;
         EntityQuery _mutationQueueQuery;
+        EntityQuery _activeExplicitRefLookupQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -36,6 +39,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
                 ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
+            _activeExplicitRefLookupQuery = systemState.GetEntityQuery(
+                ComponentType.ReadOnly<ActiveExplicitRefLookup>());
 
             systemState.RequireForUpdate(_runtimeQuery);
             systemState.RequireForUpdate(_mutationQueueQuery);
@@ -44,6 +49,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
@@ -368,7 +374,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     InteriorCellHash = cellHash,
                     IsInterior = 1,
                 });
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
+                MarkActiveExplicitRefLookupDirty(ref systemState);
                 MarkActorAiNavigationAnchorDirty(ref systemState, entity);
             }
 
@@ -376,6 +382,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 systemState.EntityManager.AddComponent<InteriorCellMember>(entity);
             if (systemState.EntityManager.HasComponent<CellLink>(entity))
                 systemState.EntityManager.RemoveComponent<CellLink>(entity);
+        }
+
+        void MarkActiveExplicitRefLookupDirty(ref SystemState systemState)
+        {
+            if (_activeExplicitRefLookupQuery.IsEmptyIgnoreFilter)
+                return;
+
+            Entity lookupEntity = _activeExplicitRefLookupQuery.GetSingletonEntity();
+            if (!systemState.EntityManager.HasComponent<ActiveExplicitRefLookupDirty>(lookupEntity))
+                throw new InvalidOperationException("[VVardenfell][WorldRefs] active explicit-ref lookup exists without its dirty marker.");
+
+            systemState.EntityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity, true);
         }
 
         void MarkActorAiNavigationAnchorDirty(ref SystemState systemState, Entity entity)

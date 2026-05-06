@@ -1,5 +1,6 @@
 using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
@@ -10,6 +11,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptAnimationGroupApplySystem : ISystem
@@ -29,6 +31,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
@@ -50,7 +53,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         void ApplyRequest(ref SystemState systemState, NativeArray<FixedString512Bytes> messages, in LogicalRefLookup lookup, in MorrowindScriptAnimationGroupRequest request)
         {
             if ((uint)request.GroupMessageIndex >= (uint)messages.Length)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group request has invalid group message index {request.GroupMessageIndex}.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Animation group request has invalid group message index.");
 
             FixedString64Bytes group = ToFixed64(messages[request.GroupMessageIndex]);
             if (group.IsEmpty)
@@ -58,7 +61,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             Entity target = ResolveTarget(ref systemState, request, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group target ref={request.TargetPlacedRefId} is not live.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Animation group target is not live.");
 
             if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
                 && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
@@ -79,7 +82,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group target ref={request.TargetPlacedRefId} has no supported animation state.");
+            throw new InvalidOperationException("[VVardenfell][MWScript] Animation group target has no supported animation state.");
         }
 
         Entity ResolveTarget(ref SystemState systemState, in MorrowindScriptAnimationGroupRequest request, in LogicalRefLookup lookup)
@@ -95,27 +98,27 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         void ApplyActorAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
-            if (EqualsIgnoreCase(group, "idle"))
+            if (IsIdleGroup(group))
             {
                 ClearScriptedActorOverlays(ref systemState, target);
                 return;
             }
 
             if (!SystemAPI.HasSingleton<ActorAnimationBlobCatalog>())
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation group '{group}' has no actor animation catalog.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation group has no actor animation catalog.");
 
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation group '{group}' has no actor animation catalog blob.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation group has no actor animation catalog blob.");
 
             var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(target);
             ref var catalog = ref catalogRef.Value;
             ulong groupHash = ActorAnimationGroupHash.Hash(group);
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var resolvedGroup))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation group '{group}' is not present on target ref={request.TargetPlacedRefId}.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation group is not present on target.");
 
             if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation target ref={request.TargetPlacedRefId} has no overlay buffer.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation target has no overlay buffer.");
 
             var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(target);
             RemoveScriptedActorOverlays(overlays);
@@ -166,7 +169,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         void ApplyObjectAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
             var state = systemState.EntityManager.GetComponentData<ObjectAnimationState>(target);
-            if (EqualsIgnoreCase(group, "idle"))
+            if (IsIdleGroup(group))
             {
                 state.Scripted = 0;
                 state.LoopCount = 0u;
@@ -175,15 +178,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             if (!SystemAPI.HasSingleton<ObjectAnimationBlobCatalog>())
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Object animation group '{group}' has no object animation catalog.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Object animation group has no object animation catalog.");
 
             var catalogRef = SystemAPI.GetSingleton<ObjectAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Object animation group '{group}' has no object animation catalog blob.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Object animation group has no object animation catalog blob.");
 
             ref var catalog = ref catalogRef.Value;
             if (!TryResolveObjectGroup(ref catalog, state.ModelPrefabIndex, group, out var resolved))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Object animation group '{group}' is not present on target ref={request.TargetPlacedRefId}.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Object animation group is not present on target.");
 
             float start = request.Mode == 2 && resolved.LoopStartTime > resolved.StartTime
                 ? resolved.LoopStartTime
@@ -287,12 +290,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             return result;
         }
 
-        static bool EqualsIgnoreCase(FixedString64Bytes left, string right)
-        {
-            FixedString64Bytes fixedRight = default;
-            fixedRight.CopyFromTruncated(right);
-            return EqualsIgnoreCase(left, fixedRight);
-        }
+        static bool IsIdleGroup(FixedString64Bytes value)
+            => value.Length == 4
+               && ToLowerAscii(value[0]) == (byte)'i'
+               && ToLowerAscii(value[1]) == (byte)'d'
+               && ToLowerAscii(value[2]) == (byte)'l'
+               && ToLowerAscii(value[3]) == (byte)'e';
 
         static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
         {

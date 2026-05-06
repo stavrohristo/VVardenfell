@@ -1,5 +1,7 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
+using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
@@ -10,6 +12,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptInventoryMutationApplySystem : ISystem
@@ -28,6 +31,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -60,7 +64,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (request.TargetMode == (byte)MorrowindScriptRefTargetMode.Player)
             {
-                Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] Player inventory mutation requested before player inventory was bootstrapped.");
+                Entity inventoryEntity = RequirePlayerInventoryEntity();
                 var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
                 if (request.Operation == 0)
                     AddPlayerItem(ref contentBlob, inventory, request.Content, count);
@@ -72,10 +76,10 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             Entity target = ResolveTarget(ref systemState, request, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Inventory mutation target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Inventory mutation target is not loaded.");
 
             if (!systemState.EntityManager.HasBuffer<ActorInventoryItem>(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Inventory mutation target ref={request.TargetPlacedRefId} has no actor inventory.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Inventory mutation target has no actor inventory.");
 
             var actorInventory = systemState.EntityManager.GetBuffer<ActorInventoryItem>(target);
             if (request.Operation == 0)
@@ -89,17 +93,17 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (request.TargetMode != (byte)MorrowindScriptRefTargetMode.Player || request.SoulActorHandleValue <= 0)
                 throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem supports only explicit Player targets with a known soul actor.");
 
-            Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
+            Entity inventoryEntity = RequirePlayerInventoryEntity();
 
             RemovePlayerSoulGem(systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
             PlayerEncumbranceDirtyUtility.MarkPlayerDirty(systemState.EntityManager, inventoryEntity);
         }
 
-        Entity RequirePlayerInventoryEntity(string error)
+        Entity RequirePlayerInventoryEntity()
         {
             int count = _playerInventoryQuery.CalculateEntityCount();
             if (count != 1)
-                throw new InvalidOperationException($"{error} Found {count} player inventory entities.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Expected exactly one player inventory entity.");
 
             return _playerInventoryQuery.GetSingletonEntity();
         }
@@ -152,7 +156,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (entry.Count <= remaining)
                 {
-                    remaining -= Math.Max(0, entry.Count);
+                    remaining -= math.max(0, entry.Count);
                     inventory.RemoveAt(i);
                     continue;
                 }
@@ -221,7 +225,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (entry.Count <= remaining)
                 {
-                    remaining -= Math.Max(0, entry.Count);
+                    remaining -= math.max(0, entry.Count);
                     inventory.RemoveAt(i);
                     continue;
                 }
