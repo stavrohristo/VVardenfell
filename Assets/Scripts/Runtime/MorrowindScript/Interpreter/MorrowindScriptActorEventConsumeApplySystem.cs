@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -6,6 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptActorEventConsumeApplySystem : ISystem
@@ -16,6 +18,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindScriptActorEventConsumeRequest>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -32,20 +35,20 @@ namespace VVardenfell.Runtime.MorrowindScript
         void ApplyRequest(ref SystemState systemState, in MorrowindScriptActorEventConsumeRequest request)
         {
             if (request.TargetEntity == Entity.Null || !systemState.EntityManager.Exists(request.TargetEntity))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor event target is not loaded.");
 
             if (request.TargetPlacedRefId != 0u)
             {
                 if (!systemState.EntityManager.HasComponent<PlacedRefIdentity>(request.TargetEntity))
-                    throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} has no placed ref identity.");
+                    throw new InvalidOperationException("[VVardenfell][MWScript] Actor event target has no placed ref identity.");
 
                 var identity = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(request.TargetEntity);
                 if (identity.Value != request.TargetPlacedRefId)
-                    throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target mismatch requested={request.TargetPlacedRefId} actual={identity.Value}.");
+                    throw new InvalidOperationException("[VVardenfell][MWScript] Actor event target placed ref mismatch.");
             }
 
             if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(request.TargetEntity))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} has no actor script event state.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor event target has no actor script event state.");
 
             var state = systemState.EntityManager.GetComponentData<ActorScriptEventState>(request.TargetEntity);
             switch ((MorrowindScriptActorEventConsumeKind)request.Kind)
@@ -57,7 +60,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     state.LastHitObject = default;
                     break;
                 default:
-                    throw new InvalidOperationException($"[VVardenfell][MWScript] Unknown actor event consume kind {request.Kind}.");
+                    throw new InvalidOperationException("[VVardenfell][MWScript] Unknown actor event consume kind.");
             }
 
             systemState.EntityManager.SetComponentData(request.TargetEntity, state);

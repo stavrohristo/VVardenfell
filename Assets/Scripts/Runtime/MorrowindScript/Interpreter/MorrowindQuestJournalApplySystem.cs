@@ -1,11 +1,13 @@
+using System;
+using Unity.Burst;
 using Unity.Entities;
-using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindScriptRefStateApplySystem))]
@@ -25,6 +27,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
@@ -38,22 +41,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (state.QuestCount != questStates.Length)
-            {
-                Debug.LogError($"[VVardenfell][MWScript] quest journal state count mismatch: state={state.QuestCount} buffer={questStates.Length}.");
-                requests.Clear();
-                return;
-            }
+                throw new InvalidOperationException("[VVardenfell][MWScript] quest journal state count mismatch.");
             if (contentBlob.Dialogues.Length != questStates.Length)
-            {
-                Debug.LogError($"[VVardenfell][MWScript] quest journal content mismatch: content={contentBlob.Dialogues.Length} buffer={questStates.Length}.");
-                requests.Clear();
-                return;
-            }
+                throw new InvalidOperationException("[VVardenfell][MWScript] quest journal content mismatch.");
 
             for (int i = 0; i < requests.Length; i++)
             {
                 if (!MorrowindQuestJournalUtility.TryApplyRequest(ref contentBlob, ref state, time, questStates, entries, requests[i]))
-                    Debug.LogError($"[VVardenfell][MWScript] invalid quest journal request dialogueIndex={requests[i].DialogueIndex} stage={requests[i].JournalIndex}.");
+                    throw new InvalidOperationException("[VVardenfell][MWScript] invalid quest journal request.");
             }
 
             systemState.EntityManager.SetComponentData(runtimeEntity, state);

@@ -1,10 +1,12 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptOnDeathConsumeApplySystem : ISystem
@@ -15,6 +17,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindScriptOnDeathConsumeRequest>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -31,14 +34,14 @@ namespace VVardenfell.Runtime.MorrowindScript
         void ApplyRequest(ref SystemState systemState, in MorrowindScriptOnDeathConsumeRequest request)
         {
             if (request.TargetEntity == Entity.Null || !systemState.EntityManager.Exists(request.TargetEntity))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] OnDeath target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] OnDeath target is not loaded.");
 
             if (!systemState.EntityManager.HasComponent<PlacedRefIdentity>(request.TargetEntity))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] OnDeath target ref={request.TargetPlacedRefId} has no placed ref identity.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] OnDeath target has no placed ref identity.");
 
             var identity = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(request.TargetEntity);
             if (identity.Value != request.TargetPlacedRefId)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] OnDeath target mismatch requested={request.TargetPlacedRefId} actual={identity.Value}.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] OnDeath target placed ref mismatch.");
 
             if (!systemState.EntityManager.HasComponent<MorrowindActorOnDeathConsumed>(request.TargetEntity))
                 systemState.EntityManager.AddComponent<MorrowindActorOnDeathConsumed>(request.TargetEntity);

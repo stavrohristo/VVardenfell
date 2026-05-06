@@ -1,5 +1,6 @@
 using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
@@ -12,6 +13,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptSayApplySystem : ISystem
@@ -24,6 +26,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeHudPreferences>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -64,11 +67,11 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Say target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Say target is not loaded.");
 
             bool playLocal = systemState.EntityManager.HasComponent<PlayerTag>(target);
             if (!playLocal && !systemState.EntityManager.HasComponent<LocalTransform>(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Say target ref={request.TargetPlacedRefId} has no LocalTransform.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Say target has no LocalTransform.");
 
             var requestEntity = systemState.EntityManager.CreateEntity();
             systemState.EntityManager.AddComponentData(requestEntity, new MorrowindScriptAudioRequest

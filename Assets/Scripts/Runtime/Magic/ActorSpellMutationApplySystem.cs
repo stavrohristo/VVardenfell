@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -9,6 +10,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Magic
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ActorSpellMutationApplySystem : ISystem
@@ -21,6 +23,7 @@ namespace VVardenfell.Runtime.Magic
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -46,21 +49,21 @@ namespace VVardenfell.Runtime.Magic
                 || request.Spell.Index < 0
                 || request.Spell.Index >= content.Spells.Length)
             {
-                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell references invalid spell handle {request.Spell.Value}.");
+                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell references invalid spell handle.");
             }
 
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell target is not loaded.");
 
             if (!systemState.EntityManager.HasBuffer<ActorKnownSpell>(target))
-                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorKnownSpell buffer.");
+                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell target has no ActorKnownSpell buffer.");
 
             if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
-                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffect buffer.");
+                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell target has no ActorActiveMagicEffect buffer.");
 
             if (!systemState.EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
-                throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffectDirty marker.");
+                throw new InvalidOperationException("[VVardenfell][Magic] AddSpell/RemoveSpell target has no ActorActiveMagicEffectDirty marker.");
 
             var knownSpells = systemState.EntityManager.GetBuffer<ActorKnownSpell>(target);
             if (request.Remove == 0)

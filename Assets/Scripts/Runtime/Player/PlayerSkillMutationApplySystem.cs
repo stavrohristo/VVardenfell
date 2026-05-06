@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
@@ -6,6 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct PlayerSkillMutationApplySystem : ISystem
@@ -22,6 +24,7 @@ namespace VVardenfell.Runtime.Player
             state.RequireForUpdate(_playerQuery);
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -48,7 +51,7 @@ namespace VVardenfell.Runtime.Player
             {
                 PlayerSkillMutationKind.Set => request.Value,
                 PlayerSkillMutationKind.Mod => current + request.Value,
-                _ => throw new InvalidOperationException($"[VVardenfell][Player] Unknown player skill mutation kind {request.Kind}."),
+                _ => throw new InvalidOperationException("[VVardenfell][Player] Unknown player skill mutation kind."),
             };
             SetSkill(ref skills, (ActorSkillKind)request.Skill, value);
         }
@@ -83,7 +86,7 @@ namespace VVardenfell.Runtime.Player
                 ActorSkillKind.Mercantile => skills.Mercantile,
                 ActorSkillKind.Speechcraft => skills.Speechcraft,
                 ActorSkillKind.HandToHand => skills.HandToHand,
-                _ => throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor skill kind {(byte)skill}."),
+                _ => throw new InvalidOperationException("[VVardenfell][Player] Unknown actor skill kind."),
             };
 
         static void SetSkill(ref ActorSkillSet skills, ActorSkillKind skill, float value)
@@ -117,7 +120,7 @@ namespace VVardenfell.Runtime.Player
                 case ActorSkillKind.Mercantile: skills.Mercantile = value; break;
                 case ActorSkillKind.Speechcraft: skills.Speechcraft = value; break;
                 case ActorSkillKind.HandToHand: skills.HandToHand = value; break;
-                default: throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor skill kind {(byte)skill}.");
+                default: throw new InvalidOperationException("[VVardenfell][Player] Unknown actor skill kind.");
             }
         }
     }

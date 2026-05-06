@@ -44,6 +44,13 @@ namespace VVardenfell.Runtime.Components
             return entityManager.GetComponentData<ActorHitAftermathState>(actor);
         }
 
+        public static ActorHitAftermathState Require(EntityManager entityManager, Entity actor)
+        {
+            if (!entityManager.HasComponent<ActorHitAftermathState>(actor))
+                throw new InvalidOperationException("[VVardenfell][Aftermath] Actor has no ActorHitAftermathState.");
+            return entityManager.GetComponentData<ActorHitAftermathState>(actor);
+        }
+
         static uint NextSequence(uint sequence)
             => sequence == uint.MaxValue ? 1u : sequence + 1u;
     }

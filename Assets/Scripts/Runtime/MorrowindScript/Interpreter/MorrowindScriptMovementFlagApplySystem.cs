@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -9,6 +10,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptMovementFlagApplySystem : ISystem
@@ -20,6 +22,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -38,13 +41,13 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Movement flag target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Movement flag target is not loaded.");
 
             if (!systemState.EntityManager.HasComponent<MorrowindMovementState>(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Movement flag target ref={request.TargetPlacedRefId} has no MorrowindMovementState.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Movement flag target has no MorrowindMovementState.");
 
             if (request.FlagKind != (byte)MorrowindScriptMovementFlagKind.ForceSneak)
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported movement flag kind {request.FlagKind}.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Unsupported movement flag kind.");
 
             var state = systemState.EntityManager.GetComponentData<MorrowindMovementState>(target);
             state.ForceSneak = request.Enabled != 0;

@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Combat;
@@ -9,6 +10,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptActorVitalApplySystem : ISystem
@@ -19,6 +21,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -37,14 +40,14 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor vital target is not loaded.");
 
             if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
             {
                 if (request.Kind == (byte)MorrowindScriptActorVitalRequestKind.Resurrect)
                     return;
 
-                throw new InvalidOperationException($"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId} has no ActorVitalSet.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] Actor vital target has no ActorVitalSet.");
             }
 
             var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
@@ -57,8 +60,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     {
                         var aftermath = ActorHitAftermathStateUtility.Require(
                             systemState.EntityManager,
-                            target,
-                            $"[VVardenfell][MWScript] Actor vital target ref={request.TargetPlacedRefId}");
+                            target);
                         ActorHitAftermathStateUtility.MarkDead(ref aftermath);
                         systemState.EntityManager.SetComponentData(target, aftermath);
                     }
@@ -84,7 +86,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                         systemState.EntityManager.RemoveComponent<MorrowindActorDeathCounted>(target);
                     break;
                 default:
-                    throw new InvalidOperationException($"[VVardenfell][MWScript] Unknown actor vital kind {request.Kind}.");
+                    throw new InvalidOperationException("[VVardenfell][MWScript] Unknown actor vital kind.");
             }
             systemState.EntityManager.SetComponentData(target, vitals);
         }

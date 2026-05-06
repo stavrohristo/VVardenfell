@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -8,6 +9,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Player
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ActorFactionRankMutationApplySystem : ISystem
@@ -20,6 +22,7 @@ namespace VVardenfell.Runtime.Player
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -39,7 +42,7 @@ namespace VVardenfell.Runtime.Player
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null)
-                throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target is not loaded.");
 
             if (MorrowindRuntimeTargetResolver.IsPlayerEntity(systemState.EntityManager, target))
                 return;
@@ -52,16 +55,14 @@ namespace VVardenfell.Runtime.Player
                 throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target has an invalid actor definition.");
 
             ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, actorHandle);
-            string factionId = actor.FactionId.ToString();
-            string actorId = actor.Id.ToString();
-            if (string.IsNullOrWhiteSpace(factionId))
+            if (actor.FactionIdHash == 0UL)
                 return;
 
-            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(factionId), out var factionHandle) || !factionHandle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target actor '{actorId}' references unknown faction '{factionId}'.");
+            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, actor.FactionIdHash, out var factionHandle) || !factionHandle.IsValid)
+                throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target actor references unknown faction.");
 
             if (!systemState.EntityManager.HasBuffer<ActorFactionMembership>(target))
-                throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target actor '{actorId}' has no actor faction state.");
+                throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target actor has no actor faction state.");
 
             var factions = systemState.EntityManager.GetBuffer<ActorFactionMembership>(target);
             int index = FindActorFactionIndex(factions, factionHandle.Index);

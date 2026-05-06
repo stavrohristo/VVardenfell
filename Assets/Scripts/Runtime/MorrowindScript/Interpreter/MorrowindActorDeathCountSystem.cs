@@ -1,11 +1,13 @@
 using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct MorrowindActorDeathCountSystem : ISystem
     {
@@ -14,6 +16,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -31,7 +34,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (!state.EntityManager.HasComponent<ActorHitAftermathState>(entity))
                 {
                     if (vitals.ValueRO.CurrentHealth <= 0f)
-                        throw new InvalidOperationException($"Actor ref={PlacedRefId(state.EntityManager, entity)} reached zero health without ActorHitAftermathState.");
+                        throw new InvalidOperationException("Actor reached zero health without ActorHitAftermathState.");
                     continue;
                 }
 
@@ -39,13 +42,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (aftermath.Dead == 0)
                 {
                     if (vitals.ValueRO.CurrentHealth <= 0f)
-                        throw new InvalidOperationException($"Actor ref={PlacedRefId(state.EntityManager, entity)} reached zero health without explicit dead aftermath state.");
+                        throw new InvalidOperationException("Actor reached zero health without explicit dead aftermath state.");
                     continue;
                 }
 
                 var actor = source.ValueRO.Definition;
                 if (!actor.IsValid || (uint)actor.Index >= (uint)deathCounts.Length)
-                    throw new InvalidOperationException($"Actor death count references invalid actor handle {actor.Value}.");
+                    throw new InvalidOperationException("Actor death count references invalid actor handle.");
 
                 var count = deathCounts[actor.Index];
                 count.Count++;
@@ -57,9 +60,5 @@ namespace VVardenfell.Runtime.MorrowindScript
             ecb.Dispose();
         }
 
-        static uint PlacedRefId(EntityManager entityManager, Entity entity)
-            => entityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
-                : 0u;
     }
 }

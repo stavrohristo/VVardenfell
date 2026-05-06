@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
@@ -8,6 +9,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Player
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ActorAttributeMutationApplySystem : ISystem
@@ -19,6 +21,7 @@ namespace VVardenfell.Runtime.Player
             state.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -37,10 +40,10 @@ namespace VVardenfell.Runtime.Player
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(entityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !entityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][Player] Actor attribute mutation target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation target is not loaded.");
 
             if (!entityManager.HasComponent<ActorAttributeSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][Player] Actor attribute mutation target ref={request.TargetPlacedRefId} has no ActorAttributeSet.");
+                throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation target has no ActorAttributeSet.");
 
             if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.None)
                 throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation requires a concrete attribute.");
@@ -51,7 +54,7 @@ namespace VVardenfell.Runtime.Player
             {
                 ActorAttributeMutationKind.Set => request.Value,
                 ActorAttributeMutationKind.Mod => current + request.Value,
-                _ => throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor attribute mutation kind {request.Kind}."),
+                _ => throw new InvalidOperationException("[VVardenfell][Player] Unknown actor attribute mutation kind."),
             };
             SetAttribute(ref attributes, (ActorAttributeKind)request.Attribute, value);
             entityManager.SetComponentData(target, attributes);
@@ -70,7 +73,7 @@ namespace VVardenfell.Runtime.Player
                 ActorAttributeKind.Endurance => attributes.Endurance,
                 ActorAttributeKind.Personality => attributes.Personality,
                 ActorAttributeKind.Luck => attributes.Luck,
-                _ => throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor attribute kind {(byte)attribute}."),
+                _ => throw new InvalidOperationException("[VVardenfell][Player] Unknown actor attribute kind."),
             };
 
         static void SetAttribute(ref ActorAttributeSet attributes, ActorAttributeKind attribute, float value)
@@ -85,7 +88,7 @@ namespace VVardenfell.Runtime.Player
                 case ActorAttributeKind.Endurance: attributes.Endurance = value; break;
                 case ActorAttributeKind.Personality: attributes.Personality = value; break;
                 case ActorAttributeKind.Luck: attributes.Luck = value; break;
-                default: throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor attribute kind {(byte)attribute}.");
+                default: throw new InvalidOperationException("[VVardenfell][Player] Unknown actor attribute kind.");
             }
         }
     }

@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -6,6 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptFactionReactionApplySystem : ISystem
@@ -18,6 +20,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -46,7 +49,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!applied)
             {
                 throw new InvalidOperationException(
-                    $"[VVardenfell][MWScript] Faction reaction mutation references invalid factions {request.SourceFactionIndex}->{request.TargetFactionIndex}.");
+                    "[VVardenfell][MWScript] Faction reaction mutation references invalid factions.");
             }
         }
     }

@@ -1,5 +1,6 @@
 using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
@@ -10,6 +11,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptHurtStandingActorApplySystem : ISystem
@@ -25,6 +27,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -56,7 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             Entity standingTarget = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (standingTarget == Entity.Null || !systemState.EntityManager.Exists(standingTarget))
-                throw new InvalidOperationException($"[VVardenfell][MWScript] HurtStandingActor target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][MWScript] HurtStandingActor target is not loaded.");
 
             float healthDelta = request.HealthPerSecond * deltaSeconds;
             if (healthDelta == 0f)
@@ -79,18 +82,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     var aftermath = ActorHitAftermathStateUtility.Require(
                         systemState.EntityManager,
-                        entities[i],
-                        $"[VVardenfell][MWScript] HurtStandingActor affected actor ref={PlacedRefId(ref systemState, entities[i])}");
+                        entities[i]);
                     ActorHitAftermathStateUtility.MarkDead(ref aftermath);
                     systemState.EntityManager.SetComponentData(entities[i], aftermath);
                 }
             }
         }
-
-        uint PlacedRefId(ref SystemState systemState, Entity entity)
-            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
-                : 0u;
 
         bool IsGuiMode(ref SystemState systemState)
         {

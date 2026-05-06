@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
@@ -7,6 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.WorldRefs
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
     public partial struct PlacedRefLockApplySystem : ISystem
@@ -22,6 +24,7 @@ namespace VVardenfell.Runtime.WorldRefs
             systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -35,7 +38,7 @@ namespace VVardenfell.Runtime.WorldRefs
                 var request = requests[i];
                 Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
                 if (target == Entity.Null)
-                    throw new InvalidOperationException($"Lock state request target ref={request.TargetPlacedRefId} is not live.");
+                    throw new InvalidOperationException("Lock state request target is not live.");
 
                 if (request.Operation == LockOperation)
                 {
@@ -49,7 +52,7 @@ namespace VVardenfell.Runtime.WorldRefs
                     continue;
                 }
 
-                throw new InvalidOperationException($"Unsupported lock state operation {request.Operation} for ref={request.TargetPlacedRefId}.");
+                throw new InvalidOperationException("Unsupported lock state operation.");
             }
 
             requests.Clear();
