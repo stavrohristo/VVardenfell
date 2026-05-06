@@ -1,9 +1,8 @@
 using System;
-using System.Collections.Generic;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
@@ -14,28 +13,33 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(ContainerWindowStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class ContainerTransferSystem : SystemBase
+    public partial struct ContainerTransferSystem : ISystem
     {
-        readonly HashSet<uint> _loggedMissingInteractionSounds = new();
         EntityQuery _playerInventoryQuery;
+        EntityQuery _worldJournalQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerInventoryQuery = GetEntityQuery(
+            _playerInventoryQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerInventoryItem>());
+            _worldJournalQuery = systemState.GetEntityQuery(
+                ComponentType.ReadWrite<WorldJournalState>(),
+                ComponentType.ReadWrite<WorldJournalEntry>());
 
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<ContainerWindowState>();
-            RequireForUpdate<ContainerWindowRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate(_playerInventoryQuery);
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<ContainerWindowState>();
+            systemState.RequireForUpdate<ContainerWindowRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
@@ -57,13 +61,13 @@ namespace VVardenfell.Runtime.Inventory
             if (request.PendingTakeAll == 0 && request.PendingTakeSelected == 0)
                 return;
 
-            EnsureTransferStateReady();
-            CompleteDependency();
+            EnsureTransferStateReady(ref systemState);
+            systemState.Dependency.Complete();
 
             uint placedRefId = state.OpenPlacedRefId;
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
-            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+            var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             int transferredStacks = 0;
 
@@ -75,8 +79,8 @@ namespace VVardenfell.Runtime.Inventory
                     if (entry.PlacedRefId != placedRefId || entry.Count <= 0)
                         continue;
 
-                    RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
-                    WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
+                    RemoveCorpseBackingInventory(ref systemState, state.OpenTargetEntity, placedRefId, entry, entry.Count);
+                    AppendContainerDelta(ref systemState, placedRefId, entry.Content, -entry.Count);
                     ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                     items.RemoveAt(i);
                     transferredStacks++;
@@ -93,8 +97,8 @@ namespace VVardenfell.Runtime.Inventory
                     var entry = items[selectedIndex];
                     if (entry.PlacedRefId == placedRefId && entry.Count > 0)
                     {
-                        RemoveCorpseBackingInventory(state.OpenTargetEntity, placedRefId, entry, entry.Count);
-                        WorldJournalUtility.AppendContainerDelta(EntityManager, placedRefId, entry.Content, -entry.Count);
+                        RemoveCorpseBackingInventory(ref systemState, state.OpenTargetEntity, placedRefId, entry, entry.Count);
+                        AppendContainerDelta(ref systemState, placedRefId, entry.Content, -entry.Count);
                         ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                         items.RemoveAt(selectedIndex);
                         transferredStacks = 1;
@@ -106,22 +110,22 @@ namespace VVardenfell.Runtime.Inventory
 
             if (transferredStacks > 0)
             {
-                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
-                TryQueueInteractionAudio(state.OpenTargetEntity, InteractionAudioKind.Container, "container");
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(systemState.EntityManager, inventoryEntity);
+                TryQueueInteractionAudio(ref systemState, state.OpenTargetEntity, InteractionAudioKind.Container);
             }
         }
 
-        void RemoveCorpseBackingInventory(Entity target, uint placedRefId, in ContainerSessionItem entry, int count)
+        void RemoveCorpseBackingInventory(ref SystemState systemState, Entity target, uint placedRefId, in ContainerSessionItem entry, int count)
         {
-            if (!ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target))
+            if (!ActorCorpseLootUtility.IsDeadLootableActor(systemState.EntityManager, target))
                 return;
 
-            if (!EntityManager.HasBuffer<ActorInventoryItem>(target))
-                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} has visible loot but no ActorInventoryItem buffer.");
+            if (!systemState.EntityManager.HasBuffer<ActorInventoryItem>(target))
+                throw new InvalidOperationException("[VVardenfell][Corpse] Corpse has visible loot but no ActorInventoryItem buffer.");
 
-            var actorInventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
-            DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
-                ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
+            var actorInventory = systemState.EntityManager.GetBuffer<ActorInventoryItem>(target);
+            DynamicBuffer<ActorEquipmentSlot> equipment = systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(target)
+                ? systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(target)
                 : default;
             ulong previousSignature = equipment.IsCreated
                 ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
@@ -135,50 +139,44 @@ namespace VVardenfell.Runtime.Inventory
                 entry.SoulActorHandleValue,
                 count);
             if (removed != count)
-                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} inventory could remove {removed} of requested {count} for content {entry.Content.Kind}:{entry.Content.HandleValue}.");
+                throw new InvalidOperationException("[VVardenfell][Corpse] Corpse inventory could not remove the requested item count.");
 
             ulong currentSignature = equipment.IsCreated
                 ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
                 : 0UL;
             if (previousSignature != currentSignature)
-                MarkActorPresentationEquipmentDirty(target);
+                MarkActorPresentationEquipmentDirty(ref systemState, target);
         }
 
-        void MarkActorPresentationEquipmentDirty(Entity actor)
+        void MarkActorPresentationEquipmentDirty(ref SystemState systemState, Entity actor)
         {
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
-                EntityManager,
+                systemState.EntityManager,
                 ref ecb,
                 actor,
                 enabled: true);
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        void TryQueueInteractionAudio(Entity target, InteractionAudioKind kind, string label)
+        void TryQueueInteractionAudio(ref SystemState systemState, Entity target, InteractionAudioKind kind)
         {
             if (!SystemAPI.HasSingleton<InteractionAudioRequestState>() || !SystemAPI.HasSingleton<InteractionAudioRequest>())
                 return;
 
-            if (!EntityManager.Exists(target) || !EntityManager.HasComponent<PlacedRefIdentity>(target))
+            if (!systemState.EntityManager.Exists(target) || !systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
                 return;
 
-            uint placedRefId = EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
-            if (!EntityManager.HasComponent<AudioEmitterAuthoring>(target))
-            {
-                WarnMissingInteractionSoundOnce(placedRefId, label, "has no AudioEmitterAuthoring component; skipping interaction one-shot.");
+            uint placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+            if (!systemState.EntityManager.HasComponent<AudioEmitterAuthoring>(target))
                 return;
-            }
 
-            var emitter = EntityManager.GetComponentData<AudioEmitterAuthoring>(target);
+            var emitter = systemState.EntityManager.GetComponentData<AudioEmitterAuthoring>(target);
             if (!emitter.PrimarySound.IsValid)
-            {
-                WarnMissingInteractionSoundOnce(placedRefId, label, "has no primary interaction sound; skipping interaction one-shot.");
                 return;
-            }
 
-            float3 position = ResolveAudioPosition(target);
+            float3 position = ResolveAudioPosition(ref systemState, target);
             ref var audioState = ref SystemAPI.GetSingletonRW<InteractionAudioRequestState>().ValueRW;
             uint sequence = audioState.NextSequence + 1u;
             audioState.NextSequence = sequence;
@@ -195,7 +193,7 @@ namespace VVardenfell.Runtime.Inventory
 
         }
 
-        void EnsureTransferStateReady()
+        void EnsureTransferStateReady(ref SystemState systemState)
         {
             if (!SystemAPI.HasSingleton<ContainerSessionItem>())
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one ContainerSessionItem buffer.");
@@ -203,26 +201,42 @@ namespace VVardenfell.Runtime.Inventory
             if (_playerInventoryQuery.CalculateEntityCount() != 1)
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one player inventory entity.");
 
-            if (!WorldJournalUtility.TryGetJournalEntity(EntityManager, out _))
+            if (_worldJournalQuery.CalculateEntityCount() != 1)
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one world journal entity.");
         }
 
-        float3 ResolveAudioPosition(Entity target)
+        uint AppendContainerDelta(ref SystemState systemState, uint placedRefId, ContentReference content, int deltaCount)
         {
-            if (EntityManager.HasComponent<LocalToWorld>(target))
-                return EntityManager.GetComponentData<LocalToWorld>(target).Value.c3.xyz;
+            if (placedRefId == 0u || !content.IsValid || deltaCount == 0)
+                return 0u;
 
-            if (EntityManager.HasComponent<LocalTransform>(target))
-                return EntityManager.GetComponentData<LocalTransform>(target).Position;
+            Entity journalEntity = _worldJournalQuery.GetSingletonEntity();
+            var state = systemState.EntityManager.GetComponentData<WorldJournalState>(journalEntity);
+            uint sequence = state.NextSequence + 1u;
+            state.NextSequence = sequence;
+            systemState.EntityManager.SetComponentData(journalEntity, state);
 
-            return float3.zero;
+            var journal = systemState.EntityManager.GetBuffer<WorldJournalEntry>(journalEntity);
+            journal.Add(new WorldJournalEntry
+            {
+                Sequence = sequence,
+                Kind = (byte)WorldJournalEntryKind.ContainerDelta,
+                PlacedRefId = placedRefId,
+                Content = content,
+                DeltaCount = deltaCount,
+            });
+            return sequence;
         }
 
-        void WarnMissingInteractionSoundOnce(uint placedRefId, string label, string reason)
+        float3 ResolveAudioPosition(ref SystemState systemState, Entity target)
         {
-            if (placedRefId == 0u || !_loggedMissingInteractionSounds.Add(placedRefId))
-                return;
+            if (systemState.EntityManager.HasComponent<LocalToWorld>(target))
+                return systemState.EntityManager.GetComponentData<LocalToWorld>(target).Value.c3.xyz;
 
+            if (systemState.EntityManager.HasComponent<LocalTransform>(target))
+                return systemState.EntityManager.GetComponentData<LocalTransform>(target).Position;
+
+            return float3.zero;
         }
     }
 }

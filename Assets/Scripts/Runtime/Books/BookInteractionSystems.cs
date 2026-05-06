@@ -1,5 +1,5 @@
 using Unity.Entities;
-using UnityEngine;
+using Unity.Burst;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
@@ -43,7 +43,7 @@ namespace VVardenfell.Runtime.Books
             if (!systemState.EntityManager.Exists(target)
                 || !systemState.EntityManager.HasComponent<BookTag>(target)
                 || !LooseCarryableResolver.TryResolveContent(ref contentBlob, systemState.EntityManager, target, out content)
-                || !RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, content, out _))
+                || !RuntimeContentMetadataResolver.TryResolveBookFixed(ref contentBlob, content, out _))
             {
                 return;
             }
@@ -88,6 +88,7 @@ namespace VVardenfell.Runtime.Books
 
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(BookReadRequestSystem))]
+    [BurstCompile]
     public partial struct InventoryBookReadRequestSystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
@@ -104,6 +105,7 @@ namespace VVardenfell.Runtime.Books
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var inventoryRequest = ref SystemAPI.GetSingletonRW<BookInventoryReadRequest>().ValueRW;
@@ -122,11 +124,8 @@ namespace VVardenfell.Runtime.Books
 
             ContentReference content = inventory[inventoryIndex].Content;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-            if (!RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, content, out _))
-            {
-                Debug.LogWarning("[VVardenfell][Books] inventory read request targeted a non-book item.");
+            if (!RuntimeContentMetadataResolver.TryResolveBookFixed(ref contentBlob, content, out _))
                 return;
-            }
 
             ref var readRequest = ref SystemAPI.GetSingletonRW<BookReadRequest>().ValueRW;
             readRequest = new BookReadRequest

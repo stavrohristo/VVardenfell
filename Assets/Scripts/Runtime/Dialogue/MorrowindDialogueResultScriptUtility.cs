@@ -55,7 +55,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
             DynamicBuffer<MorrowindDialogueChoice> choices,
-            string response,
             string script,
             ref RuntimeShellState shell,
             ref MorrowindDialogueSession session)
@@ -205,7 +204,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Debug.LogWarning($"[VVardenfell][Dialogue] unsupported V1 dialogue result command: '{line}'.");
             }
 
-            MorrowindDialogueUtility.AddTopicsFromResponse(ref contentBlob, knownTopics, response, entityManager, session.SpeakerEntity, session.SpeakerActor);
             return goodbye;
         }
 

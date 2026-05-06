@@ -1,4 +1,6 @@
 using System;
+using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
@@ -9,6 +11,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellActionSystem))]
     public partial struct RuntimeRestMenuActionSystem : ISystem
@@ -36,6 +39,7 @@ namespace VVardenfell.Runtime.Shell
             systemState.RequireForUpdate(_playerQuery);
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -45,7 +49,6 @@ namespace VVardenfell.Runtime.Shell
             if (action != RuntimeShellRestMenuActionId.None)
             {
                 HandleAction(ref systemState, ref shell, ref request, action);
-                RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
                 return;
             }
 
@@ -55,12 +58,10 @@ namespace VVardenfell.Runtime.Shell
             if (shell.RestMenuProgressHours >= shell.RestMenuTargetHours)
             {
                 RuntimeShellStateUtility.CloseRestMenu(ref shell);
-                RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
                 return;
             }
 
             AdvanceOneHour(ref systemState, ref shell);
-            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
         }
 
         void HandleAction(ref SystemState systemState, ref RuntimeShellState shell, ref RuntimeShellActionRequest request, RuntimeShellRestMenuActionId action)
@@ -72,7 +73,7 @@ namespace VVardenfell.Runtime.Shell
             switch (action)
             {
                 case RuntimeShellRestMenuActionId.SetHours:
-                    EnsureRestMenuOpen(shell, "set hours");
+                    EnsureRestMenuOpen(shell);
                     shell.RestMenuSelectedHours = RuntimeRestUtility.ClampHours(requestedHours);
                     return;
 
@@ -81,12 +82,12 @@ namespace VVardenfell.Runtime.Shell
                     return;
 
                 case RuntimeShellRestMenuActionId.Start:
-                    EnsureRestMenuOpen(shell, "start rest");
+                    EnsureRestMenuOpen(shell);
                     StartAdvancing(ref shell, RuntimeRestUtility.ClampHours(shell.RestMenuSelectedHours), shell.RestMenuCanSleep != 0);
                     return;
 
                 case RuntimeShellRestMenuActionId.UntilHealed:
-                    EnsureRestMenuOpen(shell, "rest until healed");
+                    EnsureRestMenuOpen(shell);
                     if (shell.RestMenuCanSleep == 0)
                         throw new InvalidOperationException("[VVardenfell][Rest] Until Healed was requested while sleep/rest is unavailable.");
 
@@ -94,7 +95,7 @@ namespace VVardenfell.Runtime.Shell
                     return;
 
                 default:
-                    throw new InvalidOperationException($"[VVardenfell][Rest] Unsupported rest menu action '{action}'.");
+                    throw new InvalidOperationException("[VVardenfell][Rest] Unsupported rest menu action.");
             }
         }
 
@@ -102,7 +103,7 @@ namespace VVardenfell.Runtime.Shell
         {
             if (shell.RestDisabled != 0)
             {
-                RuntimeShellStateUtility.ShowMessageBox(ref shell, "You cannot rest now.");
+                RuntimeShellStateUtility.ShowMessageBox(ref shell, BuildCannotRestNowText());
                 return;
             }
 
@@ -179,10 +180,20 @@ namespace VVardenfell.Runtime.Shell
             vitals.CurrentFatigue = math.clamp(vitals.CurrentFatigue, 0f, math.max(0f, vitals.ModifiedFatigueBase));
         }
 
-        static void EnsureRestMenuOpen(in RuntimeShellState shell, string action)
+        static void EnsureRestMenuOpen(in RuntimeShellState shell)
         {
             if (shell.RestMenuOpen == 0 || shell.RestMenuAdvancing != 0)
-                throw new InvalidOperationException($"[VVardenfell][Rest] Cannot {action}; rest menu is not accepting input.");
+                throw new InvalidOperationException("[VVardenfell][Rest] Rest menu is not accepting input.");
+        }
+
+        static Unity.Collections.FixedString512Bytes BuildCannotRestNowText()
+        {
+            var result = default(Unity.Collections.FixedString512Bytes);
+            result.Append('Y'); result.Append('o'); result.Append('u'); result.Append(' ');
+            result.Append('c'); result.Append('a'); result.Append('n'); result.Append('n'); result.Append('o'); result.Append('t'); result.Append(' ');
+            result.Append('r'); result.Append('e'); result.Append('s'); result.Append('t'); result.Append(' ');
+            result.Append('n'); result.Append('o'); result.Append('w'); result.Append('.');
+            return result;
         }
     }
 }

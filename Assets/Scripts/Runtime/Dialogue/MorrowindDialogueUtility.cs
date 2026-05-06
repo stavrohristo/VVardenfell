@@ -184,6 +184,51 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
+        public static void AddTopicsFromResponseBurst(
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            DynamicBuffer<MorrowindKnownDialogueTopic> knownTopics,
+            FixedString512Bytes response,
+            EntityManager entityManager,
+            Entity speakerEntity,
+            ActorDefHandle speakerHandle,
+            ref MorrowindDialogueFilterUtility.QueryContext queryContext)
+        {
+            if (IsWhiteSpace(response))
+                return;
+
+            for (int i = 0; i < contentBlob.Dialogues.Length && i < knownTopics.Length; i++)
+            {
+                if (knownTopics[i].Known != 0)
+                    continue;
+
+                ref RuntimeDialogueDefBlob dialogue = ref contentBlob.Dialogues[i];
+                if (dialogue.Type != DialogueDefType.Topic)
+                    continue;
+
+                FixedString128Bytes topic = ResolveDialogueTopicId(ref dialogue);
+                if (!ContainsTopicReference(response, topic))
+                    continue;
+
+                if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfoBurst(
+                        ref contentBlob,
+                        ref worldCells,
+                        entityManager,
+                        speakerEntity,
+                        speakerHandle,
+                        i,
+                        -1,
+                        ref queryContext,
+                        out _,
+                        out _))
+                {
+                    continue;
+                }
+
+                knownTopics[i] = new MorrowindKnownDialogueTopic { Known = 1 };
+            }
+        }
+
         public static bool ContainsTopicEntry(DynamicBuffer<MorrowindTopicJournalEntry> entries, int dialogueIndex, int infoIndex)
         {
             for (int i = 0; i < entries.Length; i++)
@@ -233,8 +278,86 @@ namespace VVardenfell.Runtime.MorrowindScript
             return false;
         }
 
+        static bool ContainsTopicReference(FixedString512Bytes response, FixedString128Bytes topic)
+        {
+            int topicStart = 0;
+            int topicEnd = topic.Length;
+            TrimNormalizedRange(topic, ref topicStart, ref topicEnd);
+            if (topicStart >= topicEnd)
+                return false;
+
+            int explicitIndex = IndexOf(response, (byte)'@', 0);
+            while (explicitIndex >= 0)
+            {
+                int end = IndexOf(response, (byte)'#', explicitIndex + 1);
+                if (end > explicitIndex)
+                {
+                    int valueStart = explicitIndex + 1;
+                    int valueEnd = end;
+                    TrimNormalizedRange(response, ref valueStart, ref valueEnd);
+                    if (NormalizedEquals(response, valueStart, valueEnd, topic, topicStart, topicEnd))
+                        return true;
+
+                    explicitIndex = IndexOf(response, (byte)'@', end + 1);
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            int index = IndexOfTopic(response, topic, topicStart, topicEnd, 0);
+            while (index >= 0)
+            {
+                int before = index - 1;
+                if (before < 0 || IsOpenMwTopicSeparator((char)response[before]))
+                    return true;
+
+                index = IndexOfTopic(response, topic, topicStart, topicEnd, index + 1);
+            }
+
+            return false;
+        }
+
         static int IndexOfTopic(string response, string topic, int startIndex)
             => response.IndexOf(topic, startIndex, StringComparison.OrdinalIgnoreCase);
+
+        static int IndexOfTopic(FixedString512Bytes response, FixedString128Bytes topic, int topicStart, int topicEnd, int startIndex)
+        {
+            int topicLength = topicEnd - topicStart;
+            if (topicLength <= 0 || response.Length < topicLength)
+                return -1;
+
+            int max = response.Length - topicLength;
+            for (int i = Math.Max(0, startIndex); i <= max; i++)
+            {
+                bool matched = true;
+                for (int j = 0; j < topicLength; j++)
+                {
+                    if (ToLowerAscii(response[i + j]) != ToLowerAscii(topic[topicStart + j]))
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        static int IndexOf(FixedString512Bytes value, byte needle, int startIndex)
+        {
+            for (int i = Math.Max(0, startIndex); i < value.Length; i++)
+            {
+                if (value[i] == needle)
+                    return i;
+            }
+
+            return -1;
+        }
 
         static bool IsOpenMwTopicSeparator(char ch)
             => ch == '\n'
@@ -245,6 +368,88 @@ namespace VVardenfell.Runtime.MorrowindScript
                || ch == '"'
                || ch == '('
                || ch == '[';
+
+        static FixedString128Bytes ResolveDialogueTopicId(ref RuntimeDialogueDefBlob dialogue)
+        {
+            FixedString128Bytes stringId = RuntimeFixedStringUtility.ToFixed128OrDefault(ref dialogue.StringId);
+            if (!IsWhiteSpace(stringId))
+                return stringId;
+
+            return RuntimeFixedStringUtility.ToFixed128OrDefault(ref dialogue.Id);
+        }
+
+        static bool IsWhiteSpace(FixedString512Bytes value)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (!IsAsciiWhiteSpace(value[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static bool IsWhiteSpace(FixedString128Bytes value)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (!IsAsciiWhiteSpace(value[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static void TrimNormalizedRange(FixedString512Bytes value, ref int start, ref int end)
+        {
+            while (start < end && IsAsciiWhiteSpace(value[start]))
+                start++;
+
+            while (end > start && (IsAsciiWhiteSpace(value[end - 1]) || value[end - 1] == 0x7Fu))
+                end--;
+        }
+
+        static void TrimNormalizedRange(FixedString128Bytes value, ref int start, ref int end)
+        {
+            while (start < end && IsAsciiWhiteSpace(value[start]))
+                start++;
+
+            while (end > start && (IsAsciiWhiteSpace(value[end - 1]) || value[end - 1] == 0x7Fu))
+                end--;
+        }
+
+        static bool NormalizedEquals(
+            FixedString512Bytes left,
+            int leftStart,
+            int leftEnd,
+            FixedString128Bytes right,
+            int rightStart,
+            int rightEnd)
+        {
+            int leftLength = leftEnd - leftStart;
+            int rightLength = rightEnd - rightStart;
+            if (leftLength != rightLength)
+                return false;
+
+            for (int i = 0; i < leftLength; i++)
+            {
+                if (ToLowerAscii(left[leftStart + i]) != ToLowerAscii(right[rightStart + i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static byte ToLowerAscii(byte value)
+            => value >= (byte)'A' && value <= (byte)'Z' ? (byte)(value + 32) : value;
+
+        static bool IsAsciiWhiteSpace(byte value)
+            => value == (byte)' '
+               || value == (byte)'\t'
+               || value == (byte)'\n'
+               || value == (byte)'\r'
+               || value == (byte)'\f'
+               || value == (byte)'\v';
 
         public static bool TryModFactionReaction(
             ref RuntimeContentBlob contentBlob,

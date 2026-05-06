@@ -1,5 +1,5 @@
-using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
@@ -10,6 +10,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -57,7 +59,7 @@ namespace VVardenfell.Runtime.Inventory
                 selectedIndex = FindFirstVisibleInventoryIndex(ref contentBlob, inventory, state);
 
             state.SelectedInventoryIndex = selectedIndex;
-            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(ref contentBlob, inventory, selectedIndex));
+            state.SelectedItemDetailsText = BuildSelectedItemDetails(ref contentBlob, inventory, selectedIndex);
         }
 
         static void ApplyRequests(ref InventoryWindowState state, ref InventoryWindowRequest request)
@@ -101,29 +103,29 @@ namespace VVardenfell.Runtime.Inventory
             if (!entry.Content.IsValid)
                 return false;
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
+            if (!RuntimeContentMetadataResolver.TryResolveCarryableFixed(ref contentBlob, entry.Content, out var metadata))
                 return false;
 
             if (!RuntimeContentMetadataResolver.MatchesCategory(metadata, (InventoryWindowCategory)state.ActiveCategory))
                 return false;
 
-            string filter = state.FilterText.ToString();
-            if (string.IsNullOrWhiteSpace(filter))
+            FixedString64Bytes filter = TrimAscii(state.FilterText);
+            if (filter.IsEmpty)
                 return true;
 
-            return metadata.DisplayName.IndexOf(filter.Trim(), StringComparison.OrdinalIgnoreCase) >= 0;
+            return ContainsIgnoreCase(metadata.DisplayName, filter);
         }
 
-        static string BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, int selectedIndex)
+        static FixedString512Bytes BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, int selectedIndex)
         {
             if (selectedIndex < 0 || selectedIndex >= inventory.Length)
-                return "Select an item to inspect.";
+                return RuntimeContentMetadataResolver.BuildSelectItemDetailsFixed();
 
             var entry = inventory[selectedIndex];
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
-                return "Select an item to inspect.";
+            if (!RuntimeContentMetadataResolver.TryResolveCarryableFixed(ref contentBlob, entry.Content, out var metadata))
+                return RuntimeContentMetadataResolver.BuildSelectItemDetailsFixed();
 
-            return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, entry.Count);
+            return RuntimeContentMetadataResolver.BuildCarryableDetailsFixed(metadata, entry.Count);
         }
 
         static InventoryWindowCategory ClampCategory(InventoryWindowCategory category)
@@ -132,6 +134,59 @@ namespace VVardenfell.Runtime.Inventory
                 ? category
                 : InventoryWindowCategory.All;
         }
+
+        static FixedString64Bytes TrimAscii(FixedString64Bytes value)
+        {
+            int start = 0;
+            int end = value.Length - 1;
+            while (start <= end && IsAsciiWhiteSpace(value[start]))
+                start++;
+            while (end >= start && IsAsciiWhiteSpace(value[end]))
+                end--;
+
+            var result = default(FixedString64Bytes);
+            for (int i = start; i <= end; i++)
+                result.Append((char)value[i]);
+            return result;
+        }
+
+        static bool ContainsIgnoreCase(FixedString128Bytes value, FixedString64Bytes needle)
+        {
+            if (needle.Length == 0)
+                return true;
+            if (needle.Length > value.Length)
+                return false;
+
+            int lastStart = value.Length - needle.Length;
+            for (int start = 0; start <= lastStart; start++)
+            {
+                bool matched = true;
+                for (int i = 0; i < needle.Length; i++)
+                {
+                    if (ToLowerAscii(value[start + i]) == ToLowerAscii(needle[i]))
+                        continue;
+
+                    matched = false;
+                    break;
+                }
+
+                if (matched)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static byte ToLowerAscii(byte value)
+            => value is >= (byte)'A' and <= (byte)'Z' ? (byte)(value + 32) : value;
+
+        static bool IsAsciiWhiteSpace(byte value)
+            => value == (byte)' '
+               || value == (byte)'\t'
+               || value == (byte)'\n'
+               || value == (byte)'\r'
+               || value == (byte)'\f'
+               || value == (byte)'\v';
 
     }
 }

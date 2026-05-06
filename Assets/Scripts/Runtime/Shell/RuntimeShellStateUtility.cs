@@ -185,6 +185,9 @@ namespace VVardenfell.Runtime.Shell
         }
 
         public static void ShowDialog(ref RuntimeShellState state, string title, string body)
+            => ShowDialog(ref state, ToFixedTitle(title), ToFixedBody(body));
+
+        public static void ShowDialog(ref RuntimeShellState state, FixedString128Bytes title, FixedString512Bytes body)
         {
             state.InventoryOpen = 0;
             state.ContainerOpen = 0;
@@ -193,8 +196,8 @@ namespace VVardenfell.Runtime.Shell
             state.JournalOpen = 0;
             state.DialogueOpen = 0;
             state.ModalOpen = 1;
-            state.ModalTitle = ToFixedTitle(title);
-            state.ModalBody = ToFixedBody(body);
+            state.ModalTitle = title;
+            state.ModalBody = body;
         }
 
         public static void ShowMessageBox(ref RuntimeShellState state, string body)

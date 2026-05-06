@@ -9,5 +9,10 @@ namespace VVardenfell.Runtime.Books
         {
             return metadata.IsScroll ? BookReaderKind.Scroll : BookReaderKind.Book;
         }
+
+        public static BookReaderKind ResolveKind(in FixedBookContentMetadata metadata)
+        {
+            return metadata.IsScroll ? BookReaderKind.Scroll : BookReaderKind.Book;
+        }
     }
 }

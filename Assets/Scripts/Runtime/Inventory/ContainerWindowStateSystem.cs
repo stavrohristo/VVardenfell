@@ -1,5 +1,4 @@
-using System;
-using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
@@ -9,6 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
@@ -23,6 +23,7 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -47,7 +48,7 @@ namespace VVardenfell.Runtime.Inventory
                 selectedIndex = ContainerLootUtility.FindFirstItemIndex(items, state.OpenPlacedRefId);
 
             state.SelectedItemIndex = selectedIndex;
-            state.SelectedItemDetailsText = RuntimeFixedStringUtility.ToFixed512DetailsOrDefault(BuildSelectedItemDetails(ref contentBlob, items, state.OpenPlacedRefId, selectedIndex));
+            state.SelectedItemDetailsText = BuildSelectedItemDetails(ref contentBlob, items, state.OpenPlacedRefId, selectedIndex);
         }
 
         static void ApplyRequests(ref ContainerWindowState state, ref ContainerWindowRequest request)
@@ -71,19 +72,19 @@ namespace VVardenfell.Runtime.Inventory
                 : -1;
         }
 
-        static string BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<ContainerSessionItem> items, uint placedRefId, int selectedIndex)
+        static Unity.Collections.FixedString512Bytes BuildSelectedItemDetails(ref RuntimeContentBlob contentBlob, DynamicBuffer<ContainerSessionItem> items, uint placedRefId, int selectedIndex)
         {
             if (selectedIndex < 0 || selectedIndex >= items.Length)
-                return "Container is empty.";
+                return RuntimeContentMetadataResolver.BuildContainerEmptyDetailsFixed();
 
             var entry = items[selectedIndex];
             if (entry.PlacedRefId != placedRefId || entry.Count <= 0)
-                return "Container is empty.";
+                return RuntimeContentMetadataResolver.BuildContainerEmptyDetailsFixed();
 
-            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, entry.Content, out var metadata))
-                return "Container is empty.";
+            if (!RuntimeContentMetadataResolver.TryResolveCarryableFixed(ref contentBlob, entry.Content, out var metadata))
+                return RuntimeContentMetadataResolver.BuildContainerEmptyDetailsFixed();
 
-            return RuntimeContentMetadataResolver.BuildCarryableDetails(metadata, Math.Max(1, entry.Count));
+            return RuntimeContentMetadataResolver.BuildCarryableDetailsFixed(metadata, Unity.Mathematics.math.max(1, entry.Count));
         }
 
     }

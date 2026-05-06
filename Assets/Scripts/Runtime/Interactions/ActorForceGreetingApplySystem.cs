@@ -1,15 +1,17 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Shell;
-using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Interactions
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     public partial struct ActorForceGreetingApplySystem : ISystem
     {
@@ -23,9 +25,9 @@ namespace VVardenfell.Runtime.Interactions
             systemState.RequireForUpdate<MorrowindDialogueSession>();
             systemState.RequireForUpdate<DialogueReadinessState>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
-            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -35,34 +37,29 @@ namespace VVardenfell.Runtime.Interactions
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
-            if (!worldCellReference.Blob.IsCreated)
-                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] ForceGreeting requires runtime world cell blob.");
-            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref systemState, ref contentBlob, ref worldCells, requests[i], lookup);
+                ApplyRequest(ref systemState, ref contentBlob, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][Interaction] ForceGreeting target ref={request.TargetPlacedRefId} is not loaded.");
+                throw new InvalidOperationException("[VVardenfell][Interaction] ForceGreeting target is not loaded.");
 
             if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(target))
-                throw new InvalidOperationException($"[VVardenfell][Interaction] ForceGreeting target ref={request.TargetPlacedRefId} is not an actor.");
+                throw new InvalidOperationException("[VVardenfell][Interaction] ForceGreeting target is not an actor.");
 
             if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
                 && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
             {
-                throw new InvalidOperationException($"[VVardenfell][Interaction] ForceGreeting target ref={request.TargetPlacedRefId} is disabled.");
+                throw new InvalidOperationException("[VVardenfell][Interaction] ForceGreeting target is disabled.");
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, systemState.EntityManager, target, InteractableKind.Npc)
-                ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Npc);
             ActorDefHandle actor = systemState.EntityManager.GetComponentData<ActorSpawnSource>(target).Definition;
+            var displayName = RuntimeContentMetadataResolver.ResolveActorDisplayNameFixed(ref contentBlob, actor);
             uint placedRefId = request.TargetPlacedRefId;
             if (placedRefId == 0u && systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
                 placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
@@ -88,7 +85,7 @@ namespace VVardenfell.Runtime.Interactions
                 SpeakerActor = actor,
                 SelectedTopicDialogueIndex = -1,
                 LastInfoIndex = -1,
-                SpeakerId = RuntimeFixedStringUtility.ToFixed128OrDefault(displayName),
+                SpeakerId = displayName,
             };
         }
     }

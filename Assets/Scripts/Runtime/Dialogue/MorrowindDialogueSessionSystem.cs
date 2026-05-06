@@ -1,7 +1,9 @@
+using System;
+using Unity.Collections;
 using Unity.Entities;
-using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -12,6 +14,9 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateAfter(typeof(RuntimeShellActionSystem))]
     public partial struct MorrowindDialogueSessionSystem : ISystem
     {
+        EntityQuery _worldCellBlobQuery;
+        MorrowindDialogueFilterUtility.QueryContext _filterQueryContext;
+
         public void OnCreate(ref SystemState systemState)
         {
             systemState.RequireForUpdate<RuntimeShellState>();
@@ -21,17 +26,49 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindTimeState>();
             systemState.RequireForUpdate<ActiveExplicitRefLookup>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
+
+            _worldCellBlobQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            _filterQueryContext = new MorrowindDialogueFilterUtility.QueryContext
+            {
+                PlayerFaction = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>()),
+                InteriorTransition = systemState.GetEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>()),
+                StreamingConfig = systemState.GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>()),
+                ScriptGlobal = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindScriptGlobalValue>()),
+                QuestJournal = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindQuestJournalIndex>()),
+                PlayerIdentity = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorIdentitySet>()),
+                PlayerCrime = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerCrimeState>()),
+                Player = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>()),
+                PlayerVitals = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorVitalSet>()),
+                DialogueFactionReaction = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDialogueState>(), ComponentType.ReadOnly<MorrowindFactionReactionOverride>()),
+                PlayerEquipment = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>()),
+                PlayerAttribute = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorAttributeSet>()),
+                PlayerSkill = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorSkillSet>()),
+            };
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
-            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-
             Entity shellEntity = SystemAPI.GetSingletonEntity<RuntimeShellState>();
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindDialogueState>();
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var session = ref SystemAPI.GetSingletonRW<MorrowindDialogueSession>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<MorrowindDialogueResponseRequest>().ValueRW;
+
+            if (shell.DialogueOpen == 0 || session.Active == 0)
+            {
+                request.Pending = 0;
+                return;
+            }
+
+            if (session.NeedsGreeting == 0 && request.Pending == 0)
+                return;
+
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellBlob = RequireWorldCellBlob(_worldCellBlobQuery);
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            ref MorrowindDialogueFilterUtility.QueryContext filterQueryContext = ref _filterQueryContext;
+
             var lines = systemState.EntityManager.GetBuffer<MorrowindDialogueSessionLine>(shellEntity);
             var choices = systemState.EntityManager.GetBuffer<MorrowindDialogueChoice>(shellEntity);
             var knownTopics = systemState.EntityManager.GetBuffer<MorrowindKnownDialogueTopic>(runtimeEntity);
@@ -60,20 +97,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
             var activeExplicitRefs = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
 
-            if (shell.DialogueOpen == 0 || session.Active == 0)
-            {
-                request.Pending = 0;
-                return;
-            }
-
             if (session.NeedsGreeting != 0)
             {
                 session.NeedsGreeting = 0;
                 lines.Clear();
                 choices.Clear();
-                if (!TryAppendGreeting(ref systemState, ref contentBlob, activeExplicitRefs, ref shell, ref session, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, lines, choices, ref dialogueState, ref questState, time, questStates, questEntries))
+                if (!TryAppendGreeting(ref systemState, ref contentBlob, ref worldCells, ref filterQueryContext, activeExplicitRefs, ref shell, ref session, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, lines, choices, ref dialogueState, ref questState, time, questStates, questEntries))
                 {
-                    Debug.LogWarning($"[VVardenfell][Dialogue] no greeting matched speaker '{session.SpeakerId}'.");
                     RuntimeShellStateUtility.CloseDialogue(ref shell);
                     session = CreateInactiveSession();
                     return;
@@ -104,6 +134,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 TryAppendTopic(ref systemState, 
                     ref contentBlob,
+                    ref worldCells,
+                    ref filterQueryContext,
                     activeExplicitRefs,
                     requestedDialogueIndex,
                     ref shell,
@@ -139,6 +171,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 TryAppendChoiceAnswer(ref systemState, 
                     ref contentBlob,
+                    ref worldCells,
+                    ref filterQueryContext,
                     activeExplicitRefs,
                     requestedChoiceValue,
                     ref shell,
@@ -174,6 +208,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         bool TryAppendGreeting(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            ref MorrowindDialogueFilterUtility.QueryContext filterQueryContext,
             ActiveExplicitRefLookup activeExplicitRefs,
             ref RuntimeShellState shell,
             ref MorrowindDialogueSession session,
@@ -210,18 +246,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (dialogue.Type != DialogueDefType.Greeting)
                     continue;
 
-                if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
+                if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfoBurst(
                         ref contentBlob,
+                        ref worldCells,
                         systemState.EntityManager,
                         session.SpeakerEntity,
                         session.SpeakerActor,
                         dialogueIndex,
                         -1,
+                        ref filterQueryContext,
                         out int infoIndex,
-                        out string unsupportedReason))
+                        out _))
                 {
-                    if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                        Debug.LogWarning($"[VVardenfell][Dialogue] greeting '{dialogue.Id.ToString()}' skipped: {unsupportedReason}");
                     continue;
                 }
 
@@ -229,9 +265,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.LastInfoIndex = infoIndex;
                 session.SelectedTopicDialogueIndex = dialogueIndex;
                 ref var info = ref contentBlob.DialogueInfos[infoIndex];
-                string response = info.Response.ToString();
-                MorrowindDialogueUtility.AddTopicsFromResponse(ref contentBlob, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor);
-                if (MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, info.ResultScript.ToString(), ref shell, ref session))
+                FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
+                bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
+                MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
+                if (closeDialogue)
                     CloseDialogue(ref shell, ref session, lines, choices);
                 return true;
             }
@@ -241,6 +278,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         void TryAppendTopic(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            ref MorrowindDialogueFilterUtility.QueryContext filterQueryContext,
             ActiveExplicitRefLookup activeExplicitRefs,
             int dialogueIndex,
             ref RuntimeShellState shell,
@@ -284,18 +323,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (dialogue.Type != DialogueDefType.Topic)
                 return;
 
-            if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
+            if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfoBurst(
                     ref contentBlob,
+                    ref worldCells,
                     systemState.EntityManager,
                     session.SpeakerEntity,
                     session.SpeakerActor,
                     dialogueIndex,
                     -1,
+                    ref filterQueryContext,
                     out int infoIndex,
-                    out string unsupportedReason))
+                    out _))
             {
-                if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                    Debug.LogWarning($"[VVardenfell][Dialogue] topic '{dialogue.Id.ToString()}' skipped: {unsupportedReason}");
                 return;
             }
 
@@ -312,14 +351,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                 session.SpeakerPlacedRefId,
                 session.SpeakerId);
             ref var info = ref contentBlob.DialogueInfos[infoIndex];
-            string response = info.Response.ToString();
-            MorrowindDialogueUtility.AddTopicsFromResponse(ref contentBlob, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor);
-            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, info.ResultScript.ToString(), ref shell, ref session))
+            FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
+            bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
+            MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
+            if (closeDialogue)
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 
         void TryAppendChoiceAnswer(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            ref MorrowindDialogueFilterUtility.QueryContext filterQueryContext,
             ActiveExplicitRefLookup activeExplicitRefs,
             int choiceValue,
             ref RuntimeShellState shell,
@@ -379,18 +421,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (dialogue.Type != DialogueDefType.Topic && dialogue.Type != DialogueDefType.Greeting)
                 return;
 
-            if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
+            if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfoBurst(
                     ref contentBlob,
+                    ref worldCells,
                     systemState.EntityManager,
                     session.SpeakerEntity,
                     session.SpeakerActor,
                     dialogueIndex,
                     choiceValue,
+                    ref filterQueryContext,
                     out int infoIndex,
-                    out string unsupportedReason))
+                    out _))
             {
-                if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                    Debug.LogWarning($"[VVardenfell][Dialogue] choice for '{dialogue.Id.ToString()}' skipped: {unsupportedReason}");
                 return;
             }
 
@@ -411,9 +453,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             ref var info = ref contentBlob.DialogueInfos[infoIndex];
-            string response = info.Response.ToString();
-            MorrowindDialogueUtility.AddTopicsFromResponse(ref contentBlob, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor);
-            if (MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, response, info.ResultScript.ToString(), ref shell, ref session))
+            FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
+            bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
+            MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
+            if (closeDialogue)
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 
@@ -433,6 +476,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             session = CreateInactiveSession();
             lines.Clear();
             choices.Clear();
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob(EntityQuery query)
+        {
+            if (query.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] dialogue session requires exactly one RuntimeWorldCellBlobReference singleton.");
+
+            var reference = query.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!reference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] dialogue session requires runtime world cell blob.");
+
+            return reference.Blob;
         }
 
         static MorrowindDialogueSession CreateInactiveSession()

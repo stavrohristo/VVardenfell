@@ -1,8 +1,6 @@
 using System;
-using System.Globalization;
-using System.Text;
 using Unity.Collections;
-using VVardenfell.Core;
+using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
@@ -12,143 +10,227 @@ namespace VVardenfell.Runtime.Shell
     {
         public static FixedString512Bytes Format(in ShellMessageBoxRequest request)
         {
-            string message = request.Body.ToString();
-            if (request.ArgCount == 0 || string.IsNullOrEmpty(message))
-                return RuntimeFixedStringUtility.ToFixed512OrDefault(message);
+            if (request.ArgCount == 0 || request.Body.IsEmpty)
+                return request.Body;
 
-            var formatted = new StringBuilder(message.Length + 32);
+            var formatted = default(FixedString512Bytes);
             int argIndex = 0;
-            for (int i = 0; i < message.Length; i++)
+            for (int i = 0; i < request.Body.Length; i++)
             {
-                char c = message[i];
-                if (c != '%')
+                byte c = request.Body[i];
+                if (c != (byte)'%')
                 {
-                    formatted.Append(c);
+                    formatted.Append((char)c);
                     continue;
                 }
 
-                if (++i >= message.Length)
+                if (++i >= request.Body.Length)
                     break;
-                if (message[i] == '%')
+
+                if (request.Body[i] == (byte)'%')
                 {
                     formatted.Append('%');
                     continue;
                 }
 
                 int flags = 0;
-                while (i < message.Length)
+                while (i < request.Body.Length)
                 {
-                    if (message[i] == '-')
+                    byte flag = request.Body[i];
+                    if (flag == (byte)'-')
                         flags |= 4;
-                    else if (message[i] == '+')
+                    else if (flag == (byte)'+')
                         flags |= 2;
-                    else if (message[i] == ' ')
+                    else if (flag == (byte)' ')
                         flags |= 1;
-                    else if (message[i] == '0')
+                    else if (flag == (byte)'0')
                         flags |= 8;
-                    else if (message[i] == '#')
+                    else if (flag == (byte)'#')
                         flags |= 16;
                     else
                         break;
                     i++;
                 }
 
-                int width = ParseNumber(message, ref i, -1);
+                int width = ParseNumber(request.Body, ref i, -1);
                 int precision = -1;
-                if (i < message.Length && message[i] == '.')
+                if (i < request.Body.Length && request.Body[i] == (byte)'.')
                 {
                     i++;
-                    precision = ParseNumber(message, ref i, 0);
+                    precision = ParseNumber(request.Body, ref i, 0);
                 }
 
-                if (i >= message.Length)
+                if (i >= request.Body.Length)
                     break;
 
-                char placeholder = message[i];
+                byte placeholder = request.Body[i];
                 if (!IsSupportedPlaceholder(placeholder))
                 {
-                    formatted.Append(placeholder);
+                    formatted.Append((char)placeholder);
                     continue;
                 }
 
                 if (argIndex >= request.ArgCount)
                     throw new InvalidOperationException("[VVardenfell][MWScript] MessageBox format argument underflow.");
 
-                formatted.Append(FormatArgument(request, argIndex++, placeholder, flags, width, precision));
+                var argument = FormatArgument(request, argIndex++, placeholder, flags, precision);
+                AppendPadded(ref formatted, argument, flags, width);
             }
 
-            return RuntimeFixedStringUtility.ToFixed512OrDefault(formatted.ToString());
+            return formatted;
         }
 
-        static string FormatArgument(in ShellMessageBoxRequest request, int argIndex, char placeholder, int flags, int width, int precision)
+        static FixedString128Bytes FormatArgument(in ShellMessageBoxRequest request, int argIndex, byte placeholder, int flags, int precision)
         {
-            bool floatPlaceholder = placeholder is 'f' or 'F' or 'e' or 'E' or 'g' or 'G';
-            string text = floatPlaceholder
-                ? FormatFloat(GetFloat(request, argIndex), placeholder, precision)
-                : FormatInteger(GetInt(request, argIndex), precision);
+            bool floatPlaceholder = placeholder is (byte)'f' or (byte)'F' or (byte)'e' or (byte)'E' or (byte)'g' or (byte)'G';
+            var text = default(FixedString128Bytes);
+            if (floatPlaceholder)
+                AppendFloat(ref text, GetFloat(request, argIndex), precision >= 0 ? precision : 6, (flags & 16) != 0);
+            else
+                AppendInteger(ref text, GetInt(request, argIndex), precision);
 
-            if ((flags & 16) != 0 && floatPlaceholder && precision > 0 && text.IndexOf('.', StringComparison.Ordinal) < 0)
-                text += ".";
-
-            if (!text.StartsWith("-", StringComparison.Ordinal))
+            if (!StartsWithSign(text))
             {
                 if ((flags & 2) != 0)
-                    text = "+" + text;
+                    Prepend(ref text, '+');
                 else if ((flags & 1) != 0)
-                    text = " " + text;
-            }
-
-            if (width > 0 && text.Length < width)
-            {
-                bool left = (flags & 4) != 0;
-                char pad = (flags & 8) != 0 && !left ? '0' : ' ';
-                int padCount = width - text.Length;
-                if (left)
-                    text = text + new string(' ', padCount);
-                else if (pad == '0' && (text.StartsWith("+", StringComparison.Ordinal) || text.StartsWith("-", StringComparison.Ordinal) || text.StartsWith(" ", StringComparison.Ordinal)))
-                    text = text[0] + new string('0', padCount) + text.Substring(1);
-                else
-                    text = new string(pad, padCount) + text;
+                    Prepend(ref text, ' ');
             }
 
             return text;
         }
 
-        static string FormatFloat(float value, char placeholder, int precision)
+        static void AppendPadded(ref FixedString512Bytes output, FixedString128Bytes text, int flags, int width)
         {
-            string specifier = placeholder switch
+            int padCount = math.max(0, width - text.Length);
+            bool left = (flags & 4) != 0;
+            bool zero = (flags & 8) != 0 && !left;
+
+            if (padCount == 0 || left)
             {
-                'e' => "e",
-                'E' => "E",
-                'g' => "G",
-                'G' => "G",
-                _ => "F",
-            };
-            if (precision >= 0)
-                specifier += precision.ToString(CultureInfo.InvariantCulture);
-            return value.ToString(specifier, CultureInfo.InvariantCulture);
+                output.Append(text);
+                AppendRepeated(ref output, ' ', padCount);
+                return;
+            }
+
+            if (zero && StartsWithSign(text))
+            {
+                output.Append((char)text[0]);
+                AppendRepeated(ref output, '0', padCount);
+                for (int i = 1; i < text.Length; i++)
+                    output.Append((char)text[i]);
+                return;
+            }
+
+            AppendRepeated(ref output, zero ? '0' : ' ', padCount);
+            output.Append(text);
         }
 
-        static string FormatInteger(int value, int precision)
+        static void AppendInteger(ref FixedString128Bytes output, int value, int precision)
         {
-            string text = Math.Abs(value).ToString(CultureInfo.InvariantCulture);
-            if (precision > text.Length)
-                text = new string('0', precision - text.Length) + text;
-            return value < 0 ? "-" + text : text;
+            if (value < 0)
+                output.Append('-');
+
+            uint magnitude = value == int.MinValue ? 2147483648u : (uint)math.abs(value);
+            var digits = default(FixedString64Bytes);
+            AppendUnsigned(ref digits, magnitude);
+
+            int zeroCount = precision > digits.Length ? precision - digits.Length : 0;
+            for (int i = 0; i < zeroCount; i++)
+                output.Append('0');
+            output.Append(digits);
         }
 
-        static int ParseNumber(string message, ref int index, int fallback)
+        static void AppendFloat(ref FixedString128Bytes output, float value, int precision, bool forceDecimal)
         {
+            precision = math.clamp(precision, 0, 6);
+            if (value < 0f)
+            {
+                output.Append('-');
+                value = -value;
+            }
+
+            int scale = Pow10(precision);
+            int scaled = (int)math.round(value * scale);
+            int whole = scale == 0 ? scaled : scaled / scale;
+            int fraction = scale == 0 ? 0 : scaled - whole * scale;
+            output.Append(whole);
+
+            if (precision <= 0)
+            {
+                if (forceDecimal)
+                    output.Append('.');
+                return;
+            }
+
+            output.Append('.');
+            int divisor = scale / 10;
+            while (divisor > 0)
+            {
+                output.Append((char)('0' + fraction / divisor % 10));
+                divisor /= 10;
+            }
+        }
+
+        static void AppendUnsigned(ref FixedString64Bytes output, uint value)
+        {
+            if (value == 0)
+            {
+                output.Append('0');
+                return;
+            }
+
+            var reversed = default(FixedString64Bytes);
+            while (value > 0)
+            {
+                reversed.Append((char)('0' + value % 10));
+                value /= 10;
+            }
+
+            for (int i = reversed.Length - 1; i >= 0; i--)
+                output.Append((char)reversed[i]);
+        }
+
+        static int ParseNumber(FixedString512Bytes message, ref int index, int fallback)
+        {
+            int value = 0;
             int start = index;
-            while (index < message.Length && message[index] >= '0' && message[index] <= '9')
+            while (index < message.Length && message[index] >= (byte)'0' && message[index] <= (byte)'9')
+            {
+                value = value * 10 + message[index] - (byte)'0';
                 index++;
-            return index > start && int.TryParse(message.Substring(start, index - start), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
-                ? value
-                : fallback;
+            }
+
+            return index > start ? value : fallback;
         }
 
-        static bool IsSupportedPlaceholder(char c)
-            => c is 'd' or 'i' or 'f' or 'F' or 'e' or 'E' or 'g' or 'G';
+        static bool IsSupportedPlaceholder(byte c)
+            => c is (byte)'d' or (byte)'i' or (byte)'f' or (byte)'F' or (byte)'e' or (byte)'E' or (byte)'g' or (byte)'G';
+
+        static bool StartsWithSign(FixedString128Bytes text)
+            => text.Length > 0 && (text[0] == (byte)'+' || text[0] == (byte)'-' || text[0] == (byte)' ');
+
+        static void Prepend(ref FixedString128Bytes text, char c)
+        {
+            var result = default(FixedString128Bytes);
+            result.Append(c);
+            result.Append(text);
+            text = result;
+        }
+
+        static void AppendRepeated(ref FixedString512Bytes output, char c, int count)
+        {
+            for (int i = 0; i < count; i++)
+                output.Append(c);
+        }
+
+        static int Pow10(int value)
+        {
+            int result = 1;
+            for (int i = 0; i < value; i++)
+                result *= 10;
+            return result;
+        }
 
         static int GetInt(in ShellMessageBoxRequest request, int index)
             => index switch

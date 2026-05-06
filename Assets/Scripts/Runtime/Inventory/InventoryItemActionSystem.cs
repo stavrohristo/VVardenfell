@@ -1,8 +1,8 @@
 using System;
 using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
@@ -14,6 +14,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(ContainerWindowStateSystem))]
     [UpdateAfter(typeof(InventoryWindowStateSystem))]
@@ -22,6 +23,7 @@ namespace VVardenfell.Runtime.Inventory
     {
         EntityQuery _playerInventoryQuery;
         EntityQuery _playerEquipmentQuery;
+        EntityQuery _worldJournalQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -31,6 +33,9 @@ namespace VVardenfell.Runtime.Inventory
             _playerEquipmentQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorEquipmentSlot>());
+            _worldJournalQuery = systemState.GetEntityQuery(
+                ComponentType.ReadWrite<WorldJournalState>(),
+                ComponentType.ReadWrite<WorldJournalEntry>());
 
             systemState.RequireForUpdate<InventoryItemActionRequest>();
             systemState.RequireForUpdate<InventoryHeldItemState>();
@@ -38,6 +43,7 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             bool hasQueuedRequests = SystemAPI.HasSingleton<InventoryItemActionRequestElement>();
@@ -261,7 +267,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
 
             int transferCount = math.clamp(requestedCount, 1, containerEntry.Count);
-            WorldJournalUtility.AppendContainerDelta(systemState.EntityManager, sourcePlacedRefId, containerEntry.Content, -transferCount);
+            AppendContainerDelta(ref systemState, sourcePlacedRefId, containerEntry.Content, -transferCount);
             RemoveContainerCountAt(items, sourceIndex, transferCount);
             ContainerLootUtility.AddInventoryStack(
                 ref contentBlob,
@@ -302,7 +308,7 @@ namespace VVardenfell.Runtime.Inventory
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
                 RemoveCorpseBackingInventory(ref systemState, sourcePlacedRefId, entry, count);
-                WorldJournalUtility.AppendContainerDelta(systemState.EntityManager, sourcePlacedRefId, entry.Content, -count);
+                AppendContainerDelta(ref systemState, sourcePlacedRefId, entry.Content, -count);
                 RemoveContainerCountAt(items, sourceIndex, count);
                 ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 return;
@@ -317,7 +323,7 @@ namespace VVardenfell.Runtime.Inventory
                 UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 AddCorpseBackingInventory(ref systemState, ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-                WorldJournalUtility.AppendContainerDelta(systemState.EntityManager, targetPlacedRefId, entry.Content, count);
+                AppendContainerDelta(ref systemState, targetPlacedRefId, entry.Content, count);
                 RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             }
         }
@@ -343,7 +349,7 @@ namespace VVardenfell.Runtime.Inventory
             UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
             AddCorpseBackingInventory(ref systemState, ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-            WorldJournalUtility.AppendContainerDelta(systemState.EntityManager, targetPlacedRefId, entry.Content, count);
+            AppendContainerDelta(ref systemState, targetPlacedRefId, entry.Content, count);
             RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             ClearHeld(ref held);
         }
@@ -365,7 +371,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
             }
 
-            if (RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, entry.Content, out _))
+            if (RuntimeContentMetadataResolver.TryResolveBookFixed(ref contentBlob, entry.Content, out _))
             {
                 QueueBookRead(ref systemState, inventoryIndex);
                 ClearHeld(ref held);
@@ -466,12 +472,11 @@ namespace VVardenfell.Runtime.Inventory
 
         void WarnUnsupportedUse(ref SystemState systemState, ContentReference content)
         {
-            Debug.LogWarning($"[VVardenfell][Inventory] item cannot be used from inventory yet: {content.Kind}/{content.HandleValue}");
             if (!SystemAPI.HasSingleton<InteractionPresentationState>())
                 return;
 
             ref var presentation = ref SystemAPI.GetSingletonRW<InteractionPresentationState>().ValueRW;
-            presentation.NotificationText = RuntimeFixedStringUtility.ToFixed128OrDefault("You cannot use that item.");
+            presentation.NotificationText = BuildCannotUseItemText();
             presentation.NotificationSecondsRemaining = 3f;
             presentation.ShowNotification = 1;
         }
@@ -541,7 +546,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
 
             if (!systemState.EntityManager.HasBuffer<ActorInventoryItem>(target))
-                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} has visible loot but no ActorInventoryItem buffer.");
+                throw new InvalidOperationException("[VVardenfell][Corpse] Corpse has visible loot but no ActorInventoryItem buffer.");
 
             var actorInventory = systemState.EntityManager.GetBuffer<ActorInventoryItem>(target);
             DynamicBuffer<ActorEquipmentSlot> actorEquipment = systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(target)
@@ -559,7 +564,7 @@ namespace VVardenfell.Runtime.Inventory
                 entry.SoulActorHandleValue,
                 count);
             if (removed != count)
-                throw new InvalidOperationException($"[VVardenfell][Corpse] Corpse ref={placedRefId} inventory could remove {removed} of requested {count} for content {entry.Content.Kind}:{entry.Content.HandleValue}.");
+                throw new InvalidOperationException("[VVardenfell][Corpse] Corpse inventory could not remove the requested item count.");
 
             ulong currentSignature = actorEquipment.IsCreated
                 ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(actorEquipment)
@@ -611,6 +616,32 @@ namespace VVardenfell.Runtime.Inventory
                 enabled: true);
             ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
+        }
+
+        uint AppendContainerDelta(ref SystemState systemState, uint placedRefId, ContentReference content, int deltaCount)
+        {
+            if (placedRefId == 0u || !content.IsValid || deltaCount == 0)
+                return 0u;
+
+            if (_worldJournalQuery.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][Inventory] cannot mutate container contents without exactly one world journal entity.");
+
+            Entity journalEntity = _worldJournalQuery.GetSingletonEntity();
+            var state = systemState.EntityManager.GetComponentData<WorldJournalState>(journalEntity);
+            uint sequence = state.NextSequence + 1u;
+            state.NextSequence = sequence;
+            systemState.EntityManager.SetComponentData(journalEntity, state);
+
+            var journal = systemState.EntityManager.GetBuffer<WorldJournalEntry>(journalEntity);
+            journal.Add(new WorldJournalEntry
+            {
+                Sequence = sequence,
+                Kind = (byte)WorldJournalEntryKind.ContainerDelta,
+                PlacedRefId = placedRefId,
+                Content = content,
+                DeltaCount = deltaCount,
+            });
+            return sequence;
         }
 
         static void RemovePlayerCountAt(
@@ -715,6 +746,17 @@ namespace VVardenfell.Runtime.Inventory
             {
                 InventoryIndex = -1,
             };
+        }
+
+        static FixedString128Bytes BuildCannotUseItemText()
+        {
+            var result = default(FixedString128Bytes);
+            result.Append('Y'); result.Append('o'); result.Append('u'); result.Append(' ');
+            result.Append('c'); result.Append('a'); result.Append('n'); result.Append('n'); result.Append('o'); result.Append('t'); result.Append(' ');
+            result.Append('u'); result.Append('s'); result.Append('e'); result.Append(' ');
+            result.Append('t'); result.Append('h'); result.Append('a'); result.Append('t'); result.Append(' ');
+            result.Append('i'); result.Append('t'); result.Append('e'); result.Append('m'); result.Append('.');
+            return result;
         }
     }
 }

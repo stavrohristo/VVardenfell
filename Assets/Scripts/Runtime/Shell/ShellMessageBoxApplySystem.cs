@@ -1,10 +1,12 @@
 using Unity.Entities;
+using Unity.Burst;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     public partial struct ShellMessageBoxApplySystem : ISystem
     {
@@ -15,6 +17,7 @@ namespace VVardenfell.Runtime.Shell
             systemState.RequireForUpdate<RuntimeShellState>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
