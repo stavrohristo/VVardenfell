@@ -36,9 +36,6 @@ namespace VVardenfell.Runtime.Content
             if (s_QueryCreated && s_QueryWorld == world)
                 return s_Query;
 
-            if (s_QueryCreated)
-                s_Query.Dispose();
-
             s_QueryWorld = world;
             s_Query = world.EntityManager.CreateEntityQuery(typeof(RuntimeContentBlobReference));
             s_QueryCreated = true;

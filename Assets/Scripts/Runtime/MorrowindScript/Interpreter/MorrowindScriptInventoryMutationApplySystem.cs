@@ -12,42 +12,42 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptInventoryMutationApplySystem : SystemBase
+    public partial struct MorrowindScriptInventoryMutationApplySystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerInventoryQuery = GetEntityQuery(
+            _playerInventoryQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerInventoryItem>());
 
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptInventoryMutationRequest>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptInventoryMutationRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptInventoryMutationRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptInventoryMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref contentBlob, requests[i], lookup);
+                ApplyRequest(ref systemState, ref contentBlob, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
         {
             if (request.Operation == 2)
             {
-                ApplyRemoveSoulGem(request);
+                ApplyRemoveSoulGem(ref systemState, request);
                 return;
             }
 
@@ -61,38 +61,38 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (request.TargetMode == (byte)MorrowindScriptRefTargetMode.Player)
             {
                 Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] Player inventory mutation requested before player inventory was bootstrapped.");
-                var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
+                var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
                 if (request.Operation == 0)
                     AddPlayerItem(ref contentBlob, inventory, request.Content, count);
                 else
                     RemovePlayerItem(inventory, request.Content, count);
-                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(systemState.EntityManager, inventoryEntity);
                 return;
             }
 
-            Entity target = ResolveTarget(request, lookup);
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            Entity target = ResolveTarget(ref systemState, request, lookup);
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Inventory mutation target ref={request.TargetPlacedRefId} is not loaded.");
 
-            if (!EntityManager.HasBuffer<ActorInventoryItem>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorInventoryItem>(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Inventory mutation target ref={request.TargetPlacedRefId} has no actor inventory.");
 
-            var actorInventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
+            var actorInventory = systemState.EntityManager.GetBuffer<ActorInventoryItem>(target);
             if (request.Operation == 0)
                 AddActorItem(ref contentBlob, actorInventory, request.Content, count);
             else
                 RemoveActorItem(actorInventory, request.Content, count);
         }
 
-        void ApplyRemoveSoulGem(in MorrowindScriptInventoryMutationRequest request)
+        void ApplyRemoveSoulGem(ref SystemState systemState, in MorrowindScriptInventoryMutationRequest request)
         {
             if (request.TargetMode != (byte)MorrowindScriptRefTargetMode.Player || request.SoulActorHandleValue <= 0)
                 throw new InvalidOperationException("[VVardenfell][MWScript] RemoveSoulGem supports only explicit Player targets with a known soul actor.");
 
             Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
 
-            RemovePlayerSoulGem(EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
-            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
+            RemovePlayerSoulGem(systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(systemState.EntityManager, inventoryEntity);
         }
 
         Entity RequirePlayerInventoryEntity(string error)
@@ -104,9 +104,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             return _playerInventoryQuery.GetSingletonEntity();
         }
 
-        Entity ResolveTarget(in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
+        Entity ResolveTarget(ref SystemState systemState, in MorrowindScriptInventoryMutationRequest request, in LogicalRefLookup lookup)
         {
-            if (request.TargetEntity != Entity.Null && EntityManager.Exists(request.TargetEntity))
+            if (request.TargetEntity != Entity.Null && systemState.EntityManager.Exists(request.TargetEntity))
                 return request.TargetEntity;
 
             if (request.TargetPlacedRefId != 0u && lookup.Map.IsCreated && lookup.Map.TryGetValue(request.TargetPlacedRefId, out Entity target))

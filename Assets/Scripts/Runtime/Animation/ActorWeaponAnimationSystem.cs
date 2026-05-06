@@ -9,17 +9,17 @@ namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
-    public partial class ActorWeaponAnimationSystem : SystemBase
+    public partial struct ActorWeaponAnimationSystem : ISystem
     {
         const int CombatOverlayPriority = 40;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorAnimationBlobCatalog>();
-            RequireForUpdate<ActorWeaponAnimationState>();
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<ActorWeaponAnimationState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
@@ -40,15 +40,15 @@ namespace VVardenfell.Runtime.Animation
                     ref weaponState.ValueRW,
                     overlays);
                 if (hadRenderOwner != HasRigidEquipmentRenderOwner(weaponState.ValueRO))
-                    markedRenderOwnersDirty |= MarkRigidEquipmentRenderOwnersDirty(ref ecb, entity);
+                    markedRenderOwnersDirty |= MarkRigidEquipmentRenderOwnersDirty(ref systemState, ref ecb, entity);
             }
 
             if (markedRenderOwnersDirty)
-                ecb.Playback(EntityManager);
+                ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        bool MarkRigidEquipmentRenderOwnersDirty(ref EntityCommandBuffer ecb, Entity actor)
+        bool MarkRigidEquipmentRenderOwnersDirty(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity actor)
         {
             bool marked = false;
             foreach (var (attachment, entity) in
@@ -58,7 +58,7 @@ namespace VVardenfell.Runtime.Animation
                 if (attachment.ValueRO.Actor != actor)
                     continue;
 
-                if (EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerDirty>(entity))
+                if (systemState.EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerDirty>(entity))
                     ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, true);
                 else
                     ecb.AddComponent<ActorRigidEquipmentRenderOwnerDirty>(entity);
@@ -155,8 +155,12 @@ namespace VVardenfell.Runtime.Animation
             state.AttackMinTime = 0f;
             state.AttackMaxTime = 0f;
 
-            FixedString64Bytes start = draw ? Fixed64("equip start") : Fixed64("unequip start");
-            FixedString64Bytes stop = draw ? Fixed64("equip stop") : Fixed64("unequip stop");
+            ulong start = draw
+                ? ActorWeaponAnimationUtility.EquipStartMarkerHash
+                : ActorWeaponAnimationUtility.UnequipStartMarkerHash;
+            ulong stop = draw
+                ? ActorWeaponAnimationUtility.EquipStopMarkerHash
+                : ActorWeaponAnimationUtility.UnequipStopMarkerHash;
             if (TryResolveWeaponWindow(ref catalog, presentation, state.WeaponType, start, stop, out var group, out float startTime, out float stopTime))
             {
                 StartUpperBodyOverlay(overlays, group, startTime, stopTime, holdAtStop: draw);
@@ -204,7 +208,7 @@ namespace VVardenfell.Runtime.Animation
                 || minAttackTime >= stopTime)
             {
                 throw new System.InvalidOperationException(
-                    $"[VVardenfell][Combat] Weapon animation type={state.WeaponType} attack={state.AttackType} has no valid min-to-max attack marker window.");
+                    "[VVardenfell][Combat] Weapon animation has no valid min-to-max attack marker window.");
             }
 
             state.AttackStrength = 0f;
@@ -269,7 +273,7 @@ namespace VVardenfell.Runtime.Animation
             }
 
             throw new System.InvalidOperationException(
-                $"[VVardenfell][Combat] Weapon animation type={state.WeaponType} attack={state.AttackType} has no release-to-hit marker window.");
+                "[VVardenfell][Combat] Weapon animation has no release-to-hit marker window.");
         }
 
         static void QueueMeleeSwing(ref ActorWeaponAnimationState state)
@@ -358,8 +362,8 @@ namespace VVardenfell.Runtime.Animation
                     ref catalog,
                     presentation,
                     state.WeaponType,
-                    Fixed64("equip start"),
-                    Fixed64("equip stop"),
+                    ActorWeaponAnimationUtility.EquipStartMarkerHash,
+                    ActorWeaponAnimationUtility.EquipStopMarkerHash,
                     out var group,
                     out _,
                     out float stopTime))
@@ -385,8 +389,8 @@ namespace VVardenfell.Runtime.Animation
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             int weaponType,
-            FixedString64Bytes startValue,
-            FixedString64Bytes stopValue,
+            ulong startValueHash,
+            ulong stopValueHash,
             out ActorAnimationGroupBlob group,
             out float start,
             out float stop)
@@ -397,19 +401,19 @@ namespace VVardenfell.Runtime.Animation
             if (!ActorWeaponAnimationUtility.TryResolveGroupHashes(weaponType, out ulong primaryHash, out ulong fallbackHash))
                 return false;
 
-            if (TryResolveGroupWindow(ref catalog, presentation, primaryHash, startValue, stopValue, out group, out start, out stop))
+            if (TryResolveGroupWindow(ref catalog, presentation, primaryHash, startValueHash, stopValueHash, out group, out start, out stop))
                 return true;
 
             return fallbackHash != 0UL
-                   && TryResolveGroupWindow(ref catalog, presentation, fallbackHash, startValue, stopValue, out group, out start, out stop);
+                   && TryResolveGroupWindow(ref catalog, presentation, fallbackHash, startValueHash, stopValueHash, out group, out start, out stop);
         }
 
         static bool TryResolveGroupWindow(
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             ulong groupHash,
-            FixedString64Bytes startValue,
-            FixedString64Bytes stopValue,
+            ulong startValueHash,
+            ulong stopValueHash,
             out ActorAnimationGroupBlob group,
             out float start,
             out float stop)
@@ -421,32 +425,32 @@ namespace VVardenfell.Runtime.Animation
                 return false;
             }
 
-            return ActorAnimationMarkerWindowUtility.TryResolveWindow(ref catalog, group, startValue, stopValue, out start, out stop);
+            return ActorAnimationMarkerWindowUtility.TryResolveWindow(ref catalog, group, startValueHash, stopValueHash, out start, out stop);
         }
 
         static bool TryResolveWeaponMarker(
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             int weaponType,
-            FixedString64Bytes value,
+            ulong valueHash,
             out float time)
         {
             time = 0f;
             if (!ActorWeaponAnimationUtility.TryResolveGroupHashes(weaponType, out ulong primaryHash, out ulong fallbackHash))
                 return false;
 
-            if (TryResolveGroupMarker(ref catalog, presentation, primaryHash, value, out time))
+            if (TryResolveGroupMarker(ref catalog, presentation, primaryHash, valueHash, out time))
                 return true;
 
             return fallbackHash != 0UL
-                   && TryResolveGroupMarker(ref catalog, presentation, fallbackHash, value, out time);
+                   && TryResolveGroupMarker(ref catalog, presentation, fallbackHash, valueHash, out time);
         }
 
         static bool TryResolveGroupMarker(
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
             ulong groupHash,
-            FixedString64Bytes value,
+            ulong valueHash,
             out float time)
         {
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var group))
@@ -455,7 +459,7 @@ namespace VVardenfell.Runtime.Animation
                 return false;
             }
 
-            return ActorAnimationMarkerWindowUtility.TryResolveMarker(ref catalog, group, value, out time);
+            return ActorAnimationMarkerWindowUtility.TryResolveMarker(ref catalog, group, valueHash, out time);
         }
 
         static float ResolveReleaseStartTime(
@@ -568,55 +572,61 @@ namespace VVardenfell.Runtime.Animation
             return strength < 0.66f ? ActorAttackFollowSize.Medium : ActorAttackFollowSize.Large;
         }
 
-        static FixedString64Bytes AttackMarker(ActorWeaponAttackType attackType, AttackMarkerKind kind)
+        static ulong AttackMarker(ActorWeaponAttackType attackType, AttackMarkerKind kind)
         {
             return attackType switch
             {
                 ActorWeaponAttackType.Slash => kind switch
                 {
-                    AttackMarkerKind.Start => Fixed64("slash start"),
-                    AttackMarkerKind.MinAttack => Fixed64("slash min attack"),
-                    AttackMarkerKind.MaxAttack => Fixed64("slash max attack"),
-                    AttackMarkerKind.MinHit => Fixed64("slash min hit"),
-                    _ => Fixed64("slash hit"),
+                    AttackMarkerKind.Start => ActorWeaponAnimationUtility.SlashStartMarkerHash,
+                    AttackMarkerKind.MinAttack => ActorWeaponAnimationUtility.SlashMinAttackMarkerHash,
+                    AttackMarkerKind.MaxAttack => ActorWeaponAnimationUtility.SlashMaxAttackMarkerHash,
+                    AttackMarkerKind.MinHit => ActorWeaponAnimationUtility.SlashMinHitMarkerHash,
+                    _ => ActorWeaponAnimationUtility.SlashHitMarkerHash,
                 },
                 ActorWeaponAttackType.Thrust => kind switch
                 {
-                    AttackMarkerKind.Start => Fixed64("thrust start"),
-                    AttackMarkerKind.MinAttack => Fixed64("thrust min attack"),
-                    AttackMarkerKind.MaxAttack => Fixed64("thrust max attack"),
-                    AttackMarkerKind.MinHit => Fixed64("thrust min hit"),
-                    _ => Fixed64("thrust hit"),
+                    AttackMarkerKind.Start => ActorWeaponAnimationUtility.ThrustStartMarkerHash,
+                    AttackMarkerKind.MinAttack => ActorWeaponAnimationUtility.ThrustMinAttackMarkerHash,
+                    AttackMarkerKind.MaxAttack => ActorWeaponAnimationUtility.ThrustMaxAttackMarkerHash,
+                    AttackMarkerKind.MinHit => ActorWeaponAnimationUtility.ThrustMinHitMarkerHash,
+                    _ => ActorWeaponAnimationUtility.ThrustHitMarkerHash,
                 },
                 _ => kind switch
                 {
-                    AttackMarkerKind.Start => Fixed64("chop start"),
-                    AttackMarkerKind.MinAttack => Fixed64("chop min attack"),
-                    AttackMarkerKind.MaxAttack => Fixed64("chop max attack"),
-                    AttackMarkerKind.MinHit => Fixed64("chop min hit"),
-                    _ => Fixed64("chop hit"),
+                    AttackMarkerKind.Start => ActorWeaponAnimationUtility.ChopStartMarkerHash,
+                    AttackMarkerKind.MinAttack => ActorWeaponAnimationUtility.ChopMinAttackMarkerHash,
+                    AttackMarkerKind.MaxAttack => ActorWeaponAnimationUtility.ChopMaxAttackMarkerHash,
+                    AttackMarkerKind.MinHit => ActorWeaponAnimationUtility.ChopMinHitMarkerHash,
+                    _ => ActorWeaponAnimationUtility.ChopHitMarkerHash,
                 },
             };
         }
 
-        static FixedString64Bytes FollowMarker(ActorWeaponAttackType attackType, ActorAttackFollowSize size, bool start)
+        static ulong FollowMarker(ActorWeaponAttackType attackType, ActorAttackFollowSize size, bool start)
         {
-            string prefix = attackType switch
+            return attackType switch
             {
-                ActorWeaponAttackType.Slash => "slash",
-                ActorWeaponAttackType.Thrust => "thrust",
-                _ => "chop",
+                ActorWeaponAttackType.Slash => size switch
+                {
+                    ActorAttackFollowSize.Medium => start ? ActorWeaponAnimationUtility.SlashMediumFollowStartMarkerHash : ActorWeaponAnimationUtility.SlashMediumFollowStopMarkerHash,
+                    ActorAttackFollowSize.Large => start ? ActorWeaponAnimationUtility.SlashLargeFollowStartMarkerHash : ActorWeaponAnimationUtility.SlashLargeFollowStopMarkerHash,
+                    _ => start ? ActorWeaponAnimationUtility.SlashSmallFollowStartMarkerHash : ActorWeaponAnimationUtility.SlashSmallFollowStopMarkerHash,
+                },
+                ActorWeaponAttackType.Thrust => size switch
+                {
+                    ActorAttackFollowSize.Medium => start ? ActorWeaponAnimationUtility.ThrustMediumFollowStartMarkerHash : ActorWeaponAnimationUtility.ThrustMediumFollowStopMarkerHash,
+                    ActorAttackFollowSize.Large => start ? ActorWeaponAnimationUtility.ThrustLargeFollowStartMarkerHash : ActorWeaponAnimationUtility.ThrustLargeFollowStopMarkerHash,
+                    _ => start ? ActorWeaponAnimationUtility.ThrustSmallFollowStartMarkerHash : ActorWeaponAnimationUtility.ThrustSmallFollowStopMarkerHash,
+                },
+                _ => size switch
+                {
+                    ActorAttackFollowSize.Medium => start ? ActorWeaponAnimationUtility.ChopMediumFollowStartMarkerHash : ActorWeaponAnimationUtility.ChopMediumFollowStopMarkerHash,
+                    ActorAttackFollowSize.Large => start ? ActorWeaponAnimationUtility.ChopLargeFollowStartMarkerHash : ActorWeaponAnimationUtility.ChopLargeFollowStopMarkerHash,
+                    _ => start ? ActorWeaponAnimationUtility.ChopSmallFollowStartMarkerHash : ActorWeaponAnimationUtility.ChopSmallFollowStopMarkerHash,
+                },
             };
-            string sizeText = size switch
-            {
-                ActorAttackFollowSize.Medium => "medium",
-                ActorAttackFollowSize.Large => "large",
-                _ => "small",
-            };
-            return Fixed64($"{prefix} {sizeText} follow {(start ? "start" : "stop")}");
         }
-
-        static FixedString64Bytes Fixed64(string value) => new(value);
     }
 }
 #endif

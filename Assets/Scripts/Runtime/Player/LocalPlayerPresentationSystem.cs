@@ -12,13 +12,13 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
-    public partial class LocalPlayerPresentationSpawnSystem : SystemBase
+    public partial struct LocalPlayerPresentationSpawnSystem : ISystem
     {
         EntityQuery _missingPresentationQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _missingPresentationQuery = GetEntityQuery(new EntityQueryDesc
+            _missingPresentationQuery = systemState.GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
                 {
@@ -30,12 +30,12 @@ namespace VVardenfell.Runtime.Player
                 },
             });
 
-            RequireForUpdate(_missingPresentationQuery);
-            RequireForUpdate<PlayerViewComponent>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_missingPresentationQuery);
+            systemState.RequireForUpdate<PlayerViewComponent>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.player, out var actorHandle) || !actorHandle.IsValid)
@@ -71,7 +71,7 @@ namespace VVardenfell.Runtime.Player
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
-            Entity firstPersonVisual = CreatePlayerVisual(
+            Entity firstPersonVisual = CreatePlayerVisual(ref systemState, 
                 ref ecb,
                 player,
                 view,
@@ -80,7 +80,7 @@ namespace VVardenfell.Runtime.Player
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
                 visible: true);
-            Entity thirdPersonVisual = CreatePlayerVisual(
+            Entity thirdPersonVisual = CreatePlayerVisual(ref systemState, 
                 ref ecb,
                 player,
                 view,
@@ -99,11 +99,11 @@ namespace VVardenfell.Runtime.Player
                 Actor = actorHandle,
             });
             ecb.AddComponent(player, new LocalPlayerPresentationPose());
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        Entity CreatePlayerVisual(
+        Entity CreatePlayerVisual(ref SystemState systemState, 
             ref EntityCommandBuffer ecb,
             Entity player,
             Entity view,
@@ -132,7 +132,7 @@ namespace VVardenfell.Runtime.Player
             });
             ecb.AddComponent(visual, LocalTransform.Identity);
             ecb.AddComponent(visual, new LocalToWorld());
-            ecb.AddComponent(visual, ResolveInitialMovementState(player));
+            ecb.AddComponent(visual, ResolveInitialMovementState(ref systemState, player));
             ecb.AddComponent(visual, new ActorWeaponAnimationState
             {
                 WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
@@ -143,9 +143,9 @@ namespace VVardenfell.Runtime.Player
             ecb.AddComponent<ActorShadowCasterVisible>(visual);
             ecb.SetComponentEnabled<ActorShadowCasterVisible>(visual, !firstPerson);
 
-            if (EntityManager.HasBuffer<ActorEquipmentSlot>(player))
+            if (systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(player))
             {
-                var playerEquipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
+                var playerEquipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
                 if (playerEquipment.Length > 0)
                 {
                     var equipmentBuffer = ecb.AddBuffer<ActorEquipmentSlot>(visual);
@@ -161,10 +161,10 @@ namespace VVardenfell.Runtime.Player
             => ActorVisualContentRules.PartMask(ActorVisualPartReference.Head)
                | ActorVisualContentRules.PartMask(ActorVisualPartReference.Hair);
 
-        MorrowindMovementState ResolveInitialMovementState(Entity player)
+        MorrowindMovementState ResolveInitialMovementState(ref SystemState systemState, Entity player)
         {
-            if (EntityManager.HasComponent<MorrowindMovementState>(player))
-                return EntityManager.GetComponentData<MorrowindMovementState>(player);
+            if (systemState.EntityManager.HasComponent<MorrowindMovementState>(player))
+                return systemState.EntityManager.GetComponentData<MorrowindMovementState>(player);
 
             return new MorrowindMovementState
             {
@@ -176,56 +176,56 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
     [UpdateAfter(typeof(PlayerInputReceivingSystem))]
-    public partial class LocalPlayerViewModeSystem : SystemBase
+    public partial struct LocalPlayerViewModeSystem : ISystem
     {
         EntityQuery _dirtyQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _dirtyQuery = GetEntityQuery(
+            _dirtyQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LocalPlayerPresentationState>(),
                 ComponentType.ReadOnly<LocalPlayerViewModeDirty>());
 
-            RequireForUpdate(_dirtyQuery);
-            RequireForUpdate<LocalPlayerPresentationState>();
-            RequireForUpdate<PlayerCharacterControl>();
+            systemState.RequireForUpdate(_dirtyQuery);
+            systemState.RequireForUpdate<LocalPlayerPresentationState>();
+            systemState.RequireForUpdate<PlayerCharacterControl>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var stateEntity = SystemAPI.GetSingletonEntity<LocalPlayerPresentationState>();
             if (!SystemAPI.IsComponentEnabled<LocalPlayerViewModeDirty>(stateEntity))
                 return;
 
-            var state = EntityManager.GetComponentData<LocalPlayerPresentationState>(stateEntity);
+            var state = systemState.EntityManager.GetComponentData<LocalPlayerPresentationState>(stateEntity);
             var controlEntity = SystemAPI.GetSingletonEntity<PlayerCharacterControl>();
-            var control = EntityManager.GetComponentData<PlayerCharacterControl>(controlEntity);
+            var control = systemState.EntityManager.GetComponentData<PlayerCharacterControl>(controlEntity);
 
             if (control.ToggleViewPressed)
             {
                 state.Mode = state.Mode == PlayerViewMode.FirstPerson
                     ? PlayerViewMode.ThirdPerson
                     : PlayerViewMode.FirstPerson;
-                EntityManager.SetComponentData(stateEntity, state);
+                systemState.EntityManager.SetComponentData(stateEntity, state);
                 control.ToggleViewPressed = false;
-                EntityManager.SetComponentData(controlEntity, control);
+                systemState.EntityManager.SetComponentData(controlEntity, control);
             }
 
-            SetVisualGpuActive(state.FirstPersonVisual);
-            SetVisualGpuActive(state.ThirdPersonVisual);
-            EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(stateEntity, false);
+            SetVisualGpuActive(ref systemState, state.FirstPersonVisual);
+            SetVisualGpuActive(ref systemState, state.ThirdPersonVisual);
+            systemState.EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(stateEntity, false);
         }
 
-        void SetVisualGpuActive(Entity entity)
+        void SetVisualGpuActive(ref SystemState systemState, Entity entity)
         {
             if (entity == Entity.Null
-                || !EntityManager.Exists(entity)
-                || !EntityManager.HasComponent<ActorRenderVisible>(entity))
+                || !systemState.EntityManager.Exists(entity)
+                || !systemState.EntityManager.HasComponent<ActorRenderVisible>(entity))
             {
                 return;
             }
 
-            EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, true);
+            systemState.EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, true);
         }
     }
 }

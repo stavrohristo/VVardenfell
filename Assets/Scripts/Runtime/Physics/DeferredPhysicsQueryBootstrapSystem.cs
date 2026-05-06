@@ -7,38 +7,38 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Physics
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class DeferredPhysicsQueryBootstrapSystem : SystemBase
+    public partial struct DeferredPhysicsQueryBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<DeferredPhysicsQueryBootstrapRequest>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<DeferredPhysicsQueryQueueTag>())
             {
                 Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
-                if (!EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
+                if (!systemState.EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
                 {
-                    EntityManager.AddComponent<DeferredPhysicsQueryPending>(queueEntity);
-                    EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, false);
+                    systemState.EntityManager.AddComponent<DeferredPhysicsQueryPending>(queueEntity);
+                    systemState.EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, false);
                 }
 
-                RuntimeBootstrapRequestUtility.Consume<DeferredPhysicsQueryBootstrapRequest>(EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<DeferredPhysicsQueryBootstrapRequest>(systemState.EntityManager);
                 return;
             }
 
-            Entity entity = EntityManager.CreateEntity(
+            Entity entity = systemState.EntityManager.CreateEntity(
                 typeof(DeferredPhysicsQueryQueueTag),
                 typeof(DeferredPhysicsQueryPending),
                 typeof(DeferredPhysicsQueryRuntime));
-            EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.DeferredPhysicsQueryQueue"));
-            EntityManager.AddBuffer<DeferredPhysicsQueryRequest>(entity);
-            EntityManager.AddBuffer<DeferredPhysicsQueryResult>(entity);
-            EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(entity, false);
-            EntityManager.SetComponentData(entity, new DeferredPhysicsQueryRuntime());
-            RuntimeBootstrapRequestUtility.Consume<DeferredPhysicsQueryBootstrapRequest>(EntityManager);
+            systemState.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.DeferredPhysicsQueryQueue"));
+            systemState.EntityManager.AddBuffer<DeferredPhysicsQueryRequest>(entity);
+            systemState.EntityManager.AddBuffer<DeferredPhysicsQueryResult>(entity);
+            systemState.EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(entity, false);
+            systemState.EntityManager.SetComponentData(entity, new DeferredPhysicsQueryRuntime());
+            RuntimeBootstrapRequestUtility.Consume<DeferredPhysicsQueryBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

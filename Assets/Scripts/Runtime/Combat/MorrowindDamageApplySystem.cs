@@ -11,21 +11,21 @@ namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDifficultyDamageSystem))]
-    public partial class MorrowindDamageApplySystem : SystemBase
+    public partial struct MorrowindDamageApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
+            systemState.RequireForUpdate<MorrowindPendingDamageEvent>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (damage, entity) in
                      SystemAPI.Query<RefRO<MorrowindPendingDamageEvent>>()
                          .WithEntityAccess())
             {
-                ApplyDamage(damage.ValueRO);
+                ApplyDamage(ref systemState, damage.ValueRO);
                 ecb.RemoveComponent<MorrowindPendingDamageEvent>(entity);
                 ecb.AddComponent(entity, new MorrowindDamageAppliedEvent
                 {
@@ -44,22 +44,22 @@ namespace VVardenfell.Runtime.Combat
                 });
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        void ApplyDamage(in MorrowindPendingDamageEvent damage)
+        void ApplyDamage(ref SystemState systemState, in MorrowindPendingDamageEvent damage)
         {
             Entity target = damage.Target;
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Damage target entity is missing.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Damage target has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorScriptEventState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Damage target has no ActorScriptEventState.");
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var eventState = EntityManager.GetComponentData<ActorScriptEventState>(target);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var eventState = systemState.EntityManager.GetComponentData<ActorScriptEventState>(target);
             float amount = math.max(0f, damage.Amount);
 
             if (damage.SourceKind == MorrowindDamageSourceKind.Weapon
@@ -82,8 +82,8 @@ namespace VVardenfell.Runtime.Combat
                     throw new InvalidOperationException($"[VVardenfell][Damage] Unknown damage target vital {damage.TargetVital}.");
             }
 
-            EntityManager.SetComponentData(target, vitals);
-            EntityManager.SetComponentData(target, eventState);
+            systemState.EntityManager.SetComponentData(target, vitals);
+            systemState.EntityManager.SetComponentData(target, eventState);
         }
     }
 }

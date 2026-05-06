@@ -12,7 +12,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup), OrderFirst = true)]
-    public partial class MorrowindMeleeHitConfirmationSystem : SystemBase
+    public partial struct MorrowindMeleeHitConfirmationSystem : ISystem
     {
         const byte MeleeConfirmationMaxResultAgeTicks = 4;
 
@@ -28,18 +28,18 @@ namespace VVardenfell.Runtime.Combat
             public byte HasHitPosition;
         }
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<PendingMeleeHitConfirmation>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<PendingMeleeHitConfirmation>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
-            var pending = EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity);
+            var pending = systemState.EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity);
             if (pending.Length == 0)
                 return;
 
@@ -50,7 +50,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 var request = pending[i];
                 if (!DeferredPhysicsQueryUtility.TryGetResultBySequence(
-                        EntityManager,
+                        systemState.EntityManager,
                         deferredPhysicsQueueEntity,
                         fixedTick,
                         DeferredPhysicsQueryKind.MeleeConfirmation,
@@ -71,7 +71,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 }
 
-                if (TryResolveMeleeConfirmation(
+                if (TryResolveMeleeConfirmation(ref systemState, 
                         request,
                         out Entity target,
                         out uint targetPlacedRefId,
@@ -98,15 +98,15 @@ namespace VVardenfell.Runtime.Combat
             for (int i = 0; i < resolvedHits.Length; i++)
             {
                 var hit = resolvedHits[i];
-                MarkAttackContact(hit.Target, hit.TargetPlacedRefId);
+                MarkAttackContact(ref systemState, hit.Target, hit.TargetPlacedRefId);
                 EmitMeleeHitEvent(ref ecb, hit);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        bool TryResolveMeleeConfirmation(
+        bool TryResolveMeleeConfirmation(ref SystemState systemState, 
             in PendingMeleeHitConfirmation request,
             out Entity target,
             out uint targetPlacedRefId,
@@ -119,7 +119,7 @@ namespace VVardenfell.Runtime.Combat
             hasHitPosition = 0;
 
             Entity logicalEntity = request.Target;
-            if (!ValidateActorMeleeTarget(request.Attacker, logicalEntity, request.TargetPlacedRefId, out uint placedRefId))
+            if (!ValidateActorMeleeTarget(ref systemState, request.Attacker, logicalEntity, request.TargetPlacedRefId, out uint placedRefId))
                 return false;
             if (request.Reach <= 0f)
                 return false;
@@ -131,45 +131,45 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool ValidateActorMeleeTarget(Entity attacker, Entity target, uint expectedPlacedRefId, out uint placedRefId)
+        bool ValidateActorMeleeTarget(ref SystemState systemState, Entity attacker, Entity target, uint expectedPlacedRefId, out uint placedRefId)
         {
             placedRefId = 0u;
-            if (attacker == Entity.Null || !EntityManager.Exists(attacker))
+            if (attacker == Entity.Null || !systemState.EntityManager.Exists(attacker))
                 return false;
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 return false;
             if (target == attacker)
                 return false;
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(target)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
             {
                 return false;
             }
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no ActorHitAftermathState.");
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
             if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][Combat] Melee target ref={PlacedRefId(target)} is marked dead but still has positive health.");
+                throw new InvalidOperationException($"[VVardenfell][Combat] Melee target ref={PlacedRefId(ref systemState, target)} is marked dead but still has positive health.");
             if (vitals.CurrentHealth <= 0f || aftermath.Dead != 0)
                 return false;
 
-            if (EntityManager.HasComponent<PlayerTag>(target))
+            if (systemState.EntityManager.HasComponent<PlayerTag>(target))
             {
                 if (expectedPlacedRefId != 0u)
                     throw new InvalidOperationException($"[VVardenfell][Combat] Player melee target unexpectedly carried placed ref id 0x{expectedPlacedRefId:X8}.");
                 return true;
             }
 
-            if (!EntityManager.HasComponent<ActorSpawnSource>(target))
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no ActorSpawnSource.");
-            if (!EntityManager.HasComponent<PlacedRefIdentity>(target))
+            if (!systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no PlacedRefIdentity.");
 
-            placedRefId = EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+            placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
             if (placedRefId == 0u)
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has an invalid placed ref id.");
             if (expectedPlacedRefId != 0u && placedRefId != expectedPlacedRefId)
@@ -181,18 +181,18 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        void MarkAttackContact(Entity target, uint targetPlacedRefId)
+        void MarkAttackContact(ref SystemState systemState, Entity target, uint targetPlacedRefId)
         {
-            if (!EntityManager.HasComponent<ActorScriptEventState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Target ref={targetPlacedRefId} has no ActorScriptEventState.");
-            if (!EntityManager.HasComponent<ActorFriendlyHitState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorFriendlyHitState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Target ref={targetPlacedRefId} has no ActorFriendlyHitState.");
-            if (!EntityManager.HasComponent<ActorCrimeState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorCrimeState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Target ref={targetPlacedRefId} has no ActorCrimeState.");
 
-            var state = EntityManager.GetComponentData<ActorScriptEventState>(target);
+            var state = systemState.EntityManager.GetComponentData<ActorScriptEventState>(target);
             state.Attacked = 1;
-            EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentData(target, state);
         }
 
         static void EmitMeleeHitEvent(ref EntityCommandBuffer ecb, in ResolvedMeleeHitConfirmation hit)
@@ -211,11 +211,11 @@ namespace VVardenfell.Runtime.Combat
             });
         }
 
-        uint PlacedRefId(Entity entity)
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
             => entity != Entity.Null
-               && EntityManager.Exists(entity)
-               && EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+               && systemState.EntityManager.Exists(entity)
+               && systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

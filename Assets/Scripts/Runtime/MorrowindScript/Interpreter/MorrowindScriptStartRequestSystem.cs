@@ -10,38 +10,38 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindDialogueSessionSystem))]
-    public partial class MorrowindScriptStartRequestSystem : SystemBase
+    public partial struct MorrowindScriptStartRequestSystem : ISystem
     {
         EntityQuery _globalScriptQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _globalScriptQuery = GetEntityQuery(
+            _globalScriptQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<MorrowindGlobalScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
                 ComponentType.ReadWrite<MorrowindScriptStackValue>());
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptStartRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptStartRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptStartRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptStartRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             using var snapshot = requests.ToNativeArray(Allocator.Temp);
             requests.Clear();
             for (int i = 0; i < snapshot.Length; i++)
-                ApplyRequest(ref contentBlob, snapshot[i]);
+                ApplyRequest(ref systemState, ref contentBlob, snapshot[i]);
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptStartRequest request)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, in MorrowindScriptStartRequest request)
         {
             if (!request.Program.IsValid
                 || (uint)request.ProgramIndex >= (uint)contentBlob.MorrowindScriptPrograms.Length
@@ -57,39 +57,39 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity existing = FindGlobalScriptEntity(request.ProgramIndex);
             if (existing != Entity.Null)
             {
-                RestartExisting(ref contentBlob, existing, request);
+                RestartExisting(ref systemState, ref contentBlob, existing, request);
                 return;
             }
 
-            Entity entity = EntityManager.CreateEntity();
-            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
-            EntityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
+            Entity entity = systemState.EntityManager.CreateEntity();
+            systemState.EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
+            systemState.EntityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetEntity = request.TargetEntity,
                 TargetPlacedRefId = request.TargetPlacedRefId,
             });
-            EntityManager.AddComponentData(entity, new MorrowindScriptInstance
+            systemState.EntityManager.AddComponentData(entity, new MorrowindScriptInstance
             {
                 Program = request.Program,
                 ProgramIndex = request.ProgramIndex,
                 ProgramCounter = 0,
                 Status = (byte)MorrowindScriptInstanceStatus.Running,
             });
-            MorrowindScriptRuntimeAuthoringUtility.AddRuntimeScriptBuffers(EntityManager, entity, ref contentBlob, request.Program);
+            MorrowindScriptRuntimeAuthoringUtility.AddRuntimeScriptBuffers(systemState.EntityManager, entity, ref contentBlob, request.Program);
         }
 
-        void RestartExisting(
+        void RestartExisting(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
             Entity entity,
             in MorrowindScriptStartRequest request)
         {
-            MorrowindScriptRuntimeAuthoringUtility.EnsureRuntimeScriptBuffers(EntityManager, entity, ref contentBlob, request.Program);
+            MorrowindScriptRuntimeAuthoringUtility.EnsureRuntimeScriptBuffers(systemState.EntityManager, entity, ref contentBlob, request.Program);
 
-            var instance = EntityManager.GetComponentData<MorrowindScriptInstance>(entity);
+            var instance = systemState.EntityManager.GetComponentData<MorrowindScriptInstance>(entity);
             if (instance.Status == (byte)MorrowindScriptInstanceStatus.Running)
                 return;
 
-            EntityManager.SetComponentData(entity, new MorrowindGlobalScriptInstance
+            systemState.EntityManager.SetComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetEntity = request.TargetEntity,
                 TargetPlacedRefId = request.TargetPlacedRefId,
@@ -99,8 +99,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             instance.ProgramCounter = 0;
             instance.Status = (byte)MorrowindScriptInstanceStatus.Running;
             instance.DisabledReason = default;
-            EntityManager.SetComponentData(entity, instance);
-            EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
+            systemState.EntityManager.SetComponentData(entity, instance);
+            systemState.EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
         }
 
         Entity FindGlobalScriptEntity(int programIndex)

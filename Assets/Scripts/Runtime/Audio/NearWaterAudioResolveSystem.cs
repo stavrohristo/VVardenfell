@@ -12,7 +12,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class NearWaterAudioResolveSystem : SystemBase
+    public partial struct NearWaterAudioResolveSystem : ISystem
     {
         const string NearWaterSoundId = "Water Layer";
         const float NearWaterRadiusMw = 1000f;
@@ -22,18 +22,18 @@ namespace VVardenfell.Runtime.Audio
 
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalToWorld>());
-            RequireForUpdate<AudioContextState>();
-            RequireForUpdate<NearWaterAudioState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<NearWaterAudioState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
@@ -48,7 +48,7 @@ namespace VVardenfell.Runtime.Audio
             if (!RuntimeContentBlobUtility.TryGetSoundHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(NearWaterSoundId), out var sound) || !sound.IsValid)
                 return;
 
-            EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
 

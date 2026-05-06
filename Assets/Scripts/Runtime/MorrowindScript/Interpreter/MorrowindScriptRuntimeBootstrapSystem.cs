@@ -11,32 +11,32 @@ using VVardenfell.Runtime.WorldRefs;
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
-    public partial class MorrowindScriptRuntimeBootstrapSystem : SystemBase
+    public partial struct MorrowindScriptRuntimeBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeBootstrapRequest>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<MorrowindScriptRuntimeState>())
             {
                 Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-                EnsureSessionTeardown(runtimeEntity);
-                CreateOrRepairScriptCatalog(runtimeEntity);
-                CreateOrRepairInterpreterScratch(runtimeEntity);
-                RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindMagicRuntimeState
+                EnsureSessionTeardown(ref systemState, runtimeEntity);
+                CreateOrRepairScriptCatalog(ref systemState, runtimeEntity);
+                CreateOrRepairInterpreterScratch(ref systemState, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MorrowindMagicRuntimeState
                 {
                     RandomState = 0xA5C38F2Du,
                     NextActiveSpellId = 1,
                 });
-                RuntimeBootstrapUtility.EnsureBuffer<ActorSpellCastRequest>(EntityManager, runtimeEntity);
-                RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(EntityManager, runtimeEntity);
-                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceResolveRequest>(EntityManager, runtimeEntity);
-                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(EntityManager, runtimeEntity);
-                ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
-                RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
+                RuntimeBootstrapUtility.EnsureBuffer<ActorSpellCastRequest>(systemState.EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(systemState.EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceResolveRequest>(systemState.EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(systemState.EntityManager, runtimeEntity);
+                ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(systemState.EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(systemState.EntityManager);
                 return;
             }
 
@@ -49,21 +49,21 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ref RuntimeContentBlob content = ref contentBlob.Value;
 
-            Entity runtime = EntityManager.CreateEntity(
+            Entity runtime = systemState.EntityManager.CreateEntity(
                 typeof(MorrowindScriptRuntimeState),
                 typeof(MorrowindScriptRuntimeCatalog),
                 typeof(SessionTeardown));
-            EntityManager.SetName(runtime, "VVardenfell.MorrowindScriptRuntime");
-            EntityManager.SetComponentData(runtime, new MorrowindScriptRuntimeState
+            systemState.EntityManager.SetName(runtime, "VVardenfell.MorrowindScriptRuntime");
+            systemState.EntityManager.SetComponentData(runtime, new MorrowindScriptRuntimeState
             {
                 NextAudioRequestSequence = 1u,
                 RandomState = 0x6E624EB7u,
             });
-            EntityManager.SetComponentData(runtime, MorrowindScriptRuntimeCatalog.Create(contentBlob));
-            EntityManager.SetComponentEnabled<SessionTeardown>(runtime, false);
-            CreateOrRepairInterpreterScratch(runtime);
+            systemState.EntityManager.SetComponentData(runtime, MorrowindScriptRuntimeCatalog.Create(contentBlob));
+            systemState.EntityManager.SetComponentEnabled<SessionTeardown>(runtime, false);
+            CreateOrRepairInterpreterScratch(ref systemState, runtime);
 
-            var globals = EntityManager.AddBuffer<MorrowindScriptGlobalValue>(runtime);
+            var globals = systemState.EntityManager.AddBuffer<MorrowindScriptGlobalValue>(runtime);
             globals.ResizeUninitialized(content.Globals.Length);
             for (int i = 0; i < content.Globals.Length; i++)
             {
@@ -77,95 +77,95 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
             }
 
-            var deathCounts = EntityManager.AddBuffer<MorrowindActorDeathCount>(runtime);
+            var deathCounts = systemState.EntityManager.AddBuffer<MorrowindActorDeathCount>(runtime);
             deathCounts.ResizeUninitialized(content.Actors.Length);
             for (int i = 0; i < deathCounts.Length; i++)
                 deathCounts[i] = default;
 
-            EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
+            systemState.EntityManager.AddComponentData(runtime, new MorrowindQuestJournalState
             {
                 QuestCount = content.Dialogues.Length,
                 NextEntrySequence = 1u,
             });
-            var journal = EntityManager.AddBuffer<MorrowindQuestJournalIndex>(runtime);
+            var journal = systemState.EntityManager.AddBuffer<MorrowindQuestJournalIndex>(runtime);
             journal.ResizeUninitialized(content.Dialogues.Length);
             for (int i = 0; i < journal.Length; i++)
                 journal[i] = default;
-            EntityManager.AddBuffer<MorrowindQuestJournalEntry>(runtime);
-            EntityManager.AddBuffer<MorrowindQuestJournalRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindQuestJournalEntry>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindQuestJournalRequest>(runtime);
 
-            EntityManager.AddComponentData(runtime, new MorrowindDialogueState
+            systemState.EntityManager.AddComponentData(runtime, new MorrowindDialogueState
             {
                 DialogueCount = content.Dialogues.Length,
                 NextTopicEntrySequence = 1u,
                 NextSessionSequence = 1u,
             });
-            var topics = EntityManager.AddBuffer<MorrowindKnownDialogueTopic>(runtime);
+            var topics = systemState.EntityManager.AddBuffer<MorrowindKnownDialogueTopic>(runtime);
             topics.ResizeUninitialized(content.Dialogues.Length);
             for (int i = 0; i < topics.Length; i++)
                 topics[i] = default;
-            EntityManager.AddBuffer<MorrowindTopicJournalEntry>(runtime);
-            EntityManager.AddBuffer<MorrowindFactionReactionOverride>(runtime);
-            EntityManager.AddBuffer<MorrowindDialogueRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindTopicJournalEntry>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindFactionReactionOverride>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindDialogueRequest>(runtime);
 
-            EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptActiveSay>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
-            EntityManager.AddBuffer<PlacedRefLockRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptAiPackageRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptActorAiSettingRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptDispositionRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptActorVitalRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptHurtStandingActorRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptAnimationGroupRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptInventoryMutationRequest>(runtime);
-            EntityManager.AddBuffer<ActorInventoryDropRequest>(runtime);
-            EntityManager.AddBuffer<ScriptedCastRequest>(runtime);
-            EntityManager.AddBuffer<ActorSpellCastRequest>(runtime);
-            EntityManager.AddBuffer<ActorSpellMutationRequest>(runtime);
-            EntityManager.AddBuffer<ActorForceGreetingRequest>(runtime);
-            EntityManager.AddBuffer<PlayerReputationMutationRequest>(runtime);
-            EntityManager.AddBuffer<ActorAttributeMutationRequest>(runtime);
-            EntityManager.AddBuffer<PlayerSkillMutationRequest>(runtime);
-            EntityManager.AddBuffer<PlayerFactionMutationRequest>(runtime);
-            EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
-            EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindCombatHitVoiceResolveRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindCombatHitVoiceSayRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
-            EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);
-            EntityManager.AddBuffer<GlobalMapRevealRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptShellRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptJailRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptMovementFlagRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptPlaceAtRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptOnDeathConsumeRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptActorEventConsumeRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
-            EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
-            EntityManager.AddComponentData(runtime, new MorrowindMagicRuntimeState
+            systemState.EntityManager.AddBuffer<MorrowindScriptActiveSource>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptPlayingSound>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptActiveSay>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptRefStateRequest>(runtime);
+            systemState.EntityManager.AddBuffer<PlacedRefLockRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptTransformRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptAiPackageRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptActorAiSettingRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptDispositionRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptActorVitalRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptHurtStandingActorRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptAnimationGroupRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptInventoryMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorInventoryDropRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ScriptedCastRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorSpellCastRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorSpellMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorForceGreetingRequest>(runtime);
+            systemState.EntityManager.AddBuffer<PlayerReputationMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorAttributeMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<PlayerSkillMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<PlayerFactionMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorFactionRankMutationRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptSayRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindCombatHitVoiceResolveRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindCombatHitVoiceSayRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
+            systemState.EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);
+            systemState.EntityManager.AddBuffer<GlobalMapRevealRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptShellRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptJailRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptMovementFlagRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptPlaceAtRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptOnDeathConsumeRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptActorEventConsumeRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
+            systemState.EntityManager.AddComponentData(runtime, new MorrowindMagicRuntimeState
             {
                 RandomState = 0xA5C38F2Du,
                 NextActiveSpellId = 1,
             });
-            ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
-            RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
+            ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(systemState.EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(systemState.EntityManager);
         }
 
-        void CreateOrRepairScriptCatalog(Entity runtimeEntity)
+        void CreateOrRepairScriptCatalog(ref SystemState systemState, Entity runtimeEntity)
         {
-            if (EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
+            if (systemState.EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
             {
-                var catalog = EntityManager.GetComponentData<MorrowindScriptRuntimeCatalog>(runtimeEntity);
+                var catalog = systemState.EntityManager.GetComponentData<MorrowindScriptRuntimeCatalog>(runtimeEntity);
                 if (catalog.IsCreated)
                     return;
 
                 catalog.Dispose();
-                EntityManager.SetComponentData(runtimeEntity, default(MorrowindScriptRuntimeCatalog));
+                systemState.EntityManager.SetComponentData(runtimeEntity, default(MorrowindScriptRuntimeCatalog));
             }
 
             if (!SystemAPI.HasSingleton<RuntimeContentBlobReference>())
@@ -176,36 +176,36 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new System.InvalidOperationException("[VVardenfell][MWScript] Script runtime catalog repair requires created runtime content blob.");
 
             var repairedCatalog = MorrowindScriptRuntimeCatalog.Create(contentBlob);
-            if (EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
+            if (systemState.EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
             {
-                EntityManager.SetComponentData(runtimeEntity, repairedCatalog);
+                systemState.EntityManager.SetComponentData(runtimeEntity, repairedCatalog);
                 return;
             }
 
-            EntityManager.AddComponentData(runtimeEntity, repairedCatalog);
+            systemState.EntityManager.AddComponentData(runtimeEntity, repairedCatalog);
         }
 
-        void EnsureSessionTeardown(Entity runtimeEntity)
+        void EnsureSessionTeardown(ref SystemState systemState, Entity runtimeEntity)
         {
-            if (!EntityManager.HasComponent<SessionTeardown>(runtimeEntity))
-                EntityManager.AddComponent<SessionTeardown>(runtimeEntity);
-            EntityManager.SetComponentEnabled<SessionTeardown>(runtimeEntity, false);
+            if (!systemState.EntityManager.HasComponent<SessionTeardown>(runtimeEntity))
+                systemState.EntityManager.AddComponent<SessionTeardown>(runtimeEntity);
+            systemState.EntityManager.SetComponentEnabled<SessionTeardown>(runtimeEntity, false);
         }
 
-        void CreateOrRepairInterpreterScratch(Entity runtimeEntity)
+        void CreateOrRepairInterpreterScratch(ref SystemState systemState, Entity runtimeEntity)
         {
-            if (!EntityManager.HasComponent<MorrowindScriptInterpreterScratch>(runtimeEntity))
+            if (!systemState.EntityManager.HasComponent<MorrowindScriptInterpreterScratch>(runtimeEntity))
             {
-                EntityManager.AddComponentData(runtimeEntity, MorrowindScriptInterpreterScratch.Create(Allocator.Persistent));
+                systemState.EntityManager.AddComponentData(runtimeEntity, MorrowindScriptInterpreterScratch.Create(Allocator.Persistent));
                 return;
             }
 
-            var scratch = EntityManager.GetComponentData<MorrowindScriptInterpreterScratch>(runtimeEntity);
+            var scratch = systemState.EntityManager.GetComponentData<MorrowindScriptInterpreterScratch>(runtimeEntity);
             if (scratch.IsCreated)
                 return;
 
             scratch.Dispose();
-            EntityManager.SetComponentData(runtimeEntity, MorrowindScriptInterpreterScratch.Create(Allocator.Persistent));
+            systemState.EntityManager.SetComponentData(runtimeEntity, MorrowindScriptInterpreterScratch.Create(Allocator.Persistent));
         }
 
         static byte ResolveGlobalKind(ref RuntimeGenericRecordDefBlob global)

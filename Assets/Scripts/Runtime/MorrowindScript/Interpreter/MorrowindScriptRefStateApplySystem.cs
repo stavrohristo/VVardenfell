@@ -13,33 +13,33 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptRefStateApplySystem : SystemBase
+    public partial struct MorrowindScriptRefStateApplySystem : ISystem
     {
         EntityQuery _runtimeQuery;
         EntityQuery _logicalRefQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadWrite<MorrowindScriptRefStateRequest>());
-            _logicalRefQuery = GetEntityQuery(
+            _logicalRefQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LogicalRefTag>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadWrite<PlacedRefRuntimeState>(),
                 ComponentType.ReadOnly<LogicalRefLocation>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate(_logicalRefQuery);
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<PlacedRefRuntimeStateLookup>();
-            RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate(_logicalRefQuery);
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<PlacedRefRuntimeStateLookup>();
+            systemState.RequireForUpdate<LoadedCellsMap>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var requests = EntityManager.GetBuffer<MorrowindScriptRefStateRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptRefStateRequest>(runtimeEntity);
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             var stateLookup = SystemAPI.GetSingleton<PlacedRefRuntimeStateLookup>();
             if (requests.Length == 0
@@ -65,11 +65,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
 
                 stateLookup.DisabledByPlacedRef[request.TargetPlacedRefId] = request.Disabled;
-                Entity target = ResolveLiveTarget(request, logicalRefLookup);
-                if (target == Entity.Null || !EntityManager.Exists(target))
+                Entity target = ResolveLiveTarget(ref systemState, request, logicalRefLookup);
+                if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                     continue;
 
-                CommitAndProject(
+                CommitAndProject(ref systemState, 
                     ref ecb,
                     target,
                     request.TargetPlacedRefId,
@@ -80,20 +80,20 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             requests.Clear();
-            ProjectReloadedRefs(
+            ProjectReloadedRefs(ref systemState, 
                 ref ecb,
                 stateLookup,
                 loadedCells,
                 interiorActive,
                 activeInteriorCellHash);
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        Entity ResolveLiveTarget(in MorrowindScriptRefStateRequest request, in LogicalRefLookup lookup)
+        Entity ResolveLiveTarget(ref SystemState systemState, in MorrowindScriptRefStateRequest request, in LogicalRefLookup lookup)
         {
-            if (request.TargetEntity != Entity.Null && EntityManager.Exists(request.TargetEntity))
+            if (request.TargetEntity != Entity.Null && systemState.EntityManager.Exists(request.TargetEntity))
                 return request.TargetEntity;
 
             if (lookup.Map.IsCreated && lookup.Map.TryGetValue(request.TargetPlacedRefId, out Entity target))
@@ -102,7 +102,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return Entity.Null;
         }
 
-        void ProjectReloadedRefs(
+        void ProjectReloadedRefs(ref SystemState systemState, 
             ref EntityCommandBuffer ecb,
             in PlacedRefRuntimeStateLookup stateLookup,
             in LoadedCellsMap loadedCells,
@@ -123,7 +123,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
-                CommitAndProject(
+                CommitAndProject(ref systemState, 
                     ref ecb,
                     entities[i],
                     placedRefId,
@@ -134,7 +134,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        void CommitAndProject(
+        void CommitAndProject(ref SystemState systemState, 
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             uint placedRefId,
@@ -143,10 +143,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!EntityManager.Exists(logicalEntity))
+            if (!systemState.EntityManager.Exists(logicalEntity))
                 return;
 
-            if (!EntityManager.HasComponent<PlacedRefRuntimeState>(logicalEntity))
+            if (!systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(logicalEntity))
             {
                 Debug.LogWarning($"[VVardenfell][MWScript] placed ref 0x{placedRefId:X8} is missing PlacedRefRuntimeState.");
                 return;
@@ -155,20 +155,20 @@ namespace VVardenfell.Runtime.MorrowindScript
             ecb.SetComponent(logicalEntity, new PlacedRefRuntimeState { Disabled = disabled });
             if (disabled != 0)
             {
-                ProjectLogicalRef(ref ecb, logicalEntity, false);
+                ProjectLogicalRef(ref systemState, ref ecb, logicalEntity, false);
                 return;
             }
 
-            if (IsLocationActive(logicalEntity, loadedCells, interiorActive, activeInteriorCellHash))
-                ProjectLogicalRef(ref ecb, logicalEntity, true);
+            if (IsLocationActive(ref systemState, logicalEntity, loadedCells, interiorActive, activeInteriorCellHash))
+                ProjectLogicalRef(ref systemState, ref ecb, logicalEntity, true);
         }
 
-        bool IsLocationActive(Entity logicalEntity, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)
+        bool IsLocationActive(ref SystemState systemState, Entity logicalEntity, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)
         {
-            if (!EntityManager.HasComponent<LogicalRefLocation>(logicalEntity))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(logicalEntity))
                 return false;
 
-            var location = EntityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
             if (interiorActive != 0)
                 return location.IsInterior != 0 && location.InteriorCellHash == activeInteriorCellHash;
 
@@ -177,42 +177,42 @@ namespace VVardenfell.Runtime.MorrowindScript
                 && loadedCells.Active.Contains(location.ExteriorCell);
         }
 
-        void ProjectLogicalRef(ref EntityCommandBuffer ecb, Entity logicalEntity, bool active)
+        void ProjectLogicalRef(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity logicalEntity, bool active)
         {
-            ProjectEntity(ref ecb, logicalEntity, active, isActorRoot: EntityManager.HasComponent<ActorSpawnSource>(logicalEntity));
+            ProjectEntity(ref systemState, ref ecb, logicalEntity, active, isActorRoot: systemState.EntityManager.HasComponent<ActorSpawnSource>(logicalEntity));
 
-            if (!EntityManager.HasBuffer<LogicalRefChild>(logicalEntity))
+            if (!systemState.EntityManager.HasBuffer<LogicalRefChild>(logicalEntity))
                 return;
 
-            bool isActor = EntityManager.HasComponent<ActorSpawnSource>(logicalEntity);
-            var children = EntityManager.GetBuffer<LogicalRefChild>(logicalEntity);
+            bool isActor = systemState.EntityManager.HasComponent<ActorSpawnSource>(logicalEntity);
+            var children = systemState.EntityManager.GetBuffer<LogicalRefChild>(logicalEntity);
             for (int i = 0; i < children.Length; i++)
             {
                 Entity child = children[i].Value;
-                if (child == Entity.Null || !EntityManager.Exists(child))
+                if (child == Entity.Null || !systemState.EntityManager.Exists(child))
                     continue;
 
-                ProjectEntity(ref ecb, child, active, isActor);
+                ProjectEntity(ref systemState, ref ecb, child, active, isActor);
             }
         }
 
-        void ProjectEntity(ref EntityCommandBuffer ecb, Entity entity, bool active, bool isActorRoot)
+        void ProjectEntity(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity entity, bool active, bool isActorRoot)
         {
-            if (EntityManager.HasComponent<ActorRenderVisible>(entity))
+            if (systemState.EntityManager.HasComponent<ActorRenderVisible>(entity))
                 ecb.SetComponentEnabled<ActorRenderVisible>(entity, active);
 
-            if (EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
+            if (systemState.EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
                 ecb.SetComponentEnabled<ActorShadowCasterVisible>(entity, active);
 
-            if (EntityManager.HasComponent<MaterialMeshInfo>(entity) && (!isActorRoot || !active))
+            if (systemState.EntityManager.HasComponent<MaterialMeshInfo>(entity) && (!isActorRoot || !active))
                 ecb.SetComponentEnabled<MaterialMeshInfo>(entity, active);
 
-            if (EntityManager.HasComponent<RuntimeColliderSource>(entity))
+            if (systemState.EntityManager.HasComponent<RuntimeColliderSource>(entity))
             {
                 if (active)
-                    RuntimeColliderAttachmentUtility.QueueEnablePhysics(EntityManager, ref ecb, entity);
+                    RuntimeColliderAttachmentUtility.QueueEnablePhysics(systemState.EntityManager, ref ecb, entity);
                 else
-                    RuntimeColliderAttachmentUtility.QueueDisablePhysics(EntityManager, ref ecb, entity);
+                    RuntimeColliderAttachmentUtility.QueueDisablePhysics(systemState.EntityManager, ref ecb, entity);
             }
         }
     }

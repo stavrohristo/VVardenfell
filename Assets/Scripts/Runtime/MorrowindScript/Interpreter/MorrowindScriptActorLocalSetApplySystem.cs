@@ -9,35 +9,35 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptActorLocalSetApplySystem : SystemBase
+    public partial struct MorrowindScriptActorLocalSetApplySystem : ISystem
     {
         EntityQuery _actorQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _actorQuery = GetEntityQuery(
+            _actorQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActorSpawnSource>(),
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>());
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptActorLocalSetRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptActorLocalSetRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptActorLocalSetRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptActorLocalSetRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref contentBlob, requests[i]);
+                ApplyRequest(ref systemState, ref contentBlob, requests[i]);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, in MorrowindScriptActorLocalSetRequest request)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, in MorrowindScriptActorLocalSetRequest request)
         {
             Entity target = ResolveUniqueActor(request.ActorHandleValue);
             if (target == Entity.Null)
@@ -46,7 +46,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException($"[VVardenfell][MWScript] actor-local Set target hash {actorIdHash} is not exactly one loaded actor.");
             }
 
-            var locals = EntityManager.GetBuffer<MorrowindScriptLocalValue>(target);
+            var locals = systemState.EntityManager.GetBuffer<MorrowindScriptLocalValue>(target);
             if ((uint)request.LocalIndex >= (uint)locals.Length)
             {
                 ulong actorIdHash = ResolveActorIdHash(ref contentBlob, request.ActorHandleValue);

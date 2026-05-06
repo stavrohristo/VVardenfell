@@ -10,20 +10,20 @@ namespace VVardenfell.Runtime.Audio
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
     [UpdateAfter(typeof(RegionAmbientResolveSystem))]
     [UpdateAfter(typeof(AmbientSettingsResolveSystem))]
-    public partial class AmbientEventSchedulerSystem : SystemBase
+    public partial struct AmbientEventSchedulerSystem : ISystem
     {
         static readonly ProfilerMarker k_ScheduleAmbient = new("VV.Audio.ScheduleRegionAmbient");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AudioContextState>();
-            RequireForUpdate<RegionAmbientState>();
-            RequireForUpdate<AmbientSchedulerState>();
-            RequireForUpdate<AmbientSettingsState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<RegionAmbientState>();
+            systemState.RequireForUpdate<AmbientSchedulerState>();
+            systemState.RequireForUpdate<AmbientSettingsState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_ScheduleAmbient.Auto();
 

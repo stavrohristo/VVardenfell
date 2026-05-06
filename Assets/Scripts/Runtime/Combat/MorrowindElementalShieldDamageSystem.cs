@@ -15,7 +15,7 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindOnHitAftermathSystem))]
     [UpdateBefore(typeof(MorrowindHitAftermathStateSystem))]
-    public partial class MorrowindElementalShieldDamageSystem : SystemBase
+    public partial struct MorrowindElementalShieldDamageSystem : ISystem
     {
         static readonly short FireShieldEffectId = RequireEffectId("sEffectFireShield");
         static readonly short LightningShieldEffectId = RequireEffectId("sEffectLightningShield");
@@ -27,16 +27,16 @@ namespace VVardenfell.Runtime.Combat
         static readonly short WeaknessToShockEffectId = RequireEffectId("sEffectWeaknessToShock");
         static readonly short WeaknessToFrostEffectId = RequireEffectId("sEffectWeaknessToFrost");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<MorrowindCombatSettings>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindDamageAppliedEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<MorrowindCombatSettings>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -59,10 +59,10 @@ namespace VVardenfell.Runtime.Combat
 
             foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
             {
-                if (!CanTriggerElementalShield(damage.ValueRO))
+                if (!CanTriggerElementalShield(ref systemState, damage.ValueRO))
                     continue;
 
-                ApplyElementalShieldDamage(
+                ApplyElementalShieldDamage(ref systemState, 
                     damage.ValueRO,
                     shieldMult,
                     difficultyMult,
@@ -73,21 +73,21 @@ namespace VVardenfell.Runtime.Combat
             }
 
             combatState.RandomState = randomState == 0u ? 0x6E624EB7u : randomState;
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        bool CanTriggerElementalShield(in MorrowindDamageAppliedEvent damage)
+        bool CanTriggerElementalShield(ref SystemState systemState, in MorrowindDamageAppliedEvent damage)
             => damage.Amount > 0f
                && damage.TargetVital == MorrowindDamageTargetVital.Health
                && (damage.SourceKind == MorrowindDamageSourceKind.Weapon
                    || damage.SourceKind == MorrowindDamageSourceKind.HandToHand)
                && damage.Attacker != Entity.Null
                && damage.Target != Entity.Null
-               && EntityManager.Exists(damage.Attacker)
-               && EntityManager.Exists(damage.Target);
+               && systemState.EntityManager.Exists(damage.Attacker)
+               && systemState.EntityManager.Exists(damage.Target);
 
-        void ApplyElementalShieldDamage(
+        void ApplyElementalShieldDamage(ref SystemState systemState, 
             in MorrowindDamageAppliedEvent triggeringDamage,
             float shieldMult,
             float difficultyMult,
@@ -98,29 +98,29 @@ namespace VVardenfell.Runtime.Combat
         {
             Entity attacker = triggeringDamage.Attacker;
             Entity victim = triggeringDamage.Target;
-            RequireActorMagicAndStats(attacker, "attacker");
-            RequireActorMagicAndStats(victim, "victim");
+            RequireActorMagicAndStats(ref systemState, attacker, "attacker");
+            RequireActorMagicAndStats(ref systemState, victim, "victim");
 
-            var victimEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(victim, true);
+            var victimEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(victim, true);
             float fireShield = MorrowindMeleeCombatMechanics.SumEffectMagnitude(victimEffects, FireShieldEffectId);
             float lightningShield = MorrowindMeleeCombatMechanics.SumEffectMagnitude(victimEffects, LightningShieldEffectId);
             float frostShield = MorrowindMeleeCombatMechanics.SumEffectMagnitude(victimEffects, FrostShieldEffectId);
             if (fireShield <= 0f && lightningShield <= 0f && frostShield <= 0f)
                 return;
 
-            var attackerEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(attacker, true);
+            var attackerEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(attacker, true);
             float totalDamage = 0f;
-            totalDamage += ComputeShieldDamage(attacker, attackerEffects, fireShield, ResistFireEffectId, WeaknessToFireEffectId, FireShieldEffectId, shieldMult, ref randomState);
-            totalDamage += ComputeShieldDamage(attacker, attackerEffects, lightningShield, ResistShockEffectId, WeaknessToShockEffectId, LightningShieldEffectId, shieldMult, ref randomState);
-            totalDamage += ComputeShieldDamage(attacker, attackerEffects, frostShield, ResistFrostEffectId, WeaknessToFrostEffectId, FrostShieldEffectId, shieldMult, ref randomState);
-            totalDamage = ApplyDifficulty(totalDamage, victim, attacker, difficultyMult, difficulty);
+            totalDamage += ComputeShieldDamage(ref systemState, attacker, attackerEffects, fireShield, ResistFireEffectId, WeaknessToFireEffectId, FireShieldEffectId, shieldMult, ref randomState);
+            totalDamage += ComputeShieldDamage(ref systemState, attacker, attackerEffects, lightningShield, ResistShockEffectId, WeaknessToShockEffectId, LightningShieldEffectId, shieldMult, ref randomState);
+            totalDamage += ComputeShieldDamage(ref systemState, attacker, attackerEffects, frostShield, ResistFrostEffectId, WeaknessToFrostEffectId, FrostShieldEffectId, shieldMult, ref randomState);
+            totalDamage = ApplyDifficulty(ref systemState, totalDamage, victim, attacker, difficultyMult, difficulty);
             if (totalDamage <= 0f)
                 return;
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(attacker);
             vitals.CurrentHealth = math.max(0f, vitals.CurrentHealth - totalDamage);
-            EntityManager.SetComponentData(attacker, vitals);
-            if (IsPlayer(attacker))
+            systemState.EntityManager.SetComponentData(attacker, vitals);
+            if (IsPlayer(ref systemState, attacker))
                 RuntimeShellStateUtility.ActivateHitOverlay(ref shell);
 
             Entity eventEntity = ecb.CreateEntity();
@@ -139,7 +139,7 @@ namespace VVardenfell.Runtime.Combat
             });
         }
 
-        float ComputeShieldDamage(
+        float ComputeShieldDamage(ref SystemState systemState, 
             Entity attacker,
             DynamicBuffer<ActorActiveMagicEffect> attackerEffects,
             float shieldMagnitude,
@@ -152,7 +152,7 @@ namespace VVardenfell.Runtime.Combat
             if (shieldMagnitude <= 0f)
                 return 0f;
 
-            float saveTerm = ComputeElementalShieldSaveTerm(attacker);
+            float saveTerm = ComputeElementalShieldSaveTerm(ref systemState, attacker);
             float save = math.max(0f, saveTerm - NextRoll0To99(ref randomState));
             float resistance = MorrowindMeleeCombatMechanics.SumEffectMagnitude(attackerEffects, resistEffectId)
                                - MorrowindMeleeCombatMechanics.SumEffectMagnitude(attackerEffects, weaknessEffectId)
@@ -161,11 +161,11 @@ namespace VVardenfell.Runtime.Combat
             return shieldMult * shieldMagnitude * (1f - 0.01f * save);
         }
 
-        float ComputeElementalShieldSaveTerm(Entity attacker)
+        float ComputeElementalShieldSaveTerm(ref SystemState systemState, Entity attacker)
         {
-            var skills = EntityManager.GetComponentData<ActorSkillSet>(attacker);
-            var attributes = EntityManager.GetComponentData<ActorAttributeSet>(attacker);
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var skills = systemState.EntityManager.GetComponentData<ActorSkillSet>(attacker);
+            var attributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(attacker);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(attacker);
             float saveTerm = skills.Destruction
                              + 0.2f * attributes.Willpower
                              + 0.1f * attributes.Luck;
@@ -175,13 +175,13 @@ namespace VVardenfell.Runtime.Combat
             return saveTerm * 1.25f * normalizedFatigue;
         }
 
-        float ApplyDifficulty(float damage, Entity attacker, Entity target, float difficultyMult, int difficulty)
+        float ApplyDifficulty(ref SystemState systemState, float damage, Entity attacker, Entity target, float difficultyMult, int difficulty)
         {
             if (damage <= 0f)
                 return 0f;
 
-            bool attackerIsPlayer = IsPlayer(attacker);
-            bool targetIsPlayer = IsPlayer(target);
+            bool attackerIsPlayer = IsPlayer(ref systemState, attacker);
+            bool targetIsPlayer = IsPlayer(ref systemState, target);
             if (attackerIsPlayer == targetIsPlayer)
                 return damage;
 
@@ -195,26 +195,26 @@ namespace VVardenfell.Runtime.Combat
             return math.max(0f, damage * (1f + multiplierOffset));
         }
 
-        void RequireActorMagicAndStats(Entity actor, string role)
+        void RequireActorMagicAndStats(ref SystemState systemState, Entity actor, string role)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} entity is missing.");
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(actor)} has no ActorActiveMagicEffect buffer.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(actor)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorSkillSet>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(actor)} has no ActorSkillSet.");
-            if (!EntityManager.HasComponent<ActorAttributeSet>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(actor)} has no ActorAttributeSet.");
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(ref systemState, actor)} has no ActorActiveMagicEffect buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(ref systemState, actor)} has no ActorVitalSet.");
+            if (!systemState.EntityManager.HasComponent<ActorSkillSet>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(ref systemState, actor)} has no ActorSkillSet.");
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ElementalShield] Hit {role} ref={PlacedRefId(ref systemState, actor)} has no ActorAttributeSet.");
         }
 
-        bool IsPlayer(Entity entity)
+        bool IsPlayer(ref SystemState systemState, Entity entity)
         {
-            if (entity == Entity.Null || !EntityManager.Exists(entity))
+            if (entity == Entity.Null || !systemState.EntityManager.Exists(entity))
                 throw new InvalidOperationException("[VVardenfell][ElementalShield] Difficulty participant entity is missing.");
 
-            return EntityManager.HasComponent<PlayerTag>(entity);
+            return systemState.EntityManager.HasComponent<PlayerTag>(entity);
         }
 
         uint NextRoll0To99(ref uint state)
@@ -227,9 +227,9 @@ namespace VVardenfell.Runtime.Combat
             return state;
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
 
         static short RequireEffectId(string gmstId)

@@ -64,9 +64,6 @@ namespace VVardenfell.Runtime.Physics
             if (s_DisposalQueryCreated && s_QueryWorld == world)
                 return s_DisposalQuery;
 
-            if (s_DisposalQueryCreated)
-                s_DisposalQuery.Dispose();
-
             s_QueryWorld = world;
             s_DisposalQuery = entityManager.CreateEntityQuery(ComponentType.ReadWrite<DeferredRuntimeColliderBlobDisposal>());
             s_DisposalQueryCreated = true;
@@ -75,14 +72,14 @@ namespace VVardenfell.Runtime.Physics
     }
 
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class RuntimePhysicsLifetimeBootstrapSystem : SystemBase
+    public partial struct RuntimePhysicsLifetimeBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimePhysicsLifetimeBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimePhysicsLifetimeBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity entity;
             if (SystemAPI.HasSingleton<RuntimePhysicsLifetimeState>())
@@ -91,36 +88,36 @@ namespace VVardenfell.Runtime.Physics
             }
             else
             {
-                entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.RuntimePhysicsLifetime");
-                EntityManager.AddComponentData(entity, new RuntimePhysicsLifetimeState());
+                entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.RuntimePhysicsLifetime");
+                systemState.EntityManager.AddComponentData(entity, new RuntimePhysicsLifetimeState());
             }
 
-            if (!EntityManager.HasBuffer<DeferredRuntimeColliderBlobDisposal>(entity))
-                EntityManager.AddBuffer<DeferredRuntimeColliderBlobDisposal>(entity);
-            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsLifetimeBootstrapRequest>(EntityManager);
+            if (!systemState.EntityManager.HasBuffer<DeferredRuntimeColliderBlobDisposal>(entity))
+                systemState.EntityManager.AddBuffer<DeferredRuntimeColliderBlobDisposal>(entity);
+            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsLifetimeBootstrapRequest>(systemState.EntityManager);
         }
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderLast = true)]
     [UpdateBefore(typeof(RuntimeColliderBlobDisposalSystem))]
-    public partial class RuntimeGeneratedColliderBlobCleanupSystem : SystemBase
+    public partial struct RuntimeGeneratedColliderBlobCleanupSystem : ISystem
     {
         EntityQuery _query;
         EntityQuery _allCleanupQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _query = GetEntityQuery(new EntityQueryDesc
+            _query = systemState.GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>() },
                 None = new[] { ComponentType.ReadOnly<RuntimeColliderSource>() },
             });
-            _allCleanupQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>());
-            RequireForUpdate(_query);
+            _allCleanupQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>());
+            systemState.RequireForUpdate(_query);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var entities = _query.ToEntityArray(Allocator.Temp);
             using var cleanups = _query.ToComponentDataArray<RuntimeGeneratedColliderBlobCleanup>(Allocator.Temp);
@@ -128,15 +125,15 @@ namespace VVardenfell.Runtime.Physics
             for (int i = 0; i < entities.Length; i++)
             {
                 if (cleanups[i].Value.IsCreated)
-                    RuntimeColliderBlobLifetime.DeferGeneratedBlobDisposal(EntityManager, cleanups[i].Value);
+                    RuntimeColliderBlobLifetime.DeferGeneratedBlobDisposal(systemState.EntityManager, cleanups[i].Value);
                 ecb.RemoveComponent<RuntimeGeneratedColliderBlobCleanup>(entities[i]);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (_allCleanupQuery.IsEmptyIgnoreFilter)
                 return;

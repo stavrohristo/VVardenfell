@@ -1,4 +1,4 @@
-﻿using Unity.Entities;
+using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
@@ -7,20 +7,20 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(SaveLoadBrowserActionSystem))]
-    public partial class RuntimeShellActionSystem : SystemBase
+    public partial struct RuntimeShellActionSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeShellActionRequest>();
-            RequireForUpdate<SaveLoadBrowserState>();
-            RequireForUpdate<InventoryWindowState>();
-            RequireForUpdate<StatsWindowState>();
-            RequireForUpdate<SpellWindowState>();
-            RequireForUpdate<MapWindowState>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeShellActionRequest>();
+            systemState.RequireForUpdate<SaveLoadBrowserState>();
+            systemState.RequireForUpdate<InventoryWindowState>();
+            systemState.RequireForUpdate<StatsWindowState>();
+            systemState.RequireForUpdate<SpellWindowState>();
+            systemState.RequireForUpdate<MapWindowState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<RuntimeShellActionRequest>().ValueRW;

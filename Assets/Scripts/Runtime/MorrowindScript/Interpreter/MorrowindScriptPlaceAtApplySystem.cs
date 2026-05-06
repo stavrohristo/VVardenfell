@@ -17,32 +17,32 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptPlaceAtApplySystem : SystemBase
+    public partial struct MorrowindScriptPlaceAtApplySystem : ISystem
     {
         const float ActorSafetyLiftMw = 30f;
         const float ActorSafetyTargetLiftMw = 20f;
 
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>());
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptPlaceAtRequest>();
-            RequireForUpdate<RuntimeSpawnState>();
-            RequireForUpdate<RuntimeSpawnRequest>();
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<MorrowindMovementSettings>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptPlaceAtRequest>();
+            systemState.RequireForUpdate<RuntimeSpawnState>();
+            systemState.RequireForUpdate<RuntimeSpawnRequest>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<MorrowindMovementSettings>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptPlaceAtRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptPlaceAtRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -52,14 +52,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             Entity player = ResolvePlayer();
-            var playerTransform = EntityManager.GetComponentData<LocalTransform>(player);
-            bool isInterior = TryResolveInteriorContext(out FixedString128Bytes interiorCellId, out ulong interiorCellHash);
+            var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(player);
+            bool isInterior = TryResolveInteriorContext(ref systemState, out FixedString128Bytes interiorCellId, out ulong interiorCellHash);
             int2 playerExteriorCell = isInterior ? default : WorldBootstrap.WorldPositionToCell(playerTransform.Position);
             float groundOffset = SystemAPI.GetSingleton<MorrowindMovementSettings>().GroundOffset;
 
             Entity spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
-            var spawnState = EntityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
-            var spawnRequests = EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
+            var spawnState = systemState.EntityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
+            var spawnRequests = systemState.EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
 
             for (int requestIndex = 0; requestIndex < requests.Length; requestIndex++)
             {
@@ -100,14 +100,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            EntityManager.SetComponentData(spawnEntity, spawnState);
+            systemState.EntityManager.SetComponentData(spawnEntity, spawnState);
             requests.Clear();
         }
 
         Entity ResolvePlayer()
             => _playerQuery.GetSingletonEntity();
 
-        bool TryResolveInteriorContext(out FixedString128Bytes interiorCellId, out ulong interiorCellHash)
+        bool TryResolveInteriorContext(ref SystemState systemState, out FixedString128Bytes interiorCellId, out ulong interiorCellHash)
         {
             interiorCellId = default;
             interiorCellHash = 0UL;

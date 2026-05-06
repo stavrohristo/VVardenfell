@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
@@ -6,6 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct PlayerReputationMutationApplySystem : ISystem
@@ -21,7 +23,7 @@ namespace VVardenfell.Runtime.Player
             state.RequireForUpdate<PlayerReputationMutationRequest>();
             state.RequireForUpdate(_playerQuery);
         }
-
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();

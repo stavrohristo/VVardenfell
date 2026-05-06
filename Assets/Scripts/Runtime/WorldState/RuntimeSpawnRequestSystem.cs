@@ -11,25 +11,25 @@ using VVardenfell.Runtime.WorldRefs;
 namespace VVardenfell.Runtime.WorldState
 {
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
-    public partial class RuntimeSpawnRequestSystem : SystemBase
+    public partial struct RuntimeSpawnRequestSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeSpawnState>();
-            RequireForUpdate<RuntimeSpawnResult>();
-            RequireForUpdate<RuntimeSpawnRequest>();
-            RequireForUpdate<RuntimeSpawnedRef>();
-            RequireForUpdate<WorldJournalEntry>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<LoadedCellsMap>();
-            RequireForUpdate<AvailableCells>();
-            RequireForUpdate<StreamingConfig>();
-            RequireForUpdate<InteriorTransitionState>();
-            RequireForUpdate<InteriorSpawnedEntity>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeSpawnState>();
+            systemState.RequireForUpdate<RuntimeSpawnResult>();
+            systemState.RequireForUpdate<RuntimeSpawnRequest>();
+            systemState.RequireForUpdate<RuntimeSpawnedRef>();
+            systemState.RequireForUpdate<WorldJournalEntry>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate<AvailableCells>();
+            systemState.RequireForUpdate<StreamingConfig>();
+            systemState.RequireForUpdate<InteriorTransitionState>();
+            systemState.RequireForUpdate<InteriorSpawnedEntity>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.WorldState
             var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
             var spawnState = SystemAPI.GetSingleton<RuntimeSpawnState>();
             var spawnResult = SystemAPI.GetSingleton<RuntimeSpawnResult>();
-            var requests = EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
+            var requests = systemState.EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
             if (requests.Length == 0)
                 return;
 
@@ -48,7 +48,7 @@ namespace VVardenfell.Runtime.WorldState
             requests.Clear();
 
             Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
-            var logicalLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
+            var logicalLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
             Entity loadedEntity = SystemAPI.GetSingletonEntity<LoadedCellsMap>();
             Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
             var interiorTransition = SystemAPI.GetSingleton<InteriorTransitionState>();
@@ -61,7 +61,7 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < requestSnapshot.Length; i++)
             {
                 var request = requestSnapshot[i];
-                ProcessRequest(
+                ProcessRequest(ref systemState, 
                     spawnEntity,
                     ref content,
                     ref spawnState,
@@ -76,15 +76,15 @@ namespace VVardenfell.Runtime.WorldState
                     request);
             }
 
-            EntityManager.SetComponentData(spawnEntity, spawnState);
-            EntityManager.SetComponentData(spawnEntity, spawnResult);
-            EntityManager.SetComponentData(lookupEntity, logicalLookup);
-            EntityManager.SetComponentData(loadedEntity, loaded);
+            systemState.EntityManager.SetComponentData(spawnEntity, spawnState);
+            systemState.EntityManager.SetComponentData(spawnEntity, spawnResult);
+            systemState.EntityManager.SetComponentData(lookupEntity, logicalLookup);
+            systemState.EntityManager.SetComponentData(loadedEntity, loaded);
             if (activeExplicitRefsDirty || loaded.ActiveRevision != startActiveRevision)
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(EntityManager);
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
         }
 
-        void ProcessRequest(
+        void ProcessRequest(ref SystemState systemState, 
             Entity spawnEntity,
             ref RuntimeContentBlob content,
             ref RuntimeSpawnState spawnState,
@@ -159,7 +159,7 @@ namespace VVardenfell.Runtime.WorldState
             var createEcb = new EntityCommandBuffer(Allocator.Temp);
             bool queued = actorSpawn
                 ? RuntimeSpawnFactory.QueueActorSpawn(
-                    EntityManager,
+                    systemState.EntityManager,
                     ref createEcb,
                     ref content,
                     request.Content,
@@ -172,7 +172,7 @@ namespace VVardenfell.Runtime.WorldState
                     request.InteriorCellId,
                     request.PersistencePolicy)
                 : RuntimeSpawnFactory.QueueSpawn(
-                    EntityManager,
+                    systemState.EntityManager,
                     ref createEcb,
                     ref content,
                     descriptor,
@@ -188,7 +188,7 @@ namespace VVardenfell.Runtime.WorldState
                     ref logicalLookup,
                     transitionEntity,
                     request.PersistencePolicy);
-            createEcb.Playback(EntityManager);
+            createEcb.Playback(systemState.EntityManager);
             createEcb.Dispose();
 
             if (!queued)
@@ -199,7 +199,7 @@ namespace VVardenfell.Runtime.WorldState
 
             var materializeEcb = new EntityCommandBuffer(Allocator.Temp);
             Entity logicalEntity = RuntimeSpawnFactory.QueueMaterializeSpawn(
-                EntityManager,
+                systemState.EntityManager,
                 ref materializeEcb,
                 runtimeRefId,
                 request.IsInterior != 0,
@@ -207,7 +207,7 @@ namespace VVardenfell.Runtime.WorldState
                 exteriorActive,
                 ref logicalLookup,
                 transitionEntity);
-            materializeEcb.Playback(EntityManager);
+            materializeEcb.Playback(systemState.EntityManager);
             materializeEcb.Dispose();
 
             if (logicalEntity == Entity.Null)
@@ -216,7 +216,7 @@ namespace VVardenfell.Runtime.WorldState
                 return;
             }
 
-            var spawnedRegistry = EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
+            var spawnedRegistry = systemState.EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
             spawnedRegistry.Add(new RuntimeSpawnedRef
             {
                 RuntimeRefId = runtimeRefId,
@@ -232,7 +232,7 @@ namespace VVardenfell.Runtime.WorldState
                 PersistencePolicy = request.PersistencePolicy,
                 Alive = 1,
             });
-            WorldJournalUtility.AppendRuntimeSpawn(EntityManager, spawnedRegistry[spawnedRegistry.Length - 1]);
+            WorldJournalUtility.AppendRuntimeSpawn(systemState.EntityManager, spawnedRegistry[spawnedRegistry.Length - 1]);
 
             spawnResult.RuntimeRefId = runtimeRefId;
             spawnResult.LogicalEntity = logicalEntity;

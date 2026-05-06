@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Runtime.Components;
@@ -5,18 +6,19 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup), OrderFirst = true)]
-    public partial class MorrowindTimeAdvanceSystem : SystemBase
+    public partial struct MorrowindTimeAdvanceSystem : ISystem
     {
         EntityQuery _timeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _timeQuery = GetEntityQuery(ComponentType.ReadWrite<MorrowindTimeState>(), ComponentType.ReadWrite<MorrowindTimeAdvanceRequest>());
-            RequireForUpdate(_timeQuery);
+            _timeQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<MorrowindTimeState>(), ComponentType.ReadWrite<MorrowindTimeAdvanceRequest>());
+            systemState.RequireForUpdate(_timeQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity entity = _timeQuery.GetSingletonEntity();
             ref var time = ref SystemAPI.GetSingletonRW<MorrowindTimeState>().ValueRW;

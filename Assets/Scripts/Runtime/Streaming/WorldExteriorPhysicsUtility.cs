@@ -168,9 +168,6 @@ namespace VVardenfell.Runtime.Streaming
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
 
-                if (s_QueryCreated)
-                    s_Query.Dispose();
-
                 var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
                     .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
                 s_World = world;
@@ -192,9 +189,6 @@ namespace VVardenfell.Runtime.Streaming
                 World world = em.World;
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
-
-                if (s_QueryCreated)
-                    s_Query.Dispose();
 
                 var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
                     .WithAll<CellLink, RuntimeColliderSource>();

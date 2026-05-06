@@ -8,46 +8,46 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptActorEventConsumeApplySystem : SystemBase
+    public partial struct MorrowindScriptActorEventConsumeApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptActorEventConsumeRequest>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptActorEventConsumeRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptActorEventConsumeRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptActorEventConsumeRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i]);
+                ApplyRequest(ref systemState, requests[i]);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in MorrowindScriptActorEventConsumeRequest request)
+        void ApplyRequest(ref SystemState systemState, in MorrowindScriptActorEventConsumeRequest request)
         {
-            if (request.TargetEntity == Entity.Null || !EntityManager.Exists(request.TargetEntity))
+            if (request.TargetEntity == Entity.Null || !systemState.EntityManager.Exists(request.TargetEntity))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} is not loaded.");
 
             if (request.TargetPlacedRefId != 0u)
             {
-                if (!EntityManager.HasComponent<PlacedRefIdentity>(request.TargetEntity))
+                if (!systemState.EntityManager.HasComponent<PlacedRefIdentity>(request.TargetEntity))
                     throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} has no placed ref identity.");
 
-                var identity = EntityManager.GetComponentData<PlacedRefIdentity>(request.TargetEntity);
+                var identity = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(request.TargetEntity);
                 if (identity.Value != request.TargetPlacedRefId)
                     throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target mismatch requested={request.TargetPlacedRefId} actual={identity.Value}.");
             }
 
-            if (!EntityManager.HasComponent<ActorScriptEventState>(request.TargetEntity))
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(request.TargetEntity))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Actor event target ref={request.TargetPlacedRefId} has no actor script event state.");
 
-            var state = EntityManager.GetComponentData<ActorScriptEventState>(request.TargetEntity);
+            var state = systemState.EntityManager.GetComponentData<ActorScriptEventState>(request.TargetEntity);
             switch ((MorrowindScriptActorEventConsumeKind)request.Kind)
             {
                 case MorrowindScriptActorEventConsumeKind.Murdered:
@@ -60,7 +60,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     throw new InvalidOperationException($"[VVardenfell][MWScript] Unknown actor event consume kind {request.Kind}.");
             }
 
-            EntityManager.SetComponentData(request.TargetEntity, state);
+            systemState.EntityManager.SetComponentData(request.TargetEntity, state);
         }
     }
 }

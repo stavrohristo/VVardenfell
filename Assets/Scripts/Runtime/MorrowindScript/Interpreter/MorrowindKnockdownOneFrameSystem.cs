@@ -7,21 +7,21 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindKnockdownOneFrameSystem : SystemBase
+    public partial struct MorrowindKnockdownOneFrameSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorHitAftermathState>();
+            systemState.RequireForUpdate<ActorHitAftermathState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             foreach (var (aftermath, entity) in
                      SystemAPI.Query<RefRW<ActorHitAftermathState>>()
                          .WithEntityAccess())
             {
-                if (!EntityManager.HasComponent<ActorScriptEventState>(entity))
-                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no ActorScriptEventState.");
+                if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(entity))
+                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorScriptEventState.");
 
                 if (aftermath.ValueRO.Dead != 0 || aftermath.ValueRO.KnockedDown == 0)
                 {
@@ -40,15 +40,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                     aftermath.ValueRW.KnockedDownOverOneFrame = 1;
                 }
 
-                var scriptState = EntityManager.GetComponentData<ActorScriptEventState>(entity);
+                var scriptState = systemState.EntityManager.GetComponentData<ActorScriptEventState>(entity);
                 scriptState.KnockedDownOneFrame = aftermath.ValueRW.KnockedDownOneFrame;
-                EntityManager.SetComponentData(entity, scriptState);
+                systemState.EntityManager.SetComponentData(entity, scriptState);
             }
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

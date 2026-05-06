@@ -1,22 +1,24 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
     [UpdateAfter(typeof(MorrowindMenuMutationSystemGroup))]
-    public partial class RuntimeShellPauseSyncSystem : SystemBase
+    public partial struct RuntimeShellPauseSyncSystem : ISystem
     {
         EntityQuery _pausedQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _pausedQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
-            RequireForUpdate<RuntimeShellState>();
+            _pausedQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+            systemState.RequireForUpdate<RuntimeShellState>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
             bool paused = shell.InventoryOpen != 0
@@ -31,9 +33,9 @@ namespace VVardenfell.Runtime.Shell
                 || shell.RestMenuAdvancing != 0;
 
             if (paused)
-                MorrowindRuntimeLifecycleUtility.EnsurePaused(EntityManager, _pausedQuery);
+                MorrowindRuntimeLifecycleUtility.EnsurePaused(systemState.EntityManager, _pausedQuery);
             else
-                MorrowindRuntimeLifecycleUtility.RemovePaused(EntityManager, _pausedQuery);
+                MorrowindRuntimeLifecycleUtility.RemovePaused(systemState.EntityManager, _pausedQuery);
         }
     }
 }

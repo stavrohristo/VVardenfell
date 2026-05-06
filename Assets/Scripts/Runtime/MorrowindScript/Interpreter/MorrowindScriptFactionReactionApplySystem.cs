@@ -8,26 +8,26 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptFactionReactionApplySystem : SystemBase
+    public partial struct MorrowindScriptFactionReactionApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptFactionReactionRequest>();
-            RequireForUpdate<MorrowindFactionReactionOverride>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptFactionReactionRequest>();
+            systemState.RequireForUpdate<MorrowindFactionReactionOverride>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptFactionReactionRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptFactionReactionRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
-            var overrides = EntityManager.GetBuffer<MorrowindFactionReactionOverride>(runtimeEntity);
+            var overrides = systemState.EntityManager.GetBuffer<MorrowindFactionReactionOverride>(runtimeEntity);
             for (int i = 0; i < requests.Length; i++)
                 ApplyRequest(ref contentBlob, overrides, requests[i]);
 

@@ -1,22 +1,24 @@
 using System;
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial class StatsWindowStateSystem : SystemBase
+    public partial struct StatsWindowStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<StatsWindowState>();
-            RequireForUpdate<StatsWindowRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<StatsWindowState>();
+            systemState.RequireForUpdate<StatsWindowRequest>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<StatsWindowState>().ValueRW;
@@ -27,18 +29,20 @@ namespace VVardenfell.Runtime.Shell
         }
     }
 
+    [BurstCompile]
+
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial class SpellWindowStateSystem : SystemBase
+    public partial struct SpellWindowStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<SpellWindowState>();
-            RequireForUpdate<SpellWindowRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<SpellWindowState>();
+            systemState.RequireForUpdate<SpellWindowRequest>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<SpellWindowState>().ValueRW;
@@ -53,18 +57,20 @@ namespace VVardenfell.Runtime.Shell
         }
     }
 
+    [BurstCompile]
+
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial class MapWindowStateSystem : SystemBase
+    public partial struct MapWindowStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<MapWindowState>();
-            RequireForUpdate<MapWindowRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<MapWindowState>();
+            systemState.RequireForUpdate<MapWindowRequest>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<MapWindowState>().ValueRW;

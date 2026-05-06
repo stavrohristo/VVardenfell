@@ -18,36 +18,36 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
-    public partial class MorrowindScriptTransformApplySystem : SystemBase
+    public partial struct MorrowindScriptTransformApplySystem : ISystem
     {
         EntityQuery _runtimeQuery;
         EntityQuery _standingActorQuery;
         EntityQuery _mutationQueueQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadWrite<MorrowindScriptTransformRequest>());
-            _standingActorQuery = GetEntityQuery(
+            _standingActorQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindMovementState>(),
                 ComponentType.ReadOnly<LocalTransform>());
-            _mutationQueueQuery = GetEntityQuery(
+            _mutationQueueQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
                 ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate(_mutationQueueQuery);
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<LoadedCellsMap>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate(_mutationQueueQuery);
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var requests = EntityManager.GetBuffer<MorrowindScriptTransformRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptTransformRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -68,8 +68,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
-                Entity target = ResolveLiveTarget(request, logicalRefLookup);
-                if (target == Entity.Null || !EntityManager.Exists(target))
+                Entity target = ResolveLiveTarget(ref systemState, request, logicalRefLookup);
+                if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 {
                     if (request.Operation == 6)
                         throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} is not live.");
@@ -79,31 +79,31 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (request.Operation == 2)
                 {
-                    ApplyPositionCell(target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
+                    ApplyPositionCell(ref systemState, target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
                 if (request.Operation == 3)
                 {
-                    ApplyPosition(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    ApplyPosition(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
                 if (request.Operation == 4)
                 {
-                    ApplyPositionOnly(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    ApplyPositionOnly(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
                 if (request.Operation == 5)
                 {
-                    ApplyMove(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    ApplyMove(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
                 if (request.Operation == 6)
                 {
-                    ApplySetAtStart(target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    ApplySetAtStart(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
@@ -112,26 +112,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                     quaternion worldDelta = quaternion.AxisAngle(
                         -LogicalRefRotationUtility.ResolveAxis(request.Axis),
                         request.Radians);
-                    LogicalRefRotationUtility.ApplyWorldDelta(EntityManager, target, worldDelta);
+                    LogicalRefRotationUtility.ApplyWorldDelta(systemState.EntityManager, target, worldDelta);
                     continue;
                 }
 
                 if (request.Operation == 1)
                 {
-                    LogicalRefRotationUtility.SetAngle(EntityManager, target, request.Axis, request.Radians);
+                    LogicalRefRotationUtility.SetAngle(systemState.EntityManager, target, request.Axis, request.Radians);
                     continue;
                 }
 
                 quaternion delta = quaternion.AxisAngle(
                     LogicalRefRotationUtility.ResolveAxis(request.Axis),
                     request.Radians);
-                LogicalRefRotationUtility.ApplyDelta(EntityManager, target, delta);
+                LogicalRefRotationUtility.ApplyDelta(systemState.EntityManager, target, delta);
             }
 
             requests.Clear();
         }
 
-        void ApplyPositionCell(
+        void ApplyPositionCell(ref SystemState systemState, 
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
@@ -147,163 +147,163 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (cellId.IsEmpty)
                 throw new InvalidOperationException($"PositionCell target interior cell 0x{request.InteriorCellHash:X16} has no cell id.");
 
-            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
-                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+            float3 previousPosition = systemState.EntityManager.HasComponent<LocalTransform>(target)
+                ? systemState.EntityManager.GetComponentData<LocalTransform>(target).Position
                 : request.Position;
             quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
-            MoveEntity(target, request.Position, rotation);
-            UpdateInteriorMembership(target, cellId, request.InteriorCellHash);
+            MoveEntity(ref systemState, target, request.Position, rotation);
+            UpdateInteriorMembership(ref systemState, target, cellId, request.InteriorCellHash);
 
-            if (EntityManager.HasBuffer<LogicalRefChild>(target))
+            if (systemState.EntityManager.HasBuffer<LogicalRefChild>(target))
             {
                 float3 delta = request.Position - previousPosition;
-                var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+                var children = systemState.EntityManager.GetBuffer<LogicalRefChild>(target);
                 for (int i = 0; i < children.Length; i++)
                 {
                     Entity child = children[i].Value;
-                    if (child == Entity.Null || child == target || !EntityManager.Exists(child))
+                    if (child == Entity.Null || child == target || !systemState.EntityManager.Exists(child))
                         continue;
 
-                    if (!EntityManager.HasComponent<Parent>(child) && EntityManager.HasComponent<LocalTransform>(child))
+                    if (!systemState.EntityManager.HasComponent<Parent>(child) && systemState.EntityManager.HasComponent<LocalTransform>(child))
                     {
-                        var childTransform = EntityManager.GetComponentData<LocalTransform>(child);
+                        var childTransform = systemState.EntityManager.GetComponentData<LocalTransform>(child);
                         childTransform.Position += delta;
-                        EntityManager.SetComponentData(child, childTransform);
-                        if (EntityManager.HasComponent<LocalToWorld>(child))
+                        systemState.EntityManager.SetComponentData(child, childTransform);
+                        if (systemState.EntityManager.HasComponent<LocalToWorld>(child))
                         {
-                            EntityManager.SetComponentData(child, new LocalToWorld
+                            systemState.EntityManager.SetComponentData(child, new LocalToWorld
                             {
                                 Value = float4x4.TRS(childTransform.Position, childTransform.Rotation, new float3(childTransform.Scale)),
                             });
                         }
                     }
 
-                    UpdateInteriorMembership(child, cellId, request.InteriorCellHash);
+                    UpdateInteriorMembership(ref systemState, child, cellId, request.InteriorCellHash);
                 }
             }
 
-            bool active = !EntityManager.HasComponent<LogicalRefLocation>(target)
-                          || IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
-            ProjectPositionCellTarget(target, active);
+            bool active = !systemState.EntityManager.HasComponent<LogicalRefLocation>(target)
+                          || IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(ref systemState, target, active);
         }
 
-        void ApplyPosition(
+        void ApplyPosition(ref SystemState systemState, 
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
                 throw new InvalidOperationException($"Position target ref={request.TargetPlacedRefId} has no logical location.");
 
-            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
-                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+            float3 previousPosition = systemState.EntityManager.HasComponent<LocalTransform>(target)
+                ? systemState.EntityManager.GetComponentData<LocalTransform>(target).Position
                 : request.Position;
             quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
-            MoveEntity(target, request.Position, rotation);
-            MoveUnparentedChildrenByDelta(target, request.Position - previousPosition);
+            MoveEntity(ref systemState, target, request.Position, rotation);
+            MoveUnparentedChildrenByDelta(ref systemState, target, request.Position - previousPosition);
 
-            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
-            ProjectPositionCellTarget(target, active);
+            bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(ref systemState, target, active);
         }
 
-        void ApplyPositionOnly(
+        void ApplyPositionOnly(ref SystemState systemState, 
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
                 throw new InvalidOperationException($"SetPos target ref={request.TargetPlacedRefId} has no logical location.");
 
-            float3 previousPosition = EntityManager.HasComponent<LocalTransform>(target)
-                ? EntityManager.GetComponentData<LocalTransform>(target).Position
+            float3 previousPosition = systemState.EntityManager.HasComponent<LocalTransform>(target)
+                ? systemState.EntityManager.GetComponentData<LocalTransform>(target).Position
                 : request.Position;
 
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"SetPos target ref={request.TargetPlacedRefId} has no LocalTransform.");
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(target);
-            MoveEntity(target, request.Position, transform.Rotation);
-            MoveUnparentedChildrenByDelta(target, request.Position - previousPosition);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
+            MoveEntity(ref systemState, target, request.Position, transform.Rotation);
+            MoveUnparentedChildrenByDelta(ref systemState, target, request.Position - previousPosition);
 
-            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
-            ProjectPositionCellTarget(target, active);
+            bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(ref systemState, target, active);
         }
 
-        void ApplyMove(
+        void ApplyMove(ref SystemState systemState, 
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
                 throw new InvalidOperationException($"Move target ref={request.TargetPlacedRefId} has no logical location.");
 
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"Move target ref={request.TargetPlacedRefId} has no LocalTransform.");
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(target);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             float3 delta = request.Position - transform.Position;
-            MoveEntity(target, request.Position, transform.Rotation);
-            MoveUnparentedChildrenByDelta(target, delta);
-            MoveStandingActorsByDelta(target, delta);
+            MoveEntity(ref systemState, target, request.Position, transform.Rotation);
+            MoveUnparentedChildrenByDelta(ref systemState, target, delta);
+            MoveStandingActorsByDelta(ref systemState, target, delta);
 
-            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
-            ProjectPositionCellTarget(target, active);
+            bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(ref systemState, target, active);
         }
 
-        void ApplySetAtStart(
+        void ApplySetAtStart(ref SystemState systemState, 
             Entity target,
             in MorrowindScriptTransformRequest request,
             in LoadedCellsMap loadedCells,
             byte interiorActive,
             ulong activeInteriorCellHash)
         {
-            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
                 throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no logical location.");
 
-            if (!EntityManager.HasComponent<PlacedRefInitialTransform>(target))
+            if (!systemState.EntityManager.HasComponent<PlacedRefInitialTransform>(target))
                 throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no initial transform.");
 
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"SetAtStart target ref={request.TargetPlacedRefId} has no LocalTransform.");
 
-            var initial = EntityManager.GetComponentData<PlacedRefInitialTransform>(target);
-            var current = EntityManager.GetComponentData<LocalTransform>(target);
+            var initial = systemState.EntityManager.GetComponentData<PlacedRefInitialTransform>(target);
+            var current = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             float3 delta = initial.Position - current.Position;
-            MoveEntity(target, initial.Position, initial.Rotation, initial.Scale);
-            MoveUnparentedChildrenByDelta(target, delta);
-            MoveStandingActorsByDelta(target, delta);
+            MoveEntity(ref systemState, target, initial.Position, initial.Rotation, initial.Scale);
+            MoveUnparentedChildrenByDelta(ref systemState, target, delta);
+            MoveStandingActorsByDelta(ref systemState, target, delta);
 
-            bool active = IsPositionCellTargetActive(target, loadedCells, interiorActive, activeInteriorCellHash);
-            ProjectPositionCellTarget(target, active);
+            bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
+            ProjectPositionCellTarget(ref systemState, target, active);
         }
 
-        void MoveUnparentedChildrenByDelta(Entity target, float3 delta)
+        void MoveUnparentedChildrenByDelta(ref SystemState systemState, Entity target, float3 delta)
         {
-            if (!EntityManager.HasBuffer<LogicalRefChild>(target))
+            if (!systemState.EntityManager.HasBuffer<LogicalRefChild>(target))
                 return;
 
-            var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+            var children = systemState.EntityManager.GetBuffer<LogicalRefChild>(target);
             for (int i = 0; i < children.Length; i++)
             {
                 Entity child = children[i].Value;
-                if (child == Entity.Null || child == target || !EntityManager.Exists(child))
+                if (child == Entity.Null || child == target || !systemState.EntityManager.Exists(child))
                     continue;
 
-                if (EntityManager.HasComponent<Parent>(child) || !EntityManager.HasComponent<LocalTransform>(child))
+                if (systemState.EntityManager.HasComponent<Parent>(child) || !systemState.EntityManager.HasComponent<LocalTransform>(child))
                     continue;
 
-                var childTransform = EntityManager.GetComponentData<LocalTransform>(child);
+                var childTransform = systemState.EntityManager.GetComponentData<LocalTransform>(child);
                 childTransform.Position += delta;
-                EntityManager.SetComponentData(child, childTransform);
-                if (EntityManager.HasComponent<LocalToWorld>(child))
+                systemState.EntityManager.SetComponentData(child, childTransform);
+                if (systemState.EntityManager.HasComponent<LocalToWorld>(child))
                 {
-                    EntityManager.SetComponentData(child, new LocalToWorld
+                    systemState.EntityManager.SetComponentData(child, new LocalToWorld
                     {
                         Value = float4x4.TRS(childTransform.Position, childTransform.Rotation, new float3(childTransform.Scale)),
                     });
@@ -311,7 +311,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        void MoveStandingActorsByDelta(Entity target, float3 delta)
+        void MoveStandingActorsByDelta(ref SystemState systemState, Entity target, float3 delta)
         {
             if (math.lengthsq(delta) <= 0f)
                 return;
@@ -320,136 +320,136 @@ namespace VVardenfell.Runtime.MorrowindScript
             using var states = _standingActorQuery.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
-                if (states[i].StandingOn != target || entities[i] == target || !EntityManager.Exists(entities[i]))
+                if (states[i].StandingOn != target || entities[i] == target || !systemState.EntityManager.Exists(entities[i]))
                     continue;
 
-                if (!EntityManager.HasComponent<LocalTransform>(entities[i]))
+                if (!systemState.EntityManager.HasComponent<LocalTransform>(entities[i]))
                     continue;
 
-                var transform = EntityManager.GetComponentData<LocalTransform>(entities[i]);
-                MoveEntity(entities[i], transform.Position + delta, transform.Rotation);
+                var transform = systemState.EntityManager.GetComponentData<LocalTransform>(entities[i]);
+                MoveEntity(ref systemState, entities[i], transform.Position + delta, transform.Rotation);
             }
         }
 
-        void MoveEntity(Entity entity, float3 position, quaternion rotation)
-            => MoveEntity(entity, position, rotation, float.NaN);
+        void MoveEntity(ref SystemState systemState, Entity entity, float3 position, quaternion rotation)
+            => MoveEntity(ref systemState, entity, position, rotation, float.NaN);
 
-        void MoveEntity(Entity entity, float3 position, quaternion rotation, float scale)
+        void MoveEntity(ref SystemState systemState, Entity entity, float3 position, quaternion rotation, float scale)
         {
-            if (!EntityManager.HasComponent<LocalTransform>(entity))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(entity))
                 return;
 
-            if (EntityManager.HasComponent<Static>(entity))
-                EntityManager.RemoveComponent<Static>(entity);
+            if (systemState.EntityManager.HasComponent<Static>(entity))
+                systemState.EntityManager.RemoveComponent<Static>(entity);
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(entity);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(entity);
             transform.Position = position;
             transform.Rotation = rotation;
             if (!float.IsNaN(scale))
                 transform.Scale = scale;
-            EntityManager.SetComponentData(entity, transform);
+            systemState.EntityManager.SetComponentData(entity, transform);
 
-            if (EntityManager.HasComponent<LocalToWorld>(entity))
+            if (systemState.EntityManager.HasComponent<LocalToWorld>(entity))
             {
-                EntityManager.SetComponentData(entity, new LocalToWorld
+                systemState.EntityManager.SetComponentData(entity, new LocalToWorld
                 {
                     Value = float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
                 });
             }
         }
 
-        void UpdateInteriorMembership(Entity entity, FixedString128Bytes cellId, ulong cellHash)
+        void UpdateInteriorMembership(ref SystemState systemState, Entity entity, FixedString128Bytes cellId, ulong cellHash)
         {
-            if (EntityManager.HasComponent<LogicalRefLocation>(entity))
+            if (systemState.EntityManager.HasComponent<LogicalRefLocation>(entity))
             {
-                EntityManager.SetComponentData(entity, new LogicalRefLocation
+                systemState.EntityManager.SetComponentData(entity, new LogicalRefLocation
                 {
                     InteriorCellId = cellId,
                     InteriorCellHash = cellHash,
                     IsInterior = 1,
                 });
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(EntityManager);
-                MarkActorAiNavigationAnchorDirty(entity);
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
+                MarkActorAiNavigationAnchorDirty(ref systemState, entity);
             }
 
-            if (!EntityManager.HasComponent<InteriorCellMember>(entity))
-                EntityManager.AddComponent<InteriorCellMember>(entity);
-            if (EntityManager.HasComponent<CellLink>(entity))
-                EntityManager.RemoveComponent<CellLink>(entity);
+            if (!systemState.EntityManager.HasComponent<InteriorCellMember>(entity))
+                systemState.EntityManager.AddComponent<InteriorCellMember>(entity);
+            if (systemState.EntityManager.HasComponent<CellLink>(entity))
+                systemState.EntityManager.RemoveComponent<CellLink>(entity);
         }
 
-        void MarkActorAiNavigationAnchorDirty(Entity entity)
+        void MarkActorAiNavigationAnchorDirty(ref SystemState systemState, Entity entity)
         {
-            if (!EntityManager.HasComponent<ActorAiNavigationAnchor>(entity))
+            if (!systemState.EntityManager.HasComponent<ActorAiNavigationAnchor>(entity))
                 return;
 
-            if (!EntityManager.HasComponent<ActorAiNavigationAnchorDirty>(entity))
+            if (!systemState.EntityManager.HasComponent<ActorAiNavigationAnchorDirty>(entity))
                 throw new InvalidOperationException($"[VVardenfell][AI] actor entity={entity.Index}:{entity.Version} has ActorAiNavigationAnchor without ActorAiNavigationAnchorDirty.");
 
-            EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, true);
+            systemState.EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, true);
         }
 
-        bool IsPositionCellTargetActive(Entity target, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)
+        bool IsPositionCellTargetActive(ref SystemState systemState, Entity target, in LoadedCellsMap loadedCells, byte interiorActive, ulong activeInteriorCellHash)
         {
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(target)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
                 return false;
 
-            if (!EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
                 return false;
 
-            var location = EntityManager.GetComponentData<LogicalRefLocation>(target);
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(target);
             if (location.IsInterior != 0)
                 return interiorActive != 0 && location.InteriorCellHash == activeInteriorCellHash;
 
             return loadedCells.Active.IsCreated && loadedCells.Active.Contains(location.ExteriorCell);
         }
 
-        void ProjectPositionCellTarget(Entity target, bool active)
+        void ProjectPositionCellTarget(ref SystemState systemState, Entity target, bool active)
         {
-            ProjectEntity(target, active, isActorRoot: EntityManager.HasComponent<ActorSpawnSource>(target));
+            ProjectEntity(ref systemState, target, active, isActorRoot: systemState.EntityManager.HasComponent<ActorSpawnSource>(target));
 
-            if (!EntityManager.HasBuffer<LogicalRefChild>(target))
+            if (!systemState.EntityManager.HasBuffer<LogicalRefChild>(target))
                 return;
 
-            bool isActor = EntityManager.HasComponent<ActorSpawnSource>(target);
-            var children = EntityManager.GetBuffer<LogicalRefChild>(target);
+            bool isActor = systemState.EntityManager.HasComponent<ActorSpawnSource>(target);
+            var children = systemState.EntityManager.GetBuffer<LogicalRefChild>(target);
             for (int i = 0; i < children.Length; i++)
             {
                 Entity child = children[i].Value;
-                if (child == Entity.Null || !EntityManager.Exists(child))
+                if (child == Entity.Null || !systemState.EntityManager.Exists(child))
                     continue;
 
-                ProjectEntity(child, active, isActor);
+                ProjectEntity(ref systemState, child, active, isActor);
             }
         }
 
-        void ProjectEntity(Entity entity, bool active, bool isActorRoot)
+        void ProjectEntity(ref SystemState systemState, Entity entity, bool active, bool isActorRoot)
         {
-            if (EntityManager.HasComponent<ActorRenderVisible>(entity))
-                EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, active);
+            if (systemState.EntityManager.HasComponent<ActorRenderVisible>(entity))
+                systemState.EntityManager.SetComponentEnabled<ActorRenderVisible>(entity, active);
 
-            if (EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
-                EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(entity, active);
+            if (systemState.EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
+                systemState.EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(entity, active);
 
-            if (EntityManager.HasComponent<MaterialMeshInfo>(entity) && (!isActorRoot || !active))
-                EntityManager.SetComponentEnabled<MaterialMeshInfo>(entity, active);
+            if (systemState.EntityManager.HasComponent<MaterialMeshInfo>(entity) && (!isActorRoot || !active))
+                systemState.EntityManager.SetComponentEnabled<MaterialMeshInfo>(entity, active);
 
-            if (!EntityManager.HasComponent<RuntimeColliderSource>(entity))
+            if (!systemState.EntityManager.HasComponent<RuntimeColliderSource>(entity))
                 return;
 
             Entity queueEntity = _mutationQueueQuery.GetSingletonEntity();
-            var mutations = EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+            var mutations = systemState.EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
             if (active)
                 RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
             else
                 RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
-            RuntimePhysicsMutationQueueUtility.MarkFlushRequested(EntityManager, queueEntity);
+            RuntimePhysicsMutationQueueUtility.MarkFlushRequested(systemState.EntityManager, queueEntity);
         }
 
-        Entity ResolveLiveTarget(in MorrowindScriptTransformRequest request, in LogicalRefLookup lookup)
+        Entity ResolveLiveTarget(ref SystemState systemState, in MorrowindScriptTransformRequest request, in LogicalRefLookup lookup)
         {
-            if (request.TargetEntity != Entity.Null && EntityManager.Exists(request.TargetEntity))
+            if (request.TargetEntity != Entity.Null && systemState.EntityManager.Exists(request.TargetEntity))
                 return request.TargetEntity;
 
             if (lookup.Map.IsCreated && lookup.Map.TryGetValue(request.TargetPlacedRefId, out Entity target))

@@ -11,18 +11,18 @@ namespace VVardenfell.Runtime.Magic
 {
     [UpdateInGroup(typeof(MorrowindProjectileSystemGroup))]
     [UpdateAfter(typeof(MorrowindProjectileMoveSystem))]
-    public partial class MorrowindMagicProjectileHitSystem : SystemBase
+    public partial struct MorrowindMagicProjectileHitSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindProjectileHitEvent>();
-            RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindProjectileHitEvent>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (hit, entity) in SystemAPI.Query<RefRO<MorrowindProjectileHitEvent>>().WithEntityAccess())
@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.Magic
                 {
                     CasterEntity = value.Caster,
                     TargetEntity = target,
-                    TargetPlacedRefId = target == Entity.Null ? 0u : PlacedRefId(target),
+                    TargetPlacedRefId = target == Entity.Null ? 0u : PlacedRefId(ref systemState, target),
                     Spell = new SpellDefHandle { Value = value.SpellHandleValue },
                     Scripted = value.Scripted,
                     AlwaysSucceed = 1,
@@ -52,13 +52,13 @@ namespace VVardenfell.Runtime.Magic
                 ecb.DestroyEntity(entity);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

@@ -20,7 +20,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptShellApplySystem))]
-    public partial class MorrowindScriptJailApplySystem : SystemBase
+    public partial struct MorrowindScriptJailApplySystem : ISystem
     {
         static readonly float3 InteriorWorldOffset = float3.zero;
 
@@ -31,20 +31,20 @@ namespace VVardenfell.Runtime.MorrowindScript
         EntityQuery _viewQuery;
         EntityQuery _playerVisualQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadWrite<MorrowindScriptJailRequest>());
-            _transitionQuery = GetEntityQuery(
+            _transitionQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<InteriorTransitionState>(),
                 ComponentType.ReadWrite<InteriorSpawnedEntity>());
-            _streamingQuery = GetEntityQuery(
+            _streamingQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<StreamingConfig>(),
                 ComponentType.ReadWrite<LogicalRefLookup>(),
                 ComponentType.ReadOnly<AvailableCells>(),
                 ComponentType.ReadWrite<LoadedCellsMap>());
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<LocalTransform>(),
                 ComponentType.ReadWrite<LocalToWorld>(),
@@ -53,28 +53,28 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<PlayerCharacterState>(),
                 ComponentType.ReadWrite<MorrowindMovementInput>(),
                 ComponentType.ReadWrite<MorrowindMovementState>());
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<PlayerViewComponent>(),
                 ComponentType.ReadWrite<LocalTransform>(),
                 ComponentType.ReadWrite<LocalToWorld>());
-            _playerVisualQuery = GetEntityQuery(
+            _playerVisualQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LocalPlayerVisual>(),
                 ComponentType.ReadWrite<ActorWeaponAnimationState>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate(_transitionQuery);
-            RequireForUpdate(_streamingQuery);
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_viewQuery);
-            RequireForUpdate<MorrowindTimeAdvanceRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate(_transitionQuery);
+            systemState.RequireForUpdate(_streamingQuery);
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate<MorrowindTimeAdvanceRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var requests = EntityManager.GetBuffer<MorrowindScriptJailRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptJailRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
             if (requests.Length > 1)
@@ -97,17 +97,17 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             var playerEntity = _playerQuery.GetSingletonEntity();
-            var playerTransform = EntityManager.GetComponentData<LocalTransform>(playerEntity);
+            var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(playerEntity);
             var transitionEntity = _transitionQuery.GetSingletonEntity();
-            var transition = EntityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
+            var transition = systemState.EntityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
 
             if (!TryResolveClosestPrisonMarker(ref worldCells, prisonMarkerContent, playerTransform.Position, transition, out var destination))
                 throw new InvalidOperationException("[VVardenfell][MWScript] GotoJail could not find a prisonmarker destination.");
 
             int jailDays = math.max(1, requests[0].Days);
-            ApplyJailTeleport(transitionEntity, ref transition, destination);
-            MovePlayerToDestination(playerEntity, destination.Position, ExtractYawRotation(destination.Rotation));
-            SheathePlayerWeapon(playerEntity);
+            ApplyJailTeleport(ref systemState, transitionEntity, ref transition, destination);
+            MovePlayerToDestination(ref systemState, playerEntity, destination.Position, ExtractYawRotation(destination.Rotation));
+            SheathePlayerWeapon(ref systemState, playerEntity);
             SystemAPI.GetSingletonBuffer<MorrowindTimeAdvanceRequest>().Add(new MorrowindTimeAdvanceRequest
             {
                 Hours = jailDays * 24f,
@@ -120,9 +120,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell.ValueRW);
             }
 
-            EntityManager.SetComponentData(transitionEntity, transition);
+            systemState.EntityManager.SetComponentData(transitionEntity, transition);
             if (destination.IsInterior)
-                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(EntityManager);
+                RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(systemState.EntityManager);
 
             requests.Clear();
         }
@@ -274,23 +274,23 @@ namespace VVardenfell.Runtime.MorrowindScript
             };
         }
 
-        void ApplyJailTeleport(
+        void ApplyJailTeleport(ref SystemState systemState, 
             Entity transitionEntity,
             ref InteriorTransitionState transition,
             in PrisonMarkerDestination destination)
         {
             var streamingEntity = _streamingQuery.GetSingletonEntity();
-            var config = EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
-            var logicalRefLookup = EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
-            var available = EntityManager.GetComponentData<AvailableCells>(streamingEntity);
-            var loaded = EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var config = systemState.EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
+            var logicalRefLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
+            var available = systemState.EntityManager.GetComponentData<AvailableCells>(streamingEntity);
+            var loaded = systemState.EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
 
             transition.TransitionInProgress = 1;
             if (destination.IsInterior)
             {
-                DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
-                WorldSpawner.HideExteriorVisibility(World, ref loaded);
-                if (!WorldSpawner.TrySpawnInteriorCellByHash(World, destination.InteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
+                DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
+                WorldSpawner.HideExteriorVisibility(systemState.World, ref loaded);
+                if (!WorldSpawner.TrySpawnInteriorCellByHash(systemState.World, destination.InteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
                     throw new InvalidOperationException($"[VVardenfell][MWScript] GotoJail destination interior '{destination.InteriorCellId}' was not preloaded.");
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
@@ -299,33 +299,33 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
             else
             {
-                DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
+                DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
                 config.ExteriorStreamingPaused = false;
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
                 transition.ActiveInteriorCellHash = 0UL;
                 config.CameraCell = destination.ExteriorCell;
-                WorldSpawner.SyncExteriorVisibility(World, config, available, ref loaded);
+                WorldSpawner.SyncExteriorVisibility(systemState.World, config, available, ref loaded);
             }
 
-            EntityManager.SetComponentData(streamingEntity, config);
-            EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
-            EntityManager.SetComponentData(streamingEntity, loaded);
+            systemState.EntityManager.SetComponentData(streamingEntity, config);
+            systemState.EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
+            systemState.EntityManager.SetComponentData(streamingEntity, loaded);
             transition.TransitionInProgress = 0;
         }
 
-        void MovePlayerToDestination(Entity playerEntity, float3 destinationPosition, quaternion bodyYawRotation)
+        void MovePlayerToDestination(ref SystemState systemState, Entity playerEntity, float3 destinationPosition, quaternion bodyYawRotation)
         {
-            var character = EntityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
-            var control = EntityManager.GetComponentData<PlayerCharacterControl>(playerEntity);
-            var state = EntityManager.GetComponentData<PlayerCharacterState>(playerEntity);
-            var movementState = EntityManager.GetComponentData<MorrowindMovementState>(playerEntity);
-            var playerTransform = EntityManager.GetComponentData<LocalTransform>(playerEntity);
+            var character = systemState.EntityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
+            var control = systemState.EntityManager.GetComponentData<PlayerCharacterControl>(playerEntity);
+            var state = systemState.EntityManager.GetComponentData<PlayerCharacterState>(playerEntity);
+            var movementState = systemState.EntityManager.GetComponentData<MorrowindMovementState>(playerEntity);
+            var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(playerEntity);
 
             playerTransform.Position = destinationPosition;
             playerTransform.Rotation = bodyYawRotation;
-            EntityManager.SetComponentData(playerEntity, playerTransform);
-            EntityManager.SetComponentData(playerEntity, new LocalToWorld
+            systemState.EntityManager.SetComponentData(playerEntity, playerTransform);
+            systemState.EntityManager.SetComponentData(playerEntity, new LocalToWorld
             {
                 Value = float4x4.TRS(destinationPosition, bodyYawRotation, new float3(playerTransform.Scale)),
             });
@@ -339,9 +339,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             control.AttackPressed = false;
             control.AttackReleased = false;
             control.JumpPressedEvent.Clear();
-            EntityManager.SetComponentData(playerEntity, control);
+            systemState.EntityManager.SetComponentData(playerEntity, control);
 
-            EntityManager.SetComponentData(playerEntity, default(MorrowindMovementInput));
+            systemState.EntityManager.SetComponentData(playerEntity, default(MorrowindMovementInput));
 
             movementState.Inertia = float3.zero;
             movementState.LastVelocity = float3.zero;
@@ -352,33 +352,33 @@ namespace VVardenfell.Runtime.MorrowindScript
             movementState.SupportKind = (byte)MorrowindSupportKind.FlatGround;
             movementState.StandingOn = Entity.Null;
             movementState.GroundNormal = math.up();
-            EntityManager.SetComponentData(playerEntity, movementState);
+            systemState.EntityManager.SetComponentData(playerEntity, movementState);
 
             state.WorldVelocity = float3.zero;
             state.Grounded = true;
             state.WasGrounded = true;
             state.GroundedTime = 0.001f;
             state.AirborneTime = 0f;
-            EntityManager.SetComponentData(playerEntity, state);
+            systemState.EntityManager.SetComponentData(playerEntity, state);
 
             Entity viewEntity = _viewQuery.GetSingletonEntity();
-            var view = EntityManager.GetComponentData<PlayerViewComponent>(viewEntity);
+            var view = systemState.EntityManager.GetComponentData<PlayerViewComponent>(viewEntity);
             float eyeHeight = state.Crouched ? character.CrouchingEyeHeight : character.StandingEyeHeight;
             view.LocalPitchDegrees = 0f;
             view.LocalViewRotation = quaternion.identity;
             view.LocalEyeOffset = new float3(0f, eyeHeight, 0f);
-            EntityManager.SetComponentData(viewEntity, view);
-            EntityManager.SetComponentData(viewEntity, LocalTransform.FromPositionRotationScale(
+            systemState.EntityManager.SetComponentData(viewEntity, view);
+            systemState.EntityManager.SetComponentData(viewEntity, LocalTransform.FromPositionRotationScale(
                 view.LocalEyeOffset,
                 quaternion.identity,
                 1f));
-            EntityManager.SetComponentData(viewEntity, new LocalToWorld
+            systemState.EntityManager.SetComponentData(viewEntity, new LocalToWorld
             {
                 Value = float4x4.TRS(destinationPosition + math.rotate(bodyYawRotation, view.LocalEyeOffset), bodyYawRotation, new float3(1f)),
             });
         }
 
-        void SheathePlayerWeapon(Entity playerEntity)
+        void SheathePlayerWeapon(ref SystemState systemState, Entity playerEntity)
         {
             using var entities = _playerVisualQuery.ToEntityArray(Allocator.Temp);
             using var visuals = _playerVisualQuery.ToComponentDataArray<LocalPlayerVisual>(Allocator.Temp);
@@ -388,7 +388,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (visuals[i].Player != playerEntity)
                     continue;
 
-                var weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(entities[i]);
+                var weaponState = systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(entities[i]);
                 weaponState.Drawn = 0;
                 weaponState.Phase = ActorWeaponAnimationPhase.Hidden;
                 weaponState.AttackStrength = 0f;
@@ -397,13 +397,13 @@ namespace VVardenfell.Runtime.MorrowindScript
                 weaponState.AttackPressed = 0;
                 weaponState.AttackReleased = 0;
                 weaponState.ReleaseQueued = 0;
-                EntityManager.SetComponentData(entities[i], weaponState);
+                systemState.EntityManager.SetComponentData(entities[i], weaponState);
             }
         }
 
-        void DestroyInteriorEntities(Entity transitionEntity, ref LogicalRefLookup logicalRefLookup)
+        void DestroyInteriorEntities(ref SystemState systemState, Entity transitionEntity, ref LogicalRefLookup logicalRefLookup)
         {
-            var spawnedBuffer = EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
+            var spawnedBuffer = systemState.EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
             if (spawnedBuffer.Length == 0)
                 return;
 
@@ -418,11 +418,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     for (int i = 0; i < entitiesToDestroy.Length; i++)
                     {
-                        if (EntityManager.Exists(entitiesToDestroy[i])
-                            && EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i])
+                            && systemState.EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
                         {
                             LogicalRefDestroyUtility.QueueDestroyLogicalRef(
-                                EntityManager,
+                                systemState.EntityManager,
                                 ref ecb,
                                 entitiesToDestroy[i],
                                 ref logicalRefLookup,
@@ -430,11 +430,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                             continue;
                         }
 
-                        if (EntityManager.Exists(entitiesToDestroy[i]))
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i]))
                             ecb.DestroyEntity(entitiesToDestroy[i]);
                     }
 
-                    ecb.Playback(EntityManager);
+                    ecb.Playback(systemState.EntityManager);
                 }
                 finally
                 {

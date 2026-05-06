@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Unity.Entities;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
@@ -10,16 +10,16 @@ namespace VVardenfell.Runtime.Shell
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellInputSystem))]
     [UpdateBefore(typeof(RuntimeShellActionSystem))]
-    public partial class SaveLoadBrowserActionSystem : SystemBase
+    public partial struct SaveLoadBrowserActionSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<SaveLoadBrowserState>();
-            RequireForUpdate<SaveLoadBrowserRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<SaveLoadBrowserState>();
+            systemState.RequireForUpdate<SaveLoadBrowserRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var browser = ref SystemAPI.GetSingletonRW<SaveLoadBrowserState>().ValueRW;
@@ -28,14 +28,14 @@ namespace VVardenfell.Runtime.Shell
             if (request.Pending == 0)
                 return;
 
-            HandleSaveLoadBrowserRequest(ref state, ref browser, ref request);
+            HandleSaveLoadBrowserRequest(ref systemState, ref state, ref browser, ref request);
             request.Pending = 0;
             request.Action = 0;
             request.SlotId = default;
             request.SaveName = default;
         }
 
-        void HandleSaveLoadBrowserRequest(
+        void HandleSaveLoadBrowserRequest(ref SystemState systemState, 
             ref RuntimeShellState state,
             ref SaveLoadBrowserState browser,
             ref SaveLoadBrowserRequest request)
@@ -53,7 +53,7 @@ namespace VVardenfell.Runtime.Shell
                     break;
 
                 case SaveLoadBrowserPendingAction.NewSave:
-                    if (WorldSaveStorage.TryWriteNewSlot(EntityManager, request.SaveName.ToString(), out var newSummary, out string newError))
+                    if (WorldSaveStorage.TryWriteNewSlot(systemState.EntityManager, request.SaveName.ToString(), out var newSummary, out string newError))
                     {
                         browser.SelectedSlotId = RuntimeShellStateUtility.ToFixedSlotId(newSummary.SlotId);
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Game saved.");
@@ -108,7 +108,7 @@ namespace VVardenfell.Runtime.Shell
                     break;
 
                 case SaveLoadBrowserPendingAction.Confirm:
-                    ConfirmSaveLoadBrowserAction(ref state, ref browser);
+                    ConfirmSaveLoadBrowserAction(ref systemState, ref state, ref browser);
                     break;
 
                 case SaveLoadBrowserPendingAction.CancelConfirm:
@@ -122,7 +122,7 @@ namespace VVardenfell.Runtime.Shell
             }
         }
 
-        void ConfirmSaveLoadBrowserAction(ref RuntimeShellState state, ref SaveLoadBrowserState browser)
+        void ConfirmSaveLoadBrowserAction(ref SystemState systemState, ref RuntimeShellState state, ref SaveLoadBrowserState browser)
         {
             var action = (SaveLoadBrowserPendingAction)browser.ConfirmAction;
             string slotId = browser.SelectedSlotId.ToString();
@@ -132,7 +132,7 @@ namespace VVardenfell.Runtime.Shell
             switch (action)
             {
                 case SaveLoadBrowserPendingAction.Overwrite:
-                    if (WorldSaveStorage.TryOverwriteSlot(EntityManager, slotId, browser.DraftSaveName.ToString(), out _, out string overwriteError))
+                    if (WorldSaveStorage.TryOverwriteSlot(systemState.EntityManager, slotId, browser.DraftSaveName.ToString(), out _, out string overwriteError))
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Save overwritten.");
                     else
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus(overwriteError);
@@ -143,7 +143,7 @@ namespace VVardenfell.Runtime.Shell
                     {
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus(loadabilityError);
                     }
-                    else if (WorldSaveReplayUtility.TryRestoreSlotInPlace(World, EntityManager, slotId, out string loadError))
+                    else if (WorldSaveReplayUtility.TryRestoreSlotInPlace(systemState.World, systemState.EntityManager, slotId, out string loadError))
                     {
                         state.InventoryOpen = 0;
                         state.ContainerOpen = 0;

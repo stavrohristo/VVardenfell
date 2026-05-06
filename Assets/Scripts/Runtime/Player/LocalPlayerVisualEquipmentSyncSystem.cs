@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
@@ -7,30 +8,31 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(InventoryItemActionSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class LocalPlayerVisualEquipmentSyncSystem : SystemBase
+    public partial struct LocalPlayerVisualEquipmentSyncSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _dirtyVisualQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<ActorEquipmentSlot>());
-            _dirtyVisualQuery = GetEntityQuery(
+            _dirtyVisualQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LocalPlayerVisual>(),
                 ComponentType.ReadOnly<ActorPresentationEquipmentDirty>());
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_dirtyVisualQuery);
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_dirtyVisualQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity player = _playerQuery.GetSingletonEntity();
-            var playerEquipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
+            var playerEquipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
 
             foreach (var (visual, entity) in
@@ -41,11 +43,11 @@ namespace VVardenfell.Runtime.Player
                 if (visual.ValueRO.Player != player)
                     continue;
 
-                if (!EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
+                if (!systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
                     ecb.AddBuffer<ActorEquipmentSlot>(entity);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
 
             var dirtyEcb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
@@ -66,7 +68,7 @@ namespace VVardenfell.Runtime.Player
                 if (previousSignature != currentSignature)
                 {
                     ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
-                        EntityManager,
+                        systemState.EntityManager,
                         ref dirtyEcb,
                         entity,
                         enabled: true);
@@ -75,7 +77,7 @@ namespace VVardenfell.Runtime.Player
             }
 
             if (markedDirty)
-                dirtyEcb.Playback(EntityManager);
+                dirtyEcb.Playback(systemState.EntityManager);
             dirtyEcb.Dispose();
         }
     }

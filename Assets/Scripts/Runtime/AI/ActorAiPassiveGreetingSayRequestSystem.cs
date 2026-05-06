@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
@@ -5,26 +6,27 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.AI
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindScriptSayApplySystem))]
-    public partial class ActorAiPassiveGreetingSayRequestSystem : SystemBase
+    public partial struct ActorAiPassiveGreetingSayRequestSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
-            RequireForUpdate<MorrowindScriptSayRequest>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
+            systemState.RequireForUpdate<MorrowindScriptSayRequest>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
-            var sayRequests = EntityManager.GetBuffer<MorrowindScriptSayRequest>(runtimeEntity);
+            var sayRequests = systemState.EntityManager.GetBuffer<MorrowindScriptSayRequest>(runtimeEntity);
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];

@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
@@ -8,9 +9,10 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(InteractionTargetResolutionSystem))]
-    public partial class PlayerInteractionActivationSystem : SystemBase
+    public partial struct PlayerInteractionActivationSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _focusQuery;
@@ -19,24 +21,24 @@ namespace VVardenfell.Runtime.Interactions
         EntityQuery _interactionRuntimeQuery;
         ComponentLookup<MorrowindScriptInstance> _scriptLookup;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerInteractionFocus>());
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _transitionQuery = GetEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>());
-            _interactionRuntimeQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionRuntimeState>(), ComponentType.ReadWrite<ScriptActivationEvent>());
-            _scriptLookup = GetComponentLookup<MorrowindScriptInstance>(true);
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_transitionQuery);
-            RequireForUpdate(_interactionRuntimeQuery);
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerInteractionFocus>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _transitionQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>());
+            _interactionRuntimeQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionRuntimeState>(), ComponentType.ReadWrite<ScriptActivationEvent>());
+            _scriptLookup = systemState.GetComponentLookup<MorrowindScriptInstance>(true);
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_transitionQuery);
+            systemState.RequireForUpdate(_interactionRuntimeQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
@@ -52,7 +54,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
 
             var focus = _focusQuery.GetSingleton<PlayerInteractionFocus>();
-            if (focus.HasTarget == 0 || !EntityManager.Exists(focus.TargetEntity))
+            if (focus.HasTarget == 0 || !systemState.EntityManager.Exists(focus.TargetEntity))
                 return;
 
             var resolved = new ResolvedInteractionTarget(
@@ -65,13 +67,13 @@ namespace VVardenfell.Runtime.Interactions
             ref var runtimeState = ref _interactionRuntimeQuery.GetSingletonRW<InteractionRuntimeState>().ValueRW;
             uint sequence = runtimeState.NextActivationSequence + 1u;
             runtimeState.NextActivationSequence = sequence;
-            _scriptLookup.Update(this);
+            _scriptLookup.Update(ref systemState);
 
             if (_scriptLookup.TryGetComponent(resolved.TargetEntity, out var script)
                 && script.Status == (byte)MorrowindScriptInstanceStatus.Running
                 && script.SuppressActivation != 0)
             {
-                var events = EntityManager.GetBuffer<ScriptActivationEvent>(runtimeEntity);
+                var events = systemState.EntityManager.GetBuffer<ScriptActivationEvent>(runtimeEntity);
                 events.Add(new ScriptActivationEvent
                 {
                     TargetEntity = resolved.TargetEntity,

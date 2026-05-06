@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
@@ -8,37 +9,38 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptActorAiSettingApplySystem : SystemBase
+    public partial struct MorrowindScriptActorAiSettingApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptActorAiSettingRequest>();
-            RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<MorrowindScriptActorAiSettingRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptActorAiSettingRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptActorAiSettingRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                TryApplyRequest(requests[i], lookup);
+                TryApplyRequest(ref systemState, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void TryApplyRequest(in MorrowindScriptActorAiSettingRequest request, in LogicalRefLookup lookup)
+        void TryApplyRequest(ref SystemState systemState, in MorrowindScriptActorAiSettingRequest request, in LogicalRefLookup lookup)
         {
-            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
-            if (target == Entity.Null || !EntityManager.HasComponent<ActorAiSettingsState>(target))
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            if (target == Entity.Null || !systemState.EntityManager.HasComponent<ActorAiSettingsState>(target))
                 return;
 
-            var settings = EntityManager.GetComponentData<ActorAiSettingsState>(target);
+            var settings = systemState.EntityManager.GetComponentData<ActorAiSettingsState>(target);
             switch ((MorrowindScriptActorAiSettingKind)request.Kind)
             {
                 case MorrowindScriptActorAiSettingKind.Hello:
@@ -57,7 +59,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return;
             }
 
-            EntityManager.SetComponentData(target, settings);
+            systemState.EntityManager.SetComponentData(target, settings);
         }
     }
 }

@@ -12,18 +12,18 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class ContainerWindowStateSystem : SystemBase
+    public partial struct ContainerWindowStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<ContainerWindowState>();
-            RequireForUpdate<ContainerWindowRequest>();
-            RequireForUpdate<ContainerSessionItem>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<ContainerWindowState>();
+            systemState.RequireForUpdate<ContainerWindowRequest>();
+            systemState.RequireForUpdate<ContainerSessionItem>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;

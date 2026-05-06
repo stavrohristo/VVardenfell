@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Core.Cache;
@@ -7,24 +8,25 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
-    public partial class ActorPresentationEquipmentRefreshSystem : SystemBase
+    public partial struct ActorPresentationEquipmentRefreshSystem : ISystem
     {
         EntityQuery _dirtyQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _dirtyQuery = GetEntityQuery(
+            _dirtyQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActorPresentationEquipmentSignature>(),
                 ComponentType.ReadOnly<ActorEquipmentSlot>(),
                 ComponentType.ReadOnly<ActorPresentation>(),
                 ComponentType.ReadOnly<ActorSpawnSource>(),
                 ComponentType.ReadOnly<ActorPresentationEquipmentDirty>());
-            RequireForUpdate(_dirtyQuery);
+            systemState.RequireForUpdate(_dirtyQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             bool queuedRefresh = false;
@@ -43,17 +45,17 @@ namespace VVardenfell.Runtime.Animation
                     continue;
                 }
 
-                QueuePresentationRefresh(ref ecb, entity);
+                QueuePresentationRefresh(ref systemState, ref ecb, entity);
                 queuedRefresh = true;
             }
 
             if (queuedRefresh || touchedDirty)
-                ecb.Playback(EntityManager);
+                ecb.Playback(systemState.EntityManager);
 
             ecb.Dispose();
         }
 
-        void QueuePresentationRefresh(ref EntityCommandBuffer ecb, Entity actor)
+        void QueuePresentationRefresh(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity actor)
         {
             foreach (var (instance, entity) in
                      SystemAPI.Query<RefRO<ActorRenderMeshInstance>>()
@@ -71,36 +73,36 @@ namespace VVardenfell.Runtime.Animation
                     ecb.DestroyEntity(entity);
             }
 
-            RemoveComponentIfPresent<ActorPresentation>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorPresentationEquipmentSignature>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorSkeleton>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorAnimationState>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorJumpAnimationState>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorGpuAnimationState>(ref ecb, actor);
-            RemoveComponentIfPresent<ActorLocalBounds>(ref ecb, actor);
+            RemoveComponentIfPresent<ActorPresentation>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorPresentationEquipmentSignature>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorSkeleton>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorAnimationState>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorJumpAnimationState>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorGpuAnimationState>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorLocalBounds>(ref systemState, ref ecb, actor);
 
-            RemoveBufferIfPresent<ActorBone>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorSampledBonePose>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorGpuAnimationRequest>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorAnimationOverlayState>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorAnimationEvent>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorSkinMesh>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorRigidEquipment>(ref ecb, actor);
-            RemoveBufferIfPresent<ActorAttachmentBone>(ref ecb, actor);
-            RemoveBufferIfPresent<LinkedEntityGroup>(ref ecb, actor);
+            RemoveBufferIfPresent<ActorBone>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorSampledBonePose>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorGpuAnimationRequest>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorAnimationOverlayState>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorAnimationEvent>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorSkinMesh>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorRigidEquipment>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<ActorAttachmentBone>(ref systemState, ref ecb, actor);
+            RemoveBufferIfPresent<LinkedEntityGroup>(ref systemState, ref ecb, actor);
         }
 
-        void RemoveComponentIfPresent<T>(ref EntityCommandBuffer ecb, Entity entity)
+        void RemoveComponentIfPresent<T>(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity entity)
             where T : unmanaged, IComponentData
         {
-            if (EntityManager.HasComponent<T>(entity))
+            if (systemState.EntityManager.HasComponent<T>(entity))
                 ecb.RemoveComponent<T>(entity);
         }
 
-        void RemoveBufferIfPresent<T>(ref EntityCommandBuffer ecb, Entity entity)
+        void RemoveBufferIfPresent<T>(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity entity)
             where T : unmanaged, IBufferElementData
         {
-            if (EntityManager.HasBuffer<T>(entity))
+            if (systemState.EntityManager.HasBuffer<T>(entity))
                 ecb.RemoveComponent<T>(entity);
         }
 

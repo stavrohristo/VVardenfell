@@ -48,9 +48,6 @@ namespace VVardenfell.Runtime.Combat
             if (s_SettingsQueryCreated && s_SettingsQueryWorld == world)
                 return s_SettingsQuery;
 
-            if (s_SettingsQueryCreated)
-                s_SettingsQuery.Dispose();
-
             s_SettingsQueryWorld = world;
             s_SettingsQuery = entityManager.CreateEntityQuery(ComponentType.ReadWrite<MorrowindCombatSettings>());
             s_SettingsQueryCreated = true;

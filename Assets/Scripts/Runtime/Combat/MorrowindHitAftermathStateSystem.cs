@@ -13,16 +13,16 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDamageApplySystem))]
     [UpdateBefore(typeof(MorrowindDamageFeedbackSystem))]
-    public partial class MorrowindHitAftermathStateSystem : SystemBase
+    public partial struct MorrowindHitAftermathStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindDamageAppliedEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -37,7 +37,7 @@ namespace VVardenfell.Runtime.Combat
 
             foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
             {
-                ApplyAftermath(
+                ApplyAftermath(ref systemState, 
                     damage.ValueRO,
                     knockDownMult,
                     knockDownOddsMult,
@@ -48,7 +48,7 @@ namespace VVardenfell.Runtime.Combat
             combatState.ValueRW.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        void ApplyAftermath(
+        void ApplyAftermath(ref SystemState systemState, 
             in MorrowindDamageAppliedEvent damage,
             float knockDownMult,
             int knockDownOddsMult,
@@ -56,13 +56,13 @@ namespace VVardenfell.Runtime.Combat
             ref Unity.Mathematics.Random random)
         {
             Entity target = damage.Target;
-            RequireTargetAftermathComposition(target);
+            RequireTargetAftermathComposition(ref systemState, target);
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
 
             if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} is marked dead but still has positive health.");
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} is marked dead but still has positive health.");
 
             bool changed = false;
             if (aftermath.Dead == 0 && damage.Amount > 0f && damage.Attacker != Entity.Null)
@@ -83,7 +83,7 @@ namespace VVardenfell.Runtime.Combat
                         && aftermath.KnockedDown == 0
                         && aftermath.KnockedOut == 0)
                     {
-                        var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
+                        var attributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(target);
                         float agility = math.max(0f, attributes.Agility);
                         float agilityTerm = agility * knockDownMult;
                         float knockdownTerm = agility * knockDownOddsMult * 0.01f + knockDownOddsBase;
@@ -110,47 +110,47 @@ namespace VVardenfell.Runtime.Combat
                 ActorHitAftermathStateUtility.MarkDead(ref aftermath);
                 markedDead = true;
                 changed = true;
-                StopCombatIfPresent(target);
+                StopCombatIfPresent(ref systemState, target);
             }
 
             if (changed)
             {
                 if (!markedDead)
                     ActorHitAftermathStateUtility.BumpSequence(ref aftermath);
-                EntityManager.SetComponentData(target, aftermath);
+                systemState.EntityManager.SetComponentData(target, aftermath);
             }
         }
 
-        void RequireTargetAftermathComposition(Entity target)
+        void RequireTargetAftermathComposition(ref SystemState systemState, Entity target)
         {
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][Aftermath] Damage target entity is missing.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorAttributeSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorAttributeSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorHitAftermathState.");
-            if (!EntityManager.HasComponent<ActorScriptEventState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(target)} has no ActorScriptEventState.");
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} has no ActorVitalSet.");
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} has no ActorAttributeSet.");
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} has no ActorHitAftermathState.");
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} has no ActorScriptEventState.");
         }
 
-        void StopCombatIfPresent(Entity actor)
+        void StopCombatIfPresent(ref SystemState systemState, Entity actor)
         {
-            if (EntityManager.HasComponent<ActorCombatTargetState>(actor))
+            if (systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
             {
-                var combat = EntityManager.GetComponentData<ActorCombatTargetState>(actor);
+                var combat = systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor);
                 combat.Active = 0;
                 combat.TargetEntity = Entity.Null;
                 combat.TargetPlacedRefId = 0u;
-                EntityManager.SetComponentData(actor, combat);
+                systemState.EntityManager.SetComponentData(actor, combat);
             }
 
-            MorrowindCombatTargetUtility.TryStopCombat(EntityManager, actor);
+            MorrowindCombatTargetUtility.TryStopCombat(systemState.EntityManager, actor);
         }
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

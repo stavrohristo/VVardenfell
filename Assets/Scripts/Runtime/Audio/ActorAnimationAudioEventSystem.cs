@@ -13,29 +13,30 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class ActorAnimationAudioEventSystem : SystemBase
+    public partial struct ActorAnimationAudioEventSystem : ISystem
     {
-        uint _randomState = 1u;
+        uint _randomState;
         ComponentLookup<MorrowindMovementState> _movementLookup;
         BufferLookup<ActorEquipmentSlot> _equipmentLookup;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AudioContextState>();
-            RequireForUpdate<InteractionAudioRequestState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            _movementLookup = GetComponentLookup<MorrowindMovementState>(isReadOnly: true);
-            _equipmentLookup = GetBufferLookup<ActorEquipmentSlot>(isReadOnly: true);
+            _randomState = 1u;
+            systemState.RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<InteractionAudioRequestState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            _movementLookup = systemState.GetComponentLookup<MorrowindMovementState>(isReadOnly: true);
+            _equipmentLookup = systemState.GetBufferLookup<ActorEquipmentSlot>(isReadOnly: true);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (SystemAPI.GetSingleton<AudioContextState>().Mode != AudioPlaybackMode.World)
                 return;
 
-            _movementLookup.Update(this);
-            _equipmentLookup.Update(this);
+            _movementLookup.Update(ref systemState);
+            _equipmentLookup.Update(ref systemState);
 
             ref var audioState = ref SystemAPI.GetSingletonRW<InteractionAudioRequestState>().ValueRW;
             var random = new Unity.Mathematics.Random(_randomState == 0 ? 1u : _randomState);
@@ -63,14 +64,14 @@ namespace VVardenfell.Runtime.Audio
                     ref random);
             }
 
-            ProcessLocalPlayerVisualAudio(ref contentBlob, ref audioState, ref ecb, ref random);
+            ProcessLocalPlayerVisualAudio(ref systemState, ref contentBlob, ref audioState, ref ecb, ref random);
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
             _randomState = random.state;
         }
 
-        void ProcessLocalPlayerVisualAudio(
+        void ProcessLocalPlayerVisualAudio(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
             ref InteractionAudioRequestState audioState,
             ref EntityCommandBuffer ecb,

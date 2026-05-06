@@ -8,23 +8,23 @@ namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
     [UpdateAfter(typeof(LightingEnvironmentResolveSystem))]
-    public partial class LightInstanceAnimationSystem : SystemBase
+    public partial struct LightInstanceAnimationSystem : ISystem
     {
         static readonly ProfilerMarker k_AnimateLights = new("VV.Lighting.AnimateInstances");
 
         EntityQuery _animatedLightQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _animatedLightQuery = GetEntityQuery(
+            _animatedLightQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<LightInstanceState>(),
                 ComponentType.ReadOnly<LightInstanceFlags>(),
                 ComponentType.ReadOnly<LightInstanceAnimated>());
 
-            RequireForUpdate(_animatedLightQuery);
+            systemState.RequireForUpdate(_animatedLightQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_AnimateLights.Auto();
 

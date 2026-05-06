@@ -7,22 +7,22 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Interactions
 {
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
-    public partial class DoorMotionActivationSystem : SystemBase
+    public partial struct DoorMotionActivationSystem : ISystem
     {
         const string LogPrefix = "[VVardenfell][DoorMotion]";
 
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_focusQuery);
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_focusQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
@@ -32,13 +32,13 @@ namespace VVardenfell.Runtime.Interactions
             Entity target = request.TargetEntity;
             bool shouldLog = request.Kind == (byte)InteractableKind.Door
                 || request.Kind == (byte)InteractableKind.Activator;
-            bool exists = target != Entity.Null && EntityManager.Exists(target);
-            bool hasDoorMotion = exists && EntityManager.HasComponent<DoorMotionState>(target);
-            bool hasDoorActivated = exists && EntityManager.HasComponent<DoorActivated>(target);
-            bool hasDoorAuthoring = exists && EntityManager.HasComponent<DoorAuthoring>(target);
-            bool hasDoorInteractable = exists && EntityManager.HasComponent<DoorInteractable>(target);
+            bool exists = target != Entity.Null && systemState.EntityManager.Exists(target);
+            bool hasDoorMotion = exists && systemState.EntityManager.HasComponent<DoorMotionState>(target);
+            bool hasDoorActivated = exists && systemState.EntityManager.HasComponent<DoorActivated>(target);
+            bool hasDoorAuthoring = exists && systemState.EntityManager.HasComponent<DoorAuthoring>(target);
+            bool hasDoorInteractable = exists && systemState.EntityManager.HasComponent<DoorInteractable>(target);
             byte doorIsTeleport = hasDoorInteractable
-                ? EntityManager.GetComponentData<DoorInteractable>(target).IsTeleport
+                ? systemState.EntityManager.GetComponentData<DoorInteractable>(target).IsTeleport
                 : (byte)0;
             if (target == Entity.Null
                 || !exists
@@ -46,7 +46,7 @@ namespace VVardenfell.Runtime.Interactions
                 || !hasDoorActivated)
             {
                 if (shouldLog)
-                    LogIgnoredRequest(
+                    LogIgnoredRequest(ref systemState, 
                         request,
                         target,
                         exists,
@@ -58,16 +58,16 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            var state = EntityManager.GetComponentData<DoorMotionState>(target);
-            bool wasEnabled = EntityManager.IsComponentEnabled<DoorActivated>(target);
+            var state = systemState.EntityManager.GetComponentData<DoorMotionState>(target);
+            bool wasEnabled = systemState.EntityManager.IsComponentEnabled<DoorActivated>(target);
             float previousTarget = state.TargetProgress;
             state.TargetProgress = state.TargetProgress >= 0.5f ? 0f : 1f;
-            EntityManager.SetComponentData(target, state);
-            EntityManager.SetComponentEnabled<DoorActivated>(target, true);
+            systemState.EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentEnabled<DoorActivated>(target, true);
 
             bool consumesRequest = request.Kind != (byte)InteractableKind.Door;
             if (shouldLog)
-                LogAcceptedRequest(request, target, state, wasEnabled, previousTarget, consumesRequest);
+                LogAcceptedRequest(ref systemState, request, target, state, wasEnabled, previousTarget, consumesRequest);
 
             if (!consumesRequest)
                 return;
@@ -77,7 +77,7 @@ namespace VVardenfell.Runtime.Interactions
             ClearFocus();
         }
 
-        void LogIgnoredRequest(
+        void LogIgnoredRequest(ref SystemState systemState, 
             in InteractionActivationRequest request,
             Entity target,
             bool exists,
@@ -87,7 +87,7 @@ namespace VVardenfell.Runtime.Interactions
             bool hasDoorInteractable,
             byte doorIsTeleport)
         {
-            uint placedRefId = ResolvePlacedRefId(request, target, exists);
+            uint placedRefId = ResolvePlacedRefId(ref systemState, request, target, exists);
             string reason = target == Entity.Null
                 ? "NullTarget"
                 : !exists
@@ -103,7 +103,7 @@ namespace VVardenfell.Runtime.Interactions
                 $"doorIsTeleport={doorIsTeleport != 0} hasDoorMotion={hasDoorMotion} hasDoorActivated={hasDoorActivated}");
         }
 
-        void LogAcceptedRequest(
+        void LogAcceptedRequest(ref SystemState systemState, 
             in InteractionActivationRequest request,
             Entity target,
             in DoorMotionState state,
@@ -111,7 +111,7 @@ namespace VVardenfell.Runtime.Interactions
             float previousTarget,
             bool consumesRequest)
         {
-            uint placedRefId = ResolvePlacedRefId(request, target, true);
+            uint placedRefId = ResolvePlacedRefId(ref systemState, request, target, true);
             Debug.Log(
                 $"{LogPrefix} request=Accepted sequence={request.Sequence} kind={FormatKind(request.Kind)} " +
                 $"target={FormatEntity(target)} placedRef={FormatPlacedRef(placedRefId)} consumed={consumesRequest} wasEnabled={wasEnabled} " +
@@ -120,12 +120,12 @@ namespace VVardenfell.Runtime.Interactions
                 $"speedDegreesPerSecond={math.degrees(state.SpeedRadiansPerSecond):0.###}");
         }
 
-        uint ResolvePlacedRefId(in InteractionActivationRequest request, Entity target, bool exists)
+        uint ResolvePlacedRefId(ref SystemState systemState, in InteractionActivationRequest request, Entity target, bool exists)
         {
             if (request.TargetPlacedRefId != 0u)
                 return request.TargetPlacedRefId;
-            return exists && EntityManager.HasComponent<PlacedRefIdentity>(target)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(target).Value
+            return exists && systemState.EntityManager.HasComponent<PlacedRefIdentity>(target)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value
                 : 0u;
         }
 

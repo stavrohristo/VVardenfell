@@ -8,18 +8,18 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class GlobalMapRevealApplySystem : SystemBase
+    public partial struct GlobalMapRevealApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<GlobalMapRevealRequest>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<GlobalMapRevealRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<GlobalMapRevealRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<GlobalMapRevealRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 

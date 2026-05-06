@@ -9,32 +9,32 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindScriptRefStateApplySystem))]
-    public partial class MorrowindQuestJournalApplySystem : SystemBase
+    public partial struct MorrowindQuestJournalApplySystem : ISystem
     {
         EntityQuery _runtimeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<MorrowindQuestJournalState>(),
                 ComponentType.ReadWrite<MorrowindQuestJournalIndex>(),
                 ComponentType.ReadWrite<MorrowindQuestJournalEntry>(),
                 ComponentType.ReadWrite<MorrowindQuestJournalRequest>());
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate<MorrowindTimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate<MorrowindTimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var requests = EntityManager.GetBuffer<MorrowindQuestJournalRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindQuestJournalRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
-            var state = EntityManager.GetComponentData<MorrowindQuestJournalState>(runtimeEntity);
-            var questStates = EntityManager.GetBuffer<MorrowindQuestJournalIndex>(runtimeEntity);
-            var entries = EntityManager.GetBuffer<MorrowindQuestJournalEntry>(runtimeEntity);
+            var state = systemState.EntityManager.GetComponentData<MorrowindQuestJournalState>(runtimeEntity);
+            var questStates = systemState.EntityManager.GetBuffer<MorrowindQuestJournalIndex>(runtimeEntity);
+            var entries = systemState.EntityManager.GetBuffer<MorrowindQuestJournalEntry>(runtimeEntity);
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (state.QuestCount != questStates.Length)
@@ -56,7 +56,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Debug.LogError($"[VVardenfell][MWScript] invalid quest journal request dialogueIndex={requests[i].DialogueIndex} stage={requests[i].JournalIndex}.");
             }
 
-            EntityManager.SetComponentData(runtimeEntity, state);
+            systemState.EntityManager.SetComponentData(runtimeEntity, state);
             requests.Clear();
         }
     }

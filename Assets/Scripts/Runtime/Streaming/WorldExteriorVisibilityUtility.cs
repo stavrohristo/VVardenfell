@@ -178,9 +178,6 @@ namespace VVardenfell.Runtime.Streaming
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
 
-                if (s_QueryCreated)
-                    s_Query.Dispose();
-
                 var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
                     .WithAll<CellLink>()
                     .WithPresent<MaterialMeshInfo>();
@@ -203,9 +200,6 @@ namespace VVardenfell.Runtime.Streaming
                 World world = em.World;
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
-
-                if (s_QueryCreated)
-                    s_Query.Dispose();
 
                 s_World = world;
                 s_Query = em.CreateEntityQuery(

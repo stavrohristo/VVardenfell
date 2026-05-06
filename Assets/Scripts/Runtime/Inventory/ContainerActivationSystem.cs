@@ -13,34 +13,34 @@ namespace VVardenfell.Runtime.Inventory
 {
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionActivationSystem))]
-    public partial class ContainerActivationSystem : SystemBase
+    public partial struct ContainerActivationSystem : ISystem
     {
         EntityQuery _requestQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
 
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<ContainerWindowState>();
-            RequireForUpdate<ContainerWindowRequest>();
-            RequireForUpdate<ContainerSessionHeader>();
-            RequireForUpdate<ContainerSessionItem>();
-            RequireForUpdate<WorldJournalEntry>();
-            RequireForUpdate<PlayerInteractionFocus>();
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<ContainerWindowState>();
+            systemState.RequireForUpdate<ContainerWindowRequest>();
+            systemState.RequireForUpdate<ContainerSessionHeader>();
+            systemState.RequireForUpdate<ContainerSessionItem>();
+            systemState.RequireForUpdate<WorldJournalEntry>();
+            systemState.RequireForUpdate<PlayerInteractionFocus>();
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
             if (request.Pending == 0 || request.Kind != (byte)InteractableKind.Container)
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             Entity target = request.TargetEntity;
             uint placedRefId = request.TargetPlacedRefId;
@@ -55,13 +55,13 @@ namespace VVardenfell.Runtime.Inventory
             result.PendingNotification = 0;
             result.NotificationText = default;
 
-            bool isAuthoredContainer = EntityManager.Exists(target) && EntityManager.HasComponent<ContainerAuthoring>(target);
-            bool isCorpse = EntityManager.Exists(target) && ActorCorpseLootUtility.IsDeadLootableActor(EntityManager, target);
+            bool isAuthoredContainer = systemState.EntityManager.Exists(target) && systemState.EntityManager.HasComponent<ContainerAuthoring>(target);
+            bool isCorpse = systemState.EntityManager.Exists(target) && ActorCorpseLootUtility.IsDeadLootableActor(systemState.EntityManager, target);
             if ((!isAuthoredContainer && !isCorpse)
-                || !EntityManager.HasComponent<PlacedRefIdentity>(target))
+                || !systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] container activation request resolved to a missing or non-container logical entity.");
-                ClearFocus();
+                ClearFocus(ref systemState);
                 return;
             }
 
@@ -69,18 +69,18 @@ namespace VVardenfell.Runtime.Inventory
             var headers = SystemAPI.GetSingletonBuffer<ContainerSessionHeader>();
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
             var journal = SystemAPI.GetSingletonBuffer<WorldJournalEntry>();
-            int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(EntityManager);
+            int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(systemState.EntityManager);
             ContainerDefHandle definition = default;
             string title;
             if (isCorpse)
             {
-                ActorCorpseLootUtility.RequireDeadLootableActor(EntityManager, target, placedRefId);
-                ActorCorpseLootUtility.EnsureSessionInitialized(EntityManager, journal, headers, items, target, placedRefId);
-                title = ActorCorpseLootUtility.ResolveTitle(ref contentBlob, EntityManager, target);
+                ActorCorpseLootUtility.RequireDeadLootableActor(systemState.EntityManager, target, placedRefId);
+                ActorCorpseLootUtility.EnsureSessionInitialized(systemState.EntityManager, journal, headers, items, target, placedRefId);
+                title = ActorCorpseLootUtility.ResolveTitle(ref contentBlob, systemState.EntityManager, target);
             }
             else
             {
-                var authoring = EntityManager.GetComponentData<ContainerAuthoring>(target);
+                var authoring = systemState.EntityManager.GetComponentData<ContainerAuthoring>(target);
                 definition = authoring.Definition;
                 EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, definition, playerLevel);
                 title = ContainerLootUtility.ResolveContainerTitle(ref contentBlob, definition);
@@ -100,7 +100,7 @@ namespace VVardenfell.Runtime.Inventory
             var requestState = SystemAPI.GetSingletonRW<ContainerWindowRequest>();
             requestState.ValueRW = default;
 
-            ClearFocus();
+            ClearFocus(ref systemState);
             result.Success = 1;
 
         }
@@ -130,7 +130,7 @@ namespace VVardenfell.Runtime.Inventory
             WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
         }
 
-        void ClearFocus()
+        void ClearFocus(ref SystemState systemState)
         {
             var focus = SystemAPI.GetSingletonRW<PlayerInteractionFocus>();
             focus.ValueRW = new PlayerInteractionFocus

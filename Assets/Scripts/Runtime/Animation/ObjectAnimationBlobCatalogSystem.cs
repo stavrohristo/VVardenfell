@@ -7,18 +7,18 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Animation
 {
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup), OrderFirst = true)]
-    public partial class ObjectAnimationBlobCatalogSystem : SystemBase
+    public partial struct ObjectAnimationBlobCatalogSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ObjectAnimationBlobCatalogBootstrapRequest>();
+            systemState.RequireForUpdate<ObjectAnimationBlobCatalogBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<ObjectAnimationBlobCatalog>())
             {
-                RuntimeBootstrapRequestUtility.Consume<ObjectAnimationBlobCatalogBootstrapRequest>(EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<ObjectAnimationBlobCatalogBootstrapRequest>(systemState.EntityManager);
                 return;
             }
 
@@ -30,11 +30,11 @@ namespace VVardenfell.Runtime.Animation
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new ObjectAnimationBlobCatalog { Blob = blob });
-            ecb.Playback(EntityManager);
-            RuntimeBootstrapRequestUtility.Consume<ObjectAnimationBlobCatalogBootstrapRequest>(EntityManager);
+            ecb.Playback(systemState.EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<ObjectAnimationBlobCatalogBootstrapRequest>(systemState.EntityManager);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (!SystemAPI.HasSingleton<ObjectAnimationBlobCatalog>())
                 return;

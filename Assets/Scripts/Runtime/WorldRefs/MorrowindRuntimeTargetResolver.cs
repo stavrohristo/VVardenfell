@@ -194,9 +194,6 @@ namespace VVardenfell.Runtime.WorldRefs
             if (s_PlayerQueryCreated && s_PlayerQueryWorld == world)
                 return s_PlayerQuery;
 
-            if (s_PlayerQueryCreated)
-                s_PlayerQuery.Dispose();
-
             s_PlayerQueryWorld = world;
             s_PlayerQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             s_PlayerQueryCreated = true;
@@ -208,9 +205,6 @@ namespace VVardenfell.Runtime.WorldRefs
             World world = entityManager.World;
             if (s_ActorQueryCreated && s_ActorQueryWorld == world)
                 return s_ActorQuery;
-
-            if (s_ActorQueryCreated)
-                s_ActorQuery.Dispose();
 
             s_ActorQueryWorld = world;
             s_ActorQuery = entityManager.CreateEntityQuery(

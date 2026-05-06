@@ -13,6 +13,23 @@ namespace VVardenfell.Runtime.Animation
             out float start,
             out float stop)
         {
+            return TryResolveWindow(
+                ref catalog,
+                group,
+                ActorAnimationGroupHash.Hash(startValue),
+                ActorAnimationGroupHash.Hash(stopValue),
+                out start,
+                out stop);
+        }
+
+        public static bool TryResolveWindow(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorAnimationGroupBlob group,
+            ulong startHash,
+            ulong stopHash,
+            out float start,
+            out float stop)
+        {
             start = 0f;
             stop = 0f;
             if ((uint)group.ClipIndex >= (uint)catalog.Clips.Length)
@@ -22,8 +39,6 @@ namespace VVardenfell.Runtime.Animation
             if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
                 return false;
 
-            ulong startHash = ActorAnimationGroupHash.Hash(startValue);
-            ulong stopHash = ActorAnimationGroupHash.Hash(stopValue);
             bool foundStart = false;
             bool foundStop = false;
             int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
@@ -57,6 +72,15 @@ namespace VVardenfell.Runtime.Animation
             FixedString64Bytes value,
             out float time)
         {
+            return TryResolveMarker(ref catalog, group, ActorAnimationGroupHash.Hash(value), out time);
+        }
+
+        public static bool TryResolveMarker(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorAnimationGroupBlob group,
+            ulong valueHash,
+            out float time)
+        {
             time = 0f;
             if ((uint)group.ClipIndex >= (uint)catalog.Clips.Length)
                 return false;
@@ -65,7 +89,6 @@ namespace VVardenfell.Runtime.Animation
             if (clip.FirstTextMarkerIndex < 0 || clip.TextMarkerCount <= 0)
                 return false;
 
-            ulong valueHash = ActorAnimationGroupHash.Hash(value);
             int end = math.min(catalog.TextMarkers.Length, clip.FirstTextMarkerIndex + clip.TextMarkerCount);
             for (int i = clip.FirstTextMarkerIndex; i < end; i++)
             {

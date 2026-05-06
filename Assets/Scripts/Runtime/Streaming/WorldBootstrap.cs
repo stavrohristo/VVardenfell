@@ -217,9 +217,10 @@ namespace VVardenfell.Runtime.Streaming
             RuntimeBootstrapRequestUtility.Publish<RuntimePhysicsMutationBootstrapRequest>(
                 em,
                 "VVardenfell.RuntimePhysicsMutationBootstrapRequest");
-            var bootstrapSystem = world.GetExistingSystemManaged<RuntimePhysicsMutationBootstrapSystem>()
-                                  ?? throw new System.InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation bootstrap system is unavailable.");
-            bootstrapSystem.Update();
+            SystemHandle bootstrapSystem = world.Unmanaged.GetExistingUnmanagedSystem<RuntimePhysicsMutationBootstrapSystem>();
+            if (bootstrapSystem.Equals(SystemHandle.Null))
+                throw new System.InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation bootstrap system is unavailable.");
+            bootstrapSystem.Update(world.Unmanaged);
             if (query.IsEmptyIgnoreFilter)
                 throw new System.InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation bootstrap did not create the mutation queue.");
         }
@@ -245,9 +246,6 @@ namespace VVardenfell.Runtime.Streaming
                 World world = entityManager.World;
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
-
-                if (s_QueryCreated)
-                    s_Query.Dispose();
 
                 s_World = world;
                 s_Query = entityManager.CreateEntityQuery(

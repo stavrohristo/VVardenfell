@@ -17,22 +17,22 @@ using VVardenfell.Runtime.WorldState;
 namespace VVardenfell.Runtime.Inventory
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    public partial class ActorInventoryDropApplySystem : SystemBase
+    public partial struct ActorInventoryDropApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorInventoryDropRequest>();
-            RequireForUpdate<RuntimeSpawnState>();
-            RequireForUpdate<RuntimeSpawnRequest>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ActorInventoryDropRequest>();
+            systemState.RequireForUpdate<RuntimeSpawnState>();
+            systemState.RequireForUpdate<RuntimeSpawnRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorInventoryDropRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorInventoryDropRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -40,8 +40,8 @@ namespace VVardenfell.Runtime.Inventory
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             Entity spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
-            var spawnState = EntityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
-            var spawnRequests = EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
+            var spawnState = systemState.EntityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
+            var spawnRequests = systemState.EntityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity);
 
             for (int i = 0; i < requests.Length; i++)
             {
@@ -51,24 +51,24 @@ namespace VVardenfell.Runtime.Inventory
                     continue;
 
                 Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(
-                    EntityManager,
+                    systemState.EntityManager,
                     request.TargetEntity,
                     request.TargetPlacedRefId,
                     logicalRefLookup);
                 if (target == Entity.Null)
                     throw new InvalidOperationException($"[VVardenfell][Inventory] Drop target ref={request.TargetPlacedRefId} is not live.");
 
-                if (!IsActorTarget(target))
+                if (!IsActorTarget(ref systemState, target))
                     continue;
 
-                bool equipmentChanged = RemoveAvailableItems(target, request.Content, request.Count);
-                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, target);
+                bool equipmentChanged = RemoveAvailableItems(ref systemState, target, request.Content, request.Count);
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(systemState.EntityManager, target);
                 if (equipmentChanged)
-                    MarkActorPresentationEquipmentDirty(target);
-                EnqueueDropSpawns(target, request, spawnRequests, ref spawnState);
+                    MarkActorPresentationEquipmentDirty(ref systemState, target);
+                EnqueueDropSpawns(ref systemState, target, request, spawnRequests, ref spawnState);
             }
 
-            EntityManager.SetComponentData(spawnEntity, spawnState);
+            systemState.EntityManager.SetComponentData(spawnEntity, spawnState);
             requests.Clear();
         }
 
@@ -87,17 +87,17 @@ namespace VVardenfell.Runtime.Inventory
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop content has no runtime spawn prefab.");
         }
 
-        bool IsActorTarget(Entity target)
-            => EntityManager.HasComponent<ActorSpawnSource>(target)
-               || EntityManager.HasComponent<PlayerTag>(target);
+        bool IsActorTarget(ref SystemState systemState, Entity target)
+            => systemState.EntityManager.HasComponent<ActorSpawnSource>(target)
+               || systemState.EntityManager.HasComponent<PlayerTag>(target);
 
-        bool RemoveAvailableItems(Entity target, ContentReference content, int count)
+        bool RemoveAvailableItems(ref SystemState systemState, Entity target, ContentReference content, int count)
         {
-            if (EntityManager.HasBuffer<ActorInventoryItem>(target))
+            if (systemState.EntityManager.HasBuffer<ActorInventoryItem>(target))
             {
-                var inventory = EntityManager.GetBuffer<ActorInventoryItem>(target);
-                DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
-                    ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
+                var inventory = systemState.EntityManager.GetBuffer<ActorInventoryItem>(target);
+                DynamicBuffer<ActorEquipmentSlot> equipment = systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(target)
+                    ? systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(target)
                     : default;
                 ulong previousSignature = equipment.IsCreated
                     ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
@@ -109,11 +109,11 @@ namespace VVardenfell.Runtime.Inventory
                 return previousSignature != currentSignature;
             }
 
-            if (EntityManager.HasBuffer<PlayerInventoryItem>(target))
+            if (systemState.EntityManager.HasBuffer<PlayerInventoryItem>(target))
             {
-                var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(target);
-                DynamicBuffer<ActorEquipmentSlot> equipment = EntityManager.HasBuffer<ActorEquipmentSlot>(target)
-                    ? EntityManager.GetBuffer<ActorEquipmentSlot>(target)
+                var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(target);
+                DynamicBuffer<ActorEquipmentSlot> equipment = systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(target)
+                    ? systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(target)
                     : default;
                 ulong previousSignature = equipment.IsCreated
                     ? ActorPresentationEquipmentUtility.BuildEquipmentSignature(equipment)
@@ -128,11 +128,11 @@ namespace VVardenfell.Runtime.Inventory
             return false;
         }
 
-        void MarkActorPresentationEquipmentDirty(Entity actor)
+        void MarkActorPresentationEquipmentDirty(ref SystemState systemState, Entity actor)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
-                EntityManager,
+                systemState.EntityManager,
                 ref ecb,
                 actor,
                 enabled: true);
@@ -144,28 +144,28 @@ namespace VVardenfell.Runtime.Inventory
                 if (visual.ValueRO.Player == actor)
                 {
                     ActorPresentationEquipmentUtility.QueueEnsurePresentationEquipmentDirty(
-                        EntityManager,
+                        systemState.EntityManager,
                         ref ecb,
                         entity,
                         enabled: true);
                 }
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        void EnqueueDropSpawns(
+        void EnqueueDropSpawns(ref SystemState systemState, 
             Entity target,
             in ActorInventoryDropRequest request,
             DynamicBuffer<RuntimeSpawnRequest> spawnRequests,
             ref RuntimeSpawnState spawnState)
         {
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"[VVardenfell][Inventory] Drop target ref={request.TargetPlacedRefId} has no LocalTransform.");
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(target);
-            ResolveDropLocation(target, transform.Position, out int2 exteriorCell, out FixedString128Bytes interiorCellId, out ulong interiorCellHash, out byte isInterior);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
+            ResolveDropLocation(ref systemState, target, transform.Position, out int2 exteriorCell, out FixedString128Bytes interiorCellId, out ulong interiorCellHash, out byte isInterior);
             for (int i = 0; i < request.Count; i++)
             {
                 spawnState.NextRequestSequence += 1u;
@@ -185,7 +185,7 @@ namespace VVardenfell.Runtime.Inventory
             }
         }
 
-        void ResolveDropLocation(
+        void ResolveDropLocation(ref SystemState systemState, 
             Entity target,
             float3 position,
             out int2 exteriorCell,
@@ -193,9 +193,9 @@ namespace VVardenfell.Runtime.Inventory
             out ulong interiorCellHash,
             out byte isInterior)
         {
-            if (EntityManager.HasComponent<LogicalRefLocation>(target))
+            if (systemState.EntityManager.HasComponent<LogicalRefLocation>(target))
             {
-                var location = EntityManager.GetComponentData<LogicalRefLocation>(target);
+                var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(target);
                 exteriorCell = location.ExteriorCell;
                 interiorCellId = location.InteriorCellId;
                 interiorCellHash = location.InteriorCellHash;

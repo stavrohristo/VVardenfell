@@ -16,18 +16,18 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindNormalWeaponResistanceSystem))]
     [UpdateBefore(typeof(MorrowindArmorDamageSystem))]
-    public partial class MorrowindBlockDamageSystem : SystemBase
+    public partial struct MorrowindBlockDamageSystem : ISystem
     {
         static readonly short ParalyzeEffectId = RequireEffectId("sEffectParalyze");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindPendingDamageEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -42,15 +42,15 @@ namespace VVardenfell.Runtime.Combat
                 if (damage.ValueRO.Amount <= 0f || !IsMeleeDamage(damage.ValueRO.SourceKind))
                     continue;
 
-                if (TryBlockDamage(ref content, ref random, damage.ValueRO, out var impact))
+                if (TryBlockDamage(ref systemState, ref content, ref random, damage.ValueRO, out var impact))
                 {
                     damage.ValueRW.Amount = 0f;
                     damage.ValueRW.BlockImpact = impact;
-                    TriggerBlockAnimation(impact.Target);
-                    SpendBlockFatigue(ref content, damage.ValueRO, impact.Target);
+                    TriggerBlockAnimation(ref systemState, impact.Target);
+                    SpendBlockFatigue(ref systemState, ref content, damage.ValueRO, impact.Target);
                     MorrowindArmorDamageUtility.ApplyShieldBlockConditionDamage(
                         ref content,
-                        EntityManager,
+                        systemState.EntityManager,
                         impact.Target,
                         impact.ShieldContent,
                         (int)math.floor(math.max(0f, impact.IncomingDamage)));
@@ -60,7 +60,7 @@ namespace VVardenfell.Runtime.Combat
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        bool TryBlockDamage(
+        bool TryBlockDamage(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref Unity.Mathematics.Random random,
             in MorrowindPendingDamageEvent damage,
@@ -69,12 +69,12 @@ namespace VVardenfell.Runtime.Combat
             impact = default;
             Entity target = damage.Target;
             Entity attacker = damage.Attacker;
-            RequireParticipant(target, "target");
-            RequireParticipant(attacker, "attacker");
+            RequireParticipant(ref systemState, target, "target");
+            RequireParticipant(ref systemState, attacker, "attacker");
 
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorHitAftermathState.");
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorHitAftermathState.");
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
             if (aftermath.Dead != 0
                 || aftermath.KnockedDown != 0
                 || aftermath.KnockedOut != 0
@@ -83,50 +83,50 @@ namespace VVardenfell.Runtime.Combat
                 return false;
             }
 
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorActiveMagicEffect buffer.");
-            var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorActiveMagicEffect buffer.");
+            var targetEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
             if (MorrowindMeleeCombatMechanics.SumEffectMagnitude(targetEffects, ParalyzeEffectId) > 0f)
                 return false;
 
-            if (!TryResolveShield(ref content, target, out var shieldSlot, out var shield))
+            if (!TryResolveShield(ref systemState, ref content, target, out var shieldSlot, out var shield))
                 return false;
 
-            if (!IsCarriedLeftVisibleForBlock(target))
+            if (!IsCarriedLeftVisibleForBlock(ref systemState, target))
                 return false;
 
-            float angleDegrees = ComputeBlockAngleDegrees(attacker, target);
+            float angleDegrees = ComputeBlockAngleDegrees(ref systemState, attacker, target);
             float leftAngle = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatBlockLeftAngle);
             float rightAngle = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fCombatBlockRightAngle);
             if (angleDegrees < leftAngle || angleDegrees > rightAngle)
                 return false;
 
-            if (!EntityManager.HasComponent<ActorAttributeSet>(target)
-                || !EntityManager.HasComponent<ActorSkillSet>(target)
-                || !EntityManager.HasComponent<ActorVitalSet>(target))
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(target)
+                || !systemState.EntityManager.HasComponent<ActorSkillSet>(target)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(target))
             {
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} lacks required stats.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} lacks required stats.");
             }
-            if (!EntityManager.HasComponent<ActorAttributeSet>(attacker)
-                || !EntityManager.HasComponent<ActorSkillSet>(attacker)
-                || !EntityManager.HasComponent<ActorVitalSet>(attacker))
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(attacker)
+                || !systemState.EntityManager.HasComponent<ActorSkillSet>(attacker)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(attacker))
             {
-                throw new InvalidOperationException($"[VVardenfell][Block] Attacker ref={PlacedRefId(attacker)} lacks required stats.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Attacker ref={PlacedRefId(ref systemState, attacker)} lacks required stats.");
             }
 
-            var targetAttributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
-            var targetSkills = EntityManager.GetComponentData<ActorSkillSet>(target);
-            var targetVitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var attackerAttributes = EntityManager.GetComponentData<ActorAttributeSet>(attacker);
-            var attackerSkills = EntityManager.GetComponentData<ActorSkillSet>(attacker);
-            var attackerVitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var targetAttributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(target);
+            var targetSkills = systemState.EntityManager.GetComponentData<ActorSkillSet>(target);
+            var targetVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var attackerAttributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(attacker);
+            var attackerSkills = systemState.EntityManager.GetComponentData<ActorSkillSet>(attacker);
+            var attackerVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(attacker);
 
             float blockTerm = targetSkills.Block + 0.2f * targetAttributes.Agility + 0.1f * targetAttributes.Luck;
             float swingTerm = math.saturate(damage.AttackStrength)
                               * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fSwingBlockMult)
                               + RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fSwingBlockBase);
             float blockerTerm = blockTerm * swingTerm;
-            if (IsNotMovingForward(target))
+            if (IsNotMovingForward(ref systemState, target))
                 blockerTerm *= RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fBlockStillBonus);
             blockerTerm *= MorrowindMeleeCombatMechanics.ComputeFatigueTerm(ref content, targetVitals);
 
@@ -165,13 +165,13 @@ namespace VVardenfell.Runtime.Combat
             => sourceKind == MorrowindDamageSourceKind.Weapon
                || sourceKind == MorrowindDamageSourceKind.HandToHand;
 
-        void RequireParticipant(Entity entity, string role)
+        void RequireParticipant(ref SystemState systemState, Entity entity, string role)
         {
-            if (entity == Entity.Null || !EntityManager.Exists(entity))
+            if (entity == Entity.Null || !systemState.EntityManager.Exists(entity))
                 throw new InvalidOperationException($"[VVardenfell][Block] Damage {role} entity is missing.");
         }
 
-        bool TryResolveShield(
+        bool TryResolveShield(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity target,
             out ActorEquipmentSlot shieldSlot,
@@ -179,15 +179,15 @@ namespace VVardenfell.Runtime.Combat
         {
             shieldSlot = default;
             shield = default;
-            if (!EntityManager.HasBuffer<ActorEquipmentSlot>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(target))
             {
-                if (IsCreature(ref content, target))
+                if (IsCreature(ref systemState, ref content, target))
                     return false;
 
-                throw new InvalidOperationException($"[VVardenfell][Block] Non-creature target ref={PlacedRefId(target)} has no ActorEquipmentSlot buffer.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Non-creature target ref={PlacedRefId(ref systemState, target)} has no ActorEquipmentSlot buffer.");
             }
 
-            var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(target, true);
+            var equipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(target, true);
             return MorrowindArmorDamageUtility.TryGetEquippedArmor(
                 ref content,
                 equipment,
@@ -196,51 +196,51 @@ namespace VVardenfell.Runtime.Combat
                 out shield);
         }
 
-        bool IsCreature(ref RuntimeContentBlob content, Entity actor)
+        bool IsCreature(ref SystemState systemState, ref RuntimeContentBlob content, Entity actor)
         {
-            if (EntityManager.HasComponent<PlayerTag>(actor))
+            if (systemState.EntityManager.HasComponent<PlayerTag>(actor))
                 return false;
-            if (!EntityManager.HasComponent<ActorSpawnSource>(actor))
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(actor)} has no ActorSpawnSource.");
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(actor))
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, actor)} has no ActorSpawnSource.");
 
-            var source = EntityManager.GetComponentData<ActorSpawnSource>(actor);
+            var source = systemState.EntityManager.GetComponentData<ActorSpawnSource>(actor);
             if (!source.Definition.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(actor)} has invalid actor definition.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, actor)} has invalid actor definition.");
 
             ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actorDef.Kind == ActorDefKind.Creature;
         }
 
-        bool IsCarriedLeftVisibleForBlock(Entity target)
+        bool IsCarriedLeftVisibleForBlock(ref SystemState systemState, Entity target)
         {
-            if (EntityManager.HasComponent<PlayerTag>(target))
-                return IsPlayerCarriedLeftVisibleForBlock(target);
+            if (systemState.EntityManager.HasComponent<PlayerTag>(target))
+                return IsPlayerCarriedLeftVisibleForBlock(ref systemState, target);
 
-            if (!EntityManager.HasComponent<ActorWeaponAnimationState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorWeaponAnimationState>(target))
                 return true;
 
-            var weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(target);
+            var weaponState = systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(target);
             if (weaponState.Drawn == 0 && weaponState.Phase != ActorWeaponAnimationPhase.Equipping)
                 return true;
 
             return !IsTwoHandedPresentedWeaponType(weaponState.WeaponType);
         }
 
-        bool IsPlayerCarriedLeftVisibleForBlock(Entity player)
+        bool IsPlayerCarriedLeftVisibleForBlock(ref SystemState systemState, Entity player)
         {
-            if (!EntityManager.HasComponent<LocalPlayerPresentationState>(player))
+            if (!systemState.EntityManager.HasComponent<LocalPlayerPresentationState>(player))
                 throw new InvalidOperationException("[VVardenfell][Block] Player target has no LocalPlayerPresentationState.");
 
-            var presentation = EntityManager.GetComponentData<LocalPlayerPresentationState>(player);
+            var presentation = systemState.EntityManager.GetComponentData<LocalPlayerPresentationState>(player);
             Entity visual = presentation.Mode == PlayerViewMode.FirstPerson
                 ? presentation.FirstPersonVisual
                 : presentation.ThirdPersonVisual;
-            if (visual == Entity.Null || !EntityManager.Exists(visual))
+            if (visual == Entity.Null || !systemState.EntityManager.Exists(visual))
                 throw new InvalidOperationException("[VVardenfell][Block] Player target active visual is missing.");
-            if (!EntityManager.HasComponent<ActorWeaponAnimationState>(visual))
+            if (!systemState.EntityManager.HasComponent<ActorWeaponAnimationState>(visual))
                 throw new InvalidOperationException("[VVardenfell][Block] Player target active visual has no ActorWeaponAnimationState.");
 
-            var weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(visual);
+            var weaponState = systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(visual);
             if (weaponState.Drawn == 0 && weaponState.Phase != ActorWeaponAnimationPhase.Equipping)
                 return true;
 
@@ -253,15 +253,15 @@ namespace VVardenfell.Runtime.Combat
         static bool IsTwoHandedWeaponType(int weaponType)
             => weaponType is 2 or 4 or 5 or 6 or 8;
 
-        float ComputeBlockAngleDegrees(Entity attacker, Entity target)
+        float ComputeBlockAngleDegrees(ref SystemState systemState, Entity attacker, Entity target)
         {
-            if (!EntityManager.HasComponent<LocalTransform>(attacker))
-                throw new InvalidOperationException($"[VVardenfell][Block] Attacker ref={PlacedRefId(attacker)} has no LocalTransform.");
-            if (!EntityManager.HasComponent<LocalTransform>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no LocalTransform.");
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][Block] Attacker ref={PlacedRefId(ref systemState, attacker)} has no LocalTransform.");
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no LocalTransform.");
 
-            var attackerTransform = EntityManager.GetComponentData<LocalTransform>(attacker);
-            var targetTransform = EntityManager.GetComponentData<LocalTransform>(target);
+            var attackerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(attacker);
+            var targetTransform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             float3 toAttacker = attackerTransform.Position - targetTransform.Position;
             toAttacker.y = 0f;
             float lengthSq = math.lengthsq(toAttacker);
@@ -272,12 +272,12 @@ namespace VVardenfell.Runtime.Combat
             return math.degrees(math.atan2(local.x, local.z));
         }
 
-        bool IsNotMovingForward(Entity target)
+        bool IsNotMovingForward(ref SystemState systemState, Entity target)
         {
-            if (!EntityManager.HasComponent<MorrowindMovementState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no MorrowindMovementState.");
+            if (!systemState.EntityManager.HasComponent<MorrowindMovementState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no MorrowindMovementState.");
 
-            return EntityManager.GetComponentData<MorrowindMovementState>(target).LocalMove.y <= 0f;
+            return systemState.EntityManager.GetComponentData<MorrowindMovementState>(target).LocalMove.y <= 0f;
         }
 
         static float ResolveAttackStrength(in MorrowindPendingDamageEvent damage)
@@ -291,15 +291,15 @@ namespace VVardenfell.Runtime.Combat
             return math.saturate(damage.AttackStrength);
         }
 
-        void SpendBlockFatigue(ref RuntimeContentBlob content, in MorrowindPendingDamageEvent damage, Entity target)
+        void SpendBlockFatigue(ref SystemState systemState, ref RuntimeContentBlob content, in MorrowindPendingDamageEvent damage, Entity target)
         {
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorDerivedMovementStats>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorDerivedMovementStats.");
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorVitalSet.");
+            if (!systemState.EntityManager.HasComponent<ActorDerivedMovementStats>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorDerivedMovementStats.");
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var derived = EntityManager.GetComponentData<ActorDerivedMovementStats>(target);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var derived = systemState.EntityManager.GetComponentData<ActorDerivedMovementStats>(target);
             float fatigueLoss = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueBlockBase)
                                 + math.saturate(derived.NormalizedEncumbrance) * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueBlockMult);
 
@@ -319,20 +319,20 @@ namespace VVardenfell.Runtime.Combat
             }
 
             vitals.CurrentFatigue -= fatigueLoss;
-            EntityManager.SetComponentData(target, vitals);
+            systemState.EntityManager.SetComponentData(target, vitals);
         }
 
-        void TriggerBlockAnimation(Entity target)
+        void TriggerBlockAnimation(ref SystemState systemState, Entity target)
         {
-            if (!EntityManager.HasComponent<ActorBlockState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(target)} has no ActorBlockState.");
+            if (!systemState.EntityManager.HasComponent<ActorBlockState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorBlockState.");
 
-            var state = EntityManager.GetComponentData<ActorBlockState>(target);
+            var state = systemState.EntityManager.GetComponentData<ActorBlockState>(target);
             state.Active = 1;
             state.Sequence++;
             if (state.Sequence == 0u)
                 state.Sequence = 1u;
-            EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentData(target, state);
         }
 
         static short RequireEffectId(string gmstId)
@@ -342,9 +342,9 @@ namespace VVardenfell.Runtime.Combat
             return effectId;
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

@@ -11,44 +11,44 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(MorrowindDialogueSessionSystem))]
-    public partial class MorrowindScriptActiveExplicitRefLookupSystem : SystemBase
+    public partial struct MorrowindScriptActiveExplicitRefLookupSystem : ISystem
     {
         EntityQuery _logicalRefQuery;
         EntityQuery _dirtyQuery;
         EntityQuery _sessionQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _logicalRefQuery = GetEntityQuery(
+            _logicalRefQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LogicalRefTag>(),
                 ComponentType.ReadOnly<LogicalRefContent>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadOnly<LogicalRefLocation>());
 
-            _dirtyQuery = GetEntityQuery(
+            _dirtyQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActiveExplicitRefLookup>(),
                 ComponentType.ReadOnly<ActiveExplicitRefLookupDirty>(),
                 ComponentType.ReadOnly<ActiveExplicitRefLookupBuildState>());
 
-            _sessionQuery = GetEntityQuery(
+            _sessionQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActiveExplicitRefLookup>(),
                 ComponentType.ReadOnly<SessionTeardown>());
 
-            RequireAnyForUpdate(_dirtyQuery, _sessionQuery);
+            systemState.RequireAnyForUpdate(_dirtyQuery, _sessionQuery);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
-            ActiveExplicitRefLookupLifecycleUtility.DisposeAll(EntityManager);
+            ActiveExplicitRefLookupLifecycleUtility.DisposeAll(systemState.EntityManager);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity lookupEntity = SystemAPI.GetSingletonEntity<ActiveExplicitRefLookup>();
             if (SystemAPI.IsComponentEnabled<SessionTeardown>(lookupEntity))
             {
-                ActiveExplicitRefLookupLifecycleUtility.Dispose(EntityManager, lookupEntity);
-                EntityManager.DestroyEntity(lookupEntity);
+                ActiveExplicitRefLookupLifecycleUtility.Dispose(systemState.EntityManager, lookupEntity);
+                systemState.EntityManager.DestroyEntity(lookupEntity);
                 return;
             }
             if (!SystemAPI.IsComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity))
@@ -94,9 +94,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 AddExplicitRefTarget(lookup.ByContentKey, key, entity, placedRefId);
             }
 
-            EntityManager.SetComponentData(lookupEntity, lookup);
-            EntityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity, false);
-            EntityManager.SetComponentData(lookupEntity, new ActiveExplicitRefLookupBuildState
+            systemState.EntityManager.SetComponentData(lookupEntity, lookup);
+            systemState.EntityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity, false);
+            systemState.EntityManager.SetComponentData(lookupEntity, new ActiveExplicitRefLookupBuildState
             {
                 HasBuilt = 1,
                 LastActiveRevision = loadedCells.ActiveRevision,

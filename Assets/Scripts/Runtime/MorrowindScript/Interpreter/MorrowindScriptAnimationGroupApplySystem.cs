@@ -12,27 +12,27 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptAnimationGroupApplySystem : SystemBase
+    public partial struct MorrowindScriptAnimationGroupApplySystem : ISystem
     {
         const int ScriptedActorAnimationPriority = 10000;
 
         EntityQuery _runtimeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadWrite<MorrowindScriptAnimationGroupRequest>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate<MorrowindScriptRuntimeCatalog>();
-            RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate<MorrowindScriptRuntimeCatalog>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var requests = EntityManager.GetBuffer<MorrowindScriptAnimationGroupRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptAnimationGroupRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -42,12 +42,12 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(scriptCatalog.Messages, lookup, requests[i]);
+                ApplyRequest(ref systemState, scriptCatalog.Messages, lookup, requests[i]);
 
             requests.Clear();
         }
 
-        void ApplyRequest(NativeArray<FixedString512Bytes> messages, in LogicalRefLookup lookup, in MorrowindScriptAnimationGroupRequest request)
+        void ApplyRequest(ref SystemState systemState, NativeArray<FixedString512Bytes> messages, in LogicalRefLookup lookup, in MorrowindScriptAnimationGroupRequest request)
         {
             if ((uint)request.GroupMessageIndex >= (uint)messages.Length)
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group request has invalid group message index {request.GroupMessageIndex}.");
@@ -56,35 +56,35 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (group.IsEmpty)
                 throw new InvalidOperationException("[VVardenfell][MWScript] Animation group request has empty group.");
 
-            Entity target = ResolveTarget(request, lookup);
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            Entity target = ResolveTarget(ref systemState, request, lookup);
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group target ref={request.TargetPlacedRefId} is not live.");
 
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(target)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
             {
                 return;
             }
 
-            if (EntityManager.HasComponent<ObjectAnimationState>(target))
+            if (systemState.EntityManager.HasComponent<ObjectAnimationState>(target))
             {
-                ApplyObjectAnimation(target, group, request);
+                ApplyObjectAnimation(ref systemState, target, group, request);
                 return;
             }
 
-            if (EntityManager.HasComponent<ActorPresentation>(target)
-                && EntityManager.HasComponent<ActorAnimationState>(target))
+            if (systemState.EntityManager.HasComponent<ActorPresentation>(target)
+                && systemState.EntityManager.HasComponent<ActorAnimationState>(target))
             {
-                ApplyActorAnimation(target, group, request);
+                ApplyActorAnimation(ref systemState, target, group, request);
                 return;
             }
 
             throw new InvalidOperationException($"[VVardenfell][MWScript] Animation group target ref={request.TargetPlacedRefId} has no supported animation state.");
         }
 
-        Entity ResolveTarget(in MorrowindScriptAnimationGroupRequest request, in LogicalRefLookup lookup)
+        Entity ResolveTarget(ref SystemState systemState, in MorrowindScriptAnimationGroupRequest request, in LogicalRefLookup lookup)
         {
-            if (request.TargetEntity != Entity.Null && EntityManager.Exists(request.TargetEntity))
+            if (request.TargetEntity != Entity.Null && systemState.EntityManager.Exists(request.TargetEntity))
                 return request.TargetEntity;
 
             if (request.TargetPlacedRefId != 0u && lookup.Map.IsCreated && lookup.Map.TryGetValue(request.TargetPlacedRefId, out Entity target))
@@ -93,11 +93,11 @@ namespace VVardenfell.Runtime.MorrowindScript
             return Entity.Null;
         }
 
-        void ApplyActorAnimation(Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
+        void ApplyActorAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
             if (EqualsIgnoreCase(group, "idle"))
             {
-                ClearScriptedActorOverlays(target);
+                ClearScriptedActorOverlays(ref systemState, target);
                 return;
             }
 
@@ -108,16 +108,16 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!catalogRef.IsCreated)
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation group '{group}' has no actor animation catalog blob.");
 
-            var presentation = EntityManager.GetComponentData<ActorPresentation>(target);
+            var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(target);
             ref var catalog = ref catalogRef.Value;
             ulong groupHash = ActorAnimationGroupHash.Hash(group);
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var resolvedGroup))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation group '{group}' is not present on target ref={request.TargetPlacedRefId}.");
 
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Actor animation target ref={request.TargetPlacedRefId} has no overlay buffer.");
 
-            var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(target);
+            var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(target);
             RemoveScriptedActorOverlays(overlays);
 
             ActorAnimationPlaybackState playback = default;
@@ -138,12 +138,12 @@ namespace VVardenfell.Runtime.MorrowindScript
             });
         }
 
-        void ClearScriptedActorOverlays(Entity target)
+        void ClearScriptedActorOverlays(ref SystemState systemState, Entity target)
         {
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
                 return;
 
-            RemoveScriptedActorOverlays(EntityManager.GetBuffer<ActorAnimationOverlayState>(target));
+            RemoveScriptedActorOverlays(systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(target));
         }
 
         static void RemoveScriptedActorOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays)
@@ -163,14 +163,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             return request.LoopCount > 0u ? request.LoopCount - 1u : 0u;
         }
 
-        void ApplyObjectAnimation(Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
+        void ApplyObjectAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
-            var state = EntityManager.GetComponentData<ObjectAnimationState>(target);
+            var state = systemState.EntityManager.GetComponentData<ObjectAnimationState>(target);
             if (EqualsIgnoreCase(group, "idle"))
             {
                 state.Scripted = 0;
                 state.LoopCount = 0u;
-                EntityManager.SetComponentData(target, state);
+                systemState.EntityManager.SetComponentData(target, state);
                 return;
             }
 
@@ -197,7 +197,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.StopTime = resolved.StopTime;
             state.LoopCount = ResolveObjectLoopCount(request);
             state.Scripted = 1;
-            EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentData(target, state);
         }
 
         static uint ResolveObjectLoopCount(in MorrowindScriptAnimationGroupRequest request)

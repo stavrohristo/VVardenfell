@@ -10,23 +10,23 @@ namespace VVardenfell.Runtime.Player
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(LocalPlayerVisualMovementSyncSystem))]
     [UpdateBefore(typeof(ActorWeaponAnimationSystem))]
-    public partial class LocalPlayerVisualCombatSyncSystem : SystemBase
+    public partial struct LocalPlayerVisualCombatSyncSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalPlayerPresentationState>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<LocalPlayerVisual>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<LocalPlayerVisual>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -37,7 +37,7 @@ namespace VVardenfell.Runtime.Player
             Entity activeVisual = presentation.Mode == PlayerViewMode.FirstPerson
                 ? presentation.FirstPersonVisual
                 : presentation.ThirdPersonVisual;
-            var control = EntityManager.GetComponentData<PlayerCharacterControl>(player);
+            var control = systemState.EntityManager.GetComponentData<PlayerCharacterControl>(player);
             byte readyWeaponTogglePressed = control.ReadyWeaponTogglePressed ? (byte)1 : (byte)0;
             byte attackPressed = control.AttackPressed ? (byte)1 : (byte)0;
             byte attackReleased = control.AttackReleased ? (byte)1 : (byte)0;
@@ -65,9 +65,9 @@ namespace VVardenfell.Runtime.Player
                     state.MeleeHitWeaponContent = default;
                 }
 
-                if (EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
+                if (systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(entity))
                 {
-                    var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(entity, true);
+                    var equipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(entity, true);
                     state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref content, equipment, out var weaponContent);
                     state.WeaponContent = weaponContent;
                 }
@@ -78,7 +78,7 @@ namespace VVardenfell.Runtime.Player
                 control.ReadyWeaponTogglePressed = false;
                 control.AttackPressed = false;
                 control.AttackReleased = false;
-                EntityManager.SetComponentData(player, control);
+                systemState.EntityManager.SetComponentData(player, control);
             }
         }
     }

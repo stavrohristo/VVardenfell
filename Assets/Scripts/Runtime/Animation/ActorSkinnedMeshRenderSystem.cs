@@ -13,7 +13,7 @@ namespace VVardenfell.Runtime.Animation
         {
             state.RequireForUpdate<ActorSkinMesh>();
         }
-
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             // Actor GPU animation upload now reads static ActorSkinMesh data directly.

@@ -20,21 +20,21 @@ namespace VVardenfell.Runtime.Magic
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class ActorSpellCastApplySystem : SystemBase
+    public partial struct ActorSpellCastApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeModelPrefabBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeModelPrefabBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var scriptedRequests = EntityManager.GetBuffer<ScriptedCastRequest>(runtimeEntity);
-            var castRequests = EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
+            var scriptedRequests = systemState.EntityManager.GetBuffer<ScriptedCastRequest>(runtimeEntity);
+            var castRequests = systemState.EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
             if (scriptedRequests.Length == 0 && castRequests.Length == 0)
                 return;
 
@@ -64,7 +64,7 @@ namespace VVardenfell.Runtime.Magic
             for (int i = 0; i < scriptedCopy.Length; i++)
             {
                 var request = scriptedCopy[i];
-                ApplyRequest(ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, new ActorSpellCastRequest
+                ApplyRequest(ref systemState, ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, new ActorSpellCastRequest
                 {
                     CasterEntity = request.CasterEntity,
                     CasterPlacedRefId = request.CasterPlacedRefId,
@@ -79,16 +79,16 @@ namespace VVardenfell.Runtime.Magic
             }
 
             for (int i = 0; i < castCopy.Length; i++)
-                ApplyRequest(ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, castCopy[i], ref ecb);
+                ApplyRequest(ref systemState, ref content, ref modelPrefabs, lookup, ref random, ref magicRef.ValueRW, castCopy[i], ref ecb);
 
             magicRef.ValueRW.RandomState = random.state == 0u ? 0xA5C38F2Du : random.state;
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
             scriptedCopy.Dispose();
             castCopy.Dispose();
         }
 
-        void ApplyRequest(
+        void ApplyRequest(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref RuntimeModelPrefabBlob modelPrefabs,
             in LogicalRefLookup lookup,
@@ -99,15 +99,15 @@ namespace VVardenfell.Runtime.Magic
         {
             RequireValidSpell(ref content, request.Spell);
             ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, request.Spell);
-            Entity caster = ResolveActor(request.CasterEntity, request.CasterPlacedRefId, lookup, "caster");
-            Entity target = ResolveOptionalTarget(request.TargetEntity, request.TargetPlacedRefId, lookup);
+            Entity caster = ResolveActor(ref systemState, request.CasterEntity, request.CasterPlacedRefId, lookup, "caster");
+            Entity target = ResolveOptionalTarget(ref systemState, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (request.ProjectileImpact != 0)
             {
-                InflictRangeEffects(ref content, request, caster, target, MorrowindMagicRange.Target, request.HasHitPosition != 0 ? (float3?)request.HitPosition : null, ref random, ref magicState);
+                InflictRangeEffects(ref systemState, ref content, request, caster, target, MorrowindMagicRange.Target, request.HasHitPosition != 0 ? (float3?)request.HitPosition : null, ref random, ref magicState);
                 return;
             }
 
-            if (request.Scripted == 0 && !ValidateAndSpendNormalCast(ref content, caster, request.Spell, ref spell, ref random))
+            if (request.Scripted == 0 && !ValidateAndSpendNormalCast(ref systemState, ref content, caster, request.Spell, ref spell, ref random))
                 return;
 
             MorrowindActorMagicUtility.RequireSpellEffectRange(ref content, ref spell);
@@ -120,73 +120,73 @@ namespace VVardenfell.Runtime.Magic
                 if (!MorrowindMagicEffectApplicationUtility.IsSupported(instance.EffectId))
                     throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spell.ContentId.Value:X16} contains unsupported effect {instance.EffectId}.");
 
-                EmitMagicVfxObject(ref content, ref modelPrefabs, effect.CastingObjectIdHash, caster, ref ecb);
+                EmitMagicVfxObject(ref systemState, ref content, ref modelPrefabs, effect.CastingObjectIdHash, caster, ref ecb);
 
                 if (instance.Range == MorrowindMagicRange.Target)
                 {
                     if (!hasTargetProjectile)
                     {
-                        EmitMagicProjectile(ref content, ref modelPrefabs, request.Spell, instance, ref effect, caster, target, request.Scripted, request.IgnoreReflect, request.IgnoreSpellAbsorption, ref ecb);
+                        EmitMagicProjectile(ref systemState, ref content, ref modelPrefabs, request.Spell, instance, ref effect, caster, target, request.Scripted, request.IgnoreReflect, request.IgnoreSpellAbsorption, ref ecb);
                         hasTargetProjectile = true;
                     }
                     continue;
                 }
 
                 Entity anchor = instance.Range == MorrowindMagicRange.Self ? caster : target;
-                if (anchor == Entity.Null || !EntityManager.Exists(anchor))
+                if (anchor == Entity.Null || !systemState.EntityManager.Exists(anchor))
                     throw new InvalidOperationException($"[VVardenfell][Magic] Spell contentId=0x{spell.ContentId.Value:X16} touch effect has no resolved target.");
 
-                EmitMagicVfxObject(ref content, ref modelPrefabs, effect.HitObjectIdHash, anchor, ref ecb);
-                InflictRangeEffects(ref content, request, caster, anchor, instance.Range, null, ref random, ref magicState);
+                EmitMagicVfxObject(ref systemState, ref content, ref modelPrefabs, effect.HitObjectIdHash, anchor, ref ecb);
+                InflictRangeEffects(ref systemState, ref content, request, caster, anchor, instance.Range, null, ref random, ref magicState);
             }
         }
 
-        bool ValidateAndSpendNormalCast(
+        bool ValidateAndSpendNormalCast(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity caster,
             SpellDefHandle spellHandle,
             ref RuntimeSpellDefBlob spell,
             ref Random random)
         {
-            if (!EntityManager.HasBuffer<ActorKnownSpell>(caster))
+            if (!systemState.EntityManager.HasBuffer<ActorKnownSpell>(caster))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} has no known spell buffer.");
-            if (!MorrowindActorMagicUtility.HasKnownSpell(EntityManager.GetBuffer<ActorKnownSpell>(caster, true), spellHandle))
+            if (!MorrowindActorMagicUtility.HasKnownSpell(systemState.EntityManager.GetBuffer<ActorKnownSpell>(caster, true), spellHandle))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} does not know spell contentId=0x{spell.ContentId.Value:X16}.");
-            if (!EntityManager.HasComponent<ActorAttributeSet>(caster)
-                || !EntityManager.HasComponent<ActorSkillSet>(caster)
-                || !EntityManager.HasComponent<ActorVitalSet>(caster)
-                || !EntityManager.HasComponent<ActorDerivedMovementStats>(caster)
-                || !EntityManager.HasBuffer<ActorActiveMagicEffect>(caster)
-                || !EntityManager.HasBuffer<ActorUsedPower>(caster))
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(caster)
+                || !systemState.EntityManager.HasComponent<ActorSkillSet>(caster)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(caster)
+                || !systemState.EntityManager.HasComponent<ActorDerivedMovementStats>(caster)
+                || !systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(caster)
+                || !systemState.EntityManager.HasBuffer<ActorUsedPower>(caster))
             {
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast caster entity={caster.Index}:{caster.Version} is missing actor magic composition.");
             }
 
-            var attributes = EntityManager.GetComponentData<ActorAttributeSet>(caster);
-            var skills = EntityManager.GetComponentData<ActorSkillSet>(caster);
-            var derived = EntityManager.GetComponentData<ActorDerivedMovementStats>(caster);
-            var casterEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(caster);
-            var usedPowers = EntityManager.GetBuffer<ActorUsedPower>(caster);
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(caster);
+            var attributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(caster);
+            var skills = systemState.EntityManager.GetComponentData<ActorSkillSet>(caster);
+            var derived = systemState.EntityManager.GetComponentData<ActorDerivedMovementStats>(caster);
+            var casterEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(caster);
+            var usedPowers = systemState.EntityManager.GetBuffer<ActorUsedPower>(caster);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(caster);
             int spellCost = MorrowindSpellCostUtility.CalculateSpellCost(ref content, ref spell);
 
             if (MorrowindSpellCostUtility.CalculateSuccessChance(ref content, ref spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: true, out _) <= 0f)
             {
                 if (spellCost > 0 && vitals.CurrentMagicka < spellCost)
-                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
+                    QueuePlayerMessageIfPlayer(ref systemState, caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
                 else
-                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
+                    QueuePlayerMessageIfPlayer(ref systemState, caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
                 return false;
             }
 
             if (spell.SpellType == MorrowindSpellCostUtility.SpellTypePower)
             {
-                float totalHours = ResolveTotalGameHours();
+                float totalHours = ResolveTotalGameHours(ref systemState);
                 for (int i = 0; i < usedPowers.Length; i++)
                 {
                     if (usedPowers[i].Spell.Value == spellHandle.Value && totalHours - usedPowers[i].LastUsedTotalGameHours < 24f)
                     {
-                        QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sPowerAlreadyUsed));
+                        QueuePlayerMessageIfPlayer(ref systemState, caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sPowerAlreadyUsed));
                         return false;
                     }
                 }
@@ -196,30 +196,30 @@ namespace VVardenfell.Runtime.Magic
             {
                 if (vitals.CurrentMagicka < spellCost)
                 {
-                    QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
+                    QueuePlayerMessageIfPlayer(ref systemState, caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicInsufficientSP));
                     return false;
                 }
 
                 vitals.CurrentMagicka -= spellCost;
                 float fatigueLoss = spellCost * (RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueSpellBase) + derived.NormalizedEncumbrance * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFatigueSpellMult));
                 vitals.CurrentFatigue -= fatigueLoss;
-                EntityManager.SetComponentData(caster, vitals);
+                systemState.EntityManager.SetComponentData(caster, vitals);
             }
 
             float chance = MorrowindSpellCostUtility.CalculateSuccessChance(ref content, ref spell, attributes, skills, vitals, derived, casterEffects, checkMagicka: false, out _);
             if ((spell.Flags & MorrowindSpellCostUtility.SpellFlagAlways) == 0 && spell.SpellType == MorrowindSpellCostUtility.SpellTypeSpell && random.NextInt(0, 100) >= chance)
             {
-                QueuePlayerMessageIfPlayer(caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
+                QueuePlayerMessageIfPlayer(ref systemState, caster, RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicSkillFail));
                 return false;
             }
 
             if (spell.SpellType == MorrowindSpellCostUtility.SpellTypePower)
-                MarkPowerUsed(usedPowers, spellHandle, ResolveTotalGameHours());
+                MarkPowerUsed(usedPowers, spellHandle, ResolveTotalGameHours(ref systemState));
 
             return true;
         }
 
-        public void InflictRangeEffects(
+        public void InflictRangeEffects(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
@@ -240,19 +240,19 @@ namespace VVardenfell.Runtime.Magic
 
                 if (instance.Area > 0)
                 {
-                    float3 origin = areaOrigin ?? RequirePosition(target, $"[VVardenfell][Magic] Area spell contentId=0x{spell.ContentId.Value:X16} target");
-                    ApplyAreaEffect(ref content, request, caster, target, instance, i, origin, ref random, ref magicState);
+                    float3 origin = areaOrigin ?? RequirePosition(ref systemState, target, $"[VVardenfell][Magic] Area spell contentId=0x{spell.ContentId.Value:X16} target");
+                    ApplyAreaEffect(ref systemState, ref content, request, caster, target, instance, i, origin, ref random, ref magicState);
                 }
                 else
                 {
                     if (target == Entity.Null)
                         continue;
-                    ApplyEffectToTarget(ref content, request, caster, target, instance, i, ref random, ref magicState);
+                    ApplyEffectToTarget(ref systemState, ref content, request, caster, target, instance, i, ref random, ref magicState);
                 }
             }
         }
 
-        void ApplyAreaEffect(
+        void ApplyAreaEffect(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
@@ -269,11 +269,11 @@ namespace VVardenfell.Runtime.Magic
                 if (entity == caster)
                     continue;
                 if (math.distancesq(transform.ValueRO.Position, origin) <= radius * radius)
-                    ApplyEffectToTarget(ref content, request, caster, entity, instance, effectIndex, ref random, ref magicState);
+                    ApplyEffectToTarget(ref systemState, ref content, request, caster, entity, instance, effectIndex, ref random, ref magicState);
             }
         }
 
-        void ApplyEffectToTarget(
+        void ApplyEffectToTarget(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
@@ -283,11 +283,11 @@ namespace VVardenfell.Runtime.Magic
             ref Random random,
             ref MorrowindMagicRuntimeState magicState)
         {
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][Magic] Spell effect target is not loaded.");
-            if (!EntityManager.HasBuffer<ActorActiveSpell>(target)
-                || !EntityManager.HasBuffer<ActorActiveMagicEffect>(target)
-                || !EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorActiveSpell>(target)
+                || !systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(target)
+                || !systemState.EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
             {
                 throw new InvalidOperationException($"[VVardenfell][Magic] Spell effect target entity={target.Index}:{target.Version} has no active magic composition.");
             }
@@ -307,18 +307,18 @@ namespace VVardenfell.Runtime.Magic
             float magnitude = ResolveMagnitude(instance, ref effectDef, ref random);
             if ((effectDef.Flags & MorrowindSpellCostUtility.MagicEffectFlagHarmful) != 0 && target != caster)
             {
-                if (!TryResolveProtection(ref content, request, caster, target, instance.EffectId, ref effectDef, ref magnitude, ref finalTarget, ref ignoreReflect, ref ignoreAbsorb, ref random))
+                if (!TryResolveProtection(ref systemState, ref content, request, caster, target, instance.EffectId, ref effectDef, ref magnitude, ref finalTarget, ref ignoreReflect, ref ignoreAbsorb, ref random))
                     return;
             }
 
-            var activeSpells = EntityManager.GetBuffer<ActorActiveSpell>(finalTarget);
-            var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(finalTarget);
+            var activeSpells = systemState.EntityManager.GetBuffer<ActorActiveSpell>(finalTarget);
+            var activeEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(finalTarget);
             int activeSpellId = magicState.NextActiveSpellId <= 0 ? 1 : magicState.NextActiveSpellId++;
             activeSpells.Add(new ActorActiveSpell
             {
                 ActiveSpellId = activeSpellId,
                 CasterEntity = caster,
-                CasterPlacedRefId = PlacedRefId(caster),
+                CasterPlacedRefId = PlacedRefId(ref systemState, caster),
                 Spell = request.Spell,
                 SourceKind = request.Scripted != 0 ? ActorActiveSpellSourceKind.ScriptedSpell : ActorActiveSpellSourceKind.Spell,
                 Flags = ActorActiveSpellFlags.Temporary
@@ -350,10 +350,10 @@ namespace VVardenfell.Runtime.Magic
                 SourceId = sourceId,
                 SourceIdHash = spell.IdHash,
             });
-            EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(finalTarget, true);
+            systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(finalTarget, true);
         }
 
-        bool TryResolveProtection(
+        bool TryResolveProtection(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in ActorSpellCastRequest request,
             Entity caster,
@@ -366,13 +366,13 @@ namespace VVardenfell.Runtime.Magic
             ref byte ignoreAbsorb,
             ref Random random)
         {
-            var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
+            var targetEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
             if (ignoreAbsorb == 0)
             {
                 float absorption = MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(targetEffects, MorrowindMagicEffectIds.SpellAbsorption);
                 if (absorption > 0f && random.NextInt(0, 100) < absorption)
                 {
-                    RestoreAbsorbedMagicka(ref content, request.Spell, target);
+                    RestoreAbsorbedMagicka(ref systemState, ref content, request.Spell, target);
                     return false;
                 }
             }
@@ -388,24 +388,24 @@ namespace VVardenfell.Runtime.Magic
                 }
             }
 
-            var effects = EntityManager.GetBuffer<ActorActiveMagicEffect>(finalTarget, true);
+            var effects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(finalTarget, true);
             float resist = MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(effects, MorrowindMagicEffectApplicationUtility.ResolveResistanceEffect(effectId));
             float weakness = MorrowindMagicEffectApplicationUtility.SumEffectMagnitude(effects, MorrowindMagicEffectApplicationUtility.ResolveWeaknessEffect(effectId));
             magnitude *= 1f - (0.01f * (resist - weakness));
             return magnitude > 0f;
         }
 
-        void RestoreAbsorbedMagicka(ref RuntimeContentBlob content, SpellDefHandle spellHandle, Entity target)
+        void RestoreAbsorbedMagicka(ref SystemState systemState, ref RuntimeContentBlob content, SpellDefHandle spellHandle, Entity target)
         {
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Spell absorption target entity={target.Index}:{target.Version} has no ActorVitalSet.");
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
             ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref content, spellHandle);
             vitals.CurrentMagicka += MorrowindSpellCostUtility.CalculateSpellCost(ref content, ref spell);
-            EntityManager.SetComponentData(target, vitals);
+            systemState.EntityManager.SetComponentData(target, vitals);
         }
 
-        void EmitMagicProjectile(
+        void EmitMagicProjectile(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref RuntimeModelPrefabBlob modelPrefabs,
             SpellDefHandle spellHandle,
@@ -423,16 +423,16 @@ namespace VVardenfell.Runtime.Magic
             if (speed <= 0f || !math.isfinite(speed))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Target projectile effect {effect.Index} produced invalid speed {speed}.");
 
-            var casterTransform = EntityManager.GetComponentData<LocalTransform>(caster);
-            float3 origin = ResolveProjectileOrigin(caster, casterTransform);
-            float3 targetPoint = target != Entity.Null && EntityManager.Exists(target)
-                ? ResolveProjectileAimPoint(target, EntityManager.GetComponentData<LocalTransform>(target))
+            var casterTransform = systemState.EntityManager.GetComponentData<LocalTransform>(caster);
+            float3 origin = ResolveProjectileOrigin(ref systemState, caster, casterTransform);
+            float3 targetPoint = target != Entity.Null && systemState.EntityManager.Exists(target)
+                ? ResolveProjectileAimPoint(ref systemState, target, systemState.EntityManager.GetComponentData<LocalTransform>(target))
                 : origin + math.mul(casterTransform.Rotation, new float3(0f, 0f, 1f)) * 128f;
             float3 direction = math.normalizesafe(targetPoint - origin);
             if (math.lengthsq(direction) <= 0f)
                 throw new InvalidOperationException("[VVardenfell][Magic] Target projectile direction is zero.");
 
-            var location = EntityManager.GetComponentData<LogicalRefLocation>(caster);
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(caster);
             Entity launchEntity = ecb.CreateEntity();
             ecb.SetName(launchEntity, new FixedString64Bytes("VVardenfell.MagicProjectileLaunch"));
             ecb.AddComponent(launchEntity, new MorrowindProjectileLaunchRequest
@@ -461,7 +461,7 @@ namespace VVardenfell.Runtime.Magic
             });
         }
 
-        void EmitMagicVfxObject(
+        void EmitMagicVfxObject(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref RuntimeModelPrefabBlob modelPrefabs,
             ulong objectIdHash,
@@ -470,12 +470,12 @@ namespace VVardenfell.Runtime.Magic
         {
             if (objectIdHash == 0UL)
                 return;
-            if (!EntityManager.HasComponent<LocalTransform>(anchor) || !EntityManager.HasComponent<LogicalRefLocation>(anchor))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(anchor) || !systemState.EntityManager.HasComponent<LogicalRefLocation>(anchor))
                 throw new InvalidOperationException($"[VVardenfell][Magic] VFX anchor entity={anchor.Index}:{anchor.Version} lacks transform/location.");
 
             RuntimeMagicVfxModelRef model = ResolveMagicVfxModel(ref content, ref modelPrefabs, objectIdHash, "anchored VFX");
-            var transform = EntityManager.GetComponentData<LocalTransform>(anchor);
-            var location = EntityManager.GetComponentData<LogicalRefLocation>(anchor);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(anchor);
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(anchor);
             Entity request = ecb.CreateEntity();
             ecb.AddComponent(request, new MorrowindVfxSpawnRequest
             {
@@ -505,7 +505,7 @@ namespace VVardenfell.Runtime.Magic
             return max <= min ? min : random.NextInt(min, max + 1);
         }
 
-        float ResolveTotalGameHours()
+        float ResolveTotalGameHours(ref SystemState systemState)
             => SystemAPI.TryGetSingleton<MorrowindTimeState>(out var time)
                 ? (time.DaysPassed * 24f) + time.GameHour
                 : throw new InvalidOperationException("[VVardenfell][Magic] Power cooldown requires MorrowindTimeState.");
@@ -524,30 +524,30 @@ namespace VVardenfell.Runtime.Magic
             usedPowers.Add(new ActorUsedPower { Spell = spell, LastUsedTotalGameHours = totalHours });
         }
 
-        void QueuePlayerMessageIfPlayer(Entity actor, string message)
+        void QueuePlayerMessageIfPlayer(ref SystemState systemState, Entity actor, string message)
         {
-            if (!EntityManager.HasComponent<PlayerTag>(actor))
+            if (!systemState.EntityManager.HasComponent<PlayerTag>(actor))
                 return;
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            EntityManager.GetBuffer<ShellMessageBoxRequest>(runtimeEntity).Add(new ShellMessageBoxRequest
+            systemState.EntityManager.GetBuffer<ShellMessageBoxRequest>(runtimeEntity).Add(new ShellMessageBoxRequest
             {
                 Body = RuntimeFixedStringUtility.ToFixed512OrDefault(message),
             });
         }
 
-        Entity ResolveActor(Entity entity, uint placedRefId, in LogicalRefLookup lookup, string role)
+        Entity ResolveActor(ref SystemState systemState, Entity entity, uint placedRefId, in LogicalRefLookup lookup, string role)
         {
-            Entity resolved = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, entity, placedRefId, lookup);
-            if (resolved == Entity.Null || !EntityManager.Exists(resolved))
+            Entity resolved = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, entity, placedRefId, lookup);
+            if (resolved == Entity.Null || !systemState.EntityManager.Exists(resolved))
                 throw new InvalidOperationException($"[VVardenfell][Magic] Cast {role} ref={placedRefId} is not loaded.");
             return resolved;
         }
 
-        Entity ResolveOptionalTarget(Entity entity, uint placedRefId, in LogicalRefLookup lookup)
+        Entity ResolveOptionalTarget(ref SystemState systemState, Entity entity, uint placedRefId, in LogicalRefLookup lookup)
         {
             if (entity == Entity.Null && placedRefId == 0u)
                 return Entity.Null;
-            return ResolveActor(entity, placedRefId, lookup, "target");
+            return ResolveActor(ref systemState, entity, placedRefId, lookup, "target");
         }
 
         static void RequireValidSpell(ref RuntimeContentBlob content, SpellDefHandle spell)
@@ -563,26 +563,26 @@ namespace VVardenfell.Runtime.Magic
             return ref RuntimeContentBlobUtility.Get(ref content, handle);
         }
 
-        float3 RequirePosition(Entity entity, string context)
+        float3 RequirePosition(ref SystemState systemState, Entity entity, string context)
         {
-            if (!EntityManager.HasComponent<LocalTransform>(entity))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(entity))
                 throw new InvalidOperationException($"{context} has no LocalTransform.");
-            return EntityManager.GetComponentData<LocalTransform>(entity).Position;
+            return systemState.EntityManager.GetComponentData<LocalTransform>(entity).Position;
         }
 
-        float3 ResolveProjectileOrigin(Entity caster, in LocalTransform transform)
+        float3 ResolveProjectileOrigin(ref SystemState systemState, Entity caster, in LocalTransform transform)
         {
-            if (!EntityManager.HasComponent<ActorLocalBounds>(caster))
+            if (!systemState.EntityManager.HasComponent<ActorLocalBounds>(caster))
                 return transform.Position;
-            var bounds = EntityManager.GetComponentData<ActorLocalBounds>(caster);
+            var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(caster);
             return transform.Position + bounds.Center + new float3(0f, bounds.Extents.y, 0f);
         }
 
-        float3 ResolveProjectileAimPoint(Entity target, in LocalTransform transform)
+        float3 ResolveProjectileAimPoint(ref SystemState systemState, Entity target, in LocalTransform transform)
         {
-            if (!EntityManager.HasComponent<ActorLocalBounds>(target))
+            if (!systemState.EntityManager.HasComponent<ActorLocalBounds>(target))
                 return transform.Position;
-            var bounds = EntityManager.GetComponentData<ActorLocalBounds>(target);
+            var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(target);
             return transform.Position + bounds.Center;
         }
 
@@ -622,9 +622,9 @@ namespace VVardenfell.Runtime.Magic
             };
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
 
         struct RuntimeMagicVfxModelRef

@@ -10,31 +10,31 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindQuestJournalApplySystem))]
-    public partial class MorrowindDialogueApplySystem : SystemBase
+    public partial struct MorrowindDialogueApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindDialogueState>();
-            RequireForUpdate<MorrowindDialogueRequest>();
-            RequireForUpdate<MorrowindQuestJournalState>();
-            RequireForUpdate<MorrowindTimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindDialogueState>();
+            systemState.RequireForUpdate<MorrowindDialogueRequest>();
+            systemState.RequireForUpdate<MorrowindQuestJournalState>();
+            systemState.RequireForUpdate<MorrowindTimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindDialogueState>();
-            var requests = EntityManager.GetBuffer<MorrowindDialogueRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindDialogueRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-            var knownTopics = EntityManager.GetBuffer<MorrowindKnownDialogueTopic>(runtimeEntity);
-            var topicEntries = EntityManager.GetBuffer<MorrowindTopicJournalEntry>(runtimeEntity);
+            var knownTopics = systemState.EntityManager.GetBuffer<MorrowindKnownDialogueTopic>(runtimeEntity);
+            var topicEntries = systemState.EntityManager.GetBuffer<MorrowindTopicJournalEntry>(runtimeEntity);
             ref var dialogueState = ref SystemAPI.GetSingletonRW<MorrowindDialogueState>().ValueRW;
             ref var questState = ref SystemAPI.GetSingletonRW<MorrowindQuestJournalState>().ValueRW;
-            var questStates = EntityManager.GetBuffer<MorrowindQuestJournalIndex>(runtimeEntity);
-            var questEntries = EntityManager.GetBuffer<MorrowindQuestJournalEntry>(runtimeEntity);
+            var questStates = systemState.EntityManager.GetBuffer<MorrowindQuestJournalIndex>(runtimeEntity);
+            var questEntries = systemState.EntityManager.GetBuffer<MorrowindQuestJournalEntry>(runtimeEntity);
             var time = SystemAPI.GetSingleton<MorrowindTimeState>();
 
             for (int i = 0; i < requests.Length; i++)

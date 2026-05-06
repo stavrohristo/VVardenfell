@@ -11,44 +11,44 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptMovementFlagApplySystem : SystemBase
+    public partial struct MorrowindScriptMovementFlagApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindScriptMovementFlagRequest>();
-            RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptMovementFlagRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptMovementFlagRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptMovementFlagRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i], lookup);
+                ApplyRequest(ref systemState, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in MorrowindScriptMovementFlagRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref SystemState systemState, in MorrowindScriptMovementFlagRequest request, in LogicalRefLookup lookup)
         {
-            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Movement flag target ref={request.TargetPlacedRefId} is not loaded.");
 
-            if (!EntityManager.HasComponent<MorrowindMovementState>(target))
+            if (!systemState.EntityManager.HasComponent<MorrowindMovementState>(target))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Movement flag target ref={request.TargetPlacedRefId} has no MorrowindMovementState.");
 
             if (request.FlagKind != (byte)MorrowindScriptMovementFlagKind.ForceSneak)
                 throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported movement flag kind {request.FlagKind}.");
 
-            var state = EntityManager.GetComponentData<MorrowindMovementState>(target);
+            var state = systemState.EntityManager.GetComponentData<MorrowindMovementState>(target);
             state.ForceSneak = request.Enabled != 0;
-            EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentData(target, state);
         }
     }
 }

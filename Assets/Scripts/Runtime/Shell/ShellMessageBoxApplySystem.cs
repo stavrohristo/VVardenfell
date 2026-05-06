@@ -7,19 +7,19 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class ShellMessageBoxApplySystem : SystemBase
+    public partial struct ShellMessageBoxApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ShellMessageBoxRequest>();
-            RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ShellMessageBoxRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ShellMessageBoxRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ShellMessageBoxRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 

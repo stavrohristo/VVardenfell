@@ -8,20 +8,20 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Vfx
 {
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
-    public partial class MorrowindVfxSpawnSystem : SystemBase
+    public partial struct MorrowindVfxSpawnSystem : ISystem
     {
         EntityQuery _spawnQuery;
         EntityQuery _removeQuery;
         EntityQuery _wakeQuery;
         EntityQuery _runtimeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
             MorrowindVfxRenderDispatch.EnsureRegistered();
-            _spawnQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxSpawnRequest>());
-            _removeQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRemoveRequest>());
-            _runtimeQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRuntimeState>());
-            _wakeQuery = GetEntityQuery(new EntityQueryDesc
+            _spawnQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxSpawnRequest>());
+            _removeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRemoveRequest>());
+            _runtimeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRuntimeState>());
+            _wakeQuery = systemState.GetEntityQuery(new EntityQueryDesc
             {
                 Any = new[]
                 {
@@ -30,10 +30,10 @@ namespace VVardenfell.Runtime.Vfx
                     ComponentType.ReadOnly<MorrowindVfxRuntimeState>(),
                 },
             });
-            RequireForUpdate(_wakeQuery);
+            systemState.RequireForUpdate(_wakeQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             CacheLoader cache = WorldResources.Cache;
             if (cache == null)
@@ -43,7 +43,7 @@ namespace VVardenfell.Runtime.Vfx
 
                 using var staleRuntime = _runtimeQuery.ToEntityArray(Allocator.Temp);
                 if (staleRuntime.Length > 0)
-                    EntityManager.DestroyEntity(staleRuntime);
+                    systemState.EntityManager.DestroyEntity(staleRuntime);
                 return;
             }
 
@@ -54,7 +54,7 @@ namespace VVardenfell.Runtime.Vfx
                 resources = new MorrowindVfxResources(cache);
                 WorldResources.Vfx = resources;
             }
-            EnsureRuntimeState();
+            EnsureRuntimeState(ref systemState);
 
             using var spawnEntities = _spawnQuery.ToEntityArray(Allocator.Temp);
             using var spawns = _spawnQuery.ToComponentDataArray<MorrowindVfxSpawnRequest>(Allocator.Temp);
@@ -74,30 +74,30 @@ namespace VVardenfell.Runtime.Vfx
                 ecb.DestroyEntity(removeEntities[i]);
             }
 
-            resources.Tick(SystemAPI.Time.DeltaTime, EntityManager);
+            resources.Tick(SystemAPI.Time.DeltaTime, systemState.EntityManager);
             if (resources.InstanceCount <= 0)
-                ClearRuntimeState(ref ecb);
-            ecb.Playback(EntityManager);
+                ClearRuntimeState(ref systemState, ref ecb);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             WorldResources.Vfx?.Dispose();
             WorldResources.Vfx = null;
         }
 
-        void EnsureRuntimeState()
+        void EnsureRuntimeState(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<MorrowindVfxRuntimeState>())
                 return;
 
-            Entity entity = EntityManager.CreateEntity();
-            EntityManager.SetName(entity, "VVardenfell.MorrowindVfxRuntime");
-            EntityManager.AddComponentData(entity, new MorrowindVfxRuntimeState());
+            Entity entity = systemState.EntityManager.CreateEntity();
+            systemState.EntityManager.SetName(entity, "VVardenfell.MorrowindVfxRuntime");
+            systemState.EntityManager.AddComponentData(entity, new MorrowindVfxRuntimeState());
         }
 
-        void ClearRuntimeState(ref EntityCommandBuffer ecb)
+        void ClearRuntimeState(ref SystemState systemState, ref EntityCommandBuffer ecb)
         {
             if (!SystemAPI.HasSingleton<MorrowindVfxRuntimeState>())
                 return;

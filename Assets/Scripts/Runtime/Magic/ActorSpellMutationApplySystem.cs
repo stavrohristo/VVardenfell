@@ -11,20 +11,20 @@ namespace VVardenfell.Runtime.Magic
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class ActorSpellMutationApplySystem : SystemBase
+    public partial struct ActorSpellMutationApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorSpellMutationRequest>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ActorSpellMutationRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorSpellMutationRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorSpellMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -35,12 +35,12 @@ namespace VVardenfell.Runtime.Magic
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref content, requests[i], lookup);
+                ApplyRequest(ref systemState, ref content, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob content, in ActorSpellMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob content, in ActorSpellMutationRequest request, in LogicalRefLookup lookup)
         {
             if (!request.Spell.IsValid
                 || request.Spell.Index < 0
@@ -49,30 +49,30 @@ namespace VVardenfell.Runtime.Magic
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell references invalid spell handle {request.Spell.Value}.");
             }
 
-            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} is not loaded.");
 
-            if (!EntityManager.HasBuffer<ActorKnownSpell>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorKnownSpell>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorKnownSpell buffer.");
 
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffect buffer.");
 
-            if (!EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
+            if (!systemState.EntityManager.HasComponent<ActorActiveMagicEffectDirty>(target))
                 throw new InvalidOperationException($"[VVardenfell][Magic] AddSpell/RemoveSpell target ref={request.TargetPlacedRefId} has no ActorActiveMagicEffectDirty marker.");
 
-            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(target);
+            var knownSpells = systemState.EntityManager.GetBuffer<ActorKnownSpell>(target);
             if (request.Remove == 0)
             {
                 MorrowindActorMagicUtility.AddKnownSpell(knownSpells, request.Spell);
-                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
+                systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
                 return;
             }
 
-            var activeEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target);
+            var activeEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target);
             MorrowindActorMagicUtility.RemoveKnownSpell(ref content, knownSpells, activeEffects, request.Spell);
-            EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
+            systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(target, true);
         }
     }
 }

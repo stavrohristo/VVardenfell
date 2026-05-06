@@ -10,7 +10,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
-    public partial class LightingEnvironmentResolveSystem : SystemBase
+    public partial struct LightingEnvironmentResolveSystem : ISystem
     {
         static readonly ProfilerMarker k_ResolveEnvironment = new("VV.Lighting.ResolveEnvironment");
 
@@ -28,24 +28,24 @@ namespace VVardenfell.Runtime.Streaming
         EntityQuery _weatherQuery;
         EntityQuery _videoSettingsQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _environmentQuery = GetEntityQuery(ComponentType.ReadWrite<ActiveEnvironmentState>());
-            _streamingQuery = GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>());
-            _dayCycleQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindDayCycleState>());
-            _timeQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindTimeState>());
-            _weatherQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindWeatherState>());
-            _videoSettingsQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeVideoSettings>());
-            RequireForUpdate(_environmentQuery);
-            RequireForUpdate(_streamingQuery);
-            RequireForUpdate(_dayCycleQuery);
-            RequireForUpdate(_timeQuery);
-            RequireForUpdate(_weatherQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            _environmentQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<ActiveEnvironmentState>());
+            _streamingQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>());
+            _dayCycleQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDayCycleState>());
+            _timeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindTimeState>());
+            _weatherQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindWeatherState>());
+            _videoSettingsQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeVideoSettings>());
+            systemState.RequireForUpdate(_environmentQuery);
+            systemState.RequireForUpdate(_streamingQuery);
+            systemState.RequireForUpdate(_dayCycleQuery);
+            systemState.RequireForUpdate(_timeQuery);
+            systemState.RequireForUpdate(_weatherQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_ResolveEnvironment.Auto();
 

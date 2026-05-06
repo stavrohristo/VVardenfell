@@ -10,7 +10,7 @@ namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDamageFeedbackSystem))]
-    public partial class MorrowindHitAftermathAnimationSystem : SystemBase
+    public partial struct MorrowindHitAftermathAnimationSystem : ISystem
     {
         public const int HitRecoveryOverlayPriority = 50;
         public const int KnockdownOverlayPriority = 90;
@@ -19,14 +19,14 @@ namespace VVardenfell.Runtime.Combat
         const int MaxDeathVariants = 5;
         const uint InfiniteLoops = uint.MaxValue;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorHitAftermathState>();
-            RequireForUpdate<ActorAnimationBlobCatalog>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<ActorHitAftermathState>();
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
@@ -43,16 +43,16 @@ namespace VVardenfell.Runtime.Combat
                 if (!HasAnyAftermath(aftermath.ValueRO))
                     continue;
 
-                RequireAnimationComposition(entity);
-                var presentation = EntityManager.GetComponentData<ActorPresentation>(entity);
-                var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
-                ApplyAnimation(entity, aftermath, ref catalog, presentation, overlays, ref random);
+                RequireAnimationComposition(ref systemState, entity);
+                var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(entity);
+                var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
+                ApplyAnimation(ref systemState, entity, aftermath, ref catalog, presentation, overlays, ref random);
             }
 
             combatState.ValueRW.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        void ApplyAnimation(
+        void ApplyAnimation(ref SystemState systemState, 
             Entity entity,
             RefRW<ActorHitAftermathState> aftermath,
             ref ActorAnimationCatalogBlob catalog,
@@ -62,16 +62,16 @@ namespace VVardenfell.Runtime.Combat
         {
             if (aftermath.ValueRO.Dead != 0)
             {
-                ApplyDeathAnimation(entity, aftermath, ref catalog, presentation, overlays, ref random);
+                ApplyDeathAnimation(ref systemState, entity, aftermath, ref catalog, presentation, overlays, ref random);
                 return;
             }
 
             if (aftermath.ValueRO.KnockedOut != 0)
             {
-                if (!EntityManager.HasComponent<ActorVitalSet>(entity))
-                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Knockout actor ref={PlacedRefId(entity)} has no ActorVitalSet.");
+                if (!systemState.EntityManager.HasComponent<ActorVitalSet>(entity))
+                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Knockout actor ref={PlacedRefId(ref systemState, entity)} has no ActorVitalSet.");
 
-                var vitals = EntityManager.GetComponentData<ActorVitalSet>(entity);
+                var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(entity);
                 if (vitals.CurrentFatigue >= 0f && vitals.ModifiedFatigueBase > 0f)
                 {
                     aftermath.ValueRW.KnockedOut = 0;
@@ -84,7 +84,7 @@ namespace VVardenfell.Runtime.Combat
 
                 FixedString64Bytes groupName = default;
                 groupName.Append("knockout");
-                StartOrKeepAnimation(
+                StartOrKeepAnimation(ref systemState, 
                     entity,
                     aftermath,
                     ref catalog,
@@ -114,7 +114,7 @@ namespace VVardenfell.Runtime.Combat
 
                 FixedString64Bytes groupName = default;
                 groupName.Append("knockdown");
-                StartOrKeepAnimation(
+                StartOrKeepAnimation(ref systemState, 
                     entity,
                     aftermath,
                     ref catalog,
@@ -142,8 +142,8 @@ namespace VVardenfell.Runtime.Combat
                     return;
                 }
 
-                FixedString64Bytes groupName = ResolveHitRecoveryGroup(entity, ref catalog, presentation, ref random);
-                StartOrKeepAnimation(
+                FixedString64Bytes groupName = ResolveHitRecoveryGroup(ref systemState, entity, ref catalog, presentation, ref random);
+                StartOrKeepAnimation(ref systemState, 
                     entity,
                     aftermath,
                     ref catalog,
@@ -156,7 +156,7 @@ namespace VVardenfell.Runtime.Combat
             }
         }
 
-        void ApplyDeathAnimation(
+        void ApplyDeathAnimation(ref SystemState systemState, 
             Entity entity,
             RefRW<ActorHitAftermathState> aftermath,
             ref ActorAnimationCatalogBlob catalog,
@@ -167,7 +167,7 @@ namespace VVardenfell.Runtime.Combat
             FixedString64Bytes deathGroup = aftermath.ValueRO.DeathAnimationGroup;
             if (deathGroup.IsEmpty)
             {
-                deathGroup = ResolveDeathGroup(entity, ref catalog, presentation, aftermath.ValueRO, ref random);
+                deathGroup = ResolveDeathGroup(ref systemState, entity, ref catalog, presentation, aftermath.ValueRO, ref random);
                 aftermath.ValueRW.DeathAnimationGroup = deathGroup;
             }
 
@@ -180,7 +180,7 @@ namespace VVardenfell.Runtime.Combat
                 return;
             }
 
-            StartOrKeepAnimation(
+            StartOrKeepAnimation(ref systemState, 
                 entity,
                 aftermath,
                 ref catalog,
@@ -192,7 +192,7 @@ namespace VVardenfell.Runtime.Combat
                 holdAtStop: true);
         }
 
-        void StartOrKeepAnimation(
+        void StartOrKeepAnimation(ref SystemState systemState, 
             Entity entity,
             RefRW<ActorHitAftermathState> aftermath,
             ref ActorAnimationCatalogBlob catalog,
@@ -204,7 +204,7 @@ namespace VVardenfell.Runtime.Combat
             bool holdAtStop)
         {
             if (groupName.IsEmpty)
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} requested an empty aftermath animation group.");
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} requested an empty aftermath animation group.");
 
             ulong groupHash = ActorAnimationGroupHash.Hash(groupName);
             int overlayIndex = FindAftermathOverlay(overlays, priority);
@@ -219,7 +219,7 @@ namespace VVardenfell.Runtime.Combat
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var group))
             {
                 throw new InvalidOperationException(
-                    $"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} is missing required aftermath animation group '{groupName}'.");
+                    $"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} is missing required aftermath animation group '{groupName}'.");
             }
 
             RemoveAftermathOverlays(overlays);
@@ -238,7 +238,7 @@ namespace VVardenfell.Runtime.Combat
             aftermath.ValueRW.AnimatedSequence = aftermath.ValueRO.Sequence;
         }
 
-        FixedString64Bytes ResolveHitRecoveryGroup(
+        FixedString64Bytes ResolveHitRecoveryGroup(ref SystemState systemState, 
             Entity entity,
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
@@ -262,7 +262,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             if (count == 0)
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no required hit recovery animation variants.");
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no required hit recovery animation variants.");
 
             int selected = variants[random.NextInt(count)];
             FixedString64Bytes groupName = default;
@@ -271,7 +271,7 @@ namespace VVardenfell.Runtime.Combat
             return groupName;
         }
 
-        FixedString64Bytes ResolveDeathGroup(
+        FixedString64Bytes ResolveDeathGroup(ref SystemState systemState, 
             Entity entity,
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
@@ -301,7 +301,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             if (count == 0)
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no required death animation variants.");
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no required death animation variants.");
 
             int selected = variants[random.NextInt(count)];
             FixedString64Bytes groupName = default;
@@ -359,19 +359,19 @@ namespace VVardenfell.Runtime.Combat
             }
         }
 
-        void RequireAnimationComposition(Entity entity)
+        void RequireAnimationComposition(ref SystemState systemState, Entity entity)
         {
-            if (!EntityManager.HasComponent<ActorPresentation>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no ActorPresentation.");
-            if (!EntityManager.HasComponent<ActorAnimationState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no ActorAnimationState.");
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(entity)} has no ActorAnimationOverlayState buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorPresentation>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorPresentation.");
+            if (!systemState.EntityManager.HasComponent<ActorAnimationState>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationState.");
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationOverlayState buffer.");
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

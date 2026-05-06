@@ -16,7 +16,7 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDifficultyDamageSystem))]
     [UpdateBefore(typeof(MorrowindDamageApplySystem))]
-    public partial class MorrowindDiseaseContactSystem : SystemBase
+    public partial struct MorrowindDiseaseContactSystem : ISystem
     {
         static readonly short CorprusEffectId = RequireEffectId("sEffectCorpus");
         static readonly short ResistCommonDiseaseEffectId = RequireEffectId("sEffectResistCommonDisease");
@@ -26,16 +26,16 @@ namespace VVardenfell.Runtime.Combat
         static readonly short ResistCorprusDiseaseEffectId = RequireEffectId("sEffectResistCorprusDisease");
         static readonly short WeaknessToCorprusDiseaseEffectId = RequireEffectId("sEffectWeaknessToCorprusDisease");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ShellMessageBoxRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindPendingDamageEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ShellMessageBoxRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -46,10 +46,10 @@ namespace VVardenfell.Runtime.Combat
             string contractDiseaseMessage = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.sMagicContractDisease);
 
             Entity scriptRuntimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            if (!EntityManager.HasBuffer<ShellMessageBoxRequest>(scriptRuntimeEntity))
+            if (!systemState.EntityManager.HasBuffer<ShellMessageBoxRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][Disease] Script runtime has no ShellMessageBoxRequest buffer.");
 
-            var messageBoxes = EntityManager.GetBuffer<ShellMessageBoxRequest>(scriptRuntimeEntity);
+            var messageBoxes = systemState.EntityManager.GetBuffer<ShellMessageBoxRequest>(scriptRuntimeEntity);
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
 
@@ -58,7 +58,7 @@ namespace VVardenfell.Runtime.Combat
                 if (!IsMeleeContact(damage.ValueRO.SourceKind))
                     continue;
 
-                TryTransferDisease(
+                TryTransferDisease(ref systemState, 
                     ref content,
                     damage.ValueRO.Attacker,
                     damage.ValueRO.Target,
@@ -71,7 +71,7 @@ namespace VVardenfell.Runtime.Combat
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        void TryTransferDisease(
+        void TryTransferDisease(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity carrier,
             Entity victim,
@@ -80,34 +80,34 @@ namespace VVardenfell.Runtime.Combat
             DynamicBuffer<ShellMessageBoxRequest> messageBoxes,
             ref Unity.Mathematics.Random random)
         {
-            if (carrier == Entity.Null || !EntityManager.Exists(carrier))
+            if (carrier == Entity.Null || !systemState.EntityManager.Exists(carrier))
                 throw new InvalidOperationException("[VVardenfell][Disease] Disease carrier entity is missing.");
-            if (victim == Entity.Null || !EntityManager.Exists(victim))
+            if (victim == Entity.Null || !systemState.EntityManager.Exists(victim))
                 throw new InvalidOperationException("[VVardenfell][Disease] Disease victim entity is missing.");
 
-            if (EntityManager.HasComponent<PlayerTag>(carrier))
+            if (systemState.EntityManager.HasComponent<PlayerTag>(carrier))
                 return;
 
-            if (!EntityManager.HasBuffer<ActorKnownSpell>(carrier))
-                throw new InvalidOperationException($"[VVardenfell][Disease] Disease carrier ref={PlacedRefId(carrier)} has no ActorKnownSpell buffer.");
-            if (!EntityManager.HasBuffer<ActorKnownSpell>(victim))
-                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(victim)} has no ActorKnownSpell buffer.");
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(victim))
-                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(victim)} has no ActorActiveMagicEffect buffer.");
-            if (!EntityManager.HasComponent<ActorActiveMagicEffectDirty>(victim))
-                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(victim)} has no ActorActiveMagicEffectDirty marker.");
+            if (!systemState.EntityManager.HasBuffer<ActorKnownSpell>(carrier))
+                throw new InvalidOperationException($"[VVardenfell][Disease] Disease carrier ref={PlacedRefId(ref systemState, carrier)} has no ActorKnownSpell buffer.");
+            if (!systemState.EntityManager.HasBuffer<ActorKnownSpell>(victim))
+                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(ref systemState, victim)} has no ActorKnownSpell buffer.");
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(victim))
+                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(ref systemState, victim)} has no ActorActiveMagicEffect buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorActiveMagicEffectDirty>(victim))
+                throw new InvalidOperationException($"[VVardenfell][Disease] Disease victim ref={PlacedRefId(ref systemState, victim)} has no ActorActiveMagicEffectDirty marker.");
 
-            var carrierSpells = EntityManager.GetBuffer<ActorKnownSpell>(carrier, true);
-            var victimSpells = EntityManager.GetBuffer<ActorKnownSpell>(victim);
-            var victimEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(victim, true);
-            bool victimIsPlayer = EntityManager.HasComponent<PlayerTag>(victim);
+            var carrierSpells = systemState.EntityManager.GetBuffer<ActorKnownSpell>(carrier, true);
+            var victimSpells = systemState.EntityManager.GetBuffer<ActorKnownSpell>(victim);
+            var victimEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(victim, true);
+            bool victimIsPlayer = systemState.EntityManager.HasComponent<PlayerTag>(victim);
             bool addedDisease = false;
 
             for (int i = 0; i < carrierSpells.Length; i++)
             {
                 var spellHandle = carrierSpells[i].Spell;
                 if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= content.Spells.Length)
-                    throw new InvalidOperationException($"[VVardenfell][Disease] Disease carrier ref={PlacedRefId(carrier)} references invalid spell handle {spellHandle.Value}.");
+                    throw new InvalidOperationException($"[VVardenfell][Disease] Disease carrier ref={PlacedRefId(ref systemState, carrier)} references invalid spell handle {spellHandle.Value}.");
 
                 if (MorrowindActorMagicUtility.HasKnownSpell(victimSpells, spellHandle))
                     continue;
@@ -129,7 +129,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             if (addedDisease)
-                EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(victim, true);
+                systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(victim, true);
         }
 
         static bool TryResolveDiseaseResistancePair(
@@ -195,9 +195,9 @@ namespace VVardenfell.Runtime.Combat
         static bool IsMeleeContact(MorrowindDamageSourceKind sourceKind)
             => sourceKind is MorrowindDamageSourceKind.Weapon or MorrowindDamageSourceKind.HandToHand;
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
 
         static short RequireEffectId(string gmstId)

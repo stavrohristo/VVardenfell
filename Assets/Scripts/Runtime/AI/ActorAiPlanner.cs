@@ -218,21 +218,21 @@ namespace VVardenfell.Runtime.AI
     }
 
     [UpdateInGroup(typeof(MorrowindWorldMutationSystemGroup))]
-    public partial class ActorAiNavigationAnchorSyncSystem : SystemBase
+    public partial struct ActorAiNavigationAnchorSyncSystem : ISystem
     {
         EntityQuery _dirtyQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _dirtyQuery = GetEntityQuery(
+            _dirtyQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<ActorAiNavigationAnchor>(),
                 ComponentType.ReadOnly<ActorAiNavigationAnchorDirty>(),
                 ComponentType.ReadOnly<ActorAiState>());
-            RequireForUpdate(_dirtyQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_dirtyQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -243,18 +243,18 @@ namespace VVardenfell.Runtime.AI
                          .WithAll<ActorAiState, ActorAiNavigationAnchorDirty>()
                          .WithEntityAccess())
             {
-                if (EntityManager.HasComponent<CellLink>(entity))
+                if (systemState.EntityManager.HasComponent<CellLink>(entity))
                 {
-                    var cellLink = EntityManager.GetComponentData<CellLink>(entity);
+                    var cellLink = systemState.EntityManager.GetComponentData<CellLink>(entity);
                     SyncExteriorAnchor(ref content, cellLink.Value, anchor);
-                    EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
+                    systemState.EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
                     continue;
                 }
 
-                if (!EntityManager.HasComponent<LogicalRefLocation>(entity))
+                if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(entity))
                     throw new System.InvalidOperationException($"[VVardenfell][AI] actor entity={entity.Index}:{entity.Version} has a dirty navigation anchor but no CellLink or LogicalRefLocation.");
 
-                var location = EntityManager.GetComponentData<LogicalRefLocation>(entity);
+                var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(entity);
                 if (location.IsInterior != 0)
                 {
                     SyncInteriorAnchor(ref content, location.InteriorCellHash, anchor);
@@ -264,7 +264,7 @@ namespace VVardenfell.Runtime.AI
                     SyncExteriorAnchor(ref content, location.ExteriorCell, anchor);
                 }
 
-                EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
+                systemState.EntityManager.SetComponentEnabled<ActorAiNavigationAnchorDirty>(entity, false);
             }
         }
 

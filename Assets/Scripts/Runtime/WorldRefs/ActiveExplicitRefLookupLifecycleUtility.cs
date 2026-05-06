@@ -91,9 +91,6 @@ namespace VVardenfell.Runtime.WorldRefs
             if (s_LookupQueryCreated && s_QueryWorld == world)
                 return s_LookupQuery;
 
-            if (s_LookupQueryCreated)
-                s_LookupQuery.Dispose();
-
             s_QueryWorld = world;
             s_LookupQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActiveExplicitRefLookup>());
             s_LookupQueryCreated = true;

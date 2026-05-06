@@ -13,45 +13,45 @@ namespace VVardenfell.Runtime.Inventory
 {
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateBefore(typeof(ActorPresentationSpawnSystem))]
-    public partial class InventoryAvatarPreviewSystem : SystemBase
+    public partial struct InventoryAvatarPreviewSystem : ISystem
     {
         Entity _previewEntity;
         ulong _lastSignature;
         ActorDefHandle _lastActor;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<PlayerTag>();
-            RequireForUpdate<ActorEquipmentSlot>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<PlayerTag>();
+            systemState.RequireForUpdate<ActorEquipmentSlot>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
-            DestroyPreview();
+            DestroyPreview(ref systemState);
             _previewEntity = Entity.Null;
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.player, out var actorHandle) || !actorHandle.IsValid)
             {
-                DestroyPreview();
+                DestroyPreview(ref systemState);
                 return;
             }
 
             Entity player = SystemAPI.GetSingletonEntity<PlayerTag>();
-            if (!EntityManager.HasBuffer<ActorEquipmentSlot>(player))
+            if (!systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(player))
             {
-                DestroyPreview();
+                DestroyPreview(ref systemState);
                 return;
             }
 
-            var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
+            var equipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
             ulong signature = BuildSignature(equipment);
             if (_previewEntity != Entity.Null
-                && EntityManager.Exists(_previewEntity)
+                && systemState.EntityManager.Exists(_previewEntity)
                 && signature == _lastSignature
                 && actorHandle.Value == _lastActor.Value)
             {
@@ -62,47 +62,47 @@ namespace VVardenfell.Runtime.Inventory
             for (int i = 0; i < equipment.Length; i++)
                 equipmentSnapshot.Add(equipment[i]);
 
-            DestroyPreview();
-            CreatePreview(ref contentBlob, actorHandle, equipmentSnapshot.AsArray(), signature);
+            DestroyPreview(ref systemState);
+            CreatePreview(ref systemState, ref contentBlob, actorHandle, equipmentSnapshot.AsArray(), signature);
         }
 
-        void CreatePreview(ref RuntimeContentBlob contentBlob, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
+        void CreatePreview(ref SystemState systemState, ref RuntimeContentBlob contentBlob, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
         {
-            Entity preview = EntityManager.CreateEntity();
-            EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
-            EntityManager.AddComponent<InventoryAvatarPreviewTag>(preview);
-            EntityManager.AddComponentData(preview, new ActorSpawnSource
+            Entity preview = systemState.EntityManager.CreateEntity();
+            systemState.EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
+            systemState.EntityManager.AddComponent<InventoryAvatarPreviewTag>(preview);
+            systemState.EntityManager.AddComponentData(preview, new ActorSpawnSource
             {
                 Definition = actorHandle,
                 FirstPerson = 0,
             });
-            EntityManager.AddComponentData(preview, LocalTransform.FromPositionRotationScale(
+            systemState.EntityManager.AddComponentData(preview, LocalTransform.FromPositionRotationScale(
                 InventoryAvatarPreviewRuntimeUtility.Position,
                 InventoryAvatarPreviewRuntimeUtility.Rotation,
                 1f));
-            EntityManager.AddComponentData(preview, new LocalToWorld
+            systemState.EntityManager.AddComponentData(preview, new LocalToWorld
             {
                 Value = float4x4.TRS(
                     InventoryAvatarPreviewRuntimeUtility.Position,
                     InventoryAvatarPreviewRuntimeUtility.Rotation,
                     new float3(1f)),
             });
-            EntityManager.AddComponentData(preview, new MorrowindMovementState
+            systemState.EntityManager.AddComponentData(preview, new MorrowindMovementState
             {
                 Grounded = true,
                 GroundNormal = math.up(),
             });
-            EntityManager.AddComponent<ActorRenderVisible>(preview);
-            EntityManager.SetComponentEnabled<ActorRenderVisible>(preview, true);
-            EntityManager.AddComponent<ActorShadowCasterVisible>(preview);
-            EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(preview, false);
+            systemState.EntityManager.AddComponent<ActorRenderVisible>(preview);
+            systemState.EntityManager.SetComponentEnabled<ActorRenderVisible>(preview, true);
+            systemState.EntityManager.AddComponent<ActorShadowCasterVisible>(preview);
+            systemState.EntityManager.SetComponentEnabled<ActorShadowCasterVisible>(preview, false);
 
-            var previewEquipment = EntityManager.AddBuffer<ActorEquipmentSlot>(preview);
+            var previewEquipment = systemState.EntityManager.AddBuffer<ActorEquipmentSlot>(preview);
             for (int i = 0; i < equipment.Length; i++)
                 previewEquipment.Add(equipment[i]);
 
             int weaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref contentBlob, previewEquipment, out var weaponContent);
-            EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
+            systemState.EntityManager.AddComponentData(preview, new ActorWeaponAnimationState
             {
                 WeaponContent = weaponContent,
                 WeaponType = weaponType,
@@ -115,13 +115,13 @@ namespace VVardenfell.Runtime.Inventory
             _lastSignature = signature;
         }
 
-        void DestroyPreview()
+        void DestroyPreview(ref SystemState systemState)
         {
             if (_previewEntity == Entity.Null)
                 return;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            if (EntityManager.Exists(_previewEntity))
+            if (systemState.EntityManager.Exists(_previewEntity))
                 ecb.DestroyEntity(_previewEntity);
 
             foreach (var (attachment, entity) in
@@ -132,7 +132,7 @@ namespace VVardenfell.Runtime.Inventory
                     ecb.DestroyEntity(entity);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
             _previewEntity = Entity.Null;
             _lastActor = default;

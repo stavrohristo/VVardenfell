@@ -5,6 +5,7 @@ using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Rendering;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -42,6 +43,8 @@ namespace VVardenfell.Runtime.Animation
         }
 
         [BurstCompile]
+        [WithAll(typeof(ModelPrefabRenderLeaf))]
+        [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
         partial struct SyncRigidEquipmentVisibilityJob : IJobEntity
         {
             [ReadOnly] public ComponentLookup<ActorWeaponAnimationState> WeaponStateLookup;

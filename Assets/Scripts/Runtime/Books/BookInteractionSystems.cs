@@ -13,24 +13,24 @@ namespace VVardenfell.Runtime.Books
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
     [UpdateBefore(typeof(LooseItemPickupSystem))]
-    public partial class LooseBookReadSystem : SystemBase
+    public partial struct LooseBookReadSystem : ISystem
     {
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
 
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate<BookReadRequest>();
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate<BookReadRequest>();
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var activationRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var activation = ref activationRef.ValueRW;
@@ -40,9 +40,9 @@ namespace VVardenfell.Runtime.Books
             Entity target = activation.TargetEntity;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             ContentReference content = default;
-            if (!EntityManager.Exists(target)
-                || !EntityManager.HasComponent<BookTag>(target)
-                || !LooseCarryableResolver.TryResolveContent(ref contentBlob, EntityManager, target, out content)
+            if (!systemState.EntityManager.Exists(target)
+                || !systemState.EntityManager.HasComponent<BookTag>(target)
+                || !LooseCarryableResolver.TryResolveContent(ref contentBlob, systemState.EntityManager, target, out content)
                 || !RuntimeContentMetadataResolver.TryResolveBook(ref contentBlob, content, out _))
             {
                 return;
@@ -88,23 +88,23 @@ namespace VVardenfell.Runtime.Books
 
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(BookReadRequestSystem))]
-    public partial class InventoryBookReadRequestSystem : SystemBase
+    public partial struct InventoryBookReadRequestSystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerInventoryQuery = GetEntityQuery(
+            _playerInventoryQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<PlayerInventoryItem>());
 
-            RequireForUpdate<BookInventoryReadRequest>();
-            RequireForUpdate<BookReadRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate(_playerInventoryQuery);
+            systemState.RequireForUpdate<BookInventoryReadRequest>();
+            systemState.RequireForUpdate<BookReadRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var inventoryRequest = ref SystemAPI.GetSingletonRW<BookInventoryReadRequest>().ValueRW;
             if (inventoryRequest.Pending == 0)
@@ -116,7 +116,7 @@ namespace VVardenfell.Runtime.Books
             inventoryRequest.InventoryIndex = -1;
 
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
-            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity, true);
+            var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity, true);
             if (inventoryIndex < 0 || inventoryIndex >= inventory.Length)
                 return;
 

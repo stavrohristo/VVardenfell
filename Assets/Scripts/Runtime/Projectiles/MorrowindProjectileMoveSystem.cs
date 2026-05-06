@@ -13,16 +13,16 @@ namespace VVardenfell.Runtime.Projectiles
 {
     [UpdateInGroup(typeof(MorrowindProjectileSystemGroup))]
     [UpdateAfter(typeof(MorrowindProjectileLaunchSystem))]
-    public partial class MorrowindProjectileMoveSystem : SystemBase
+    public partial struct MorrowindProjectileMoveSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindProjectile>();
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<MorrowindProjectile>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             float dt = SystemAPI.Time.DeltaTime;
             if (dt <= 0f)
@@ -35,14 +35,14 @@ namespace VVardenfell.Runtime.Projectiles
                      SystemAPI.Query<RefRW<MorrowindProjectile>, RefRW<LocalTransform>, RefRO<PhysicsCollider>>()
                          .WithEntityAccess())
             {
-                MoveProjectile(dt, ref projectile.ValueRW, ref transform.ValueRW, collider.ValueRO, entity, deferredPhysicsQueueEntity, fixedTick, ref ecb);
+                MoveProjectile(ref systemState, dt, ref projectile.ValueRW, ref transform.ValueRW, collider.ValueRO, entity, deferredPhysicsQueueEntity, fixedTick, ref ecb);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        void MoveProjectile(
+        void MoveProjectile(ref SystemState systemState, 
             float dt,
             ref MorrowindProjectile projectile,
             ref LocalTransform transform,
@@ -60,7 +60,7 @@ namespace VVardenfell.Runtime.Projectiles
             if (projectile.PendingQuerySequence != 0u)
             {
                 if (DeferredPhysicsQueryUtility.TryGetResultBySequence(
-                        EntityManager,
+                        systemState.EntityManager,
                         deferredPhysicsQueueEntity,
                         fixedTick,
                         DeferredPhysicsQueryKind.ProjectileSegment,
@@ -72,7 +72,7 @@ namespace VVardenfell.Runtime.Projectiles
                     projectile.PendingQueryFixedTick = 0u;
                     if (result.Status == DeferredPhysicsQueryStatus.Hit)
                     {
-                        EmitHitEvent(projectile, projectileEntity, result, ref ecb);
+                        EmitHitEvent(ref systemState, projectile, projectileEntity, result, ref ecb);
                         EmitVisualRemove(projectileEntity, ref ecb);
                         ecb.DestroyEntity(projectileEntity);
                         return;
@@ -95,7 +95,7 @@ namespace VVardenfell.Runtime.Projectiles
                 return;
 
             projectile.PendingQuerySequence = DeferredPhysicsQueryUtility.EnqueueColliderCast(
-                EntityManager,
+                systemState.EntityManager,
                 deferredPhysicsQueueEntity,
                 fixedTick,
                 DeferredPhysicsQueryKind.ProjectileSegment,
@@ -110,7 +110,7 @@ namespace VVardenfell.Runtime.Projectiles
             transform.Position = end;
         }
 
-        void EmitHitEvent(in MorrowindProjectile projectile, Entity projectileEntity, in DeferredPhysicsQueryResult hit, ref EntityCommandBuffer ecb)
+        void EmitHitEvent(ref SystemState systemState, in MorrowindProjectile projectile, Entity projectileEntity, in DeferredPhysicsQueryResult hit, ref EntityCommandBuffer ecb)
         {
             Entity evt = ecb.CreateEntity();
             ecb.SetName(evt, new FixedString64Bytes("VVardenfell.ProjectileHitEvent"));
@@ -121,7 +121,7 @@ namespace VVardenfell.Runtime.Projectiles
                 Target = hit.HitEntity,
                 SourceContent = projectile.SourceContent,
                 SourceKind = projectile.SourceKind,
-                HitKind = ResolveHitKind(hit.HitEntity),
+                HitKind = ResolveHitKind(ref systemState, hit.HitEntity),
                 SpellHandleValue = projectile.SpellHandleValue,
                 EffectId = projectile.EffectId,
                 AttackStrength = projectile.AttackStrength,
@@ -147,13 +147,13 @@ namespace VVardenfell.Runtime.Projectiles
             });
         }
 
-        MorrowindProjectileHitKind ResolveHitKind(Entity entity)
+        MorrowindProjectileHitKind ResolveHitKind(ref SystemState systemState, Entity entity)
         {
-            if (entity == Entity.Null || !EntityManager.Exists(entity))
+            if (entity == Entity.Null || !systemState.EntityManager.Exists(entity))
                 return MorrowindProjectileHitKind.Geometry;
-            if (EntityManager.HasComponent<MorrowindProjectile>(entity))
+            if (systemState.EntityManager.HasComponent<MorrowindProjectile>(entity))
                 return MorrowindProjectileHitKind.Projectile;
-            if (EntityManager.HasComponent<ActorVitalSet>(entity))
+            if (systemState.EntityManager.HasComponent<ActorVitalSet>(entity))
                 return MorrowindProjectileHitKind.Actor;
             return MorrowindProjectileHitKind.Object;
         }

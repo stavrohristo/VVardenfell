@@ -9,7 +9,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
-    public partial class EnvironmentPresentationSystem : SystemBase
+    public partial struct EnvironmentPresentationSystem : ISystem
     {
         static readonly int k_EnvironmentAmbientColorId = Shader.PropertyToID("_VV_EnvironmentAmbientColor");
         static readonly int k_SkyColorId = Shader.PropertyToID("_VV_SkyColor");
@@ -25,17 +25,17 @@ namespace VVardenfell.Runtime.Streaming
         static readonly int k_FogRangeId = Shader.PropertyToID("_VV_FogRange");
         static readonly int k_FogColorId = Shader.PropertyToID("_VV_FogColor");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<StreamingConfig>();
-            RequireForUpdate<ActiveEnvironmentState>();
-            RequireForUpdate<MainLightSingleton>();
-            RequireForUpdate<ActiveSkyWeatherState>();
+            systemState.RequireForUpdate<StreamingConfig>();
+            systemState.RequireForUpdate<ActiveEnvironmentState>();
+            systemState.RequireForUpdate<MainLightSingleton>();
+            systemState.RequireForUpdate<ActiveSkyWeatherState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             var environment = SystemAPI.GetSingleton<ActiveEnvironmentState>();
 

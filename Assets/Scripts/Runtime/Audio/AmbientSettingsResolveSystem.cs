@@ -8,18 +8,18 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class AmbientSettingsResolveSystem : SystemBase
+    public partial struct AmbientSettingsResolveSystem : ISystem
     {
         static readonly ProfilerMarker k_SettingsResolve = new("VV.Audio.ResolveAmbientSettings");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AmbientSettingsState>();
-            RequireForUpdate<AudioTuningState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<AmbientSettingsState>();
+            systemState.RequireForUpdate<AudioTuningState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_SettingsResolve.Auto();
 

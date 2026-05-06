@@ -9,28 +9,28 @@ namespace VVardenfell.Runtime.Books
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
-    public partial class BookRuntimeBootstrapSystem : SystemBase
+    public partial struct BookRuntimeBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<BookRuntimeBootstrapRequest>();
+            systemState.RequireForUpdate<BookRuntimeBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<RuntimeShellState, PlayerInteractionFocus>(
-                EntityManager,
+                systemState.EntityManager,
                 "VVardenfell.BookRuntime");
 
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReadRequest { InventoryIndex = -1 });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReaderState { InventoryIndex = -1 });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookReaderRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookInventoryReadRequest { InventoryIndex = -1 });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new BookSkillGrantRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookReadRequest { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookReaderState { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookReaderRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookInventoryReadRequest { InventoryIndex = -1 });
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookSkillGrantRequest());
 
-            RuntimeBootstrapUtility.EnsureBuffer<BookReadHistoryEntry>(EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<BookReadHistoryEntry>(systemState.EntityManager, runtimeEntity);
 
-            RuntimeBootstrapRequestUtility.Consume<BookRuntimeBootstrapRequest>(EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<BookRuntimeBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

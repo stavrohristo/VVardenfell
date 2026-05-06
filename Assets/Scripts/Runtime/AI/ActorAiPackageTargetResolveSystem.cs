@@ -12,20 +12,20 @@ namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAiPlannerSystem))]
-    public partial class ActorAiPackageTargetResolveSystem : SystemBase
+    public partial struct ActorAiPackageTargetResolveSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            RequireForUpdate<ActorAiPackageRuntime>();
-            RequireForUpdate<ActiveExplicitRefLookup>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            _playerQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            systemState.RequireForUpdate<ActorAiPackageRuntime>();
+            systemState.RequireForUpdate<ActiveExplicitRefLookup>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -45,7 +45,7 @@ namespace VVardenfell.Runtime.AI
                     if (!RequiresTarget(package.Type) || package.FollowTargetEntity != Entity.Null || package.TargetId.IsEmpty)
                         continue;
 
-                    if (!TryResolveTarget(ref content, activeExplicitRefs, logicalRefs, player, package.TargetId, out Entity target, out uint placedRefId))
+                    if (!TryResolveTarget(ref systemState, ref content, activeExplicitRefs, logicalRefs, player, package.TargetId, out Entity target, out uint placedRefId))
                         continue;
 
                     package.FollowTargetEntity = target;
@@ -62,7 +62,7 @@ namespace VVardenfell.Runtime.AI
                    || packageType == (byte)ActorAiRuntimePackageType.Activate;
         }
 
-        bool TryResolveTarget(
+        bool TryResolveTarget(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
             in ActiveExplicitRefLookup activeExplicitRefs,
             in LogicalRefLookup logicalRefs,
@@ -78,12 +78,12 @@ namespace VVardenfell.Runtime.AI
 
             if (IsPlayerTarget(targetId))
             {
-                if (player == Entity.Null || !EntityManager.Exists(player))
+                if (player == Entity.Null || !systemState.EntityManager.Exists(player))
                     return false;
 
                 target = player;
-                placedRefId = EntityManager.HasComponent<PlacedRefIdentity>(player)
-                    ? EntityManager.GetComponentData<PlacedRefIdentity>(player).Value
+                placedRefId = systemState.EntityManager.HasComponent<PlacedRefIdentity>(player)
+                    ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(player).Value
                     : 0u;
                 return true;
             }
@@ -97,7 +97,7 @@ namespace VVardenfell.Runtime.AI
                 if (!logicalRefs.Map.IsCreated || !logicalRefs.Map.TryGetValue(placedRefId, out target))
                     return false;
 
-                return target != Entity.Null && EntityManager.Exists(target);
+                return target != Entity.Null && systemState.EntityManager.Exists(target);
             }
 
             if (!RuntimeContentBlobUtility.TryResolvePlaceableByIdHash(ref contentBlob, targetHash, out ContentReference content) || !RuntimeContentBlobUtility.IsValid(ref contentBlob, content))
@@ -110,7 +110,7 @@ namespace VVardenfell.Runtime.AI
             if (!activeExplicitRefs.ByContentKey.TryGetValue(key, out var activeTarget) || activeTarget.Ambiguous != 0)
                 return false;
 
-            if (activeTarget.Entity == Entity.Null || activeTarget.PlacedRefId == 0u || !EntityManager.Exists(activeTarget.Entity))
+            if (activeTarget.Entity == Entity.Null || activeTarget.PlacedRefId == 0u || !systemState.EntityManager.Exists(activeTarget.Entity))
                 return false;
 
             target = activeTarget.Entity;

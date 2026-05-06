@@ -1,11 +1,9 @@
-using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Movement
 {
-    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     public partial struct MorrowindMovementSettingsBootstrapSystem : ISystem
     {

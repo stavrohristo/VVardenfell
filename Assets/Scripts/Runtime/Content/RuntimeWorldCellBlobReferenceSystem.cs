@@ -8,9 +8,9 @@ namespace VVardenfell.Runtime.Content
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
     [UpdateAfter(typeof(RuntimeModelPrefabBlobReferenceSystem))]
-    public partial class RuntimeWorldCellBlobReferenceSystem : SystemBase
+    public partial struct RuntimeWorldCellBlobReferenceSystem : ISystem
     {
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<RuntimeWorldCellBlobReference>())
                 return;
@@ -21,10 +21,10 @@ namespace VVardenfell.Runtime.Content
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new RuntimeWorldCellBlobReference { Blob = blob });
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (!SystemAPI.HasSingleton<RuntimeWorldCellBlobReference>())
                 return;

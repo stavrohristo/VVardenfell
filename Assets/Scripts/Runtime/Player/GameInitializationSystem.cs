@@ -55,7 +55,7 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(RuntimeSpawnBootstrapSystem))]
     [UpdateAfter(typeof(ContainerLootBootstrapSystem))]
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
-    public partial class GameInitializationSystem : SystemBase
+    public partial struct GameInitializationSystem : ISystem
     {
         EntityQuery _runtimeActiveQuery;
         EntityQuery _runtimePausedQuery;
@@ -63,31 +63,31 @@ namespace VVardenfell.Runtime.Player
         EntityQuery _playerViewQuery;
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeActiveQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
-            _runtimePausedQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
-            _localPlayerVisualQuery = GetEntityQuery(ComponentType.ReadOnly<LocalPlayerVisual>());
-            _playerViewQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerViewComponent>());
-            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            RequireForUpdate<GameInitializationSingleton>();
-            RequireForUpdate<WorldJournalState>();
-            RequireForUpdate<RuntimeSpawnState>();
-            RequireForUpdate<RuntimeSpawnedRef>();
-            RequireForUpdate<ContainerSessionHeader>();
-            RequireForUpdate<ContainerSessionItem>();
-            RequireForUpdate<PickedItemRecord>();
-            RequireForUpdate<InteriorTransitionState>();
-            RequireForUpdate<InteriorSpawnedEntity>();
-            RequireForUpdate<StreamingConfig>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<LoadedCellsMap>();
-            RequireForUpdate<AvailableCells>();
-            RequireForUpdate<MainCameraSingleton>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            _runtimeActiveQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
+            _runtimePausedQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+            _localPlayerVisualQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<LocalPlayerVisual>());
+            _playerViewQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerViewComponent>());
+            _playerQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            systemState.RequireForUpdate<GameInitializationSingleton>();
+            systemState.RequireForUpdate<WorldJournalState>();
+            systemState.RequireForUpdate<RuntimeSpawnState>();
+            systemState.RequireForUpdate<RuntimeSpawnedRef>();
+            systemState.RequireForUpdate<ContainerSessionHeader>();
+            systemState.RequireForUpdate<ContainerSessionItem>();
+            systemState.RequireForUpdate<PickedItemRecord>();
+            systemState.RequireForUpdate<InteriorTransitionState>();
+            systemState.RequireForUpdate<InteriorSpawnedEntity>();
+            systemState.RequireForUpdate<StreamingConfig>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate<AvailableCells>();
+            systemState.RequireForUpdate<MainCameraSingleton>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             bool hasNewGameRequest = SystemAPI.HasSingleton<NewGameInitializationSingleton>();
             bool hasContinueRequest = SystemAPI.HasSingleton<ContinueGameInitializationSingleton>();
@@ -97,14 +97,14 @@ namespace VVardenfell.Runtime.Player
 
             var initEntity = SystemAPI.GetSingletonEntity<GameInitializationSingleton>();
             var init = SystemAPI.GetComponent<GameInitializationSingleton>(initEntity);
-            var em = EntityManager;
+            var em = systemState.EntityManager;
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Game initialization requires runtime content blob.");
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(em, _runtimePausedQuery, _runtimeActiveQuery);
             WorldSaveReplayUtility.ResetRuntimeForInitialization(
-                World,
+                systemState.World,
                 em,
                 preserveShell: true,
                 _localPlayerVisualQuery,
@@ -112,9 +112,9 @@ namespace VVardenfell.Runtime.Player
                 _playerQuery);
             if (init.SpawnLocalPlayer == 0)
             {
-                ConfigureStreamingAfterInitialization(em, init);
+                ConfigureStreamingAfterInitialization(ref systemState, em, init);
                 MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
-                ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+                ClearInitializationRequests(ref systemState, hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
                 return;
             }
 
@@ -143,7 +143,7 @@ namespace VVardenfell.Runtime.Player
                 PopulateInitializationActiveEffects(em, initEntity, payload.ActiveMagicEffects);
                 PopulateInitializationUsedPowers(em, initEntity, payload.UsedPowers);
                 WorldSaveReplayUtility.ApplyMapDiscoveryPayload(em, payload);
-                if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(World, em, payload, out string locationError))
+                if (!RuntimeSpawnProjectionUtility.TryRestoreWorldLocation(systemState.World, em, payload, out string locationError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] load slot location restore failed. {locationError}");
 
                 RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(em);
@@ -153,7 +153,7 @@ namespace VVardenfell.Runtime.Player
                 if (!init.HasSerializedSavePayload)
                     throw new System.InvalidOperationException("[VVardenfell][Save] continue requested, but no serialized save payload was available.");
 
-                if (!WorldSaveReplayUtility.TryRestoreContinueSave(World, em, ref init, out string loadError))
+                if (!WorldSaveReplayUtility.TryRestoreContinueSave(systemState.World, em, ref init, out string loadError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] continue load failed. {loadError}");
             }
 
@@ -280,10 +280,10 @@ namespace VVardenfell.Runtime.Player
             Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
 
-            ConfigureStreamingAfterInitialization(em, init);
+            ConfigureStreamingAfterInitialization(ref systemState, em, init);
 
             MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
-            ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+            ClearInitializationRequests(ref systemState, hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
         }
 
         static void PopulatePlayerFactions(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player)
@@ -404,7 +404,7 @@ namespace VVardenfell.Runtime.Player
                 equipment.Add(selectedEquipment[i]);
         }
 
-        void ConfigureStreamingAfterInitialization(EntityManager em, in GameInitializationSingleton init)
+        void ConfigureStreamingAfterInitialization(ref SystemState systemState, EntityManager em, in GameInitializationSingleton init)
         {
             Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
             var streamingConfig = em.GetComponentData<StreamingConfig>(streamingEntity);
@@ -421,19 +421,19 @@ namespace VVardenfell.Runtime.Player
             em.SetComponentData(streamingEntity, streamingConfig);
         }
 
-        void ClearInitializationRequests(
+        void ClearInitializationRequests(ref SystemState systemState, 
             bool hasNewGameRequest,
             bool hasContinueRequest,
             bool hasLoadRequest,
             Entity initEntity)
         {
             if (hasNewGameRequest)
-                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
+                systemState.EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<NewGameInitializationSingleton>());
             if (hasContinueRequest)
-                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<ContinueGameInitializationSingleton>());
+                systemState.EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<ContinueGameInitializationSingleton>());
             if (hasLoadRequest)
-                EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
-            EntityManager.DestroyEntity(initEntity);
+                systemState.EntityManager.DestroyEntity(SystemAPI.GetSingletonEntity<LoadGameInitializationSingleton>());
+            systemState.EntityManager.DestroyEntity(initEntity);
         }
 
         static void PopulatePlayerInventory(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, DynamicBuffer<PlayerInventoryItem> playerInventory)

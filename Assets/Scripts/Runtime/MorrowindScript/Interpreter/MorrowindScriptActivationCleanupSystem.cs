@@ -15,7 +15,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             state.RequireForUpdate<ScriptActivationEvent>();
         }
-
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             var events = SystemAPI.GetSingletonBuffer<ScriptActivationEvent>();

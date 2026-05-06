@@ -17,21 +17,21 @@ namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorWeaponAnimationSystem))]
-    public partial class ActorMeleeCombatAnimationSyncSystem : SystemBase
+    public partial struct ActorMeleeCombatAnimationSyncSystem : ISystem
     {
         static readonly short ParalyzeEffectId = RequireEffectId("sEffectParalyze");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorCombatTargetState>();
-            RequireForUpdate<ActorMeleeCombatAiState>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<ActorCombatTargetState>();
+            systemState.RequireForUpdate<ActorMeleeCombatAiState>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -57,7 +57,7 @@ namespace VVardenfell.Runtime.Combat
             {
                 ref var aiState = ref ai.ValueRW;
                 ref var weapon = ref weaponState.ValueRW;
-                ResolveEquippedMeleeWeapon(ref content, entity, ref weapon);
+                ResolveEquippedMeleeWeapon(ref systemState, ref content, entity, ref weapon);
 
                 if (combat.ValueRO.Active == 0)
                 {
@@ -66,8 +66,8 @@ namespace VVardenfell.Runtime.Combat
                 }
 
                 Entity target = combat.ValueRO.TargetEntity;
-                RequireActiveCombatComposition(entity, target);
-                if (IsActorDisabledOrDead(entity) || IsActorDisabledOrDead(target) || IsActorUnableToAttack(entity))
+                RequireActiveCombatComposition(ref systemState, entity, target);
+                if (IsActorDisabledOrDead(ref systemState, entity) || IsActorDisabledOrDead(ref systemState, target) || IsActorUnableToAttack(ref systemState, entity))
                 {
                     ClearAttackControls(ref aiState, ref weapon);
                     continue;
@@ -94,14 +94,14 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 if (weapon.Drawn == 0 || weapon.Phase != ActorWeaponAnimationPhase.Equipped)
                     continue;
-                if (!CanStartMeleeAttack(ref content, deferredPhysicsQueueEntity, fixedTick, entity, actorBounds.ValueRO, transform.ValueRO, target))
+                if (!CanStartMeleeAttack(ref systemState, ref content, deferredPhysicsQueueEntity, fixedTick, entity, actorBounds.ValueRO, transform.ValueRO, target))
                     continue;
 
-                FaceTarget(ref transform.ValueRW, target);
+                FaceTarget(ref systemState, ref transform.ValueRW, target);
                 aiState.DesiredAttackStrength = random.NextFloat();
                 aiState.DesiredAttackType = ChooseAttackType(ref content, weapon.WeaponContent, ref random);
                 aiState.AttackInProgress = 1;
-                aiState.CooldownSeconds = ResolveAttackCooldown(ref content, entity, ref random);
+                aiState.CooldownSeconds = ResolveAttackCooldown(ref systemState, ref content, entity, ref random);
                 weapon.AiAttackTypeOverride = 1;
                 weapon.AiAttackType = aiState.DesiredAttackType;
                 weapon.AttackPressed = 1;
@@ -110,20 +110,20 @@ namespace VVardenfell.Runtime.Combat
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        void ResolveEquippedMeleeWeapon(ref RuntimeContentBlob content, Entity actor, ref ActorWeaponAnimationState state)
+        void ResolveEquippedMeleeWeapon(ref SystemState systemState, ref RuntimeContentBlob content, Entity actor, ref ActorWeaponAnimationState state)
         {
             state.WeaponType = ActorWeaponAnimationUtility.NoWeaponType;
             state.WeaponContent = default;
 
-            if (!EntityManager.HasBuffer<ActorEquipmentSlot>(actor))
+            if (!systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(actor))
             {
-                if (IsCreature(ref content, actor))
+                if (IsCreature(ref systemState, ref content, actor))
                     return;
 
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] NPC ref={PlacedRefId(actor)} has no ActorEquipmentSlot buffer.");
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] NPC ref={PlacedRefId(ref systemState, actor)} has no ActorEquipmentSlot buffer.");
             }
 
-            var equipment = EntityManager.GetBuffer<ActorEquipmentSlot>(actor, true);
+            var equipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(actor, true);
             state.WeaponType = ActorWeaponAnimationUtility.ResolveEquippedWeaponType(ref content, equipment, out var weaponContent);
             state.WeaponContent = weaponContent;
         }
@@ -169,59 +169,59 @@ namespace VVardenfell.Runtime.Combat
                || phase == ActorWeaponAnimationPhase.AttackRelease
                || phase == ActorWeaponAnimationPhase.AttackFollow;
 
-        void RequireActiveCombatComposition(Entity actor, Entity target)
+        void RequireActiveCombatComposition(ref SystemState systemState, Entity actor, Entity target)
         {
-            if (target == Entity.Null || !EntityManager.Exists(target))
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has an invalid active combat target.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has no ActorHitAftermathState.");
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has no ActorActiveMagicEffect buffer.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has an invalid active combat target.");
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has no ActorVitalSet.");
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has no ActorHitAftermathState.");
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has no ActorActiveMagicEffect buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no ActorHitAftermathState.");
         }
 
-        bool IsActorUnableToAttack(Entity actor)
+        bool IsActorUnableToAttack(ref SystemState systemState, Entity actor)
         {
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(actor);
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(actor);
             if (aftermath.KnockedDown != 0 || aftermath.KnockedOut != 0 || aftermath.HitRecovery != 0)
                 return true;
 
-            var effects = EntityManager.GetBuffer<ActorActiveMagicEffect>(actor, true);
+            var effects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(actor, true);
             return MorrowindMeleeCombatMechanics.SumEffectMagnitude(effects, ParalyzeEffectId) > 0f;
         }
 
-        bool IsActorDisabledOrDead(Entity actor)
+        bool IsActorDisabledOrDead(ref SystemState systemState, Entity actor)
         {
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(actor)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(actor).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(actor)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(actor).Disabled != 0)
             {
                 return true;
             }
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(actor);
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(actor);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(actor);
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(actor);
             if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} is marked dead but still has positive health.");
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} is marked dead but still has positive health.");
             return vitals.CurrentHealth <= 0f || aftermath.Dead != 0;
         }
 
-        void FaceTarget(ref LocalTransform actorTransform, Entity target)
+        void FaceTarget(ref SystemState systemState, ref LocalTransform actorTransform, Entity target)
         {
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no LocalTransform.");
 
-            float3 delta = EntityManager.GetComponentData<LocalTransform>(target).Position - actorTransform.Position;
+            float3 delta = systemState.EntityManager.GetComponentData<LocalTransform>(target).Position - actorTransform.Position;
             delta.y = 0f;
             if (math.lengthsq(delta) > 0.000001f)
                 actorTransform.Rotation = quaternion.LookRotationSafe(math.normalize(delta), math.up());
         }
 
-        bool CanStartMeleeAttack(
+        bool CanStartMeleeAttack(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity deferredPhysicsQueueEntity,
             uint fixedTick,
@@ -230,12 +230,12 @@ namespace VVardenfell.Runtime.Combat
             in LocalTransform actorTransform,
             Entity target)
         {
-            if (!TryResolveTargetBounds(target, out float3 targetBase, out float targetRadius, out float targetHeight, out float3 targetCenter))
+            if (!TryResolveTargetBounds(ref systemState, target, out float3 targetBase, out float targetRadius, out float targetHeight, out float3 targetCenter))
                 return false;
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
                 ref content,
-                EntityManager.GetComponentData<ActorWeaponAnimationState>(actor).WeaponContent,
+                systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(actor).WeaponContent,
                 out bool hasWeapon,
                 out _,
                 out var weapon,
@@ -253,7 +253,7 @@ namespace VVardenfell.Runtime.Combat
                 float4x4.TRS(actorTransform.Position, actorTransform.Rotation, new float3(actorTransform.Scale)),
                 actorBounds.Center);
             return ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
-                EntityManager,
+                systemState.EntityManager,
                 deferredPhysicsQueueEntity,
                 fixedTick,
                 actor,
@@ -262,7 +262,7 @@ namespace VVardenfell.Runtime.Combat
                 targetCenter);
         }
 
-        bool TryResolveTargetBounds(
+        bool TryResolveTargetBounds(ref SystemState systemState, 
             Entity target,
             out float3 targetBase,
             out float targetRadius,
@@ -273,14 +273,14 @@ namespace VVardenfell.Runtime.Combat
             targetRadius = 0f;
             targetHeight = 0f;
             targetCenter = default;
-            if (!EntityManager.HasComponent<LocalTransform>(target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no LocalTransform.");
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(target);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             targetBase = transform.Position;
-            if (EntityManager.HasComponent<ActorLocalBounds>(target))
+            if (systemState.EntityManager.HasComponent<ActorLocalBounds>(target))
             {
-                var bounds = EntityManager.GetComponentData<ActorLocalBounds>(target);
+                var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(target);
                 float scale = math.max(0.01f, transform.Scale);
                 targetRadius = math.max(bounds.Extents.x, bounds.Extents.z) * scale;
                 targetHeight = math.max(0.01f, bounds.Extents.y * 2f * scale);
@@ -288,9 +288,9 @@ namespace VVardenfell.Runtime.Combat
                 return true;
             }
 
-            if (EntityManager.HasComponent<PlayerCharacterComponent>(target))
+            if (systemState.EntityManager.HasComponent<PlayerCharacterComponent>(target))
             {
-                var player = EntityManager.GetComponentData<PlayerCharacterComponent>(target);
+                var player = systemState.EntityManager.GetComponentData<PlayerCharacterComponent>(target);
                 targetRadius = math.max(0.01f, player.Radius);
                 targetHeight = math.max(0.01f, player.StandingHeight);
                 targetCenter = targetBase + new float3(0f, targetHeight * 0.5f, 0f);
@@ -360,22 +360,22 @@ namespace VVardenfell.Runtime.Combat
             return ActorWeaponAttackType.Chop;
         }
 
-        float ResolveAttackCooldown(ref RuntimeContentBlob content, Entity actor, ref Unity.Mathematics.Random random)
+        float ResolveAttackCooldown(ref SystemState systemState, ref RuntimeContentBlob content, Entity actor, ref Unity.Mathematics.Random random)
         {
-            ulong gmstHash = IsCreature(ref content, actor)
+            ulong gmstHash = IsCreature(ref systemState, ref content, actor)
                 ? RuntimeContentKnownHashes.fCombatDelayCreature
                 : RuntimeContentKnownHashes.fCombatDelayNPC;
             float baseDelay = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, gmstHash);
             return math.min(baseDelay + 0.01f * random.NextInt(100), baseDelay + 0.9f);
         }
 
-        bool IsCreature(ref RuntimeContentBlob content, Entity actor)
+        bool IsCreature(ref SystemState systemState, ref RuntimeContentBlob content, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorSpawnSource>(actor))
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has no ActorSpawnSource.");
-            var source = EntityManager.GetComponentData<ActorSpawnSource>(actor);
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(actor))
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has no ActorSpawnSource.");
+            var source = systemState.EntityManager.GetComponentData<ActorSpawnSource>(actor);
             if (!source.Definition.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(actor)} has invalid ActorSpawnSource.");
+                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Actor ref={PlacedRefId(ref systemState, actor)} has invalid ActorSpawnSource.");
 
             ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actorDef.Kind == ActorDefKind.Creature;
@@ -391,11 +391,11 @@ namespace VVardenfell.Runtime.Combat
             return effectId;
         }
 
-        uint PlacedRefId(Entity entity)
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
             => entity != Entity.Null
-               && EntityManager.Exists(entity)
-               && EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+               && systemState.EntityManager.Exists(entity)
+               && systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

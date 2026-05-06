@@ -9,23 +9,23 @@ namespace VVardenfell.Runtime.Magic
 {
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
     [UpdateAfter(typeof(PlayerInputReceivingSystem))]
-    public partial class PlayerMagicCastInputSystem : SystemBase
+    public partial struct PlayerMagicCastInputSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
                 ComponentType.ReadOnly<ActorKnownSpell>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<SpellWindowState>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<SpellWindowState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity player = _playerQuery.GetSingletonEntity();
             var controlRef = _playerQuery.GetSingletonRW<PlayerCharacterControl>();
@@ -34,7 +34,7 @@ namespace VVardenfell.Runtime.Magic
                 return;
 
             control.CastMagicPressed = false;
-            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(player, true);
+            var knownSpells = systemState.EntityManager.GetBuffer<ActorKnownSpell>(player, true);
             if (knownSpells.Length == 0)
                 throw new InvalidOperationException("[VVardenfell][Magic] Player attempted to cast with an empty spellbook.");
 
@@ -52,7 +52,7 @@ namespace VVardenfell.Runtime.Magic
             }
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorSpellCastRequest>(runtimeEntity);
             requests.Add(new ActorSpellCastRequest
             {
                 CasterEntity = player,

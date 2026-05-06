@@ -10,33 +10,33 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
-    public partial class RuntimeShellBootstrapSystem : SystemBase
+    public partial struct RuntimeShellBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimeShellBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus, RuntimeShellState>(
-                EntityManager,
+                systemState.EntityManager,
                 "VVardenfell.RuntimeShell");
 
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellState
             {
                 HudVisible = 1,
                 SelectedAction = (byte)RuntimeShellMenuActionId.Resume,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeShellActionRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeSubtitleState());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeEnemyHealthBarState());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellActionRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeSubtitleState());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeEnemyHealthBarState());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SaveLoadBrowserState
             {
                 DraftSaveName = new FixedString64Bytes("New Save"),
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SaveLoadBrowserRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SaveLoadBrowserRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new InventoryWindowState
             {
                 Rect = new RuntimeWindowRect
                 {
@@ -48,14 +48,14 @@ namespace VVardenfell.Runtime.Shell
                 SelectedInventoryIndex = -1,
                 ActiveCategory = (byte)InventoryWindowCategory.All,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryWindowRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryItemActionRequest());
-            RuntimeBootstrapUtility.EnsureBuffer<InventoryItemActionRequestElement>(EntityManager, runtimeEntity);
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new InventoryHeldItemState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new InventoryWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new InventoryItemActionRequest());
+            RuntimeBootstrapUtility.EnsureBuffer<InventoryItemActionRequestElement>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new InventoryHeldItemState
             {
                 InventoryIndex = -1,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new StatsWindowState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new StatsWindowState
             {
                 Rect = new RuntimeWindowRect
                 {
@@ -65,8 +65,8 @@ namespace VVardenfell.Runtime.Shell
                     Height = 0.45f,
                 },
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new StatsWindowRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SpellWindowState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new StatsWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SpellWindowState
             {
                 Rect = new RuntimeWindowRect
                 {
@@ -77,8 +77,8 @@ namespace VVardenfell.Runtime.Shell
                 },
                 SelectedSpellIndex = -1,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new SpellWindowRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MapWindowState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SpellWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MapWindowState
             {
                 Mode = (byte)MapWindowMode.Local,
                 Rect = new RuntimeWindowRect
@@ -91,8 +91,8 @@ namespace VVardenfell.Runtime.Shell
                 LocalZoom = 1f,
                 GlobalZoom = 1f,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MapWindowRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new JournalWindowState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MapWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new JournalWindowState
             {
                 Rect = new RuntimeWindowRect
                 {
@@ -106,24 +106,23 @@ namespace VVardenfell.Runtime.Shell
                 QuestScrollY = 1f,
                 EntryScrollY = 1f,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new JournalWindowRequest());
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindDialogueSession
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new JournalWindowRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MorrowindDialogueSession
             {
                 SelectedTopicDialogueIndex = -1,
                 ChoiceDialogueIndex = -1,
                 LastInfoIndex = -1,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindDialogueResponseRequest());
-            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueSessionLine>(EntityManager, runtimeEntity);
-            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueChoice>(EntityManager, runtimeEntity);
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new LocalMapDiscoveryState
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MorrowindDialogueResponseRequest());
+            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueSessionLine>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueChoice>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,
                 RenderResolution = 256,
                 RevealRadiusFraction = 0.17f,
             });
-            RuntimeBootstrapRequestUtility.Consume<RuntimeShellBootstrapRequest>(EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<RuntimeShellBootstrapRequest>(systemState.EntityManager);
         }
     }
 }
-

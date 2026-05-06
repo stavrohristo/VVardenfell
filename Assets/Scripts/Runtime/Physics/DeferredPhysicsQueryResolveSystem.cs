@@ -7,7 +7,7 @@ namespace VVardenfell.Runtime.Physics
 {
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(VVardenfell.Runtime.Player.PlayerPhysicsViewPoseSystem))]
-    public partial class DeferredPhysicsQueryResolveSystem : SystemBase
+    public partial struct DeferredPhysicsQueryResolveSystem : ISystem
     {
         static readonly DeferredPhysicsQueryKindMask k_FrameOwnedKinds =
             DeferredPhysicsQueryKindMask.GenericRay
@@ -15,26 +15,26 @@ namespace VVardenfell.Runtime.Physics
             | DeferredPhysicsQueryKindMask.LineOfSight
             | DeferredPhysicsQueryKindMask.MeleeConfirmation;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<PhysicsWorldSingleton>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<PhysicsWorldSingleton>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
-            if (!EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
+            if (!systemState.EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
                 throw new System.InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
             if (!SystemAPI.IsComponentEnabled<DeferredPhysicsQueryPending>(queueEntity))
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             var frame = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>();
             DeferredPhysicsQueryResolveUtility.ResolveOwnedRequests(
-                EntityManager,
+                systemState.EntityManager,
                 queueEntity,
                 SystemAPI.GetSingleton<PhysicsWorldSingleton>(),
                 frame.FixedTick,

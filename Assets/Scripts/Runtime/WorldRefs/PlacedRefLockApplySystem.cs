@@ -9,23 +9,23 @@ namespace VVardenfell.Runtime.WorldRefs
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
-    public partial class PlacedRefLockApplySystem : SystemBase
+    public partial struct PlacedRefLockApplySystem : ISystem
     {
         const byte LockOperation = 1;
         const byte UnlockOperation = 2;
         const int DefaultLockLevelSentinel = int.MinValue;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<PlacedRefLockRequest>();
-            RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<PlacedRefLockRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<PlacedRefLockRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<PlacedRefLockRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
@@ -33,19 +33,19 @@ namespace VVardenfell.Runtime.WorldRefs
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
-                Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+                Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
                 if (target == Entity.Null)
                     throw new InvalidOperationException($"Lock state request target ref={request.TargetPlacedRefId} is not live.");
 
                 if (request.Operation == LockOperation)
                 {
-                    ApplyLock(target, request);
+                    ApplyLock(ref systemState, target, request);
                     continue;
                 }
 
                 if (request.Operation == UnlockOperation)
                 {
-                    ApplyUnlock(target);
+                    ApplyUnlock(ref systemState, target);
                     continue;
                 }
 
@@ -55,10 +55,10 @@ namespace VVardenfell.Runtime.WorldRefs
             requests.Clear();
         }
 
-        void ApplyLock(Entity target, in PlacedRefLockRequest request)
+        void ApplyLock(ref SystemState systemState, Entity target, in PlacedRefLockRequest request)
         {
-            var state = EntityManager.HasComponent<PlacedRefLockState>(target)
-                ? EntityManager.GetComponentData<PlacedRefLockState>(target)
+            var state = systemState.EntityManager.HasComponent<PlacedRefLockState>(target)
+                ? systemState.EntityManager.GetComponentData<PlacedRefLockState>(target)
                 : default;
 
             int level = request.LockLevel;
@@ -72,23 +72,23 @@ namespace VVardenfell.Runtime.WorldRefs
             state.LockLevel = level;
             state.Locked = 1;
 
-            if (EntityManager.HasComponent<PlacedRefLockState>(target))
-                EntityManager.SetComponentData(target, state);
+            if (systemState.EntityManager.HasComponent<PlacedRefLockState>(target))
+                systemState.EntityManager.SetComponentData(target, state);
             else
-                EntityManager.AddComponentData(target, state);
+                systemState.EntityManager.AddComponentData(target, state);
         }
 
-        void ApplyUnlock(Entity target)
+        void ApplyUnlock(ref SystemState systemState, Entity target)
         {
-            if (!EntityManager.HasComponent<PlacedRefLockState>(target))
+            if (!systemState.EntityManager.HasComponent<PlacedRefLockState>(target))
                 return;
 
-            var state = EntityManager.GetComponentData<PlacedRefLockState>(target);
+            var state = systemState.EntityManager.GetComponentData<PlacedRefLockState>(target);
             if (state.Locked != 0)
                 state.LockLevel = -math.abs(state.LockLevel);
 
             state.Locked = 0;
-            EntityManager.SetComponentData(target, state);
+            systemState.EntityManager.SetComponentData(target, state);
         }
     }
 }

@@ -11,15 +11,15 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
-    public partial class LightingBootstrapSystem : SystemBase
+    public partial struct LightingBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<LightingBootstrapRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<LightingBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -28,33 +28,33 @@ namespace VVardenfell.Runtime.Streaming
 
             if (!SystemAPI.HasSingleton<ActiveEnvironmentState>())
             {
-                var entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.LightingState");
-                EntityManager.AddComponentData(entity, CreateFallbackEnvironment(isInterior: false));
+                var entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.LightingState");
+                systemState.EntityManager.AddComponentData(entity, CreateFallbackEnvironment(isInterior: false));
             }
 
             if (!SystemAPI.HasSingleton<MorrowindDayCycleState>())
             {
-                var entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.DayCycleState");
-                EntityManager.AddComponentData(entity, CreateDefaultDayCycle(ref content));
+                var entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.DayCycleState");
+                systemState.EntityManager.AddComponentData(entity, CreateDefaultDayCycle(ref content));
             }
 
             if (!SystemAPI.HasSingleton<ActiveSkyWeatherState>())
             {
-                var entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.SkyWeatherState");
-                EntityManager.AddComponentData(entity, CreateFallbackSkyWeather());
+                var entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.SkyWeatherState");
+                systemState.EntityManager.AddComponentData(entity, CreateFallbackSkyWeather());
             }
 
             if (!SystemAPI.HasSingleton<RuntimeVideoSettings>())
             {
-                var entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.RuntimeVideoSettings");
-                EntityManager.AddComponentData(entity, ResolveRuntimeVideoSettings());
+                var entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.RuntimeVideoSettings");
+                systemState.EntityManager.AddComponentData(entity, ResolveRuntimeVideoSettings());
             }
 
-            RuntimeBootstrapRequestUtility.Consume<LightingBootstrapRequest>(EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<LightingBootstrapRequest>(systemState.EntityManager);
         }
 
         internal static ActiveEnvironmentState CreateFallbackEnvironment(bool isInterior)

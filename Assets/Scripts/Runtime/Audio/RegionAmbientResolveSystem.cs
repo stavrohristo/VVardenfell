@@ -10,19 +10,19 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup))]
-    public partial class RegionAmbientResolveSystem : SystemBase
+    public partial struct RegionAmbientResolveSystem : ISystem
     {
         static readonly ProfilerMarker k_RegionResolve = new("VV.Audio.ResolveRegionAmbient");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AudioContextState>();
-            RequireForUpdate<RegionAmbientState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<RegionAmbientState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_RegionResolve.Auto();
 

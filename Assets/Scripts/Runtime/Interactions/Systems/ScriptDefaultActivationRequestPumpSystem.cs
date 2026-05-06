@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
@@ -5,26 +6,27 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionActivationSystem))]
     [UpdateBefore(typeof(ContainerActivationSystem))]
-    public partial class ScriptDefaultActivationRequestPumpSystem : SystemBase
+    public partial struct ScriptDefaultActivationRequestPumpSystem : ISystem
     {
         EntityQuery _runtimeQuery;
         EntityQuery _requestQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<InteractionRuntimeState>(),
                 ComponentType.ReadWrite<ScriptDefaultActivationRequest>());
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate(_requestQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
@@ -32,7 +34,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
 
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
-            var queuedRequests = EntityManager.GetBuffer<ScriptDefaultActivationRequest>(runtimeEntity);
+            var queuedRequests = systemState.EntityManager.GetBuffer<ScriptDefaultActivationRequest>(runtimeEntity);
             if (queuedRequests.Length == 0)
                 return;
 

@@ -15,14 +15,14 @@ namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup), OrderFirst = true)]
     [UpdateAfter(typeof(MorrowindMeleeHitConfirmationSystem))]
-    public partial class PlayerMeleeHitSystem : SystemBase
+    public partial struct PlayerMeleeHitSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _viewPoseQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<PlayerCharacterComponent>(),
                 ComponentType.ReadOnly<LocalPlayerPresentationState>(),
@@ -32,18 +32,18 @@ namespace VVardenfell.Runtime.Combat
                 ComponentType.ReadWrite<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorDerivedMovementStats>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffect>());
-            _viewPoseQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
+            _viewPoseQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_viewPoseQuery);
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_viewPoseQuery);
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -53,13 +53,13 @@ namespace VVardenfell.Runtime.Combat
             Entity player = _playerQuery.GetSingletonEntity();
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
 
-            Entity visualEntity = ResolveActivePlayerVisual(player, out var weaponState);
+            Entity visualEntity = ResolveActivePlayerVisual(ref systemState, player, out var weaponState);
             bool stateChanged = false;
 
             var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
             bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
             var audioState = hasAudioState
-                ? EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
+                ? systemState.EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
                 : default;
             var audioEcb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             if (weaponState.MeleeSwingPending != 0)
@@ -72,14 +72,14 @@ namespace VVardenfell.Runtime.Combat
             }
 
             if (hasAudioState)
-                EntityManager.SetComponentData(audioEntity, audioState);
-            audioEcb.Playback(EntityManager);
+                systemState.EntityManager.SetComponentData(audioEntity, audioState);
+            audioEcb.Playback(systemState.EntityManager);
             audioEcb.Dispose();
 
             if (weaponState.MeleeHitPending == 0)
             {
                 if (stateChanged)
-                    EntityManager.SetComponentData(visualEntity, weaponState);
+                    systemState.EntityManager.SetComponentData(visualEntity, weaponState);
                 return;
             }
 
@@ -99,14 +99,14 @@ namespace VVardenfell.Runtime.Combat
             var playerComponent = _playerQuery.GetSingleton<PlayerCharacterComponent>();
 
             SpendAttackFatigue(ref content, ref playerVitals, playerDerived, hasWeapon, weapon, hitAttackStrength);
-            EntityManager.SetComponentData(player, playerVitals);
+            systemState.EntityManager.SetComponentData(player, playerVitals);
 
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
-            TryQueueMeleeConfirmation(
+            TryQueueMeleeConfirmation(ref systemState, 
                 ref content,
                 logicalRefLookup,
                 player,
@@ -126,10 +126,10 @@ namespace VVardenfell.Runtime.Combat
             weaponState.MeleeHitPending = 0;
             weaponState.MeleeHitAttackStrength = 0f;
             weaponState.MeleeHitWeaponContent = default;
-            EntityManager.SetComponentData(visualEntity, weaponState);
+            systemState.EntityManager.SetComponentData(visualEntity, weaponState);
         }
 
-        bool TryQueueMeleeConfirmation(
+        bool TryQueueMeleeConfirmation(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in LogicalRefLookup logicalRefLookup,
             Entity player,
@@ -148,7 +148,7 @@ namespace VVardenfell.Runtime.Combat
         {
             querySequence = 0u;
             targetPlacedRefId = 0u;
-            if (!TrySelectMeleeTarget(
+            if (!TrySelectMeleeTarget(ref systemState, 
                     ref content,
                     logicalRefLookup,
                     player,
@@ -166,7 +166,7 @@ namespace VVardenfell.Runtime.Combat
             }
 
             querySequence = DeferredPhysicsQueryUtility.EnqueueRay(
-                EntityManager,
+                systemState.EntityManager,
                 deferredPhysicsQueueEntity,
                 fixedTick,
                 DeferredPhysicsQueryKind.MeleeConfirmation,
@@ -176,7 +176,7 @@ namespace VVardenfell.Runtime.Combat
                 viewPose.Position,
                 confirmationEnd,
                 InteractionCollisionLayers.LineOfSightQueryFilter);
-            EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
+            systemState.EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
             {
                 QuerySequence = querySequence,
                 RequestFixedTick = fixedTick,
@@ -193,7 +193,7 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool TrySelectMeleeTarget(
+        bool TrySelectMeleeTarget(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in LogicalRefLookup logicalRefLookup,
             Entity player,
@@ -207,7 +207,7 @@ namespace VVardenfell.Runtime.Combat
             out byte hasHitPosition,
             out float3 confirmationEnd)
         {
-            if (TrySelectFocusedMeleeTarget(
+            if (TrySelectFocusedMeleeTarget(ref systemState, 
                     logicalRefLookup,
                     player,
                     reach,
@@ -220,7 +220,7 @@ namespace VVardenfell.Runtime.Combat
                 return true;
             }
 
-            return TrySelectActorBoundsMeleeTarget(
+            return TrySelectActorBoundsMeleeTarget(ref systemState, 
                 ref content,
                 player,
                 playerPosition,
@@ -234,7 +234,7 @@ namespace VVardenfell.Runtime.Combat
                 out confirmationEnd);
         }
 
-        bool TrySelectFocusedMeleeTarget(
+        bool TrySelectFocusedMeleeTarget(ref SystemState systemState, 
             in LogicalRefLookup logicalRefLookup,
             Entity player,
             float reach,
@@ -254,13 +254,13 @@ namespace VVardenfell.Runtime.Combat
                 return false;
             if (focus.HasTarget == 0 || focus.TargetEntity == Entity.Null || focus.HitDistance > reach)
                 return false;
-            if (!ValidateActorMeleeTarget(player, player, focus.TargetEntity, out targetPlacedRefId))
+            if (!ValidateActorMeleeTarget(ref systemState, player, player, focus.TargetEntity, out targetPlacedRefId))
                 return false;
-            if (!TryGetActorCenter(focus.TargetEntity, out confirmationEnd))
+            if (!TryGetActorCenter(ref systemState, focus.TargetEntity, out confirmationEnd))
                 return false;
 
             target = focus.TargetEntity;
-            if (TryGetInteractionRayHitPosition(logicalRefLookup, target, out hitPosition))
+            if (TryGetInteractionRayHitPosition(ref systemState, logicalRefLookup, target, out hitPosition))
             {
                 hasHitPosition = 1;
                 confirmationEnd = hitPosition;
@@ -274,7 +274,7 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool TrySelectActorBoundsMeleeTarget(
+        bool TrySelectActorBoundsMeleeTarget(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity player,
             float3 playerPosition,
@@ -312,8 +312,8 @@ namespace VVardenfell.Runtime.Combat
             {
                 if (entity == player || vitals.ValueRO.CurrentHealth <= 0f)
                     continue;
-                if (EntityManager.HasComponent<PlacedRefRuntimeState>(entity)
-                    && EntityManager.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0)
+                if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(entity)
+                    && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0)
                 {
                     continue;
                 }
@@ -356,51 +356,51 @@ namespace VVardenfell.Runtime.Combat
             return target != Entity.Null;
         }
 
-        bool ValidateActorMeleeTarget(Entity player, Entity attacker, Entity logicalEntity, out uint placedRefId)
+        bool ValidateActorMeleeTarget(ref SystemState systemState, Entity player, Entity attacker, Entity logicalEntity, out uint placedRefId)
         {
             placedRefId = 0u;
-            if (logicalEntity == Entity.Null || !EntityManager.Exists(logicalEntity))
+            if (logicalEntity == Entity.Null || !systemState.EntityManager.Exists(logicalEntity))
                 return false;
-            if (logicalEntity == player || logicalEntity == attacker || EntityManager.HasComponent<PlayerTag>(logicalEntity))
+            if (logicalEntity == player || logicalEntity == attacker || systemState.EntityManager.HasComponent<PlayerTag>(logicalEntity))
                 return false;
-            if (!EntityManager.HasComponent<ActorSpawnSource>(logicalEntity))
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(logicalEntity))
                 return false;
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(logicalEntity)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(logicalEntity).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(logicalEntity)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(logicalEntity).Disabled != 0)
             {
                 return false;
             }
-            if (!EntityManager.HasComponent<PlacedRefIdentity>(logicalEntity))
+            if (!systemState.EntityManager.HasComponent<PlacedRefIdentity>(logicalEntity))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee actor entity={logicalEntity.Index}:{logicalEntity.Version} has no PlacedRefIdentity.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(logicalEntity))
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(logicalEntity))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee actor entity={logicalEntity.Index}:{logicalEntity.Version} has no ActorVitalSet.");
 
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(logicalEntity);
+            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(logicalEntity);
             if (vitals.CurrentHealth <= 0f)
                 return false;
 
-            placedRefId = EntityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
+            placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
             if (placedRefId == 0u)
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee actor entity={logicalEntity.Index}:{logicalEntity.Version} has an invalid placed ref id.");
 
             return true;
         }
 
-        bool TryGetActorCenter(Entity actor, out float3 center)
+        bool TryGetActorCenter(ref SystemState systemState, Entity actor, out float3 center)
         {
             center = default;
-            if (!EntityManager.HasComponent<LocalTransform>(actor) || !EntityManager.HasComponent<ActorLocalBounds>(actor))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(actor) || !systemState.EntityManager.HasComponent<ActorLocalBounds>(actor))
                 return false;
 
-            var transform = EntityManager.GetComponentData<LocalTransform>(actor);
-            var bounds = EntityManager.GetComponentData<ActorLocalBounds>(actor);
+            var transform = systemState.EntityManager.GetComponentData<LocalTransform>(actor);
+            var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(actor);
             center = math.transform(
                 float4x4.TRS(transform.Position, transform.Rotation, new float3(transform.Scale)),
                 bounds.Center);
             return true;
         }
 
-        bool TryGetInteractionRayHitPosition(
+        bool TryGetInteractionRayHitPosition(ref SystemState systemState, 
             in LogicalRefLookup logicalRefLookup,
             Entity target,
             out float3 hitPosition)
@@ -409,7 +409,7 @@ namespace VVardenfell.Runtime.Combat
             if (!SystemAPI.TryGetSingleton<PlayerInteractionRaycastHit>(out var hit) || hit.HasHit == 0)
                 return false;
 
-            if (!InteractionTargetResolver.TryResolveLogicalEntity(EntityManager, logicalRefLookup, hit.HitEntity, out Entity logicalEntity))
+            if (!InteractionTargetResolver.TryResolveLogicalEntity(systemState.EntityManager, logicalRefLookup, hit.HitEntity, out Entity logicalEntity))
                 return false;
             if (logicalEntity != target)
                 return false;
@@ -429,25 +429,25 @@ namespace VVardenfell.Runtime.Combat
         static float3 ToHorizontal(float3 value)
             => new(value.x, 0f, value.z);
 
-        Entity ResolveActivePlayerVisual(Entity player, out ActorWeaponAnimationState weaponState)
+        Entity ResolveActivePlayerVisual(ref SystemState systemState, Entity player, out ActorWeaponAnimationState weaponState)
         {
             weaponState = default;
             var presentation = _playerQuery.GetSingleton<LocalPlayerPresentationState>();
             Entity activeVisual = presentation.Mode == PlayerViewMode.FirstPerson
                 ? presentation.FirstPersonVisual
                 : presentation.ThirdPersonVisual;
-            if (activeVisual == Entity.Null || !EntityManager.Exists(activeVisual))
+            if (activeVisual == Entity.Null || !systemState.EntityManager.Exists(activeVisual))
                 throw new InvalidOperationException("[VVardenfell][Combat] Active local player visual entity is missing.");
-            if (!EntityManager.HasComponent<LocalPlayerVisual>(activeVisual))
+            if (!systemState.EntityManager.HasComponent<LocalPlayerVisual>(activeVisual))
                 throw new InvalidOperationException("[VVardenfell][Combat] Active local player visual is missing LocalPlayerVisual.");
-            if (!EntityManager.HasComponent<ActorWeaponAnimationState>(activeVisual))
+            if (!systemState.EntityManager.HasComponent<ActorWeaponAnimationState>(activeVisual))
                 throw new InvalidOperationException("[VVardenfell][Combat] Active local player visual is missing ActorWeaponAnimationState.");
 
-            var visual = EntityManager.GetComponentData<LocalPlayerVisual>(activeVisual);
+            var visual = systemState.EntityManager.GetComponentData<LocalPlayerVisual>(activeVisual);
             if (visual.Player != player)
                 throw new InvalidOperationException("[VVardenfell][Combat] Active local player visual is not bound to the local player.");
 
-            weaponState = EntityManager.GetComponentData<ActorWeaponAnimationState>(activeVisual);
+            weaponState = systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(activeVisual);
             return activeVisual;
         }
 

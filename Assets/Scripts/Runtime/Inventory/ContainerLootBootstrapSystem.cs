@@ -10,20 +10,20 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
-    public partial class ContainerLootBootstrapSystem : SystemBase
+    public partial struct ContainerLootBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ContainerLootBootstrapRequest>();
+            systemState.RequireForUpdate<ContainerLootBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
-            Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus>(EntityManager);
+            Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus>(systemState.EntityManager);
 
-            RuntimeBootstrapUtility.EnsureBuffer<ContainerSessionHeader>(EntityManager, runtimeEntity);
-            RuntimeBootstrapUtility.EnsureBuffer<ContainerSessionItem>(EntityManager, runtimeEntity);
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new ContainerWindowState
+            RuntimeBootstrapUtility.EnsureBuffer<ContainerSessionHeader>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<ContainerSessionItem>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new ContainerWindowState
             {
                 Rect = new RuntimeWindowRect
                 {
@@ -34,8 +34,8 @@ namespace VVardenfell.Runtime.Inventory
                 },
                 SelectedItemIndex = -1,
             });
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new ContainerWindowRequest());
-            RuntimeBootstrapRequestUtility.Consume<ContainerLootBootstrapRequest>(EntityManager);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new ContainerWindowRequest());
+            RuntimeBootstrapRequestUtility.Consume<ContainerLootBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

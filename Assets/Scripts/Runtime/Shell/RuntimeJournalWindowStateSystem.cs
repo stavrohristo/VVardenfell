@@ -1,21 +1,23 @@
+using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Shell
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial class JournalWindowStateSystem : SystemBase
+    public partial struct JournalWindowStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<JournalWindowState>();
-            RequireForUpdate<JournalWindowRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<JournalWindowState>();
+            systemState.RequireForUpdate<JournalWindowRequest>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<JournalWindowState>().ValueRW;

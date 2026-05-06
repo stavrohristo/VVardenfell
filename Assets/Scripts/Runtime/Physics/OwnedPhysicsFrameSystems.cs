@@ -14,30 +14,29 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Physics
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class MorrowindOwnedPhysicsBootstrapSystem : SystemBase
+    public partial struct MorrowindOwnedPhysicsBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindOwnedPhysicsBootstrapRequest>();
+            systemState.RequireForUpdate<PhysicsStep>();
+            systemState.RequireForUpdate<MorrowindOwnedPhysicsBootstrapRequest>();
+            Entity stateEntity = systemState.EntityManager.CreateEntity();
+            systemState.EntityManager.SetName(stateEntity, "VVardenfell.MorrowindPhysicsFrame");
+            systemState.EntityManager.AddComponentData(stateEntity, new MorrowindPhysicsFrameState());
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
-            if (SystemAPI.HasSingleton<MorrowindPhysicsFrameState>())
-            {
-            }
-            else
-            {
-                Entity stateEntity = EntityManager.CreateEntity();
-                EntityManager.SetName(stateEntity, "VVardenfell.MorrowindPhysicsFrame");
-                EntityManager.AddComponentData(stateEntity, new MorrowindPhysicsFrameState());
-            }
 
-            var physicsGroup = World.GetExistingSystemManaged<PhysicsSystemGroup>();
+            var physicsGroup = systemState.World.GetExistingSystemManaged<PhysicsSystemGroup>();
             bool autoDisabled = physicsGroup != null;
             if (physicsGroup != null)
                 physicsGroup.Enabled = false;
-            EnsurePhysicsStep();
+
+            ref var step = ref SystemAPI.GetSingletonRW<PhysicsStep>().ValueRW;
+            step.IncrementalStaticBroadphase = true;
+            step.IncrementalDynamicBroadphase = true;
+            
 
             ref var frameState = ref SystemAPI.GetSingletonRW<MorrowindPhysicsFrameState>().ValueRW;
             frameState.AutoPhysicsDisabled = (byte)(autoDisabled ? 1 : 0);
@@ -46,21 +45,7 @@ namespace VVardenfell.Runtime.Physics
                 frameState.BootLogged = 1;
             }
 
-            RuntimeBootstrapRequestUtility.Consume<MorrowindOwnedPhysicsBootstrapRequest>(EntityManager);
-        }
-
-        void EnsurePhysicsStep()
-        {
-            var step = SystemAPI.HasSingleton<PhysicsStep>()
-                ? SystemAPI.GetSingleton<PhysicsStep>()
-                : PhysicsStep.Default;
-            step.IncrementalStaticBroadphase = true;
-            step.IncrementalDynamicBroadphase = true;
-
-            if (SystemAPI.HasSingleton<PhysicsStep>())
-                SystemAPI.SetSingleton(step);
-            else
-                EntityManager.CreateSingleton(step, "VVardenfell.PhysicsStep");
+            RuntimeBootstrapRequestUtility.Consume<MorrowindOwnedPhysicsBootstrapRequest>(systemState.EntityManager);
         }
     }
 
@@ -74,15 +59,11 @@ namespace VVardenfell.Runtime.Physics
         PhysicsSimulationGroup _physicsSimulationGroup;
         SystemHandle _exportPhysicsWorldHandle;
 
-        static readonly ProfilerMarker k_FixedStep = new("VV.Physics.OwnedDriver.FixedStep");
-        static readonly ProfilerMarker k_Initialize = new("VV.Physics.OwnedDriver.Initialize");
-        static readonly ProfilerMarker k_Simulate = new("VV.Physics.OwnedDriver.Simulate");
-        static readonly ProfilerMarker k_Export = new("VV.Physics.OwnedDriver.Export");
-
         protected override void OnCreate()
         {
             RequireForUpdate<MorrowindPhysicsFrameState>();
             RequireForUpdate<FixedTickSystem.Singleton>();
+            RequireForUpdate<PhysicsWorldSingleton>();
         }
 
         protected override void OnStartRunning()
@@ -95,7 +76,6 @@ namespace VVardenfell.Runtime.Physics
 
         protected override void OnUpdate()
         {
-            using var fixedStepScope = k_FixedStep.Auto();
             if (_physicsGroup != null && _physicsGroup.Enabled)
                 _physicsGroup.Enabled = false;
 
@@ -105,35 +85,21 @@ namespace VVardenfell.Runtime.Physics
             frameState.SnapshotTick = fixedTick;
             frameState.BuildSequence++;
 
-            using (k_Initialize.Auto())
-            {
-                _physicsInitializeGroup?.Update();
-            }
-
-            using (k_Simulate.Auto())
-            {
-                _physicsSimulationGroup?.Update();
-            }
-
-            if (!_exportPhysicsWorldHandle.Equals(SystemHandle.Null))
-            {
-                using (k_Export.Auto())
-                {
-                    _exportPhysicsWorldHandle.Update(World.Unmanaged);
-                }
-            }
+            _physicsInitializeGroup?.Update();
+            _physicsSimulationGroup?.Update();
+            _exportPhysicsWorldHandle.Update(World.Unmanaged);
         }
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup), OrderFirst = true)]
-    public partial class MorrowindPhysicsQueryFrameStampSystem : SystemBase
+    public partial struct MorrowindPhysicsQueryFrameStampSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var frameState = ref SystemAPI.GetSingletonRW<MorrowindPhysicsFrameState>().ValueRW;
             frameState.QuerySequence++;
@@ -141,22 +107,22 @@ namespace VVardenfell.Runtime.Physics
     }
 
     [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
-    public partial class CellStreamingColliderSyncSystem : SystemBase
+    public partial struct CellStreamingColliderSyncSystem : ISystem
     {
         EntityQuery _mutationQueueQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _mutationQueueQuery = GetEntityQuery(
+            _mutationQueueQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
                 ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
-            RequireForUpdate<PendingCellPhysicsLoad>();
-            RequireForUpdate<PendingCellPhysicsUnload>();
-            RequireForUpdate(_mutationQueueQuery);
+            systemState.RequireForUpdate<PendingCellPhysicsLoad>();
+            systemState.RequireForUpdate<PendingCellPhysicsUnload>();
+            systemState.RequireForUpdate(_mutationQueueQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var pendingLoads = ref SystemAPI.GetSingletonRW<PendingCellPhysicsLoad>().ValueRW;
             ref var pendingUnloads = ref SystemAPI.GetSingletonRW<PendingCellPhysicsUnload>().ValueRW;
@@ -196,12 +162,12 @@ namespace VVardenfell.Runtime.Physics
             if (entitiesToEnable.Length > 0 || entitiesToDisable.Length > 0)
             {
                 Entity queueEntity = _mutationQueueQuery.GetSingletonEntity();
-                var mutations = EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
+                var mutations = systemState.EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
                 for (int i = 0; i < entitiesToEnable.Length; i++)
                     RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entitiesToEnable[i]);
                 for (int i = 0; i < entitiesToDisable.Length; i++)
                     RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entitiesToDisable[i]);
-                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(EntityManager, queueEntity);
+                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(systemState.EntityManager, queueEntity);
             }
 
             pendingLoads.Cells.Clear();

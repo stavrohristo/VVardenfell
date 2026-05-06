@@ -10,44 +10,44 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class ActorFactionRankMutationApplySystem : SystemBase
+    public partial struct ActorFactionRankMutationApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorFactionRankMutationRequest>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ActorFactionRankMutationRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorFactionRankMutationRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<ActorFactionRankMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref contentBlob, requests[i], lookup);
+                ApplyRequest(ref systemState, ref contentBlob, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, in ActorFactionRankMutationRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref SystemState systemState, ref RuntimeContentBlob contentBlob, in ActorFactionRankMutationRequest request, in LogicalRefLookup lookup)
         {
-            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null)
                 throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target ref={request.TargetPlacedRefId} is not loaded.");
 
-            if (MorrowindRuntimeTargetResolver.IsPlayerEntity(EntityManager, target))
+            if (MorrowindRuntimeTargetResolver.IsPlayerEntity(systemState.EntityManager, target))
                 return;
 
-            if (!EntityManager.HasComponent<ActorSpawnSource>(target))
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(target))
                 throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target is not backed by an actor spawn source.");
 
-            ActorDefHandle actorHandle = EntityManager.GetComponentData<ActorSpawnSource>(target).Definition;
+            ActorDefHandle actorHandle = systemState.EntityManager.GetComponentData<ActorSpawnSource>(target).Definition;
             if (!actorHandle.IsValid)
                 throw new InvalidOperationException("[VVardenfell][Player] RaiseRank target has an invalid actor definition.");
 
@@ -60,10 +60,10 @@ namespace VVardenfell.Runtime.Player
             if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(factionId), out var factionHandle) || !factionHandle.IsValid)
                 throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target actor '{actorId}' references unknown faction '{factionId}'.");
 
-            if (!EntityManager.HasBuffer<ActorFactionMembership>(target))
+            if (!systemState.EntityManager.HasBuffer<ActorFactionMembership>(target))
                 throw new InvalidOperationException($"[VVardenfell][Player] RaiseRank target actor '{actorId}' has no actor faction state.");
 
-            var factions = EntityManager.GetBuffer<ActorFactionMembership>(target);
+            var factions = systemState.EntityManager.GetBuffer<ActorFactionMembership>(target);
             int index = FindActorFactionIndex(factions, factionHandle.Index);
             if (index >= 0)
             {

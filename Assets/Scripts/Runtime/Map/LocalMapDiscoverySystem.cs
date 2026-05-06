@@ -12,7 +12,7 @@ namespace VVardenfell.Runtime.Map
 {
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(CellStreamingSystemGroup))]
-    public partial class LocalMapDiscoverySystem : SystemBase
+    public partial struct LocalMapDiscoverySystem : ISystem
     {
         const int DefaultMaskResolution = 64;
         const float DefaultRevealRadiusFraction = 0.17f;
@@ -21,29 +21,29 @@ namespace VVardenfell.Runtime.Map
         EntityQuery _tileQuery;
         NativeParallelHashMap<int2, Entity> _tileLookup;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>());
-            _tileQuery = GetEntityQuery(
+            _tileQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ExteriorMapDiscoveryTile>(),
                 ComponentType.ReadWrite<ExteriorMapDiscoverySample>());
 
-            RequireForUpdate<LocalMapDiscoveryState>();
-            RequireForUpdate<StreamingConfig>();
-            RequireForUpdate<InteriorTransitionState>();
+            systemState.RequireForUpdate<LocalMapDiscoveryState>();
+            systemState.RequireForUpdate<StreamingConfig>();
+            systemState.RequireForUpdate<InteriorTransitionState>();
 
             _tileLookup = new NativeParallelHashMap<int2, Entity>(64, Allocator.Persistent);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (_tileLookup.IsCreated)
                 _tileLookup.Dispose();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
@@ -54,7 +54,7 @@ namespace VVardenfell.Runtime.Map
 
             var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
             var stateEntity = SystemAPI.GetSingletonEntity<LocalMapDiscoveryState>();
-            var state = EntityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
+            var state = systemState.EntityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
             bool normalized = NormalizeState(ref state);
 
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
@@ -72,7 +72,7 @@ namespace VVardenfell.Runtime.Map
             if (!ShouldReveal(in state, playerCell, playerSample, resolution, radius))
             {
                 if (normalized)
-                    EntityManager.SetComponentData(stateEntity, state);
+                    systemState.EntityManager.SetComponentData(stateEntity, state);
                 return;
             }
 
@@ -90,14 +90,14 @@ namespace VVardenfell.Runtime.Map
                     if (!CircleTouchesUnitSquare(centerX, centerY, radius))
                         continue;
 
-                    Entity tileEntity = EnsureTile(playerCell + new int2(ox, oy), resolution);
-                    var tile = EntityManager.GetComponentData<ExteriorMapDiscoveryTile>(tileEntity);
-                    var samples = EntityManager.GetBuffer<ExteriorMapDiscoverySample>(tileEntity);
+                    Entity tileEntity = EnsureTile(ref systemState, playerCell + new int2(ox, oy), resolution);
+                    var tile = systemState.EntityManager.GetComponentData<ExteriorMapDiscoveryTile>(tileEntity);
+                    var samples = systemState.EntityManager.GetBuffer<ExteriorMapDiscoverySample>(tileEntity);
                     if (Reveal(samples, resolution, centerX, centerY, radiusSq))
                     {
                         tile.Revision++;
                         tile.Dirty = 1;
-                        EntityManager.SetComponentData(tileEntity, tile);
+                        systemState.EntityManager.SetComponentData(tileEntity, tile);
                         anyChanged = true;
                     }
                 }
@@ -111,37 +111,37 @@ namespace VVardenfell.Runtime.Map
             state.LastRevealRadiusFraction = radius;
             state.HasLastRevealSample = 1;
 
-            EntityManager.SetComponentData(stateEntity, state);
+            systemState.EntityManager.SetComponentData(stateEntity, state);
         }
 
-        Entity EnsureTile(int2 cell, int resolution)
+        Entity EnsureTile(ref SystemState systemState, int2 cell, int resolution)
         {
             if (_tileLookup.IsCreated
                 && _tileLookup.TryGetValue(cell, out Entity existing)
-                && EntityManager.Exists(existing)
-                && EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
+                && systemState.EntityManager.Exists(existing)
+                && systemState.EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
             {
                 return existing;
             }
 
-            RebuildTileLookup();
+            RebuildTileLookup(ref systemState);
             if (_tileLookup.TryGetValue(cell, out existing)
-                && EntityManager.Exists(existing)
-                && EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
+                && systemState.EntityManager.Exists(existing)
+                && systemState.EntityManager.HasComponent<ExteriorMapDiscoveryTile>(existing))
             {
                 return existing;
             }
 
-            var entity = EntityManager.CreateEntity();
-            EntityManager.SetName(entity, $"LocalMapDiscovery({cell.x},{cell.y})");
-            EntityManager.AddComponentData(entity, new ExteriorMapDiscoveryTile
+            var entity = systemState.EntityManager.CreateEntity();
+            systemState.EntityManager.SetName(entity, $"LocalMapDiscovery({cell.x},{cell.y})");
+            systemState.EntityManager.AddComponentData(entity, new ExteriorMapDiscoveryTile
             {
                 Cell = cell,
                 Revision = 1,
                 Dirty = 1,
             });
 
-            var buffer = EntityManager.AddBuffer<ExteriorMapDiscoverySample>(entity);
+            var buffer = systemState.EntityManager.AddBuffer<ExteriorMapDiscoverySample>(entity);
             buffer.ResizeUninitialized(resolution * resolution);
             for (int i = 0; i < buffer.Length; i++)
                 buffer[i] = new ExteriorMapDiscoverySample { Alpha = byte.MaxValue };
@@ -149,7 +149,7 @@ namespace VVardenfell.Runtime.Map
             return entity;
         }
 
-        void RebuildTileLookup()
+        void RebuildTileLookup(ref SystemState systemState)
         {
             int count = math.max(64, _tileQuery.CalculateEntityCount());
             if (!_tileLookup.IsCreated || _tileLookup.Capacity < count)

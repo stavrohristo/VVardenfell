@@ -11,33 +11,33 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindCombatHitVoiceSayRequestPumpSystem))]
-    public partial class MorrowindCombatHitVoiceResolveSystem : SystemBase
+    public partial struct MorrowindCombatHitVoiceResolveSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindCombatHitVoiceResolveRequest>();
-            RequireForUpdate<MorrowindCombatHitVoiceSayRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindCombatHitVoiceResolveRequest>();
+            systemState.RequireForUpdate<MorrowindCombatHitVoiceSayRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindCombatHitVoiceResolveRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindCombatHitVoiceResolveRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
-            var sayRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(runtimeEntity);
+            var sayRequests = systemState.EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(runtimeEntity);
             for (int i = 0; i < requests.Length; i++)
-                Resolve(ref contentBlob, requests[i], sayRequests);
+                Resolve(ref systemState, ref contentBlob, requests[i], sayRequests);
 
             requests.Clear();
         }
 
-        void Resolve(
+        void Resolve(ref SystemState systemState, 
             ref RuntimeContentBlob contentBlob,
             in MorrowindCombatHitVoiceResolveRequest request,
             DynamicBuffer<MorrowindCombatHitVoiceSayRequest> sayRequests)
@@ -50,7 +50,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint randomState = request.RandomState == 0u ? 1u : request.RandomState;
             if (!MorrowindDialogueFilterUtility.TryFindRandomMatchingVoicedInfo(
                     ref contentBlob,
-                    EntityManager,
+                    systemState.EntityManager,
                     request.TargetEntity,
                     request.Actor,
                     request.DialogueIndex,

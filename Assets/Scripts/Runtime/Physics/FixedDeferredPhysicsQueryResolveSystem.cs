@@ -7,30 +7,30 @@ namespace VVardenfell.Runtime.Physics
 {
     [UpdateInGroup(typeof(MorrowindPhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(MorrowindPhysicsQueryFrameStampSystem))]
-    public partial class FixedDeferredPhysicsQueryResolveSystem : SystemBase
+    public partial struct FixedDeferredPhysicsQueryResolveSystem : ISystem
     {
         const DeferredPhysicsQueryKindMask FixedOwnedKinds = DeferredPhysicsQueryKindMask.ProjectileSegment;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<PhysicsWorldSingleton>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<PhysicsWorldSingleton>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity queueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
-            if (!EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
+            if (!systemState.EntityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
                 throw new System.InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
             if (!SystemAPI.IsComponentEnabled<DeferredPhysicsQueryPending>(queueEntity))
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             var frame = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>();
             DeferredPhysicsQueryResolveUtility.ResolveOwnedRequests(
-                EntityManager,
+                systemState.EntityManager,
                 queueEntity,
                 SystemAPI.GetSingleton<PhysicsWorldSingleton>(),
                 frame.FixedTick,

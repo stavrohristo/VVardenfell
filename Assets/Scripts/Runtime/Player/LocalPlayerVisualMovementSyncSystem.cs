@@ -11,21 +11,21 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
-    public partial class LocalPlayerVisualMovementSyncSystem : SystemBase
+    public partial struct LocalPlayerVisualMovementSyncSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<MorrowindMovementState>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<LocalPlayerVisual>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<LocalPlayerVisual>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity player = _playerQuery.GetSingletonEntity();
             var playerMovementState = _playerQuery.GetSingleton<MorrowindMovementState>();
@@ -42,28 +42,28 @@ namespace VVardenfell.Runtime.Player
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
     [UpdateBefore(typeof(LocalPlayerVisualTransformSyncSystem))]
-    public partial class LocalPlayerPresentationPoseSyncSystem : SystemBase
+    public partial struct LocalPlayerPresentationPoseSyncSystem : ISystem
     {
         const float TeleportResetDistanceSq = 4f;
 
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadWrite<LocalPlayerPresentationPose>());
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_viewQuery);
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity player = _playerQuery.GetSingletonEntity();
             LocalTransform playerTransform = _playerQuery.GetSingleton<LocalTransform>();
@@ -117,26 +117,26 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAnimationControllerSystem))]
-    public partial class LocalPlayerVisualTransformSyncSystem : SystemBase
+    public partial struct LocalPlayerVisualTransformSyncSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<LocalPlayerPresentationPose>());
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_viewQuery);
-            RequireForUpdate<LocalPlayerVisual>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate<LocalPlayerVisual>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity player = _playerQuery.GetSingletonEntity();
             LocalTransform playerTransform = _playerQuery.GetSingleton<LocalTransform>();

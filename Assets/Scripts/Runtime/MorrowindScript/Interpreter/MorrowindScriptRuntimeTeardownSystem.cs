@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Runtime.Bootstrap;
@@ -6,6 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     [UpdateAfter(typeof(RuntimeSessionTeardownMarkSystem))]
     public partial struct MorrowindScriptRuntimeTeardownSystem : ISystem
@@ -18,7 +20,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadOnly<SessionTeardown>());
         }
-
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             if (_teardownQuery.IsEmpty)

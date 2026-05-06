@@ -8,20 +8,20 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Interactions
 {
     [UpdateInGroup(typeof(MorrowindInteractionPresentationSystemGroup))]
-    public partial class InteractionPresentationStateSystem : SystemBase
+    public partial struct InteractionPresentationStateSystem : ISystem
     {
         const float NotificationLifetimeSeconds = 2.25f;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<PlayerInteractionFocus>();
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<InteractionPresentationState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<PlayerInteractionFocus>();
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<InteractionPresentationState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var presentation = ref SystemAPI.GetSingletonRW<InteractionPresentationState>().ValueRW;
             presentation.ShowCrosshair = 1;
@@ -29,14 +29,14 @@ namespace VVardenfell.Runtime.Interactions
             presentation.FocusText = default;
 
             var focus = SystemAPI.GetSingleton<PlayerInteractionFocus>();
-            if (focus.HasTarget != 0 && EntityManager.Exists(focus.TargetEntity))
+            if (focus.HasTarget != 0 && systemState.EntityManager.Exists(focus.TargetEntity))
             {
                 ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
                 var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
                 if (!worldCellReference.Blob.IsCreated)
                     throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction presentation requires runtime world cell blob.");
                 ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
-                string prompt = BuildFocusPrompt(ref contentBlob, ref worldCells, focus);
+                string prompt = BuildFocusPrompt(ref systemState, ref contentBlob, ref worldCells, focus);
                 if (!string.IsNullOrWhiteSpace(prompt))
                 {
                     presentation.ShowFocus = 1;
@@ -64,9 +64,9 @@ namespace VVardenfell.Runtime.Interactions
             }
         }
 
-        string BuildFocusPrompt(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, PlayerInteractionFocus focus)
+        string BuildFocusPrompt(ref SystemState systemState, ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, PlayerInteractionFocus focus)
         {
-            return InteractionMetadataResolver.BuildFocusPrompt(ref contentBlob, ref worldCells, EntityManager, focus);
+            return InteractionMetadataResolver.BuildFocusPrompt(ref contentBlob, ref worldCells, systemState.EntityManager, focus);
         }
 
     }

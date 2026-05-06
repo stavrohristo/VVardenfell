@@ -7,9 +7,9 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Content
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class RuntimeContentBlobReferenceSystem : SystemBase
+    public partial struct RuntimeContentBlobReferenceSystem : ISystem
     {
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<RuntimeContentBlobReference>())
                 return;
@@ -21,10 +21,10 @@ namespace VVardenfell.Runtime.Content
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new RuntimeContentBlobReference { Blob = blob });
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (!SystemAPI.HasSingleton<RuntimeContentBlobReference>())
                 return;

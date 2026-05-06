@@ -7,26 +7,26 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Physics
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
-    public partial class RuntimePhysicsMutationBootstrapSystem : SystemBase
+    public partial struct RuntimePhysicsMutationBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimePhysicsMutationBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimePhysicsMutationBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<RuntimePhysicsMutationQueueTag>())
             {
-                RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(systemState.EntityManager);
                 return;
             }
 
-            Entity entity = EntityManager.CreateEntity(typeof(RuntimePhysicsMutationQueueTag), typeof(PhysicsFlushRequested));
-            EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.RuntimePhysicsMutationQueue"));
-            EntityManager.AddBuffer<RuntimePhysicsMutationRequest>(entity);
-            EntityManager.SetComponentData(entity, new PhysicsFlushRequested());
-            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(EntityManager);
+            Entity entity = systemState.EntityManager.CreateEntity(typeof(RuntimePhysicsMutationQueueTag), typeof(PhysicsFlushRequested));
+            systemState.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.RuntimePhysicsMutationQueue"));
+            systemState.EntityManager.AddBuffer<RuntimePhysicsMutationRequest>(entity);
+            systemState.EntityManager.SetComponentData(entity, new PhysicsFlushRequested());
+            RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

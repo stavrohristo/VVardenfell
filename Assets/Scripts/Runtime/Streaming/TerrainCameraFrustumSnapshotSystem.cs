@@ -9,25 +9,25 @@ namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     [UpdateAfter(typeof(PlayerCameraSyncSystem))]
-    public partial class TerrainCameraFrustumSnapshotSystem : SystemBase
+    public partial struct TerrainCameraFrustumSnapshotSystem : ISystem
     {
         Entity _snapshotEntity;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _snapshotEntity = EntityManager.CreateEntity(typeof(TerrainCameraFrustumSnapshot));
-            EntityManager.SetName(_snapshotEntity, "VVardenfell.TerrainCameraFrustumSnapshot");
-            RequireForUpdate<MainCameraSingleton>();
+            _snapshotEntity = systemState.EntityManager.CreateEntity(typeof(TerrainCameraFrustumSnapshot));
+            systemState.EntityManager.SetName(_snapshotEntity, "VVardenfell.TerrainCameraFrustumSnapshot");
+            systemState.RequireForUpdate<MainCameraSingleton>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Camera camera = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             Transform transform = camera.transform;
 
             float nearClip = math.max(0.001f, camera.nearClipPlane);
             float farClip = math.max(nearClip + 1f, camera.farClipPlane);
-            EntityManager.SetComponentData(_snapshotEntity, new TerrainCameraFrustumSnapshot
+            systemState.EntityManager.SetComponentData(_snapshotEntity, new TerrainCameraFrustumSnapshot
             {
                 Position = transform.position,
                 Forward = math.normalizesafe(ToFloat3(transform.forward), new float3(0f, 0f, 1f)),

@@ -9,15 +9,15 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
-    public partial class MorrowindTimeBootstrapSystem : SystemBase
+    public partial struct MorrowindTimeBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindTimeBootstrapRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindTimeBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -26,45 +26,45 @@ namespace VVardenfell.Runtime.Streaming
 
             if (!SystemAPI.HasSingleton<MorrowindTimeState>())
             {
-                Entity entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.TimeState");
-                EntityManager.AddComponentData(entity, CreateDefaultTime(ref content));
-                EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
+                Entity entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.TimeState");
+                systemState.EntityManager.AddComponentData(entity, CreateDefaultTime(ref content));
+                systemState.EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
             }
             else
             {
                 Entity entity = SystemAPI.GetSingletonEntity<MorrowindTimeState>();
-                if (!EntityManager.HasBuffer<MorrowindTimeAdvanceRequest>(entity))
-                    EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindTimeAdvanceRequest>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
             }
 
             if (!SystemAPI.HasSingleton<MorrowindWeatherState>())
             {
-                Entity entity = EntityManager.CreateEntity();
-                EntityManager.SetName(entity, "VVardenfell.WeatherState");
-                EntityManager.AddComponentData(entity, CreateDefaultWeather());
-                EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
-                EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
-                EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
-                EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
-                EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
+                Entity entity = systemState.EntityManager.CreateEntity();
+                systemState.EntityManager.SetName(entity, "VVardenfell.WeatherState");
+                systemState.EntityManager.AddComponentData(entity, CreateDefaultWeather());
+                systemState.EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+                systemState.EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
+                systemState.EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                systemState.EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                systemState.EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
             }
             else
             {
                 Entity entity = SystemAPI.GetSingletonEntity<MorrowindWeatherState>();
-                if (!EntityManager.HasBuffer<MorrowindWeatherChangeRequest>(entity))
-                    EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
-                if (!EntityManager.HasBuffer<MorrowindWeatherForceRequest>(entity))
-                    EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
-                if (!EntityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
-                    EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
-                if (!EntityManager.HasBuffer<MorrowindRegionWeatherOverrideEntry>(entity))
-                    EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
-                if (!EntityManager.HasBuffer<MorrowindRegionWeatherOverrideRequest>(entity))
-                    EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindWeatherChangeRequest>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindWeatherForceRequest>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindRegionWeatherCacheEntry>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindRegionWeatherCacheEntry>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindRegionWeatherOverrideEntry>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindRegionWeatherOverrideEntry>(entity);
+                if (!systemState.EntityManager.HasBuffer<MorrowindRegionWeatherOverrideRequest>(entity))
+                    systemState.EntityManager.AddBuffer<MorrowindRegionWeatherOverrideRequest>(entity);
             }
 
-            RuntimeBootstrapRequestUtility.Consume<MorrowindTimeBootstrapRequest>(EntityManager);
+            RuntimeBootstrapRequestUtility.Consume<MorrowindTimeBootstrapRequest>(systemState.EntityManager);
         }
 
         public static MorrowindTimeState CreateDefaultTime()

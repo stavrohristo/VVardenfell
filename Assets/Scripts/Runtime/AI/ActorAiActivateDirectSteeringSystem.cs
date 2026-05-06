@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
@@ -6,17 +7,18 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.AI
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorAiPlannerSystem))]
     [UpdateBefore(typeof(ActorAiActivateRequestSystem))]
-    public partial class ActorAiActivateDirectSteeringSystem : SystemBase
+    public partial struct ActorAiActivateDirectSteeringSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorAiPackageRuntime>();
+            systemState.RequireForUpdate<ActorAiPackageRuntime>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             float elapsedTime = (float)SystemAPI.Time.ElapsedTime;
             foreach (var (aiStateRef, packages, transformRef, inputRef) in SystemAPI
@@ -35,14 +37,14 @@ namespace VVardenfell.Runtime.AI
                     continue;
 
                 if (package.FollowTargetEntity == Entity.Null
-                    || !EntityManager.Exists(package.FollowTargetEntity)
-                    || !EntityManager.HasComponent<LocalTransform>(package.FollowTargetEntity))
+                    || !systemState.EntityManager.Exists(package.FollowTargetEntity)
+                    || !systemState.EntityManager.HasComponent<LocalTransform>(package.FollowTargetEntity))
                 {
                     inputRef.ValueRW.LocalMove = float2.zero;
                     continue;
                 }
 
-                float3 targetPosition = EntityManager.GetComponentData<LocalTransform>(package.FollowTargetEntity).Position;
+                float3 targetPosition = systemState.EntityManager.GetComponentData<LocalTransform>(package.FollowTargetEntity).Position;
                 float3 direction = targetPosition - transformRef.ValueRO.Position;
                 direction.y = 0f;
                 float distanceSq = math.lengthsq(direction);

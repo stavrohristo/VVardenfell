@@ -12,28 +12,28 @@ namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorAiActivateDirectSteeringSystem))]
-    public partial class ActorAiActivateRequestSystem : SystemBase
+    public partial struct ActorAiActivateRequestSystem : ISystem
     {
         EntityQuery _runtimeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _runtimeQuery = GetEntityQuery(
+            _runtimeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<InteractionRuntimeState>(),
                 ComponentType.ReadWrite<ScriptDefaultActivationRequest>());
 
-            RequireForUpdate(_runtimeQuery);
-            RequireForUpdate<ActorAiPackageRuntime>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate(_runtimeQuery);
+            systemState.RequireForUpdate<ActorAiPackageRuntime>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             float elapsedTime = (float)SystemAPI.Time.ElapsedTime;
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
             ref var runtimeState = ref _runtimeQuery.GetSingletonRW<InteractionRuntimeState>().ValueRW;
-            var activationRequests = EntityManager.GetBuffer<ScriptDefaultActivationRequest>(runtimeEntity);
+            var activationRequests = systemState.EntityManager.GetBuffer<ScriptDefaultActivationRequest>(runtimeEntity);
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
             if (!worldCellReference.Blob.IsCreated)
@@ -59,18 +59,18 @@ namespace VVardenfell.Runtime.AI
                     continue;
 
                 if (package.FollowTargetEntity == Entity.Null
-                    || !EntityManager.Exists(package.FollowTargetEntity)
-                    || !EntityManager.HasComponent<LocalTransform>(package.FollowTargetEntity))
+                    || !systemState.EntityManager.Exists(package.FollowTargetEntity)
+                    || !systemState.EntityManager.HasComponent<LocalTransform>(package.FollowTargetEntity))
                 {
                     continue;
                 }
 
                 float activateDistance = math.max(0.5f, package.FollowDistance);
-                float3 targetPosition = EntityManager.GetComponentData<LocalTransform>(package.FollowTargetEntity).Position;
+                float3 targetPosition = systemState.EntityManager.GetComponentData<LocalTransform>(package.FollowTargetEntity).Position;
                 if (math.lengthsq(FlatDelta(targetPosition, transform.ValueRO.Position)) > activateDistance * activateDistance)
                     continue;
 
-                if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, package.FollowTargetEntity, out InteractableKind kind))
+                if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, systemState.EntityManager, package.FollowTargetEntity, out InteractableKind kind))
                 {
                     throw new InvalidOperationException(
                         $"[VVardenfell][AI] AiActivate target ref={package.FollowTargetPlacedRefId} is loaded but has no supported activation kind.");

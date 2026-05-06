@@ -223,25 +223,25 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateAfter(typeof(DeferredPhysicsQueryResolveSystem))]
     [UpdateAfter(typeof(PlayerPhysicsViewPoseSystem))]
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
-    public partial class PlayerInteractionRaycastSystem : SystemBase
+    public partial struct PlayerInteractionRaycastSystem : ISystem
     {
         EntityQuery _viewPoseQuery;
         EntityQuery _raycastHitQuery;
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _viewPoseQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
-            _raycastHitQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
-            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            RequireForUpdate(_viewPoseQuery);
-            RequireForUpdate(_raycastHitQuery);
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            _viewPoseQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
+            _raycastHitQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
+            _playerQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            systemState.RequireForUpdate(_viewPoseQuery);
+            systemState.RequireForUpdate(_raycastHitQuery);
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
@@ -250,7 +250,7 @@ namespace VVardenfell.Runtime.Interactions
             uint fallbackSequence = hitRef.ValueRO.Sequence + 1u;
 
             if (DeferredPhysicsQueryUtility.TryGetLatestResult(
-                    EntityManager,
+                    systemState.EntityManager,
                     deferredPhysicsQueueEntity,
                     fixedTick,
                     DeferredPhysicsQueryKind.InteractionPick,
@@ -276,7 +276,7 @@ namespace VVardenfell.Runtime.Interactions
             float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
             Entity player = _playerQuery.GetSingletonEntity();
             DeferredPhysicsQueryUtility.EnqueueRay(
-                EntityManager,
+                systemState.EntityManager,
                 deferredPhysicsQueueEntity,
                 fixedTick,
                 DeferredPhysicsQueryKind.InteractionPick,
@@ -291,23 +291,23 @@ namespace VVardenfell.Runtime.Interactions
 
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup))]
     [UpdateAfter(typeof(PlayerInteractionRaycastSystem))]
-    public partial class InteractionTargetResolutionSystem : SystemBase
+    public partial struct InteractionTargetResolutionSystem : ISystem
     {
         EntityQuery _raycastHitQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _raycastHitQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerInteractionRaycastHit>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
-            RequireForUpdate(_raycastHitQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            _raycastHitQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerInteractionRaycastHit>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            systemState.RequireForUpdate(_raycastHitQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var focusRef = _focusQuery.GetSingletonRW<PlayerInteractionFocus>();
             ref var focus = ref focusRef.ValueRW;
@@ -327,7 +327,7 @@ namespace VVardenfell.Runtime.Interactions
             if (!InteractionTargetResolver.TryResolveFromRaycastHit(
                     ref contentBlob,
                     ref worldCells,
-                    EntityManager,
+                    systemState.EntityManager,
                     logicalRefLookup,
                     raycastHit,
                     out _,

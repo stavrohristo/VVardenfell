@@ -45,9 +45,6 @@ namespace VVardenfell.Runtime.Rendering
             if (s_QueryCreated && s_QueryWorld == world)
                 return s_Query;
 
-            if (s_QueryCreated)
-                s_Query.Dispose();
-
             s_QueryWorld = world;
             s_Query = world.EntityManager.CreateEntityQuery(ComponentType.ReadWrite<MainCameraSingleton>());
             s_QueryCreated = true;

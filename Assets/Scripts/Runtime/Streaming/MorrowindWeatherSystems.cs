@@ -9,17 +9,17 @@ namespace VVardenfell.Runtime.Streaming
     [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
     [UpdateAfter(typeof(MorrowindTimeAdvanceSystem))]
     [UpdateBefore(typeof(LightingEnvironmentResolveSystem))]
-    public partial class MorrowindWeatherSelectionSystem : SystemBase
+    public partial struct MorrowindWeatherSelectionSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindTimeState>();
-            RequireForUpdate<MorrowindWeatherState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<MorrowindTimeState>();
+            systemState.RequireForUpdate<MorrowindWeatherState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -35,7 +35,7 @@ namespace VVardenfell.Runtime.Streaming
             DynamicBuffer<MorrowindRegionWeatherOverrideRequest> regionOverrideRequests = SystemAPI.GetBuffer<MorrowindRegionWeatherOverrideRequest>(weatherEntity);
 
             bool interiorActive = SystemAPI.HasSingleton<InteriorTransitionState>() && SystemAPI.GetSingleton<InteriorTransitionState>().InteriorActive != 0;
-            int regionHandleValue = ResolveCurrentRegionHandle(ref content);
+            int regionHandleValue = ResolveCurrentRegionHandle(ref systemState, ref content);
             var settings = content.WeatherSettings;
             float hoursBetweenChanges = settings.HoursBetweenWeatherChanges > 0f ? settings.HoursBetweenWeatherChanges : 20f;
             var random = new Unity.Mathematics.Random(EnsureSeed(weather.RandomState));
@@ -99,7 +99,7 @@ namespace VVardenfell.Runtime.Streaming
             AddWeatherTransition(ref weather, ref content, next);
         }
 
-        int ResolveCurrentRegionHandle(ref RuntimeContentBlob content)
+        int ResolveCurrentRegionHandle(ref SystemState systemState, ref RuntimeContentBlob content)
         {
             if (!SystemAPI.HasSingleton<StreamingConfig>())
                 return 0;
@@ -434,18 +434,18 @@ namespace VVardenfell.Runtime.Streaming
     [UpdateInGroup(typeof(MorrowindEnvironmentSystemGroup))]
     [UpdateAfter(typeof(MorrowindWeatherSelectionSystem))]
     [UpdateBefore(typeof(LightingEnvironmentResolveSystem))]
-    public partial class MorrowindSkyWeatherResolveSystem : SystemBase
+    public partial struct MorrowindSkyWeatherResolveSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindTimeState>();
-            RequireForUpdate<MorrowindDayCycleState>();
-            RequireForUpdate<MorrowindWeatherState>();
-            RequireForUpdate<ActiveSkyWeatherState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindTimeState>();
+            systemState.RequireForUpdate<MorrowindDayCycleState>();
+            systemState.RequireForUpdate<MorrowindWeatherState>();
+            systemState.RequireForUpdate<ActiveSkyWeatherState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -466,7 +466,7 @@ namespace VVardenfell.Runtime.Streaming
             var masser = MorrowindDayCycleUtility.EvaluateMoon(weatherSettings.MasserMoon, time.DaysPassed, time.GameHour);
             var secunda = MorrowindDayCycleUtility.EvaluateMoon(weatherSettings.SecundaMoon, time.DaysPassed, time.GameHour);
 
-            ResolveThunder(ref weather, current, next, blended, time.Paused != 0);
+            ResolveThunder(ref systemState, ref weather, current, next, blended, time.Paused != 0);
 
             sky = new ActiveSkyWeatherState
             {
@@ -531,7 +531,7 @@ namespace VVardenfell.Runtime.Streaming
             return math.normalize(new float3(1f, 0f, 0.35f));
         }
 
-        void ResolveThunder(ref MorrowindWeatherState weather, in WeatherDefinitionDef current, in WeatherDefinitionDef next, in MorrowindWeatherEvaluationUtility.WeatherBlend blend, bool paused)
+        void ResolveThunder(ref SystemState systemState, ref MorrowindWeatherState weather, in WeatherDefinitionDef current, in WeatherDefinitionDef next, in MorrowindWeatherEvaluationUtility.WeatherBlend blend, bool paused)
         {
             float elapsedSeconds = SystemAPI.Time.DeltaTime;
             float flashDecrement = math.max(0.1f, blend.DominantWeather.FlashDecrement);

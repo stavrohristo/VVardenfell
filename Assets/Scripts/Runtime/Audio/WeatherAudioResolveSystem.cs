@@ -7,19 +7,19 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioSimulationSystemGroup), OrderLast = true)]
-    public partial class WeatherAudioResolveSystem : SystemBase
+    public partial struct WeatherAudioResolveSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActiveSkyWeatherState>();
-            RequireForUpdate<MorrowindWeatherState>();
-            RequireForUpdate<RegionAmbientState>();
-            RequireForUpdate<WeatherAudioState>();
-            RequireForUpdate<WeatherRainAudioState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<ActiveSkyWeatherState>();
+            systemState.RequireForUpdate<MorrowindWeatherState>();
+            systemState.RequireForUpdate<RegionAmbientState>();
+            systemState.RequireForUpdate<WeatherAudioState>();
+            systemState.RequireForUpdate<WeatherRainAudioState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 

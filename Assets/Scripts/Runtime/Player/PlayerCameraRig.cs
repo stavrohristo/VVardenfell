@@ -73,26 +73,26 @@ namespace VVardenfell.Runtime.Player
     }
 
     [UpdateInGroup(typeof(MorrowindFramePhysicsQuerySystemGroup), OrderFirst = true)]
-    public partial class PlayerPhysicsViewPoseSystem : SystemBase
+    public partial struct PlayerPhysicsViewPoseSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>());
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>(),
                 ComponentType.ReadWrite<PlayerPhysicsViewPose>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate(_viewQuery);
-            RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity playerEntity = _playerQuery.GetSingletonEntity();
             var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
@@ -115,32 +115,32 @@ namespace VVardenfell.Runtime.Player
     }
 
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
-    public partial class PlayerCameraSyncSystem : SystemBase
+    public partial struct PlayerCameraSyncSystem : ISystem
     {
         static readonly float3 s_FirstPersonCameraHeadOffset = new(0f, 0.105f, 0.105f);
 
         EntityQuery _viewQuery;
         EntityQuery _presentationQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>(),
                 ComponentType.ReadOnly<LocalToWorld>());
-            _presentationQuery = GetEntityQuery(
+            _presentationQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<LocalPlayerPresentationState>(),
                 ComponentType.ReadOnly<LocalPlayerPresentationPose>());
-            RequireForUpdate(_viewQuery);
-            RequireForUpdate(_presentationQuery);
-            RequireForUpdate<ActorAnimationBlobCatalog>();
-            RequireForUpdate<MainCameraSingleton>();
+            systemState.RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate(_presentationQuery);
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<MainCameraSingleton>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
 
-            EntityManager.CompleteDependencyBeforeRO<LocalPlayerPresentationPose>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<LocalPlayerPresentationPose>();
             var pose = _presentationQuery.GetSingleton<LocalPlayerPresentationPose>();
             if (pose.Initialized == 0)
                 return;
@@ -150,7 +150,7 @@ namespace VVardenfell.Runtime.Player
             quaternion cameraRotation = pose.ViewRotation;
             if (presentation.Mode == PlayerViewMode.FirstPerson)
             {
-                cameraPosition = ResolveFirstPersonCameraPosition(presentation, pose.BodyRotation);
+                cameraPosition = ResolveFirstPersonCameraPosition(ref systemState, presentation, pose.BodyRotation);
             }
             else
             {
@@ -167,34 +167,34 @@ namespace VVardenfell.Runtime.Player
                 cameraRotation.value.w);
         }
 
-        float3 ResolveFirstPersonCameraPosition(
+        float3 ResolveFirstPersonCameraPosition(ref SystemState systemState, 
             in LocalPlayerPresentationState presentation,
             quaternion bodyRotation)
         {
             Entity actorVisual = presentation.FirstPersonVisual;
-            if (actorVisual == Entity.Null || !EntityManager.Exists(actorVisual))
+            if (actorVisual == Entity.Null || !systemState.EntityManager.Exists(actorVisual))
                 throw new System.InvalidOperationException("[VVardenfell] first-person body camera requires the local player's full actor visual.");
-            if (!EntityManager.HasComponent<ActorSkeleton>(actorVisual) || !EntityManager.HasBuffer<ActorBone>(actorVisual))
+            if (!systemState.EntityManager.HasComponent<ActorSkeleton>(actorVisual) || !systemState.EntityManager.HasBuffer<ActorBone>(actorVisual))
                 throw new System.InvalidOperationException("[VVardenfell] first-person body camera requires an animated ActorSkeleton on the local player's full actor visual.");
-            if (!EntityManager.HasComponent<LocalToWorld>(actorVisual))
+            if (!systemState.EntityManager.HasComponent<LocalToWorld>(actorVisual))
                 throw new System.InvalidOperationException("[VVardenfell] first-person body camera requires LocalToWorld on the local player's full actor visual.");
 
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell] first-person body camera requires ActorAnimationBlobCatalog.");
 
-            EntityManager.CompleteDependencyBeforeRO<ActorSkeleton>();
-            EntityManager.CompleteDependencyBeforeRO<ActorBone>();
-            EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<ActorSkeleton>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<ActorBone>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
 
-            var skeleton = EntityManager.GetComponentData<ActorSkeleton>(actorVisual);
-            var bones = EntityManager.GetBuffer<ActorBone>(actorVisual);
+            var skeleton = systemState.EntityManager.GetComponentData<ActorSkeleton>(actorVisual);
+            var bones = systemState.EntityManager.GetBuffer<ActorBone>(actorVisual);
             ref var catalog = ref catalogRef.Value;
             int boneIndex = ActorSkeletonUtility.ResolveBoneIndex(ref catalog, skeleton, ActorSkeletonNameHash.Bip01Head);
             if ((uint)boneIndex >= (uint)bones.Length)
                 throw new System.InvalidOperationException("[VVardenfell] first-person body camera could not resolve Bip01 Head on the local player's full actor visual.");
 
-            float4x4 actorWorld = EntityManager.GetComponentData<LocalToWorld>(actorVisual).Value;
+            float4x4 actorWorld = systemState.EntityManager.GetComponentData<LocalToWorld>(actorVisual).Value;
             float3 headPosition = math.mul(actorWorld, bones[boneIndex].LocalToRoot).c3.xyz;
             return headPosition + math.rotate(bodyRotation, s_FirstPersonCameraHeadOffset);
         }

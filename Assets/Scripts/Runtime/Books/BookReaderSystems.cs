@@ -11,16 +11,16 @@ namespace VVardenfell.Runtime.Books
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class BookReaderRequestSystem : SystemBase
+    public partial struct BookReaderRequestSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<BookReaderState>();
-            RequireForUpdate<BookReaderRequest>();
-            RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<BookReaderState>();
+            systemState.RequireForUpdate<BookReaderRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<BookReaderState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<BookReaderRequest>().ValueRW;
@@ -61,19 +61,19 @@ namespace VVardenfell.Runtime.Books
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(BookReaderRequestSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class BookReadRequestSystem : SystemBase
+    public partial struct BookReadRequestSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<BookReadRequest>();
-            RequireForUpdate<BookReaderState>();
-            RequireForUpdate<BookSkillGrantRequest>();
-            RequireForUpdate<BookReadHistoryEntry>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<BookReadRequest>();
+            systemState.RequireForUpdate<BookReaderState>();
+            systemState.RequireForUpdate<BookSkillGrantRequest>();
+            systemState.RequireForUpdate<BookReadHistoryEntry>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var request = ref SystemAPI.GetSingletonRW<BookReadRequest>().ValueRW;
             if (request.Pending == 0)
@@ -99,7 +99,7 @@ namespace VVardenfell.Runtime.Books
             reader.Title = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(metadata.Title);
             reader.StatusText = default;
 
-            TryQueueSkillGrant(request.Sequence, metadata);
+            TryQueueSkillGrant(ref systemState, request.Sequence, metadata);
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             string body = metadata.IsScroll
@@ -111,9 +111,9 @@ namespace VVardenfell.Runtime.Books
             request.InventoryIndex = -1;
         }
 
-        void TryQueueSkillGrant(uint sequence, in BookContentMetadata metadata)
+        void TryQueueSkillGrant(ref SystemState systemState, uint sequence, in BookContentMetadata metadata)
         {
-            if (metadata.SkillId < 0 || HasRead(metadata.Content))
+            if (metadata.SkillId < 0 || HasRead(ref systemState, metadata.Content))
                 return;
 
             ref var skillGrant = ref SystemAPI.GetSingletonRW<BookSkillGrantRequest>().ValueRW;
@@ -129,7 +129,7 @@ namespace VVardenfell.Runtime.Books
             });
         }
 
-        bool HasRead(ContentReference content)
+        bool HasRead(ref SystemState systemState, ContentReference content)
         {
             var history = SystemAPI.GetSingletonBuffer<BookReadHistoryEntry>();
             for (int i = 0; i < history.Length; i++)

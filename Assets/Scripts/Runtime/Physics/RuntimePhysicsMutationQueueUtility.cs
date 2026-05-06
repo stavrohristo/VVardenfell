@@ -27,9 +27,6 @@ namespace VVardenfell.Runtime.Physics
             if (s_QueueQueryCreated && s_QueryWorld == world)
                 return s_QueueQuery;
 
-            if (s_QueueQueryCreated)
-                s_QueueQuery.Dispose();
-
             s_QueryWorld = world;
             s_QueueQuery = entityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),

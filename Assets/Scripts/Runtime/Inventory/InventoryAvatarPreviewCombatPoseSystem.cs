@@ -1,3 +1,4 @@
+using Unity.Burst;
 #if !VVARDENFELL_OLD_ACTOR_ANIMATION
 using Unity.Entities;
 using VVardenfell.Core.Cache;
@@ -8,19 +9,20 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Inventory
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateAfter(typeof(ActorPresentationSpawnSystem))]
     [UpdateBefore(typeof(ActorGpuAnimationRequestSystem))]
-    public partial class InventoryAvatarPreviewCombatPoseSystem : SystemBase
+    public partial struct InventoryAvatarPreviewCombatPoseSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<InventoryAvatarPreviewTag>();
-            RequireForUpdate<ActorAnimationBlobCatalog>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<InventoryAvatarPreviewTag>();
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)

@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -8,22 +9,23 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Interactions
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(DoorMotionActivationSystem))]
-    public partial class DoorMotionSystem : SystemBase
+    public partial struct DoorMotionSystem : ISystem
     {
         EntityQuery _activeQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _activeQuery = GetEntityQuery(
+            _activeQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<DoorActivated>(),
                 ComponentType.ReadWrite<DoorMotionState>(),
                 ComponentType.ReadOnly<LogicalRefChild>());
-            RequireForUpdate(_activeQuery);
+            systemState.RequireForUpdate(_activeQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             float deltaTime = math.max(0f, SystemAPI.Time.DeltaTime);
             if (deltaTime <= 0f)
@@ -31,21 +33,21 @@ namespace VVardenfell.Runtime.Interactions
 
             using var entities = _activeQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
-                AdvanceDoor(entities[i], deltaTime);
+                AdvanceDoor(ref systemState, entities[i], deltaTime);
         }
 
-        void AdvanceDoor(Entity entity, float deltaTime)
+        void AdvanceDoor(ref SystemState systemState, Entity entity, float deltaTime)
         {
-            if (!EntityManager.Exists(entity) || !EntityManager.IsComponentEnabled<DoorActivated>(entity))
+            if (!systemState.EntityManager.Exists(entity) || !systemState.EntityManager.IsComponentEnabled<DoorActivated>(entity))
                 return;
 
-            var state = EntityManager.GetComponentData<DoorMotionState>(entity);
+            var state = systemState.EntityManager.GetComponentData<DoorMotionState>(entity);
             float distance = state.TargetProgress - state.Progress;
             if (math.abs(distance) <= 0.0001f || state.RangeRadians <= 0f || state.SpeedRadiansPerSecond <= 0f)
             {
                 state.Progress = state.TargetProgress;
-                EntityManager.SetComponentData(entity, state);
-                EntityManager.SetComponentEnabled<DoorActivated>(entity, false);
+                systemState.EntityManager.SetComponentData(entity, state);
+                systemState.EntityManager.SetComponentEnabled<DoorActivated>(entity, false);
                 return;
             }
 
@@ -53,13 +55,13 @@ namespace VVardenfell.Runtime.Interactions
             float newProgress = state.Progress + math.sign(distance) * math.min(math.abs(distance), step);
             float deltaRadians = (newProgress - state.Progress) * state.RangeRadians;
             state.Progress = newProgress;
-            EntityManager.SetComponentData(entity, state);
+            systemState.EntityManager.SetComponentData(entity, state);
 
             quaternion delta = quaternion.AxisAngle(ResolveAxis(state.Axis), deltaRadians);
-            LogicalRefRotationUtility.ApplyDelta(EntityManager, entity, delta);
+            LogicalRefRotationUtility.ApplyDelta(systemState.EntityManager, entity, delta);
 
             if (math.abs(state.TargetProgress - state.Progress) <= 0.0001f)
-                EntityManager.SetComponentEnabled<DoorActivated>(entity, false);
+                systemState.EntityManager.SetComponentEnabled<DoorActivated>(entity, false);
         }
 
         static float3 ResolveAxis(byte axis)

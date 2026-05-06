@@ -9,36 +9,36 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
-    public partial class PlayerInputReceivingSystem : SystemBase
+    public partial struct PlayerInputReceivingSystem : ISystem, ISystemStartStop
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerCharacterComponent>(),
                 ComponentType.ReadWrite<PlayerCharacterControl>(),
                 ComponentType.ReadWrite<PlayerCharacterState>(),
                 ComponentType.ReadWrite<ActorMagicCastState>(),
                 ComponentType.ReadWrite<MorrowindMovementInput>());
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<FixedTickSystem.Singleton>();
-            RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<FixedTickSystem.Singleton>();
+            systemState.RequireForUpdate<RuntimeShellState>();
         }
 
-        protected override void OnStartRunning()
+        public void OnStartRunning(ref SystemState systemState)
         {
             ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);
         }
 
-        protected override void OnStopRunning()
+        public void OnStopRunning(ref SystemState systemState)
         {
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             uint fixedTick = SystemAPI.GetSingleton<FixedTickSystem.Singleton>().Tick;
             var character = _playerQuery.GetSingleton<PlayerCharacterComponent>();
@@ -128,7 +128,7 @@ namespace VVardenfell.Runtime.Player
             control.InteractPressed |= interactPressedThisFrame;
             control.ToggleViewPressed |= toggleViewPressedThisFrame;
             if (toggleViewPressedThisFrame)
-                EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(player, true);
+                systemState.EntityManager.SetComponentEnabled<LocalPlayerViewModeDirty>(player, true);
             control.ReadyWeaponTogglePressed |= readyWeaponTogglePressedThisFrame;
             control.ReadyMagicTogglePressed |= readyMagicTogglePressedThisFrame;
             control.CastMagicPressed |= castMagicPressedThisFrame;

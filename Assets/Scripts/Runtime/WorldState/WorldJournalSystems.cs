@@ -13,26 +13,26 @@ namespace VVardenfell.Runtime.WorldState
     [UpdateAfter(typeof(RuntimeSpawnBootstrapSystem))]
     [UpdateAfter(typeof(ContainerLootBootstrapSystem))]
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
-    public partial class WorldJournalBootstrapSystem : SystemBase
+    public partial struct WorldJournalBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<WorldJournalBootstrapRequest>();
+            systemState.RequireForUpdate<WorldJournalBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus, WorldJournalState>(
-                EntityManager,
+                systemState.EntityManager,
                 ref ecb,
                 new FixedString64Bytes("VVardenfell.WorldJournal"),
                 out bool created);
 
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new WorldJournalState(), ref ecb, created);
-            RuntimeBootstrapUtility.EnsureBuffer<WorldJournalEntry>(EntityManager, runtimeEntity, ref ecb, created);
-            WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
-            RuntimeBootstrapRequestUtility.Consume<WorldJournalBootstrapRequest>(EntityManager);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new WorldJournalState(), ref ecb, created);
+            RuntimeBootstrapUtility.EnsureBuffer<WorldJournalEntry>(systemState.EntityManager, runtimeEntity, ref ecb, created);
+            WorldStateStructuralUtility.PlaybackAndDispose(systemState.EntityManager, ref ecb);
+            RuntimeBootstrapRequestUtility.Consume<WorldJournalBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

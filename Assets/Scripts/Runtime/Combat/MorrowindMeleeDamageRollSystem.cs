@@ -13,18 +13,18 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(ActorMeleeHitSystem))]
     [UpdateBefore(typeof(MorrowindNormalWeaponResistanceSystem))]
-    public partial class MorrowindMeleeDamageRollSystem : SystemBase
+    public partial struct MorrowindMeleeDamageRollSystem : ISystem
     {
         static readonly short ParalyzeEffectId = RequireEffectId("sEffectParalyze");
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindMeleeHitEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindMeleeHitEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -39,37 +39,37 @@ namespace VVardenfell.Runtime.Combat
                      SystemAPI.Query<RefRO<MorrowindMeleeHitEvent>>()
                          .WithEntityAccess())
             {
-                var pendingDamage = ResolveDamage(ref content, ref random, hit.ValueRO);
+                var pendingDamage = ResolveDamage(ref systemState, ref content, ref random, hit.ValueRO);
                 ecb.RemoveComponent<MorrowindMeleeHitEvent>(entity);
                 ecb.AddComponent(entity, pendingDamage);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
         }
 
-        MorrowindPendingDamageEvent ResolveDamage(
+        MorrowindPendingDamageEvent ResolveDamage(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref Unity.Mathematics.Random random,
             in MorrowindMeleeHitEvent hit)
         {
             Entity attacker = hit.Attacker;
             Entity target = hit.Target;
-            RequireAttackerCombatComposition(attacker);
-            RequireTargetCombatComposition(target);
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit target ref={PlacedRefId(target)} has no ActorHitAftermathState.");
+            RequireAttackerCombatComposition(ref systemState, attacker);
+            RequireTargetCombatComposition(ref systemState, target);
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit target ref={PlacedRefId(ref systemState, target)} has no ActorHitAftermathState.");
 
-            var attackerAttributes = EntityManager.GetComponentData<ActorAttributeSet>(attacker);
-            var attackerSkills = EntityManager.GetComponentData<ActorSkillSet>(attacker);
-            var attackerVitals = EntityManager.GetComponentData<ActorVitalSet>(attacker);
-            var attackerEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(attacker, true);
-            var targetAttributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
-            var targetVitals = EntityManager.GetComponentData<ActorVitalSet>(target);
-            var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
-            bool targetInCombat = EntityManager.HasComponent<ActorCombatTargetState>(target)
-                                  && EntityManager.GetComponentData<ActorCombatTargetState>(target).Active != 0;
+            var attackerAttributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(attacker);
+            var attackerSkills = systemState.EntityManager.GetComponentData<ActorSkillSet>(attacker);
+            var attackerVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(attacker);
+            var attackerEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(attacker, true);
+            var targetAttributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(target);
+            var targetVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
+            var targetEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
+            bool targetInCombat = systemState.EntityManager.HasComponent<ActorCombatTargetState>(target)
+                                  && systemState.EntityManager.GetComponentData<ActorCombatTargetState>(target).Active != 0;
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
                 ref content,
@@ -103,13 +103,13 @@ namespace VVardenfell.Runtime.Combat
                     fullDamage);
                 amount *= MorrowindWeaponConditionUtility.ResolveEquippedConditionMultiplier(
                     ref content,
-                    EntityManager,
+                    systemState.EntityManager,
                     attacker,
                     hit.WeaponContent,
                     weapon);
                 MorrowindWeaponConditionUtility.ApplyWeaponConditionDamage(
                     ref content,
-                    EntityManager,
+                    systemState.EntityManager,
                     attacker,
                     hit.WeaponContent,
                     weapon,
@@ -130,7 +130,7 @@ namespace VVardenfell.Runtime.Combat
                 };
             }
 
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
             bool healthDamage = aftermath.KnockedDown != 0
                                 || aftermath.KnockedOut != 0
                                 || MorrowindMeleeCombatMechanics.SumEffectMagnitude(targetEffects, ParalyzeEffectId) > 0f;
@@ -156,29 +156,29 @@ namespace VVardenfell.Runtime.Combat
             };
         }
 
-        void RequireAttackerCombatComposition(Entity actor)
+        void RequireAttackerCombatComposition(ref SystemState systemState, Entity actor)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 throw new InvalidOperationException("[VVardenfell][Damage] Melee hit attacker entity is missing.");
-            if (!EntityManager.HasComponent<ActorAttributeSet>(actor)
-                || !EntityManager.HasComponent<ActorSkillSet>(actor)
-                || !EntityManager.HasComponent<ActorVitalSet>(actor)
-                || !EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(actor)
+                || !systemState.EntityManager.HasComponent<ActorSkillSet>(actor)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(actor)
+                || !systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
             {
-                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit attacker ref={PlacedRefId(actor)} lacks required combat stats/effects.");
+                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit attacker ref={PlacedRefId(ref systemState, actor)} lacks required combat stats/effects.");
             }
         }
 
-        void RequireTargetCombatComposition(Entity actor)
+        void RequireTargetCombatComposition(ref SystemState systemState, Entity actor)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 throw new InvalidOperationException("[VVardenfell][Damage] Melee hit target entity is missing.");
-            if (!EntityManager.HasComponent<ActorAttributeSet>(actor)
-                || !EntityManager.HasComponent<ActorVitalSet>(actor)
-                || !EntityManager.HasBuffer<ActorActiveMagicEffect>(actor)
-                || !EntityManager.HasComponent<ActorHitAftermathState>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorAttributeSet>(actor)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(actor)
+                || !systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(actor)
+                || !systemState.EntityManager.HasComponent<ActorHitAftermathState>(actor))
             {
-                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit target ref={PlacedRefId(actor)} lacks required combat stats/effects/aftermath state.");
+                throw new InvalidOperationException($"[VVardenfell][Damage] Melee hit target ref={PlacedRefId(ref systemState, actor)} lacks required combat stats/effects/aftermath state.");
             }
         }
 
@@ -189,9 +189,9 @@ namespace VVardenfell.Runtime.Combat
             return effectId;
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

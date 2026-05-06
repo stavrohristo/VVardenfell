@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioMenuSystemGroup))]
-    public partial class AudioContextResolveSystem : SystemBase
+    public partial struct AudioContextResolveSystem : ISystem
     {
         static readonly ProfilerMarker k_ContextResolve = new("VV.Audio.ResolveContext");
 
@@ -15,12 +15,12 @@ namespace VVardenfell.Runtime.Audio
         BootstrapAudioPhase _lastPhase;
         bool _hasLoggedContext;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<AudioContextState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_ContextResolve.Auto();
 

@@ -12,27 +12,27 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class MorrowindScriptHurtStandingActorApplySystem : SystemBase
+    public partial struct MorrowindScriptHurtStandingActorApplySystem : ISystem
     {
         EntityQuery _standingActorQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _standingActorQuery = GetEntityQuery(
+            _standingActorQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindMovementState>(),
                 ComponentType.ReadWrite<ActorVitalSet>());
-            RequireForUpdate<MorrowindScriptHurtStandingActorRequest>();
-            RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<MorrowindScriptHurtStandingActorRequest>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<MorrowindScriptHurtStandingActorRequest>(runtimeEntity);
+            var requests = systemState.EntityManager.GetBuffer<MorrowindScriptHurtStandingActorRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
-            if (IsGuiMode())
+            if (IsGuiMode(ref systemState))
             {
                 requests.Clear();
                 return;
@@ -47,15 +47,15 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i], lookup, deltaSeconds);
+                ApplyRequest(ref systemState, requests[i], lookup, deltaSeconds);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in MorrowindScriptHurtStandingActorRequest request, in LogicalRefLookup lookup, float deltaSeconds)
+        void ApplyRequest(ref SystemState systemState, in MorrowindScriptHurtStandingActorRequest request, in LogicalRefLookup lookup, float deltaSeconds)
         {
-            Entity standingTarget = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
-            if (standingTarget == Entity.Null || !EntityManager.Exists(standingTarget))
+            Entity standingTarget = MorrowindRuntimeTargetResolver.ResolveLiveTarget(systemState.EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            if (standingTarget == Entity.Null || !systemState.EntityManager.Exists(standingTarget))
                 throw new InvalidOperationException($"[VVardenfell][MWScript] HurtStandingActor target ref={request.TargetPlacedRefId} is not loaded.");
 
             float healthDelta = request.HealthPerSecond * deltaSeconds;
@@ -69,30 +69,30 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (entities[i] == standingTarget || movementStates[i].StandingOn != standingTarget)
                     continue;
 
-                var vitals = EntityManager.GetComponentData<ActorVitalSet>(entities[i]);
+                var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(entities[i]);
                 if (vitals.CurrentHealth <= 0f)
                     continue;
 
                 vitals.CurrentHealth -= healthDelta;
-                EntityManager.SetComponentData(entities[i], vitals);
+                systemState.EntityManager.SetComponentData(entities[i], vitals);
                 if (vitals.CurrentHealth <= 0f)
                 {
                     var aftermath = ActorHitAftermathStateUtility.Require(
-                        EntityManager,
+                        systemState.EntityManager,
                         entities[i],
-                        $"[VVardenfell][MWScript] HurtStandingActor affected actor ref={PlacedRefId(entities[i])}");
+                        $"[VVardenfell][MWScript] HurtStandingActor affected actor ref={PlacedRefId(ref systemState, entities[i])}");
                     ActorHitAftermathStateUtility.MarkDead(ref aftermath);
-                    EntityManager.SetComponentData(entities[i], aftermath);
+                    systemState.EntityManager.SetComponentData(entities[i], aftermath);
                 }
             }
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
 
-        bool IsGuiMode()
+        bool IsGuiMode(ref SystemState systemState)
         {
             if (!SystemAPI.TryGetSingleton<RuntimeShellState>(out var shell))
                 return false;

@@ -13,31 +13,31 @@ using Collider = Unity.Physics.Collider;
 namespace VVardenfell.Runtime.Projectiles
 {
     [UpdateInGroup(typeof(MorrowindProjectileSystemGroup), OrderFirst = true)]
-    public partial class MorrowindProjectileLaunchSystem : SystemBase
+    public partial struct MorrowindProjectileLaunchSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindProjectileLaunchRequest>();
+            systemState.RequireForUpdate<MorrowindProjectileLaunchRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (request, requestEntity) in
                      SystemAPI.Query<RefRO<MorrowindProjectileLaunchRequest>>()
                          .WithEntityAccess())
             {
-                Launch(request.ValueRO, ref ecb);
+                Launch(ref systemState, request.ValueRO, ref ecb);
                 ecb.DestroyEntity(requestEntity);
             }
 
-            ecb.Playback(EntityManager);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
-        void Launch(in MorrowindProjectileLaunchRequest request, ref EntityCommandBuffer ecb)
+        void Launch(ref SystemState systemState, in MorrowindProjectileLaunchRequest request, ref EntityCommandBuffer ecb)
         {
-            RequireLaunchRequest(request);
+            RequireLaunchRequest(ref systemState, request);
 
             float3 direction = math.normalizesafe(request.Direction);
             if (math.lengthsq(direction) <= 0f)
@@ -88,7 +88,7 @@ namespace VVardenfell.Runtime.Projectiles
                 IgnoreSpellAbsorption = request.IgnoreSpellAbsorption,
             });
             RuntimeColliderPhysicsUtility.QueueAttachNewSource(
-                EntityManager,
+                systemState.EntityManager,
                 ref ecb,
                 projectile,
                 collider,
@@ -125,11 +125,11 @@ namespace VVardenfell.Runtime.Projectiles
             });
         }
 
-        void RequireLaunchRequest(in MorrowindProjectileLaunchRequest request)
+        void RequireLaunchRequest(ref SystemState systemState, in MorrowindProjectileLaunchRequest request)
         {
-            if (request.Caster == Entity.Null || !EntityManager.Exists(request.Caster))
+            if (request.Caster == Entity.Null || !systemState.EntityManager.Exists(request.Caster))
                 throw new InvalidOperationException("[VVardenfell][Projectile] Launch caster entity is missing.");
-            if (!EntityManager.HasComponent<LocalTransform>(request.Caster))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(request.Caster))
                 throw new InvalidOperationException("[VVardenfell][Projectile] Launch caster has no LocalTransform.");
             if (request.SourceKind == MorrowindProjectileSourceKind.None)
                 throw new InvalidOperationException("[VVardenfell][Projectile] Launch source kind is None.");

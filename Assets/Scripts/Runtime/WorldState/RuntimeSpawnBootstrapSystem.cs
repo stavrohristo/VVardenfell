@@ -9,31 +9,31 @@ namespace VVardenfell.Runtime.WorldState
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
     [UpdateAfter(typeof(InteractionRuntimeBootstrapSystem))]
-    public partial class RuntimeSpawnBootstrapSystem : SystemBase
+    public partial struct RuntimeSpawnBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeSpawnBootstrapRequest>();
+            systemState.RequireForUpdate<RuntimeSpawnBootstrapRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity runtimeEntity = RuntimeBootstrapUtility.ResolveOrCreate<PlayerInteractionFocus, RuntimeSpawnState>(
-                EntityManager,
+                systemState.EntityManager,
                 ref ecb,
                 new FixedString64Bytes("VVardenfell.RuntimeSpawn"),
                 out bool created);
 
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeSpawnState(), ref ecb, created);
-            RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new RuntimeSpawnResult
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeSpawnState(), ref ecb, created);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeSpawnResult
             {
                 LogicalEntity = Entity.Null,
             }, ref ecb, created);
-            RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnRequest>(EntityManager, runtimeEntity, ref ecb, created);
-            RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnedRef>(EntityManager, runtimeEntity, ref ecb, created);
-            WorldStateStructuralUtility.PlaybackAndDispose(EntityManager, ref ecb);
-            RuntimeBootstrapRequestUtility.Consume<RuntimeSpawnBootstrapRequest>(EntityManager);
+            RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnRequest>(systemState.EntityManager, runtimeEntity, ref ecb, created);
+            RuntimeBootstrapUtility.EnsureBuffer<RuntimeSpawnedRef>(systemState.EntityManager, runtimeEntity, ref ecb, created);
+            WorldStateStructuralUtility.PlaybackAndDispose(systemState.EntityManager, ref ecb);
+            RuntimeBootstrapRequestUtility.Consume<RuntimeSpawnBootstrapRequest>(systemState.EntityManager);
         }
     }
 }

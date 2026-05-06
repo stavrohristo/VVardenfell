@@ -8,27 +8,27 @@ using VVardenfell.Runtime.Rendering;
 namespace VVardenfell.Runtime.Streaming
 {
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
-    public partial class ModelBillboardSystem : SystemBase
+    public partial struct ModelBillboardSystem : ISystem
     {
         EntityQuery _billboardQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _billboardQuery = GetEntityQuery(
+            _billboardQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<LocalTransform>(),
                 ComponentType.ReadOnly<LocalToWorld>(),
                 ComponentType.ReadOnly<ModelBillboardState>(),
                 ComponentType.ReadOnly<ModelBillboardTag>());
 
-            RequireForUpdate<MainCameraSingleton>();
-            RequireForUpdate(_billboardQuery);
+            systemState.RequireForUpdate<MainCameraSingleton>();
+            systemState.RequireForUpdate(_billboardQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             float3 cameraPosition = cam.transform.position;
-            var entityManager = EntityManager;
+            var entityManager = systemState.EntityManager;
             entityManager.CompleteDependencyBeforeRO<LocalToWorld>();
 
             foreach (var (localTransform, localToWorld, billboardState, entity) in

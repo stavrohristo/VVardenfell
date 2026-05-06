@@ -1,4 +1,4 @@
-﻿using Unity.Entities;
+using Unity.Entities;
 using UnityEngine.InputSystem;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
@@ -9,25 +9,25 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial class RuntimeShellInputSystem : SystemBase
+    public partial struct RuntimeShellInputSystem : ISystem, ISystemStartStop
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<ContainerWindowState>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<ContainerWindowState>();
         }
 
-        protected override void OnStartRunning()
-        {
-            RuntimeShellPresentationGate.BlocksGameplayInput = false;
-        }
-
-        protected override void OnStopRunning()
+        public void OnStartRunning(ref SystemState systemState)
         {
             RuntimeShellPresentationGate.BlocksGameplayInput = false;
         }
 
-        protected override void OnUpdate()
+        public void OnStopRunning(ref SystemState systemState)
+        {
+            RuntimeShellPresentationGate.BlocksGameplayInput = false;
+        }
+
+        public void OnUpdate(ref SystemState systemState)
         {
             if (BootstrapPresentationGate.BlocksGameplayInput)
             {

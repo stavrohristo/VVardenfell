@@ -13,30 +13,30 @@ namespace VVardenfell.Runtime.Inventory
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
-    public partial class InventoryWindowStateSystem : SystemBase
+    public partial struct InventoryWindowStateSystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerInventoryQuery = GetEntityQuery(
+            _playerInventoryQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<PlayerInventoryItem>());
 
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<InventoryWindowState>();
-            RequireForUpdate<InventoryWindowRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate(_playerInventoryQuery);
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<InventoryWindowState>();
+            systemState.RequireForUpdate<InventoryWindowRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<InventoryWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<InventoryWindowRequest>().ValueRW;
             Entity playerInventoryEntity = _playerInventoryQuery.GetSingletonEntity();
-            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
+            var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ApplyRequests(ref state, ref request);

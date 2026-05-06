@@ -10,17 +10,17 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDamageFeedbackSystem))]
     [UpdateBefore(typeof(MorrowindHitAftermathAnimationSystem))]
-    public partial class MorrowindBlockAnimationSystem : SystemBase
+    public partial struct MorrowindBlockAnimationSystem : ISystem
     {
         const int BlockOverlayPriority = 60;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorBlockState>();
-            RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<ActorBlockState>();
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
@@ -34,14 +34,14 @@ namespace VVardenfell.Runtime.Combat
                 if (block.ValueRO.Active == 0)
                     continue;
 
-                RequireAnimationComposition(entity);
-                var presentation = EntityManager.GetComponentData<ActorPresentation>(entity);
-                var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
-                ApplyBlockAnimation(entity, block, ref catalog, presentation, overlays);
+                RequireAnimationComposition(ref systemState, entity);
+                var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(entity);
+                var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
+                ApplyBlockAnimation(ref systemState, entity, block, ref catalog, presentation, overlays);
             }
         }
 
-        void ApplyBlockAnimation(
+        void ApplyBlockAnimation(ref SystemState systemState, 
             Entity entity,
             RefRW<ActorBlockState> block,
             ref ActorAnimationCatalogBlob catalog,
@@ -68,7 +68,7 @@ namespace VVardenfell.Runtime.Combat
                     ActorAnimationGroupHash.Hash(groupName),
                     out var group))
             {
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(entity)} is missing required shield animation group.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, entity)} is missing required shield animation group.");
             }
 
             if (!ActorAnimationMarkerWindowUtility.TryResolveWindow(
@@ -79,7 +79,7 @@ namespace VVardenfell.Runtime.Combat
                     out float startTime,
                     out float stopTime))
             {
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(entity)} shield animation is missing block start/stop markers.");
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, entity)} shield animation is missing block start/stop markers.");
             }
 
             RemoveBlockOverlay(overlays);
@@ -115,19 +115,19 @@ namespace VVardenfell.Runtime.Combat
                     overlays.RemoveAt(i);
         }
 
-        void RequireAnimationComposition(Entity entity)
+        void RequireAnimationComposition(ref SystemState systemState, Entity entity)
         {
-            if (!EntityManager.HasComponent<ActorPresentation>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(entity)} has no ActorPresentation.");
-            if (!EntityManager.HasComponent<ActorAnimationState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(entity)} has no ActorAnimationState.");
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(entity)} has no ActorAnimationOverlayState buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorPresentation>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorPresentation.");
+            if (!systemState.EntityManager.HasComponent<ActorAnimationState>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationState.");
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
+                throw new InvalidOperationException($"[VVardenfell][Block] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationOverlayState buffer.");
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

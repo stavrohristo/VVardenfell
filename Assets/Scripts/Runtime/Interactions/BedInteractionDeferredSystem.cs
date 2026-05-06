@@ -10,7 +10,7 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
     [UpdateBefore(typeof(ActivatorInteractionDeferredSystem))]
-    public partial class BedInteractionDeferredSystem : SystemBase
+    public partial struct BedInteractionDeferredSystem : ISystem
     {
         const string BedStandardScriptId = "bed_standard";
         const string CharGenBedScriptId = "chargenbed";
@@ -18,19 +18,19 @@ namespace VVardenfell.Runtime.Interactions
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
 
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
 
             Entity target = request.TargetEntity;
-            if (!EntityManager.Exists(target) || !IsBedActivator(target))
+            if (!systemState.EntityManager.Exists(target) || !IsBedActivator(ref systemState, target))
                 return;
 
             uint placedRefId = request.TargetPlacedRefId;
@@ -60,14 +60,14 @@ namespace VVardenfell.Runtime.Interactions
             result.NotificationText = default;
         }
 
-        bool IsBedActivator(Entity target)
+        bool IsBedActivator(ref SystemState systemState, Entity target)
         {
-            if (!EntityManager.HasComponent<ActivatorAuthoring>(target))
+            if (!systemState.EntityManager.HasComponent<ActivatorAuthoring>(target))
                 return false;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
-            ActivatorDefHandle handle = EntityManager.GetComponentData<ActivatorAuthoring>(target).Definition;
+            ActivatorDefHandle handle = systemState.EntityManager.GetComponentData<ActivatorAuthoring>(target).Definition;
             if (!handle.IsValid || handle.Index < 0 || handle.Index >= contentBlob.Activators.Length)
                 return false;
 

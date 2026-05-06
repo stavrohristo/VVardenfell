@@ -15,16 +15,16 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindHitAftermathStateSystem))]
     [UpdateBefore(typeof(MorrowindHitAftermathAnimationSystem))]
-    public partial class MorrowindDamageFeedbackSystem : SystemBase
+    public partial struct MorrowindDamageFeedbackSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<MorrowindDamageAppliedEvent>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
             uint randomState = combatState.ValueRO.RandomState;
@@ -35,24 +35,24 @@ namespace VVardenfell.Runtime.Combat
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
             bool hasAudioState = SystemAPI.TryGetSingletonEntity<InteractionAudioRequestState>(out Entity audioEntity);
             var audioState = hasAudioState
-                ? EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
+                ? systemState.EntityManager.GetComponentData<InteractionAudioRequestState>(audioEntity)
                 : default;
 
             foreach (var (damage, entity) in
                      SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>()
                          .WithEntityAccess())
             {
-                EmitBlockImpactAudio(ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
-                EmitArmorImpactAudio(ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
-                EmitAppliedDamageAudio(ref content, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
-                EmitBloodVfxRequest(ref content, ref randomState, ref ecb, damage.ValueRO);
+                EmitBlockImpactAudio(ref systemState, ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
+                EmitArmorImpactAudio(ref systemState, ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
+                EmitAppliedDamageAudio(ref systemState, ref content, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
+                EmitBloodVfxRequest(ref systemState, ref content, ref randomState, ref ecb, damage.ValueRO);
                 ecb.DestroyEntity(entity);
             }
 
             combatState.ValueRW.RandomState = randomState == 0u ? 1u : randomState;
             if (hasAudioState)
-                EntityManager.SetComponentData(audioEntity, audioState);
-            ecb.Playback(EntityManager);
+                systemState.EntityManager.SetComponentData(audioEntity, audioState);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
         }
 
@@ -63,7 +63,7 @@ namespace VVardenfell.Runtime.Combat
             return state;
         }
 
-        void EmitBlockImpactAudio(
+        void EmitBlockImpactAudio(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
@@ -82,19 +82,19 @@ namespace VVardenfell.Runtime.Combat
                 _ => throw new InvalidOperationException($"[VVardenfell][Damage] Block impact has invalid shield skill {impact.ShieldSkill}."),
             };
 
-            if (impact.Target == Entity.Null || !EntityManager.Exists(impact.Target))
+            if (impact.Target == Entity.Null || !systemState.EntityManager.Exists(impact.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target entity is missing.");
             if (impact.Target != damage.Target)
                 throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target does not match applied damage target.");
-            if (!EntityManager.HasComponent<LocalTransform>(impact.Target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(impact.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Block hit sound target has no LocalTransform.");
 
             MorrowindCombatAudioUtility.EmitRequiredSound(
                 ref content,
                 soundId,
                 impact.Target,
-                PlacedRefId(impact.Target),
-                EntityManager.GetComponentData<LocalTransform>(impact.Target).Position,
+                PlacedRefId(ref systemState, impact.Target),
+                systemState.EntityManager.GetComponentData<LocalTransform>(impact.Target).Position,
                 1f,
                 1f,
                 ref audioState,
@@ -102,7 +102,7 @@ namespace VVardenfell.Runtime.Combat
                 ref ecb);
         }
 
-        void EmitArmorImpactAudio(
+        void EmitArmorImpactAudio(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
@@ -121,19 +121,19 @@ namespace VVardenfell.Runtime.Combat
                 _ => "Hand To Hand Hit",
             };
 
-            if (impact.Target == Entity.Null || !EntityManager.Exists(impact.Target))
+            if (impact.Target == Entity.Null || !systemState.EntityManager.Exists(impact.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor hit sound target entity is missing.");
             if (impact.Target != damage.Target)
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor hit sound target does not match applied damage target.");
-            if (!EntityManager.HasComponent<LocalTransform>(impact.Target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(impact.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Armor hit sound target has no LocalTransform.");
 
             MorrowindCombatAudioUtility.EmitRequiredSound(
                 ref content,
                 soundId,
                 impact.Target,
-                PlacedRefId(impact.Target),
-                EntityManager.GetComponentData<LocalTransform>(impact.Target).Position,
+                PlacedRefId(ref systemState, impact.Target),
+                systemState.EntityManager.GetComponentData<LocalTransform>(impact.Target).Position,
                 1f,
                 1f,
                 ref audioState,
@@ -141,7 +141,7 @@ namespace VVardenfell.Runtime.Combat
                 ref ecb);
         }
 
-        void EmitAppliedDamageAudio(
+        void EmitAppliedDamageAudio(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref InteractionAudioRequestState audioState,
             bool hasAudioState,
@@ -152,9 +152,9 @@ namespace VVardenfell.Runtime.Combat
             if (damage.Amount <= 0f)
                 return;
 
-            if (damage.Target == Entity.Null || !EntityManager.Exists(damage.Target))
+            if (damage.Target == Entity.Null || !systemState.EntityManager.Exists(damage.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Damage sound target entity is missing.");
-            if (!EntityManager.HasComponent<LocalTransform>(damage.Target))
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(damage.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Damage sound target has no LocalTransform.");
 
             string soundId = ResolveDamageSoundId(damage, ref randomState);
@@ -165,8 +165,8 @@ namespace VVardenfell.Runtime.Combat
                 ref content,
                 soundId,
                 damage.Target,
-                PlacedRefId(damage.Target),
-                EntityManager.GetComponentData<LocalTransform>(damage.Target).Position,
+                PlacedRefId(ref systemState, damage.Target),
+                systemState.EntityManager.GetComponentData<LocalTransform>(damage.Target).Position,
                 1f,
                 1f,
                 ref audioState,
@@ -189,7 +189,7 @@ namespace VVardenfell.Runtime.Combat
             return null;
         }
 
-        void EmitBloodVfxRequest(
+        void EmitBloodVfxRequest(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             ref uint randomState,
             ref EntityCommandBuffer ecb,
@@ -202,20 +202,20 @@ namespace VVardenfell.Runtime.Combat
                 return;
             }
 
-            if (damage.Target == Entity.Null || !EntityManager.Exists(damage.Target))
+            if (damage.Target == Entity.Null || !systemState.EntityManager.Exists(damage.Target))
                 throw new InvalidOperationException("[VVardenfell][Damage] Blood VFX target entity is missing.");
-            if (!EntityManager.HasComponent<ActorSpawnSource>(damage.Target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(damage.Target)} has no ActorSpawnSource.");
-            if (!EntityManager.HasComponent<LogicalRefLocation>(damage.Target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(damage.Target)} has no LogicalRefLocation.");
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(damage.Target))
+                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(ref systemState, damage.Target)} has no ActorSpawnSource.");
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(damage.Target))
+                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(ref systemState, damage.Target)} has no LogicalRefLocation.");
 
             int modelVariant = (int)(NextRandom(ref randomState) % 3u);
             string model = "meshes/" + RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentStableHash.HashId($"Blood_Model_{modelVariant}"));
-            var actorSource = EntityManager.GetComponentData<ActorSpawnSource>(damage.Target);
+            var actorSource = systemState.EntityManager.GetComponentData<ActorSpawnSource>(damage.Target);
             ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorSource.Definition);
             string texture = ResolveBloodTexture(ref content, actor.BloodType);
-            var location = EntityManager.GetComponentData<LogicalRefLocation>(damage.Target);
-            float3 bloodPosition = ResolveBloodVfxPosition(damage, ref randomState);
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(damage.Target);
+            float3 bloodPosition = ResolveBloodVfxPosition(ref systemState, damage, ref randomState);
 
             Entity requestEntity = ecb.CreateEntity();
             ecb.AddComponent(requestEntity, new MorrowindVfxSpawnRequest
@@ -232,22 +232,22 @@ namespace VVardenfell.Runtime.Combat
             });
         }
 
-        float3 ResolveBloodVfxPosition(in MorrowindDamageAppliedEvent damage, ref uint randomState)
+        float3 ResolveBloodVfxPosition(ref SystemState systemState, in MorrowindDamageAppliedEvent damage, ref uint randomState)
         {
             if (damage.Target == Entity.Null
                 || damage.Attacker == Entity.Null
-                || !EntityManager.Exists(damage.Target)
-                || !EntityManager.Exists(damage.Attacker)
-                || !EntityManager.HasComponent<LocalTransform>(damage.Target)
-                || !EntityManager.HasComponent<LocalTransform>(damage.Attacker)
-                || !EntityManager.HasComponent<ActorLocalBounds>(damage.Target))
+                || !systemState.EntityManager.Exists(damage.Target)
+                || !systemState.EntityManager.Exists(damage.Attacker)
+                || !systemState.EntityManager.HasComponent<LocalTransform>(damage.Target)
+                || !systemState.EntityManager.HasComponent<LocalTransform>(damage.Attacker)
+                || !systemState.EntityManager.HasComponent<ActorLocalBounds>(damage.Target))
             {
                 return damage.HitPosition;
             }
 
-            var targetTransform = EntityManager.GetComponentData<LocalTransform>(damage.Target);
-            var attackerTransform = EntityManager.GetComponentData<LocalTransform>(damage.Attacker);
-            var bounds = EntityManager.GetComponentData<ActorLocalBounds>(damage.Target);
+            var targetTransform = systemState.EntityManager.GetComponentData<LocalTransform>(damage.Target);
+            var attackerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(damage.Attacker);
+            var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(damage.Target);
             float scale = math.max(0.01f, targetTransform.Scale);
             float3 extents = bounds.Extents * scale;
             float3 targetBase = targetTransform.Position;
@@ -279,9 +279,9 @@ namespace VVardenfell.Runtime.Combat
             return RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.Blood_Texture_0);
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        uint PlacedRefId(ref SystemState systemState, Entity entity)
+            => systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

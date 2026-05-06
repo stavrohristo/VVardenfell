@@ -11,26 +11,27 @@ namespace VVardenfell.Runtime.Audio
 {
     [UpdateInGroup(typeof(MorrowindAudioMenuSystemGroup))]
     [UpdateAfter(typeof(AudioContextResolveSystem))]
-    public partial class MusicResolveSystem : SystemBase
+    public partial struct MusicResolveSystem : ISystem
     {
         const string MenuMusicTrackRelativePath = "Special/morrowind title.mp3";
 
         static readonly ProfilerMarker k_MusicResolve = new("VV.Audio.ResolveMusic");
 
-        int _lastPlaylistTrackCount = -1;
+        int _lastPlaylistTrackCount;
         bool _loggedMusicPool;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<AudioContextState>();
-            RequireForUpdate<MusicState>();
-            RequireForUpdate<MusicPlaylistState>();
-            RequireForUpdate<MusicPlaybackStatus>();
-            RequireForUpdate<MorrowindMusicRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            _lastPlaylistTrackCount = -1;
+            systemState.RequireForUpdate<AudioContextState>();
+            systemState.RequireForUpdate<MusicState>();
+            systemState.RequireForUpdate<MusicPlaylistState>();
+            systemState.RequireForUpdate<MusicPlaybackStatus>();
+            systemState.RequireForUpdate<MorrowindMusicRequest>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             using var _ = k_MusicResolve.Auto();
 

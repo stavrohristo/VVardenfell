@@ -351,9 +351,6 @@ namespace VVardenfell.Runtime.Shell
             if (s_WorldCellQueryCreated && s_WorldCellQueryWorld == world)
                 return s_WorldCellQuery;
 
-            if (s_WorldCellQueryCreated)
-                s_WorldCellQuery.Dispose();
-
             s_WorldCellQueryWorld = world;
             s_WorldCellQuery = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
             s_WorldCellQueryCreated = true;

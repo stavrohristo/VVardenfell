@@ -228,17 +228,17 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateAfter(typeof(LooseItemPickupSystem))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
     [UpdateAfter(typeof(ActivatorInteractionDeferredSystem))]
-    public partial class PickedItemRespawnPruneSystem : SystemBase
+    public partial struct PickedItemRespawnPruneSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<InteractionRuntimeState>();
-            RequireForUpdate<PickedItemRecord>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<InteractionRuntimeState>();
+            systemState.RequireForUpdate<PickedItemRecord>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var runtimeState = ref SystemAPI.GetSingletonRW<InteractionRuntimeState>().ValueRW;
             if (runtimeState.PendingPickedItemPrune == 0)
@@ -262,23 +262,23 @@ namespace VVardenfell.Runtime.Interactions
                          .WithEntityAccess())
             {
                 if (pickedSet.Contains(placedRefId.ValueRO.Value)
-                    && LooseCarryableResolver.TryResolveContent(ref contentBlob, EntityManager, entity, out _))
+                    && LooseCarryableResolver.TryResolveContent(ref contentBlob, systemState.EntityManager, entity, out _))
                     entitiesToDestroy.Add(entity);
             }
 
             if (entitiesToDestroy.Count == 0)
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
-            var logicalRefLookup = EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
+            var logicalRefLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(lookupEntity);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             for (int i = 0; i < entitiesToDestroy.Count; i++)
-                InteractionEntityDestroyUtility.QueueDestroyLogicalRef(EntityManager, ref ecb, entitiesToDestroy[i], ref logicalRefLookup);
-            ecb.Playback(EntityManager);
+                InteractionEntityDestroyUtility.QueueDestroyLogicalRef(systemState.EntityManager, ref ecb, entitiesToDestroy[i], ref logicalRefLookup);
+            ecb.Playback(systemState.EntityManager);
             ecb.Dispose();
-            EntityManager.SetComponentData(lookupEntity, logicalRefLookup);
+            systemState.EntityManager.SetComponentData(lookupEntity, logicalRefLookup);
 
         }
 

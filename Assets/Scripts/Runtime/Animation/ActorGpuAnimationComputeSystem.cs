@@ -16,7 +16,7 @@ namespace VVardenfell.Runtime.Animation
     [UpdateInGroup(typeof(PresentationSystemGroup))]
     [UpdateAfter(typeof(MorrowindPresentationSystemGroup))]
     [UpdateBefore(typeof(EntitiesGraphicsSystem))]
-    public partial class ActorGpuAnimationComputeSystem : SystemBase
+    public partial struct ActorGpuAnimationComputeSystem : ISystem
     {
         static readonly ProfilerMarker k_CountWork = new("VV.ActorGpuAnimation.CountWork");
         static readonly ProfilerMarker k_PackFrame = new("VV.ActorGpuAnimation.PackFrame");
@@ -47,10 +47,10 @@ namespace VVardenfell.Runtime.Animation
             public int BoneMatrixOffset;
         }
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorAnimationBlobCatalog>();
-            RequireForUpdate<ActorAnimationRuntimeSettings>();
+            systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
+            systemState.RequireForUpdate<ActorAnimationRuntimeSettings>();
             _gpuActorQuery = SystemAPI.QueryBuilder()
                 .WithAll<ActorGpuAnimationState, ActorSkeleton, ActorGpuAnimationRequest, ActorSkinMesh, ActorRenderVisible>()
                 .Build();
@@ -59,7 +59,7 @@ namespace VVardenfell.Runtime.Animation
             _totals = new NativeReference<ActorGpuAnimationCount>(Allocator.Persistent);
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var settings = SystemAPI.GetSingleton<ActorAnimationRuntimeSettings>();
             ActorGpuAnimationValidation.Enabled = settings.ValidationEnabled != 0;
@@ -108,15 +108,15 @@ namespace VVardenfell.Runtime.Animation
                 {
                     Catalog = catalogRef,
                     Counts = _counts.AsArray(),
-                }.ScheduleParallel(_gpuActorQuery, Dependency);
+                }.ScheduleParallel(_gpuActorQuery, systemState.Dependency);
 
-                Dependency = new BuildGpuAnimationOffsetsJob
+                systemState.Dependency = new BuildGpuAnimationOffsetsJob
                 {
                     Counts = _counts.AsArray(),
                     Offsets = _offsets.AsArray(),
                     Totals = _totals,
                 }.Schedule(countHandle);
-                Dependency.Complete();
+                systemState.Dependency.Complete();
             }
 
             ActorGpuAnimationCount totalCounts = _totals.Value;
@@ -147,9 +147,9 @@ namespace VVardenfell.Runtime.Animation
                     Actors = upload.Actors,
                     Layers = upload.Layers,
                     SkinMeshes = upload.SkinMeshes,
-                }.ScheduleParallel(_gpuActorQuery, Dependency);
-                Dependency = packHandle;
-                Dependency.Complete();
+                }.ScheduleParallel(_gpuActorQuery, systemState.Dependency);
+                systemState.Dependency = packHandle;
+                systemState.Dependency.Complete();
             }
             gpuResources.EndFrameUpload(upload);
             gpuResources.PrepareFrameForRender(
@@ -161,7 +161,7 @@ namespace VVardenfell.Runtime.Animation
                 gpuResources.AllocatedDeformedVertexCount);
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             if (_counts.IsCreated)
                 _counts.Dispose();

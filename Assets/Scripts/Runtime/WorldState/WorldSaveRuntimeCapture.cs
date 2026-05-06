@@ -418,9 +418,6 @@ namespace VVardenfell.Runtime.WorldState
                 if (s_QueryCreated && s_World == world)
                     return s_Query;
 
-                if (s_QueryCreated)
-                    s_Query.Dispose();
-
                 s_World = world;
                 s_Query = entityManager.CreateEntityQuery(
                     ComponentType.ReadOnly<ExteriorMapDiscoveryTile>(),

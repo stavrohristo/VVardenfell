@@ -11,28 +11,28 @@ namespace VVardenfell.Runtime.Interactions
 {
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(LooseItemPickupSystem))]
-    public partial class NpcInteractionDeferredSystem : SystemBase
+    public partial struct NpcInteractionDeferredSystem : ISystem
     {
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
 
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<DialogueReadinessState>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<MorrowindDialogueState>();
-            RequireForUpdate<MorrowindDialogueSession>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<DialogueReadinessState>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<MorrowindDialogueState>();
+            systemState.RequireForUpdate<MorrowindDialogueSession>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
@@ -43,7 +43,7 @@ namespace VVardenfell.Runtime.Interactions
             if (kind != InteractableKind.Npc)
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             Entity target = request.TargetEntity;
             uint placedRefId = request.TargetPlacedRefId;
@@ -56,21 +56,21 @@ namespace VVardenfell.Runtime.Interactions
             if (!worldCellReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] deferred npc activation requires runtime world cell blob.");
             ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
-            if (!EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
+            if (!systemState.EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, systemState.EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred npc activation resolved to a missing or mismatched logical entity.");
                 ClearFocus();
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, EntityManager, target, kind)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, systemState.EntityManager, target, kind)
                 ?? InteractionMetadataResolver.ResolveKindLabel(kind);
 
             ref var dialogue = ref SystemAPI.GetSingletonRW<DialogueReadinessState>().ValueRW;
             dialogue.PendingTargetEntity = target;
             dialogue.PendingTargetPlacedRefId = placedRefId;
-            dialogue.PendingActor = EntityManager.HasComponent<ActorSpawnSource>(target)
-                ? EntityManager.GetComponentData<ActorSpawnSource>(target).Definition
+            dialogue.PendingActor = systemState.EntityManager.HasComponent<ActorSpawnSource>(target)
+                ? systemState.EntityManager.GetComponentData<ActorSpawnSource>(target).Definition
                 : default;
             dialogue.LastActivationSequence = sequence;
 
@@ -114,32 +114,32 @@ namespace VVardenfell.Runtime.Interactions
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
-    public partial class ActivatorInteractionDeferredSystem : SystemBase
+    public partial struct ActivatorInteractionDeferredSystem : ISystem
     {
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _requestQuery = GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
-            _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
+            _requestQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<InteractionActivationRequest>());
+            _focusQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
 
-            RequireForUpdate(_requestQuery);
-            RequireForUpdate(_focusQuery);
-            RequireForUpdate<InteractionActivationResult>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
-            RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate(_requestQuery);
+            systemState.RequireForUpdate(_focusQuery);
+            systemState.RequireForUpdate<InteractionActivationResult>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var requestRef = _requestQuery.GetSingletonRW<InteractionActivationRequest>();
             ref var request = ref requestRef.ValueRW;
             if (request.Pending == 0 || request.Kind != (byte)InteractableKind.Activator)
                 return;
 
-            CompleteDependency();
+            systemState.Dependency.Complete();
 
             Entity target = request.TargetEntity;
             uint placedRefId = request.TargetPlacedRefId;
@@ -152,8 +152,8 @@ namespace VVardenfell.Runtime.Interactions
             if (!worldCellReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] deferred activator activation requires runtime world cell blob.");
             ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
-            if (!EntityManager.Exists(target)
-                || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, target, out InteractableKind resolvedKind)
+            if (!systemState.EntityManager.Exists(target)
+                || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, systemState.EntityManager, target, out InteractableKind resolvedKind)
                 || resolvedKind != InteractableKind.Activator)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred activator activation resolved to a missing or mismatched logical entity.");
@@ -161,7 +161,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, EntityManager, target, InteractableKind.Activator)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, systemState.EntityManager, target, InteractableKind.Activator)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Activator);
 
             ClearFocus();
@@ -191,23 +191,23 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateAfter(typeof(TeleportDoorTransitionSystem))]
     [UpdateAfter(typeof(NpcInteractionDeferredSystem))]
     [UpdateAfter(typeof(ActivatorInteractionDeferredSystem))]
-    public partial class DialogueReadinessCleanupSystem : SystemBase
+    public partial struct DialogueReadinessCleanupSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<DialogueReadinessState>();
+            systemState.RequireForUpdate<DialogueReadinessState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<DialogueReadinessState>().ValueRW;
             if (state.PendingTargetEntity == Entity.Null)
                 return;
 
-            if (EntityManager.Exists(state.PendingTargetEntity)
-                && EntityManager.HasComponent<PassiveActorPresence>(state.PendingTargetEntity))
+            if (systemState.EntityManager.Exists(state.PendingTargetEntity)
+                && systemState.EntityManager.HasComponent<PassiveActorPresence>(state.PendingTargetEntity))
             {
-                var actor = EntityManager.GetComponentData<PassiveActorPresence>(state.PendingTargetEntity);
+                var actor = systemState.EntityManager.GetComponentData<PassiveActorPresence>(state.PendingTargetEntity);
                 if (actor.CanTalk != 0)
                     return;
             }

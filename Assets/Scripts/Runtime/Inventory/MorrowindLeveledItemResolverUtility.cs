@@ -39,9 +39,6 @@ namespace VVardenfell.Runtime.Inventory
             if (s_PlayerQueryCreated && s_PlayerQueryWorld == world)
                 return s_PlayerQuery;
 
-            if (s_PlayerQueryCreated)
-                s_PlayerQuery.Dispose();
-
             s_PlayerQueryWorld = world;
             s_PlayerQuery = entityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),

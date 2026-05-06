@@ -1,3 +1,4 @@
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
@@ -11,24 +12,25 @@ namespace VVardenfell.Runtime.Streaming
     /// Tracks the player view cell for exterior streaming. Menu/bootstrap cameras must not
     /// drive world streaming, otherwise the real player start cell can unload before spawn.
     /// </summary>
+    [BurstCompile]
     [UpdateInGroup(typeof(CellStreamingSystemGroup), OrderFirst = true)]
-    public partial class CameraCellTrackerSystem : SystemBase
+    public partial struct CameraCellTrackerSystem : ISystem
     {
         private EntityQuery _configQuery;
         private EntityQuery _viewQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
             // WithAllRW: GetSingletonRW requires the query to declare read-write intent.
             _configQuery = SystemAPI.QueryBuilder().WithAllRW<StreamingConfig>().Build();
-            _viewQuery = GetEntityQuery(
+            _viewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerViewComponent>(),
                 ComponentType.ReadOnly<LocalToWorld>());
-            RequireForUpdate(_configQuery);
-            RequireForUpdate(_viewQuery);
+            systemState.RequireForUpdate(_configQuery);
+            systemState.RequireForUpdate(_viewQuery);
         }
-
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnUpdate(ref SystemState systemState)
         {
             var cfg = _configQuery.GetSingletonRW<StreamingConfig>();
             if (cfg.ValueRO.ExteriorStreamingPaused)
@@ -37,7 +39,7 @@ namespace VVardenfell.Runtime.Streaming
             if (_viewQuery.IsEmptyIgnoreFilter)
                 return;
 
-            EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
 
             float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             var p = _viewQuery.GetSingleton<LocalToWorld>().Position;

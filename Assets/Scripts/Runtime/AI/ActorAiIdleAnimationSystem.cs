@@ -8,27 +8,27 @@ namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateBefore(typeof(ActorAiPlannerSystem))]
-    public partial class ActorAiIdleAnimationSystem : SystemBase
+    public partial struct ActorAiIdleAnimationSystem : ISystem
     {
         const int AiIdleOverlayPriority = 20;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<ActorAiState>();
+            systemState.RequireForUpdate<ActorAiState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             foreach (var (aiStateRef, entity) in SystemAPI.Query<RefRW<ActorAiState>>().WithEntityAccess())
             {
                 ref var aiState = ref aiStateRef.ValueRW;
                 if (aiState.PendingIdleGroup != 0)
                 {
-                    StartIdle(entity, ref aiState);
+                    StartIdle(ref systemState, entity, ref aiState);
                     continue;
                 }
 
-                if (aiState.ActiveIdleGroupHash != 0UL && !IsIdleOverlayActive(entity, aiState.ActiveIdleGroupHash))
+                if (aiState.ActiveIdleGroupHash != 0UL && !IsIdleOverlayActive(ref systemState, entity, aiState.ActiveIdleGroupHash))
                 {
                     aiState.ActiveIdleGroupHash = 0UL;
                     if (aiState.Status == (byte)ActorAiPlannerStatus.Waiting && float.IsPositiveInfinity(aiState.WaitUntilTime))
@@ -40,15 +40,15 @@ namespace VVardenfell.Runtime.AI
             }
         }
 
-        void StartIdle(Entity entity, ref ActorAiState aiState)
+        void StartIdle(ref SystemState systemState, Entity entity, ref ActorAiState aiState)
         {
             if (!SystemAPI.HasSingleton<ActorAnimationBlobCatalog>())
                 throw new InvalidOperationException("[VVardenfell][AI] AiWander idle has no actor animation catalog.");
 
-            if (!EntityManager.HasComponent<ActorPresentation>(entity))
+            if (!systemState.EntityManager.HasComponent<ActorPresentation>(entity))
                 throw new InvalidOperationException("[VVardenfell][AI] AiWander idle target has no ActorPresentation.");
 
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
                 throw new InvalidOperationException("[VVardenfell][AI] AiWander idle target has no ActorAnimationOverlayState buffer.");
 
             var group = ResolveIdleGroup(aiState.PendingIdleGroup);
@@ -57,12 +57,12 @@ namespace VVardenfell.Runtime.AI
                 throw new InvalidOperationException("[VVardenfell][AI] AiWander idle has no actor animation catalog blob.");
 
             ref var catalog = ref catalogRef.Value;
-            var presentation = EntityManager.GetComponentData<ActorPresentation>(entity);
+            var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(entity);
             ulong groupHash = ActorAnimationGroupHash.Hash(group);
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var resolvedGroup))
                 throw new InvalidOperationException($"[VVardenfell][AI] AiWander idle group '{group}' is not present on target actor.");
 
-            var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
+            var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
             RemoveAiIdleOverlays(overlays);
 
             ActorAnimationPlaybackState playback = default;
@@ -80,12 +80,12 @@ namespace VVardenfell.Runtime.AI
             aiState.PendingIdleGroup = 0;
         }
 
-        bool IsIdleOverlayActive(Entity entity, ulong groupHash)
+        bool IsIdleOverlayActive(ref SystemState systemState, Entity entity, ulong groupHash)
         {
-            if (!EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
                 throw new InvalidOperationException("[VVardenfell][AI] AiWander idle target lost ActorAnimationOverlayState buffer.");
 
-            var overlays = EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
+            var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
             for (int i = 0; i < overlays.Length; i++)
             {
                 var overlay = overlays[i];

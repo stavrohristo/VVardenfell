@@ -596,9 +596,6 @@ namespace VVardenfell.Runtime.Pathfinding
             if (s_PathfindingQueryCreated && s_PathfindingQueryWorld == world)
                 return s_PathfindingQuery;
 
-            if (s_PathfindingQueryCreated)
-                s_PathfindingQuery.Dispose();
-
             s_PathfindingQueryWorld = world;
             s_PathfindingQuery = entityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PathGridPathfindingState>(),

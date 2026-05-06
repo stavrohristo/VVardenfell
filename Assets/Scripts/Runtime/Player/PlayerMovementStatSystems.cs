@@ -11,7 +11,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
-    public partial class ActorActiveMagicEffectSystem : SystemBase
+    public partial struct ActorActiveMagicEffectSystem : ISystem
     {
         const short BurdenEffectId = 7;
         const short FeatherEffectId = 8;
@@ -21,9 +21,9 @@ namespace VVardenfell.Runtime.Player
 
         EntityQuery _actorQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _actorQuery = GetEntityQuery(
+            _actorQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
                 ComponentType.ReadWrite<ActorActiveSpell>(),
@@ -31,11 +31,11 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
-            RequireForUpdate(_actorQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_actorQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             float dt = math.max(0f, SystemAPI.Time.DeltaTime);
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
@@ -46,17 +46,17 @@ namespace VVardenfell.Runtime.Player
                      SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>, RefRW<ActorVitalSet>>()
                          .WithEntityAccess())
             {
-                bool dirty = EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity);
+                bool dirty = systemState.EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity);
                 if (dirty)
                     RebuildPassiveSpellEffects(ref content, knownSpells, activeSpells, activeEffects);
                 InjectDebugActiveEffects(activeEffects);
-                bool changed = ApplyAndTickActiveEffects(ref content, entity, activeSpells, activeEffects, dt);
+                bool changed = ApplyAndTickActiveEffects(ref systemState, ref content, entity, activeSpells, activeEffects, dt);
 
                 if (dirty || changed)
                 {
                     modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
-                    PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, entity);
-                    EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
+                    PlayerEncumbranceDirtyUtility.MarkIfPlayer(systemState.EntityManager, entity);
+                    systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
                 }
             }
         }
@@ -211,11 +211,11 @@ namespace VVardenfell.Runtime.Player
             return modifiers;
         }
 
-        bool ApplyAndTickActiveEffects(ref RuntimeContentBlob content, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
+        bool ApplyAndTickActiveEffects(ref SystemState systemState, ref RuntimeContentBlob content, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
         {
             bool changed = false;
             for (int i = 0; i < activeEffects.Length; i++)
-                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(EntityManager, ref content, entity, activeSpells, activeEffects, i, deltaSeconds);
+                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(systemState.EntityManager, ref content, entity, activeSpells, activeEffects, i, deltaSeconds);
 
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
@@ -233,13 +233,13 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateAfter(typeof(ActorActiveMagicEffectSystem))]
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
-    public partial class PlayerActorEncumbranceSystem : SystemBase
+    public partial struct PlayerActorEncumbranceSystem : ISystem
     {
         EntityQuery _dirtyPlayerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _dirtyPlayerQuery = GetEntityQuery(
+            _dirtyPlayerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorAttributeSet>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>(),
@@ -247,11 +247,11 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<PlayerInventoryItem>(),
                 ComponentType.ReadOnly<PlayerEncumbranceDirty>());
 
-            RequireForUpdate(_dirtyPlayerQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_dirtyPlayerQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -275,7 +275,7 @@ namespace VVardenfell.Runtime.Player
                     derived.ValueRO.Encumbrance,
                     derived.ValueRO.CarryCapacity);
 
-                EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(entity, false);
+                systemState.EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(entity, false);
             }
         }
 
@@ -301,13 +301,13 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(PlayerActorEncumbranceSystem))]
-    public partial class PlayerActorFatigueSystem : SystemBase
+    public partial struct PlayerActorFatigueSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<ActorAttributeSet>(),
                 ComponentType.ReadOnly<ActorSkillSet>(),
@@ -318,11 +318,11 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<MorrowindMovementInput>(),
                 ComponentType.ReadOnly<MorrowindMovementState>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
@@ -364,13 +364,13 @@ namespace VVardenfell.Runtime.Player
 
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(PlayerActorFatigueSystem))]
-    public partial class PlayerActorDerivedMovementStatsSystem : SystemBase
+    public partial struct PlayerActorDerivedMovementStatsSystem : ISystem
     {
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<ActorAttributeSet>(),
                 ComponentType.ReadOnly<ActorSkillSet>(),
@@ -379,11 +379,11 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<ActorDerivedMovementStats>(),
                 ComponentType.ReadWrite<MorrowindMovementSpeed>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;

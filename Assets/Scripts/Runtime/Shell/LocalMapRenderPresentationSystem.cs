@@ -12,31 +12,31 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     [UpdateBefore(typeof(RuntimeHudShellPresentationSystem))]
-    public partial class LocalMapRenderPresentationSystem : SystemBase
+    public partial struct LocalMapRenderPresentationSystem : ISystem
     {
         EntityQuery _playerQuery;
         EntityQuery _tileQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>());
-            _tileQuery = GetEntityQuery(
+            _tileQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ExteriorMapDiscoveryTile>(),
                 ComponentType.ReadOnly<ExteriorMapDiscoverySample>());
 
-            RequireForUpdate<LocalMapDiscoveryState>();
-            RequireForUpdate<InteriorTransitionState>();
-            RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate<LocalMapDiscoveryState>();
+            systemState.RequireForUpdate<InteriorTransitionState>();
+            systemState.RequireForUpdate<LoadedCellsMap>();
         }
 
-        protected override void OnDestroy()
+        public void OnDestroy(ref SystemState systemState)
         {
             LocalMapPresentationCache.Dispose();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             if (_playerQuery.IsEmptyIgnoreFilter)
                 return;
@@ -69,7 +69,7 @@ namespace VVardenfell.Runtime.Shell
                     maskResolution);
             }
 
-            EntityManager.CompleteDependencyBeforeRO<Unity.Rendering.MaterialMeshInfo>();
+            systemState.EntityManager.CompleteDependencyBeforeRO<Unity.Rendering.MaterialMeshInfo>();
             LocalMapPresentationCache.RenderOnePendingTile(centerCell, renderResolution, loadedCells.Active);
         }
     }

@@ -7,14 +7,14 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    public partial class RuntimeShellStateSystem : SystemBase
+    public partial struct RuntimeShellStateSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeShellState>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             state.HudVisible = (byte)(BootstrapPresentationGate.BlocksGameplayInput ? 0 : 1);

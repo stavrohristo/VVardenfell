@@ -19,29 +19,29 @@ namespace VVardenfell.Runtime.AI
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorAiPlannerSystem))]
     [UpdateBefore(typeof(PathGridTraversalRequestSystem))]
-    public partial class ActorAiGreetingSystem : SystemBase
+    public partial struct ActorAiGreetingSystem : ISystem
     {
         const float InitialGreetingDelaySeconds = 0.5f;
 
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(
+            _playerQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<ActorVitalSet>());
 
-            RequireForUpdate(_playerQuery);
-            RequireForUpdate<ActorAiGreetingState>();
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
-            RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            RequireForUpdate<MorrowindPhysicsFrameState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate(_playerQuery);
+            systemState.RequireForUpdate<ActorAiGreetingState>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
+            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
@@ -51,15 +51,15 @@ namespace VVardenfell.Runtime.AI
 
             bool hasHelloDialogue = TryResolveHelloVoiceDialogue(ref contentBlob, out int helloDialogueIndex);
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var sayRequests = EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
+            var sayRequests = systemState.EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
             Entity player = _playerQuery.GetSingletonEntity();
-            var playerTransform = EntityManager.GetComponentData<LocalTransform>(player);
-            var playerVitals = EntityManager.GetComponentData<ActorVitalSet>(player);
+            var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(player);
+            var playerVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(player);
             Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             if (playerVitals.CurrentHealth <= 0f)
             {
-                ResetAllGreetingsAndRelease();
+                ResetAllGreetingsAndRelease(ref systemState);
                 return;
             }
 
@@ -79,10 +79,10 @@ namespace VVardenfell.Runtime.AI
                          .WithEntityAccess())
             {
                 ref var greeting = ref greetingRef.ValueRW;
-                if (vitals.ValueRO.CurrentHealth <= 0f || IsCombatBlocked(entity) || !CanPassiveGreetCurrentPackage(entity))
+                if (vitals.ValueRO.CurrentHealth <= 0f || IsCombatBlocked(ref systemState, entity) || !CanPassiveGreetCurrentPackage(ref systemState, entity))
                 {
                     if (greeting.Phase == (byte)ActorAiGreetingPhase.InProgress)
-                        ReleaseGreetingInterrupt(entity);
+                        ReleaseGreetingInterrupt(ref systemState, entity);
                     greeting = default;
                     continue;
                 }
@@ -93,7 +93,7 @@ namespace VVardenfell.Runtime.AI
                 if (greeting.Phase != (byte)ActorAiGreetingPhase.None && distanceSq >= resetDistanceSq)
                 {
                     if (greeting.Phase == (byte)ActorAiGreetingPhase.InProgress)
-                        ReleaseGreetingInterrupt(entity);
+                        ReleaseGreetingInterrupt(ref systemState, entity);
                     greeting = default;
                     continue;
                 }
@@ -102,12 +102,12 @@ namespace VVardenfell.Runtime.AI
                 {
                     greeting.Timer += elapsedSeconds;
                     FacePlayer(ref transformRef.ValueRW, playerPosition);
-                    InterruptMovementForGreeting(entity, forceIdle: true);
+                    InterruptMovementForGreeting(ref systemState, entity, forceIdle: true);
                     if (greeting.Timer >= math.max(0f, greetDuration))
                     {
                         greeting.Phase = (byte)ActorAiGreetingPhase.Done;
                         greeting.Timer = 0f;
-                        ReleaseGreetingInterrupt(entity);
+                        ReleaseGreetingInterrupt(ref systemState, entity);
                     }
 
                     continue;
@@ -124,7 +124,7 @@ namespace VVardenfell.Runtime.AI
                 }
 
                 if (!ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
-                        EntityManager,
+                        systemState.EntityManager,
                         deferredPhysicsQueueEntity,
                         fixedTick,
                         entity,
@@ -149,7 +149,7 @@ namespace VVardenfell.Runtime.AI
 
                 if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
                         ref contentBlob,
-                        EntityManager,
+                        systemState.EntityManager,
                         entity,
                         source.ValueRO.Definition,
                         helloDialogueIndex,
@@ -191,35 +191,35 @@ namespace VVardenfell.Runtime.AI
                 greeting.Phase = (byte)ActorAiGreetingPhase.InProgress;
                 greeting.Timer = 0f;
                 FacePlayer(ref transformRef.ValueRW, playerPosition);
-                InterruptMovementForGreeting(entity, forceIdle: true);
+                InterruptMovementForGreeting(ref systemState, entity, forceIdle: true);
             }
         }
 
-        void ResetAllGreetingsAndRelease()
+        void ResetAllGreetingsAndRelease(ref SystemState systemState)
         {
             foreach (var (greeting, entity) in SystemAPI.Query<RefRW<ActorAiGreetingState>>().WithEntityAccess())
             {
                 if (greeting.ValueRO.Phase == (byte)ActorAiGreetingPhase.InProgress)
-                    ReleaseGreetingInterrupt(entity);
+                    ReleaseGreetingInterrupt(ref systemState, entity);
                 greeting.ValueRW = default;
             }
         }
 
-        bool IsCombatBlocked(Entity actor)
+        bool IsCombatBlocked(ref SystemState systemState, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorCombatTargetState>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
                 return false;
 
-            return EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
+            return systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
         }
 
-        bool CanPassiveGreetCurrentPackage(Entity actor)
+        bool CanPassiveGreetCurrentPackage(ref SystemState systemState, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorAiState>(actor) || !EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorAiState>(actor) || !systemState.EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
                 return true;
 
-            var aiState = EntityManager.GetComponentData<ActorAiState>(actor);
-            var packages = EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
+            var aiState = systemState.EntityManager.GetComponentData<ActorAiState>(actor);
+            var packages = systemState.EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
             if ((uint)aiState.CurrentPackageIndex >= (uint)packages.Length)
                 return true;
 
@@ -228,12 +228,12 @@ namespace VVardenfell.Runtime.AI
                    || packageType == (byte)ActorAiRuntimePackageType.Travel;
         }
 
-        void InterruptMovementForGreeting(Entity actor, bool forceIdle)
+        void InterruptMovementForGreeting(ref SystemState systemState, Entity actor, bool forceIdle)
         {
-            if (EntityManager.HasComponent<ActorAiState>(actor) && EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
+            if (systemState.EntityManager.HasComponent<ActorAiState>(actor) && systemState.EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
             {
-                var packages = EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
-                var aiState = EntityManager.GetComponentData<ActorAiState>(actor);
+                var packages = systemState.EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
+                var aiState = systemState.EntityManager.GetComponentData<ActorAiState>(actor);
                 if ((uint)aiState.CurrentPackageIndex < (uint)packages.Length)
                 {
                     byte packageType = packages[aiState.CurrentPackageIndex].Type;
@@ -248,28 +248,28 @@ namespace VVardenfell.Runtime.AI
                     aiState.PendingIdleGroup = 2;
                 aiState.WaitUntilTime = float.PositiveInfinity;
                 aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
-                EntityManager.SetComponentData(actor, aiState);
+                systemState.EntityManager.SetComponentData(actor, aiState);
             }
 
-            if (EntityManager.HasComponent<PathGridTraversalState>(actor))
-                EntityManager.SetComponentData(actor, new PathGridTraversalState());
-            if (EntityManager.HasComponent<PathGridTraversalPendingRequest>(actor))
+            if (systemState.EntityManager.HasComponent<PathGridTraversalState>(actor))
+                systemState.EntityManager.SetComponentData(actor, new PathGridTraversalState());
+            if (systemState.EntityManager.HasComponent<PathGridTraversalPendingRequest>(actor))
             {
-                EntityManager.SetComponentData(actor, default(PathGridTraversalPendingRequest));
-                EntityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(actor, false);
+                systemState.EntityManager.SetComponentData(actor, default(PathGridTraversalPendingRequest));
+                systemState.EntityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(actor, false);
             }
-            if (EntityManager.HasComponent<PathGridTraversalAwaitingResult>(actor))
-                EntityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(actor, false);
-            if (EntityManager.HasBuffer<PathGridTraversalNode>(actor))
-                EntityManager.GetBuffer<PathGridTraversalNode>(actor).Clear();
+            if (systemState.EntityManager.HasComponent<PathGridTraversalAwaitingResult>(actor))
+                systemState.EntityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(actor, false);
+            if (systemState.EntityManager.HasBuffer<PathGridTraversalNode>(actor))
+                systemState.EntityManager.GetBuffer<PathGridTraversalNode>(actor).Clear();
         }
 
-        void ReleaseGreetingInterrupt(Entity actor)
+        void ReleaseGreetingInterrupt(ref SystemState systemState, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorAiState>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorAiState>(actor))
                 return;
 
-            var aiState = EntityManager.GetComponentData<ActorAiState>(actor);
+            var aiState = systemState.EntityManager.GetComponentData<ActorAiState>(actor);
             if (aiState.Status == (byte)ActorAiPlannerStatus.Waiting && float.IsPositiveInfinity(aiState.WaitUntilTime))
             {
                 aiState.WaitUntilTime = 0f;
@@ -277,7 +277,7 @@ namespace VVardenfell.Runtime.AI
             }
 
             aiState.PendingIdleGroup = 0;
-            EntityManager.SetComponentData(actor, aiState);
+            systemState.EntityManager.SetComponentData(actor, aiState);
         }
 
         static void FacePlayer(ref LocalTransform actorTransform, float3 playerPosition)

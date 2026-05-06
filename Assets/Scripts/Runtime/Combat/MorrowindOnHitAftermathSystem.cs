@@ -19,7 +19,7 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDamageApplySystem))]
     [UpdateBefore(typeof(MorrowindHitAftermathStateSystem))]
-    public partial class MorrowindOnHitAftermathSystem : SystemBase
+    public partial struct MorrowindOnHitAftermathSystem : ISystem
     {
         const string HitVoiceDialogueId = "hit";
         const float DamageEpsilon = 0.001f;
@@ -28,17 +28,17 @@ namespace VVardenfell.Runtime.Combat
 
         EntityQuery _playerQuery;
 
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<MorrowindCombatRuntimeState>();
-            RequireForUpdate<RuntimeShellState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            _playerQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            systemState.RequireForUpdate<MorrowindDamageAppliedEvent>();
+            systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
+            systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState systemState)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -51,19 +51,19 @@ namespace VVardenfell.Runtime.Combat
 
             bool hasHitVoiceDialogue = TryResolveHitVoiceDialogue(ref content, out int hitDialogueIndex);
             Entity scriptRuntimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            if (!EntityManager.HasBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity))
+            if (!systemState.EntityManager.HasBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindCombatHitVoiceSayRequest buffer.");
-            if (!EntityManager.HasBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity))
+            if (!systemState.EntityManager.HasBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindCombatHitVoiceResolveRequest buffer.");
-            if (!EntityManager.HasBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity))
+            if (!systemState.EntityManager.HasBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no MorrowindScriptActiveSay buffer.");
-            if (!EntityManager.HasBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity))
+            if (!systemState.EntityManager.HasBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Script runtime has no ActorForceGreetingRequest buffer.");
 
-            var hitVoiceRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity);
-            var hitVoiceResolveRequests = EntityManager.GetBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity);
-            var activeSays = EntityManager.GetBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity, true);
-            var forceGreetingRequests = EntityManager.GetBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity);
+            var hitVoiceRequests = systemState.EntityManager.GetBuffer<MorrowindCombatHitVoiceSayRequest>(scriptRuntimeEntity);
+            var hitVoiceResolveRequests = systemState.EntityManager.GetBuffer<MorrowindCombatHitVoiceResolveRequest>(scriptRuntimeEntity);
+            var activeSays = systemState.EntityManager.GetBuffer<MorrowindScriptActiveSay>(scriptRuntimeEntity, true);
+            var forceGreetingRequests = systemState.EntityManager.GetBuffer<ActorForceGreetingRequest>(scriptRuntimeEntity);
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             uint randomState = combatState.RandomState;
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -72,9 +72,9 @@ namespace VVardenfell.Runtime.Combat
 
             foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
             {
-                ApplyHitMemory(damage.ValueRO);
+                ApplyHitMemory(ref systemState, damage.ValueRO);
 
-                bool setOnPcHitMe = ApplySocialHitAftermath(
+                bool setOnPcHitMe = ApplySocialHitAftermath(ref systemState, 
                     ref content,
                     damage.ValueRO,
                     activeSays,
@@ -87,12 +87,12 @@ namespace VVardenfell.Runtime.Combat
                     combatStartTargets,
                     ref randomState);
 
-                if (setOnPcHitMe && IsPlayerAttacker(damage.ValueRO.Attacker))
-                    SetOnPcHitMeIfDeclared(ref content, damage.ValueRO.Target);
+                if (setOnPcHitMe && IsPlayerAttacker(ref systemState, damage.ValueRO.Attacker))
+                    SetOnPcHitMeIfDeclared(ref systemState, ref content, damage.ValueRO.Target);
 
                 if (damage.ValueRO.TargetVital == MorrowindDamageTargetVital.Health
                     && damage.ValueRO.Amount > DamageEpsilon
-                    && IsPlayer(damage.ValueRO.Target))
+                    && IsPlayer(ref systemState, damage.ValueRO.Target))
                 {
                     RuntimeShellStateUtility.ActivateHitOverlay(ref shell);
                 }
@@ -100,28 +100,28 @@ namespace VVardenfell.Runtime.Combat
                 if (damage.ValueRO.Amount <= DamageEpsilon || damage.ValueRO.Attacker == Entity.Null)
                     continue;
 
-                ApplyMurderAftermath(ref content, damage.ValueRO);
+                ApplyMurderAftermath(ref systemState, ref content, damage.ValueRO);
 
-                if (!IsNpcTarget(ref content, damage.ValueRO.Target, out var targetSource))
+                if (!IsNpcTarget(ref systemState, ref content, damage.ValueRO.Target, out var targetSource))
                     continue;
 
-                uint targetRef = PlacedRefIdOrZero(damage.ValueRO.Target);
+                uint targetRef = PlacedRefIdOrZero(ref systemState, damage.ValueRO.Target);
                 bool actorSayingOrPending = IsActorSayingOrPending(activeSays, hitVoiceRequests, hitVoiceResolveRequests, damage.ValueRO.Target, targetRef);
-                bool shouldQueueHitVoice = hasHitVoiceDialogue && !actorSayingOrPending && ShouldQueueHitVoice(damage.ValueRO, voiceHitOdds, ref randomState);
+                bool shouldQueueHitVoice = hasHitVoiceDialogue && !actorSayingOrPending && ShouldQueueHitVoice(ref systemState, damage.ValueRO, voiceHitOdds, ref randomState);
 
                 if (shouldQueueHitVoice)
                 {
-                    QueueHitVoiceResolve(hitDialogueIndex, targetSource.Definition, damage.ValueRO.Target, hitVoiceResolveRequests, randomState);
+                    QueueHitVoiceResolve(ref systemState, hitDialogueIndex, targetSource.Definition, damage.ValueRO.Target, hitVoiceResolveRequests, randomState);
                 }
             }
 
             for (int i = 0; i < combatStartActors.Length; i++)
-                StartCombatAfterHit(ref content, combatStartActors[i], combatStartTargets[i]);
+                StartCombatAfterHit(ref systemState, ref content, combatStartActors[i], combatStartTargets[i]);
 
             combatState.RandomState = randomState == 0u ? 1u : randomState;
         }
 
-        bool ApplySocialHitAftermath(
+        bool ApplySocialHitAftermath(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             in MorrowindDamageAppliedEvent damage,
             DynamicBuffer<MorrowindScriptActiveSay> activeSays,
@@ -135,31 +135,31 @@ namespace VVardenfell.Runtime.Combat
             ref uint randomState)
         {
             if (damage.Attacker == Entity.Null
-                || !IsActorEntity(damage.Attacker)
+                || !IsActorEntity(ref systemState, damage.Attacker)
                 || damage.Target == Entity.Null
-                || !EntityManager.Exists(damage.Target)
-                || !EntityManager.HasComponent<ActorSpawnSource>(damage.Target)
-                || IsInCombatWith(damage.Target, damage.Attacker))
+                || !systemState.EntityManager.Exists(damage.Target)
+                || !systemState.EntityManager.HasComponent<ActorSpawnSource>(damage.Target)
+                || IsInCombatWith(ref systemState, damage.Target, damage.Attacker))
             {
                 return true;
             }
 
-            if (IsFriendlyHit(damage, out bool complain))
+            if (IsFriendlyHit(ref systemState, damage, out bool complain))
             {
-                if (complain && hasHitVoiceDialogue && IsNpcTarget(ref content, damage.Target, out var friendlyTargetSource))
+                if (complain && hasHitVoiceDialogue && IsNpcTarget(ref systemState, ref content, damage.Target, out var friendlyTargetSource))
                 {
-                    uint targetRef = PlacedRefIdOrZero(damage.Target);
+                    uint targetRef = PlacedRefIdOrZero(ref systemState, damage.Target);
                     if (!IsActorSayingOrPending(activeSays, hitVoiceRequests, hitVoiceResolveRequests, damage.Target, targetRef))
-                        QueueHitVoiceResolve(hitDialogueIndex, friendlyTargetSource.Definition, damage.Target, hitVoiceResolveRequests, randomState);
+                        QueueHitVoiceResolve(ref systemState, hitDialogueIndex, friendlyTargetSource.Definition, damage.Target, hitVoiceResolveRequests, randomState);
                 }
 
                 return false;
             }
 
-            if (CanCommitAssaultCrime(ref content, damage.Target, damage.Attacker))
-                ApplyAssaultCrime(ref content, damage.Target, damage.Attacker, forceGreetingRequests);
+            if (CanCommitAssaultCrime(ref systemState, ref content, damage.Target, damage.Attacker))
+                ApplyAssaultCrime(ref systemState, ref content, damage.Target, damage.Attacker, forceGreetingRequests);
 
-            if (ShouldStartCombatAfterHit(ref content, damage.Target, damage.Attacker))
+            if (ShouldStartCombatAfterHit(ref systemState, ref content, damage.Target, damage.Attacker))
             {
                 combatStartActors.Add(damage.Target);
                 combatStartTargets.Add(damage.Attacker);
@@ -168,21 +168,21 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool IsFriendlyHit(in MorrowindDamageAppliedEvent damage, out bool complain)
+        bool IsFriendlyHit(ref SystemState systemState, in MorrowindDamageAppliedEvent damage, out bool complain)
         {
             complain = false;
-            if (!IsPlayer(damage.Attacker) || !IsPlayerFollower(damage.Target))
+            if (!IsPlayer(ref systemState, damage.Attacker) || !IsPlayerFollower(ref systemState, damage.Target))
                 return false;
 
-            if (!EntityManager.HasComponent<ActorFriendlyHitState>(damage.Target))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(damage.Target)} has no ActorFriendlyHitState.");
+            if (!systemState.EntityManager.HasComponent<ActorFriendlyHitState>(damage.Target))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, damage.Target)} has no ActorFriendlyHitState.");
 
-            if (IsInAnyCombat(damage.Target))
+            if (IsInAnyCombat(ref systemState, damage.Target))
                 return true;
 
-            var friendly = EntityManager.GetComponentData<ActorFriendlyHitState>(damage.Target);
+            var friendly = systemState.EntityManager.GetComponentData<ActorFriendlyHitState>(damage.Target);
             friendly.Count++;
-            EntityManager.SetComponentData(damage.Target, friendly);
+            systemState.EntityManager.SetComponentData(damage.Target, friendly);
 
             if (friendly.Count >= FriendlyHitForgivenessLimit)
                 return false;
@@ -192,11 +192,11 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
-        bool IsPlayerFollower(Entity actor)
+        bool IsPlayerFollower(ref SystemState systemState, Entity actor)
         {
             if (actor == Entity.Null
-                || !EntityManager.Exists(actor)
-                || !EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
+                || !systemState.EntityManager.Exists(actor)
+                || !systemState.EntityManager.HasBuffer<ActorAiPackageRuntime>(actor))
             {
                 return false;
             }
@@ -205,7 +205,7 @@ namespace VVardenfell.Runtime.Combat
             if (player == Entity.Null)
                 return false;
 
-            var packages = EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
+            var packages = systemState.EntityManager.GetBuffer<ActorAiPackageRuntime>(actor, true);
             for (int i = 0; i < packages.Length; i++)
             {
                 byte type = packages[i].Type;
@@ -219,30 +219,30 @@ namespace VVardenfell.Runtime.Combat
             return false;
         }
 
-        bool CanCommitAssaultCrime(ref RuntimeContentBlob content, Entity target, Entity attacker)
+        bool CanCommitAssaultCrime(ref SystemState systemState, ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
-            if (!IsPlayer(attacker) || !IsNpcTarget(ref content, target, out _))
+            if (!IsPlayer(ref systemState, attacker) || !IsNpcTarget(ref systemState, ref content, target, out _))
                 return false;
 
-            RequireSocialCrimeComposition(target);
-            if (IsAggressiveTo(target, attacker) || IsInAnyCombat(target))
+            RequireSocialCrimeComposition(ref systemState, target);
+            if (IsAggressiveTo(ref systemState, target, attacker) || IsInAnyCombat(ref systemState, target))
                 return false;
 
-            var effects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
+            var effects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
             return MorrowindMeleeCombatMechanics.SumEffectMagnitude(effects, VampirismEffectId) <= 0f;
         }
 
-        void ApplyAssaultCrime(ref RuntimeContentBlob content, Entity target, Entity attacker, DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests)
+        void ApplyAssaultCrime(ref SystemState systemState, ref RuntimeContentBlob content, Entity target, Entity attacker, DynamicBuffer<ActorForceGreetingRequest> forceGreetingRequests)
         {
-            if (IsPlayerFollower(target))
+            if (IsPlayerFollower(ref systemState, target))
                 return;
 
-            var settings = EntityManager.GetComponentData<ActorAiSettingsState>(target);
-            if (!IsNpcTarget(ref content, target, out var source))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(target)} is not an NPC.");
+            var settings = systemState.EntityManager.GetComponentData<ActorAiSettingsState>(target);
+            if (!IsNpcTarget(ref systemState, ref content, target, out var source))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(ref systemState, target)} is not an NPC.");
 
             bool isGuard = IsGuardNpc(ref content, source.Definition);
-            bool reported = TryFindCrimeReporter(ref content, attacker, target, out Entity reportingGuard);
+            bool reported = TryFindCrimeReporter(ref systemState, ref content, attacker, target, out Entity reportingGuard);
             bool setCrimeId = reported;
 
             int dispositionModifier = 0;
@@ -263,7 +263,7 @@ namespace VVardenfell.Runtime.Combat
 
             if (dispositionModifier != 0)
             {
-                ApplyAssaultDispositionPenalty(target, dispositionModifier);
+                ApplyAssaultDispositionPenalty(ref systemState, target, dispositionModifier);
                 setCrimeId = true;
             }
 
@@ -271,25 +271,25 @@ namespace VVardenfell.Runtime.Combat
                 return;
 
             int bounty = reported ? RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iCrimeAttack) : 0;
-            int crimeId = AddPlayerBountyAndAdvanceCrimeId(bounty);
-            SetActorCrimeId(target, crimeId);
+            int crimeId = AddPlayerBountyAndAdvanceCrimeId(ref systemState, bounty);
+            SetActorCrimeId(ref systemState, target, crimeId);
 
             if (reported)
             {
-                MarkCrimeWitnesses(ref content, attacker, target, crimeId);
+                MarkCrimeWitnesses(ref systemState, ref content, attacker, target, crimeId);
                 if (reportingGuard != Entity.Null)
-                    QueueForceGreeting(forceGreetingRequests, reportingGuard);
+                    QueueForceGreeting(ref systemState, forceGreetingRequests, reportingGuard);
             }
         }
 
-        void ApplyAssaultDispositionPenalty(Entity target, int penalty)
+        void ApplyAssaultDispositionPenalty(ref SystemState systemState, Entity target, int penalty)
         {
-            if (!EntityManager.HasComponent<ActorDispositionState>(target))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(target)} has no ActorDispositionState.");
+            if (!systemState.EntityManager.HasComponent<ActorDispositionState>(target))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Assault target ref={PlacedRefIdOrZero(ref systemState, target)} has no ActorDispositionState.");
 
-            var disposition = EntityManager.GetComponentData<ActorDispositionState>(target);
+            var disposition = systemState.EntityManager.GetComponentData<ActorDispositionState>(target);
             disposition.BaseDisposition = ClampInt(disposition.BaseDisposition + penalty, 0, 100);
-            EntityManager.SetComponentData(target, disposition);
+            systemState.EntityManager.SetComponentData(target, disposition);
         }
 
         bool IsGuardNpc(ref RuntimeContentBlob content, ActorDefHandle actorHandle)
@@ -298,15 +298,15 @@ namespace VVardenfell.Runtime.Combat
             return actor.ClassIdHash == RuntimeContentKnownHashes.guard;
         }
 
-        bool TryFindCrimeReporter(ref RuntimeContentBlob content, Entity player, Entity victim, out Entity guard)
+        bool TryFindCrimeReporter(ref SystemState systemState, ref RuntimeContentBlob content, Entity player, Entity victim, out Entity guard)
         {
             guard = Entity.Null;
-            if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
+            if (player == Entity.Null || !systemState.EntityManager.Exists(player) || !systemState.EntityManager.HasComponent<LocalTransform>(player))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Assault crime player has no LocalTransform.");
 
             float radius = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fAlarmRadius) * WorldScale.MwUnitsToMeters;
             float radiusSq = radius * radius;
-            float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
+            float3 playerPosition = systemState.EntityManager.GetComponentData<LocalTransform>(player).Position;
             float bestDistanceSq = float.PositiveInfinity;
             bool reported = false;
 
@@ -323,7 +323,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 if (!IsNpcActor(ref content, source.ValueRO.Definition))
                     continue;
-                if (!CanReportCrime(entity, victim, vitals.ValueRO))
+                if (!CanReportCrime(ref systemState, entity, victim, vitals.ValueRO))
                     continue;
 
                 float distanceSq = math.lengthsq(transform.ValueRO.Position - playerPosition);
@@ -343,14 +343,14 @@ namespace VVardenfell.Runtime.Combat
             return reported;
         }
 
-        void MarkCrimeWitnesses(ref RuntimeContentBlob content, Entity player, Entity victim, int crimeId)
+        void MarkCrimeWitnesses(ref SystemState systemState, ref RuntimeContentBlob content, Entity player, Entity victim, int crimeId)
         {
-            if (player == Entity.Null || !EntityManager.Exists(player) || !EntityManager.HasComponent<LocalTransform>(player))
+            if (player == Entity.Null || !systemState.EntityManager.Exists(player) || !systemState.EntityManager.HasComponent<LocalTransform>(player))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Crime witness scan player has no LocalTransform.");
 
             float radius = RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fAlarmRadius) * WorldScale.MwUnitsToMeters;
             float radiusSq = radius * radius;
-            float3 playerPosition = EntityManager.GetComponentData<LocalTransform>(player).Position;
+            float3 playerPosition = systemState.EntityManager.GetComponentData<LocalTransform>(player).Position;
 
             foreach (var (source, settings, vitals, transform, entity) in
                      SystemAPI.Query<
@@ -361,7 +361,7 @@ namespace VVardenfell.Runtime.Combat
                          .WithNone<PlayerTag>()
                          .WithEntityAccess())
             {
-                if (!CanReportCrime(entity, victim, vitals.ValueRO))
+                if (!CanReportCrime(ref systemState, entity, victim, vitals.ValueRO))
                     continue;
                 if (!IsNpcActor(ref content, source.ValueRO.Definition))
                     continue;
@@ -376,36 +376,36 @@ namespace VVardenfell.Runtime.Combat
                 if (!isReporter && !isVictim)
                     continue;
 
-                SetActorCrimeId(entity, crimeId);
+                SetActorCrimeId(ref systemState, entity, crimeId);
                 if (isGuard)
-                    SetActorAlarmed(entity);
+                    SetActorAlarmed(ref systemState, entity);
             }
         }
 
-        bool CanReportCrime(Entity actor, Entity victim, in ActorVitalSet vitals)
+        bool CanReportCrime(ref SystemState systemState, Entity actor, Entity victim, in ActorVitalSet vitals)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 return false;
-            if (EntityManager.HasComponent<PlayerTag>(actor))
+            if (systemState.EntityManager.HasComponent<PlayerTag>(actor))
                 return false;
-            if (!EntityManager.HasComponent<ActorSpawnSource>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(actor))
                 return false;
             if (vitals.CurrentHealth <= 0f)
                 return false;
-            if (EntityManager.HasComponent<PlacedRefRuntimeState>(actor)
-                && EntityManager.GetComponentData<PlacedRefRuntimeState>(actor).Disabled != 0)
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(actor)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(actor).Disabled != 0)
             {
                 return false;
             }
-            if (EntityManager.HasComponent<ActorHitAftermathState>(actor))
+            if (systemState.EntityManager.HasComponent<ActorHitAftermathState>(actor))
             {
-                var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(actor);
+                var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(actor);
                 if (aftermath.Dead != 0 || aftermath.KnockedDown != 0 || aftermath.KnockedOut != 0)
                     return false;
             }
-            if (IsInCombatWith(actor, victim))
+            if (IsInCombatWith(ref systemState, actor, victim))
                 return false;
-            if (IsPlayerFollower(actor))
+            if (IsPlayerFollower(ref systemState, actor))
                 return false;
 
             return true;
@@ -420,9 +420,9 @@ namespace VVardenfell.Runtime.Combat
             return actor.Kind == ActorDefKind.Npc;
         }
 
-        void QueueForceGreeting(DynamicBuffer<ActorForceGreetingRequest> requests, Entity guard)
+        void QueueForceGreeting(ref SystemState systemState, DynamicBuffer<ActorForceGreetingRequest> requests, Entity guard)
         {
-            uint placedRefId = PlacedRefIdOrZero(guard);
+            uint placedRefId = PlacedRefIdOrZero(ref systemState, guard);
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
@@ -437,145 +437,145 @@ namespace VVardenfell.Runtime.Combat
             });
         }
 
-        bool ShouldStartCombatAfterHit(ref RuntimeContentBlob content, Entity target, Entity attacker)
+        bool ShouldStartCombatAfterHit(ref SystemState systemState, ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
             if (target == Entity.Null
                 || attacker == Entity.Null
-                || !EntityManager.Exists(target)
-                || !EntityManager.Exists(attacker)
-                || IsInCombatWith(target, attacker))
+                || !systemState.EntityManager.Exists(target)
+                || !systemState.EntityManager.Exists(attacker)
+                || IsInCombatWith(ref systemState, target, attacker))
             {
                 return false;
             }
 
-            if (!EntityManager.HasComponent<ActorVitalSet>(target)
-                || EntityManager.GetComponentData<ActorVitalSet>(target).CurrentHealth <= 0f)
+            if (!systemState.EntityManager.HasComponent<ActorVitalSet>(target)
+                || systemState.EntityManager.GetComponentData<ActorVitalSet>(target).CurrentHealth <= 0f)
             {
                 return false;
             }
 
-            if (!IsPlayer(attacker))
-                return IsInCombatWith(attacker, target);
+            if (!IsPlayer(ref systemState, attacker))
+                return IsInCombatWith(ref systemState, attacker, target);
 
-            if (!EntityManager.HasComponent<ActorAiSettingsState>(target))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Combat target ref={PlacedRefIdOrZero(target)} has no ActorAiSettingsState.");
+            if (!systemState.EntityManager.HasComponent<ActorAiSettingsState>(target))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Combat target ref={PlacedRefIdOrZero(ref systemState, target)} has no ActorAiSettingsState.");
 
-            var settings = EntityManager.GetComponentData<ActorAiSettingsState>(target);
-            return settings.Fight != 0 || !DeclaresOnPcHitMeInteger(ref content, target);
+            var settings = systemState.EntityManager.GetComponentData<ActorAiSettingsState>(target);
+            return settings.Fight != 0 || !DeclaresOnPcHitMeInteger(ref systemState, ref content, target);
         }
 
-        void StartCombatAfterHit(ref RuntimeContentBlob content, Entity target, Entity attacker)
+        void StartCombatAfterHit(ref SystemState systemState, ref RuntimeContentBlob content, Entity target, Entity attacker)
         {
-            uint targetPlacedRefId = PlacedRefIdOrZero(target);
+            uint targetPlacedRefId = PlacedRefIdOrZero(ref systemState, target);
             if (!MorrowindCombatTargetUtility.TryStartCombat(
                     ref content,
-                    EntityManager,
+                    systemState.EntityManager,
                     target,
                     targetPlacedRefId,
                     attacker,
-                    PlacedRefIdOrZero(attacker)))
+                    PlacedRefIdOrZero(ref systemState, attacker)))
             {
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Failed to start combat for target ref={targetPlacedRefId}.");
             }
         }
 
-        void ApplyMurderAftermath(ref RuntimeContentBlob content, in MorrowindDamageAppliedEvent damage)
+        void ApplyMurderAftermath(ref SystemState systemState, ref RuntimeContentBlob content, in MorrowindDamageAppliedEvent damage)
         {
-            if (!IsPlayer(damage.Attacker)
+            if (!IsPlayer(ref systemState, damage.Attacker)
                 || damage.TargetVital != MorrowindDamageTargetVital.Health
                 || damage.Amount <= DamageEpsilon
                 || damage.Target == Entity.Null
-                || !EntityManager.Exists(damage.Target)
-                || !EntityManager.HasComponent<ActorVitalSet>(damage.Target)
-                || EntityManager.GetComponentData<ActorVitalSet>(damage.Target).CurrentHealth > 0f
-                || !EntityManager.HasComponent<ActorHitAftermathState>(damage.Target)
-                || EntityManager.GetComponentData<ActorHitAftermathState>(damage.Target).Dead != 0
-                || !IsNpcTarget(ref content, damage.Target, out _))
+                || !systemState.EntityManager.Exists(damage.Target)
+                || !systemState.EntityManager.HasComponent<ActorVitalSet>(damage.Target)
+                || systemState.EntityManager.GetComponentData<ActorVitalSet>(damage.Target).CurrentHealth > 0f
+                || !systemState.EntityManager.HasComponent<ActorHitAftermathState>(damage.Target)
+                || systemState.EntityManager.GetComponentData<ActorHitAftermathState>(damage.Target).Dead != 0
+                || !IsNpcTarget(ref systemState, ref content, damage.Target, out _))
             {
                 return;
             }
 
-            RequireSocialCrimeComposition(damage.Target);
-            var crime = EntityManager.GetComponentData<ActorCrimeState>(damage.Target);
+            RequireSocialCrimeComposition(ref systemState, damage.Target);
+            var crime = systemState.EntityManager.GetComponentData<ActorCrimeState>(damage.Target);
             if (crime.CrimeId < 0)
                 return;
 
             int bounty = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iCrimeKilling);
-            int crimeId = AddPlayerBountyAndAdvanceCrimeId(bounty);
-            SetActorCrimeId(damage.Target, crimeId);
+            int crimeId = AddPlayerBountyAndAdvanceCrimeId(ref systemState, bounty);
+            SetActorCrimeId(ref systemState, damage.Target, crimeId);
 
-            var eventState = EntityManager.GetComponentData<ActorScriptEventState>(damage.Target);
+            var eventState = systemState.EntityManager.GetComponentData<ActorScriptEventState>(damage.Target);
             eventState.Murdered = 1;
-            EntityManager.SetComponentData(damage.Target, eventState);
+            systemState.EntityManager.SetComponentData(damage.Target, eventState);
         }
 
-        void ApplyHitMemory(in MorrowindDamageAppliedEvent damage)
+        void ApplyHitMemory(ref SystemState systemState, in MorrowindDamageAppliedEvent damage)
         {
-            Entity target = RequireLiveActorTarget(damage.Target, "target");
-            var targetState = EntityManager.GetComponentData<ActorScriptEventState>(target);
+            Entity target = RequireLiveActorTarget(ref systemState, damage.Target, "target");
+            var targetState = systemState.EntityManager.GetComponentData<ActorScriptEventState>(target);
 
             if (damage.SourceKind == MorrowindDamageSourceKind.Weapon)
             {
                 if (!damage.SourceContent.IsValid || damage.SourceContent.Kind != ContentReferenceKind.Item)
-                    throw new InvalidOperationException($"[VVardenfell][OnHit] Weapon hit target ref={PlacedRefIdOrZero(target)} has invalid source content.");
+                    throw new InvalidOperationException($"[VVardenfell][OnHit] Weapon hit target ref={PlacedRefIdOrZero(ref systemState, target)} has invalid source content.");
 
                 targetState.LastHitAttemptObject = damage.SourceContent;
                 if (damage.Amount > DamageEpsilon)
                     targetState.LastHitObject = damage.SourceContent;
             }
 
-            if (IsActorEntity(damage.Attacker))
+            if (IsActorEntity(ref systemState, damage.Attacker))
             {
-                if (!IsInCombatWith(target, damage.Attacker) && targetState.Attacked == 0)
+                if (!IsInCombatWith(ref systemState, target, damage.Attacker) && targetState.Attacked == 0)
                     targetState.Attacked = 1;
 
-                if (ShouldStoreHitAttemptActors(damage.Attacker, target))
+                if (ShouldStoreHitAttemptActors(ref systemState, damage.Attacker, target))
                 {
                     if (targetState.LastHitAttemptActor == Entity.Null)
                     {
                         targetState.LastHitAttemptActor = damage.Attacker;
-                        targetState.LastHitAttemptActorPlacedRefId = PlacedRefIdOrZero(damage.Attacker);
+                        targetState.LastHitAttemptActorPlacedRefId = PlacedRefIdOrZero(ref systemState, damage.Attacker);
                     }
 
-                    var attackerState = RequireScriptEventState(damage.Attacker, "attacker");
+                    var attackerState = RequireScriptEventState(ref systemState, damage.Attacker, "attacker");
                     if (attackerState.LastHitAttemptActor == Entity.Null)
                     {
                         attackerState.LastHitAttemptActor = target;
-                        attackerState.LastHitAttemptActorPlacedRefId = PlacedRefIdOrZero(target);
-                        EntityManager.SetComponentData(damage.Attacker, attackerState);
+                        attackerState.LastHitAttemptActorPlacedRefId = PlacedRefIdOrZero(ref systemState, target);
+                        systemState.EntityManager.SetComponentData(damage.Attacker, attackerState);
                     }
                 }
             }
 
-            EntityManager.SetComponentData(target, targetState);
+            systemState.EntityManager.SetComponentData(target, targetState);
         }
 
-        void SetOnPcHitMeIfDeclared(ref RuntimeContentBlob content, Entity target)
+        void SetOnPcHitMeIfDeclared(ref SystemState systemState, ref RuntimeContentBlob content, Entity target)
         {
-            Entity actor = RequireLiveActorTarget(target, "OnPCHitMe target");
-            if (!TryResolveOnPcHitMeLocal(ref content, actor, out int localIndex, out int declaredLocalCount))
+            Entity actor = RequireLiveActorTarget(ref systemState, target, "OnPCHitMe target");
+            if (!TryResolveOnPcHitMeLocal(ref systemState, ref content, actor, out int localIndex, out int declaredLocalCount))
                 return;
 
-            if (!EntityManager.HasBuffer<MorrowindScriptLocalValue>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} declares OnPCHitMe but has no script locals buffer.");
+            if (!systemState.EntityManager.HasBuffer<MorrowindScriptLocalValue>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} declares OnPCHitMe but has no script locals buffer.");
 
-            var locals = EntityManager.GetBuffer<MorrowindScriptLocalValue>(actor);
+            var locals = systemState.EntityManager.GetBuffer<MorrowindScriptLocalValue>(actor);
             if (locals.Length < declaredLocalCount)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} script locals buffer length {locals.Length} is shorter than declared locals {declaredLocalCount}.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} script locals buffer length {locals.Length} is shorter than declared locals {declaredLocalCount}.");
 
             var local = locals[localIndex];
             if (local.ValueKind != (byte)MorrowindScriptValueKind.Integer)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} runtime OnPCHitMe local is not an integer.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} runtime OnPCHitMe local is not an integer.");
 
             local.IntValue = 1;
             local.FloatValue = 1f;
             locals[localIndex] = local;
         }
 
-        bool DeclaresOnPcHitMeInteger(ref RuntimeContentBlob content, Entity target)
-            => TryResolveOnPcHitMeLocal(ref content, target, out _, out _);
+        bool DeclaresOnPcHitMeInteger(ref SystemState systemState, ref RuntimeContentBlob content, Entity target)
+            => TryResolveOnPcHitMeLocal(ref systemState, ref content, target, out _, out _);
 
-        bool TryResolveOnPcHitMeLocal(
+        bool TryResolveOnPcHitMeLocal(ref SystemState systemState, 
             ref RuntimeContentBlob content,
             Entity actor,
             out int localIndex,
@@ -584,16 +584,16 @@ namespace VVardenfell.Runtime.Combat
             localIndex = -1;
             declaredLocalCount = 0;
 
-            var source = EntityManager.GetComponentData<ActorSpawnSource>(actor);
+            var source = systemState.EntityManager.GetComponentData<ActorSpawnSource>(actor);
             if (!source.Definition.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has invalid actor definition.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has invalid actor definition.");
 
             ref RuntimeActorDefBlob actorDef = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             if (actorDef.ScriptIdHash == 0UL)
                 return false;
 
             if (!RuntimeContentBlobUtility.TryGetMorrowindScriptProgramHandleByIdHash(ref content, actorDef.ScriptIdHash, out var programHandle) || !programHandle.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} script hash 0x{actorDef.ScriptIdHash:X16} has no compiled runtime program.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} script hash 0x{actorDef.ScriptIdHash:X16} has no compiled runtime program.");
 
             ref RuntimeMorrowindScriptProgramDefBlob program = ref RuntimeContentBlobUtility.Get(ref content, programHandle);
             RuntimeContentBlobUtility.RequireRange(program.FirstLocalIndex, program.LocalCount, content.MorrowindScriptLocals.Length, "script local");
@@ -612,11 +612,11 @@ namespace VVardenfell.Runtime.Combat
                 return false;
 
             if (content.MorrowindScriptLocals[program.FirstLocalIndex + localIndex].ValueKind != (byte)MorrowindScriptValueKind.Integer)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} local OnPCHitMe is not an integer.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} local OnPCHitMe is not an integer.");
             return true;
         }
 
-        void QueueHitVoiceResolve(
+        void QueueHitVoiceResolve(ref SystemState systemState, 
             int hitDialogueIndex,
             ActorDefHandle targetActor,
             Entity target,
@@ -626,106 +626,106 @@ namespace VVardenfell.Runtime.Combat
             requests.Add(new MorrowindCombatHitVoiceResolveRequest
             {
                 TargetEntity = target,
-                TargetPlacedRefId = PlacedRefIdOrZero(target),
+                TargetPlacedRefId = PlacedRefIdOrZero(ref systemState, target),
                 Actor = targetActor,
                 DialogueIndex = hitDialogueIndex,
                 RandomState = randomState == 0u ? 1u : randomState,
             });
         }
 
-        Entity RequireLiveActorTarget(Entity actor, string context)
+        Entity RequireLiveActorTarget(ref SystemState systemState, Entity actor, string context)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} entity is missing.");
-            if (!EntityManager.HasComponent<ActorSpawnSource>(actor) && !EntityManager.HasComponent<PlayerTag>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(actor) && !systemState.EntityManager.HasComponent<PlayerTag>(actor))
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} entity={actor.Index}:{actor.Version} is not an actor.");
-            if (!EntityManager.HasComponent<ActorScriptEventState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} ref={PlacedRefIdOrZero(actor)} has no ActorScriptEventState.");
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorScriptEventState.");
 
             return actor;
         }
 
-        ActorScriptEventState RequireScriptEventState(Entity actor, string context)
+        ActorScriptEventState RequireScriptEventState(ref SystemState systemState, Entity actor, string context)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} entity is missing.");
-            if (!EntityManager.HasComponent<ActorScriptEventState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} ref={PlacedRefIdOrZero(actor)} has no ActorScriptEventState.");
+            if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Damage {context} ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorScriptEventState.");
 
-            return EntityManager.GetComponentData<ActorScriptEventState>(actor);
+            return systemState.EntityManager.GetComponentData<ActorScriptEventState>(actor);
         }
 
-        bool ShouldStoreHitAttemptActors(Entity attacker, Entity target)
-            => IsPlayer(attacker) || IsInCombatWith(attacker, target);
+        bool ShouldStoreHitAttemptActors(ref SystemState systemState, Entity attacker, Entity target)
+            => IsPlayer(ref systemState, attacker) || IsInCombatWith(ref systemState, attacker, target);
 
-        bool IsInCombatWith(Entity actor, Entity target)
+        bool IsInCombatWith(ref SystemState systemState, Entity actor, Entity target)
         {
             if (actor == Entity.Null
-                || !EntityManager.Exists(actor)
-                || !EntityManager.HasComponent<ActorCombatTargetState>(actor))
+                || !systemState.EntityManager.Exists(actor)
+                || !systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
             {
                 return false;
             }
 
-            var combat = EntityManager.GetComponentData<ActorCombatTargetState>(actor);
+            var combat = systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor);
             if (combat.Active == 0)
                 return false;
 
-            uint targetRef = PlacedRefIdOrZero(target);
+            uint targetRef = PlacedRefIdOrZero(ref systemState, target);
             return combat.TargetEntity == target || (targetRef != 0u && combat.TargetPlacedRefId == targetRef);
         }
 
-        bool IsNpcTarget(ref RuntimeContentBlob content, Entity target, out ActorSpawnSource source)
+        bool IsNpcTarget(ref SystemState systemState, ref RuntimeContentBlob content, Entity target, out ActorSpawnSource source)
         {
             source = default;
-            if (target == Entity.Null || !EntityManager.Exists(target) || !EntityManager.HasComponent<ActorSpawnSource>(target))
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target) || !systemState.EntityManager.HasComponent<ActorSpawnSource>(target))
                 return false;
 
-            source = EntityManager.GetComponentData<ActorSpawnSource>(target);
+            source = systemState.EntityManager.GetComponentData<ActorSpawnSource>(target);
             if (!source.Definition.IsValid)
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(target)} has invalid actor definition.");
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, target)} has invalid actor definition.");
 
             ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, source.Definition);
             return actor.Kind == ActorDefKind.Npc;
         }
 
-        bool IsActorEntity(Entity entity)
+        bool IsActorEntity(ref SystemState systemState, Entity entity)
             => entity != Entity.Null
-               && EntityManager.Exists(entity)
-               && (EntityManager.HasComponent<ActorSpawnSource>(entity) || EntityManager.HasComponent<PlayerTag>(entity));
+               && systemState.EntityManager.Exists(entity)
+               && (systemState.EntityManager.HasComponent<ActorSpawnSource>(entity) || systemState.EntityManager.HasComponent<PlayerTag>(entity));
 
-        void RequireSocialCrimeComposition(Entity actor)
+        void RequireSocialCrimeComposition(ref SystemState systemState, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorCrimeState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorCrimeState.");
-            if (!EntityManager.HasComponent<ActorAiSettingsState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorAiSettingsState.");
-            if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorActiveMagicEffect buffer.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorHitAftermathState.");
+            if (!systemState.EntityManager.HasComponent<ActorCrimeState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorCrimeState.");
+            if (!systemState.EntityManager.HasComponent<ActorAiSettingsState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorAiSettingsState.");
+            if (!systemState.EntityManager.HasBuffer<ActorActiveMagicEffect>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorActiveMagicEffect buffer.");
+            if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorHitAftermathState.");
         }
 
-        bool IsAggressiveTo(Entity actor, Entity target)
+        bool IsAggressiveTo(ref SystemState systemState, Entity actor, Entity target)
         {
-            if (IsInCombatWith(actor, target))
+            if (IsInCombatWith(ref systemState, actor, target))
                 return true;
 
-            if (!EntityManager.HasComponent<ActorAiSettingsState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorAiSettingsState.");
+            if (!systemState.EntityManager.HasComponent<ActorAiSettingsState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorAiSettingsState.");
 
-            return EntityManager.GetComponentData<ActorAiSettingsState>(actor).Fight >= 100;
+            return systemState.EntityManager.GetComponentData<ActorAiSettingsState>(actor).Fight >= 100;
         }
 
-        bool IsInAnyCombat(Entity actor)
+        bool IsInAnyCombat(ref SystemState systemState, Entity actor)
         {
-            if (actor == Entity.Null || !EntityManager.Exists(actor))
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
                 return false;
 
-            if (!EntityManager.HasComponent<ActorCombatTargetState>(actor))
+            if (!systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
                 return false;
 
-            return EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
+            return systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
         }
 
         Entity TryGetPlayerEntity()
@@ -736,53 +736,53 @@ namespace VVardenfell.Runtime.Combat
             return _playerQuery.GetSingletonEntity();
         }
 
-        int AddPlayerBountyAndAdvanceCrimeId(int bounty)
+        int AddPlayerBountyAndAdvanceCrimeId(ref SystemState systemState, int bounty)
         {
             Entity player = TryGetPlayerEntity();
             if (player == Entity.Null)
                 throw new InvalidOperationException("[VVardenfell][OnHit] Crime reporting requires a loaded player entity.");
-            if (!EntityManager.HasComponent<PlayerCrimeState>(player))
+            if (!systemState.EntityManager.HasComponent<PlayerCrimeState>(player))
                 throw new InvalidOperationException("[VVardenfell][OnHit] Player has no PlayerCrimeState.");
 
-            var crime = EntityManager.GetComponentData<PlayerCrimeState>(player);
+            var crime = systemState.EntityManager.GetComponentData<PlayerCrimeState>(player);
             crime.Bounty = Math.Max(0, crime.Bounty + Math.Max(0, bounty));
             crime.CurrentCrimeId = crime.CurrentCrimeId < 0 ? 0 : crime.CurrentCrimeId + 1;
-            EntityManager.SetComponentData(player, crime);
+            systemState.EntityManager.SetComponentData(player, crime);
             return crime.CurrentCrimeId;
         }
 
-        void SetActorCrimeId(Entity actor, int crimeId)
+        void SetActorCrimeId(ref SystemState systemState, Entity actor, int crimeId)
         {
-            if (!EntityManager.HasComponent<ActorCrimeState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorCrimeState.");
+            if (!systemState.EntityManager.HasComponent<ActorCrimeState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorCrimeState.");
 
-            var crime = EntityManager.GetComponentData<ActorCrimeState>(actor);
+            var crime = systemState.EntityManager.GetComponentData<ActorCrimeState>(actor);
             crime.CrimeId = crimeId;
-            EntityManager.SetComponentData(actor, crime);
+            systemState.EntityManager.SetComponentData(actor, crime);
         }
 
-        void SetActorAlarmed(Entity actor)
+        void SetActorAlarmed(ref SystemState systemState, Entity actor)
         {
-            if (!EntityManager.HasComponent<ActorCrimeState>(actor))
-                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(actor)} has no ActorCrimeState.");
+            if (!systemState.EntityManager.HasComponent<ActorCrimeState>(actor))
+                throw new InvalidOperationException($"[VVardenfell][OnHit] Actor ref={PlacedRefIdOrZero(ref systemState, actor)} has no ActorCrimeState.");
 
-            var crime = EntityManager.GetComponentData<ActorCrimeState>(actor);
+            var crime = systemState.EntityManager.GetComponentData<ActorCrimeState>(actor);
             crime.Alarmed = 1;
-            EntityManager.SetComponentData(actor, crime);
+            systemState.EntityManager.SetComponentData(actor, crime);
         }
 
-        bool IsPlayerAttacker(Entity entity) => IsPlayer(entity);
+        bool IsPlayerAttacker(ref SystemState systemState, Entity entity) => IsPlayer(ref systemState, entity);
 
-        bool IsPlayer(Entity entity)
-            => entity != Entity.Null && EntityManager.Exists(entity) && EntityManager.HasComponent<PlayerTag>(entity);
+        bool IsPlayer(ref SystemState systemState, Entity entity)
+            => entity != Entity.Null && systemState.EntityManager.Exists(entity) && systemState.EntityManager.HasComponent<PlayerTag>(entity);
 
-        bool ShouldQueueHitVoice(in MorrowindDamageAppliedEvent damage, int voiceHitOdds, ref uint randomState)
+        bool ShouldQueueHitVoice(ref SystemState systemState, in MorrowindDamageAppliedEvent damage, int voiceHitOdds, ref uint randomState)
         {
             if (damage.TargetVital == MorrowindDamageTargetVital.Health
                 && damage.Target != Entity.Null
-                && EntityManager.Exists(damage.Target)
-                && EntityManager.HasComponent<ActorVitalSet>(damage.Target)
-                && EntityManager.GetComponentData<ActorVitalSet>(damage.Target).CurrentHealth <= 0f)
+                && systemState.EntityManager.Exists(damage.Target)
+                && systemState.EntityManager.HasComponent<ActorVitalSet>(damage.Target)
+                && systemState.EntityManager.GetComponentData<ActorVitalSet>(damage.Target).CurrentHealth <= 0f)
             {
                 return true;
             }
@@ -850,12 +850,12 @@ namespace VVardenfell.Runtime.Combat
             return state % 100u;
         }
 
-        uint PlacedRefIdOrZero(Entity entity)
+        uint PlacedRefIdOrZero(ref SystemState systemState, Entity entity)
         {
-            if (entity == Entity.Null || !EntityManager.Exists(entity) || !EntityManager.HasComponent<PlacedRefIdentity>(entity))
+            if (entity == Entity.Null || !systemState.EntityManager.Exists(entity) || !systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity))
                 return 0u;
 
-            return EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value;
+            return systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value;
         }
 
         static int ClampInt(int value, int min, int max)
