@@ -32,7 +32,7 @@ namespace VVardenfell.Runtime.Bootstrap
         public static void Publish<T>(EntityManager entityManager, string entityName)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = RequestQueryCache<T>.Get(entityManager);
             if (!query.IsEmptyIgnoreFilter)
                 return;
 
@@ -45,7 +45,7 @@ namespace VVardenfell.Runtime.Bootstrap
         public static void Consume<T>(EntityManager entityManager)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = RequestQueryCache<T>.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -54,6 +54,29 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 if (entityManager.Exists(entities[i]))
                     entityManager.DestroyEntity(entities[i]);
+            }
+        }
+
+        static class RequestQueryCache<T>
+            where T : unmanaged, IComponentData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
             }
         }
     }

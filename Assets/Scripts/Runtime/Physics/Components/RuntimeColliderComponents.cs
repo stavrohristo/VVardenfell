@@ -109,8 +109,7 @@ namespace VVardenfell.Runtime.Components
 
         public static bool EnablePhysics(EntityManager entityManager, Entity entity)
         {
-            VVardenfell.Runtime.Physics.RuntimePhysicsMutationQueueUtility.EnqueueEnable(entityManager, entity);
-            return true;
+            return VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.EnablePhysics(entityManager, entity);
         }
 
         public static bool QueueEnablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)
@@ -120,7 +119,7 @@ namespace VVardenfell.Runtime.Components
 
         public static void DisablePhysics(EntityManager entityManager, Entity entity)
         {
-            VVardenfell.Runtime.Physics.RuntimePhysicsMutationQueueUtility.EnqueueDisable(entityManager, entity);
+            VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.DisablePhysics(entityManager, entity);
         }
 
         public static void QueueDisablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)

@@ -377,7 +377,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadPlayerFaction(EntityManager entityManager, int factionIndex, out PlayerFactionMembership membership)
         {
             membership = default;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>());
+            EntityQuery query = PlayerFactionQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
 
@@ -408,7 +408,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadCurrentPlayerCell(ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, out string cellName)
         {
             cellName = string.Empty;
-            using var transitionQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>());
+            EntityQuery transitionQuery = InteriorTransitionQueryCache.Get(entityManager);
             if (!transitionQuery.IsEmptyIgnoreFilter)
             {
                 var transition = entityManager.GetComponentData<InteriorTransitionState>(transitionQuery.GetSingletonEntity());
@@ -419,7 +419,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 }
             }
 
-            using var streamingQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<StreamingConfig>());
+            EntityQuery streamingQuery = StreamingConfigQueryCache.Get(entityManager);
             if (streamingQuery.IsEmptyIgnoreFilter)
                 return false;
 
@@ -704,7 +704,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadGlobal(EntityManager entityManager, int index, out float value)
         {
             value = 0f;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindScriptGlobalValue>());
+            EntityQuery query = ScriptGlobalQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
             var globals = entityManager.GetBuffer<MorrowindScriptGlobalValue>(query.GetSingletonEntity(), true);
@@ -717,7 +717,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadJournal(EntityManager entityManager, int index, out int value)
         {
             value = 0;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindQuestJournalIndex>());
+            EntityQuery query = QuestJournalQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
             var journal = entityManager.GetBuffer<MorrowindQuestJournalIndex>(query.GetSingletonEntity(), true);
@@ -771,7 +771,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadPlayerIdentity(EntityManager entityManager, out ActorIdentitySet identity)
         {
             identity = default;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorIdentitySet>());
+            EntityQuery query = PlayerIdentityQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
             identity = entityManager.GetComponentData<ActorIdentitySet>(query.GetSingletonEntity());
@@ -781,7 +781,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadPlayerCrime(EntityManager entityManager, out PlayerCrimeState crime)
         {
             crime = default;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerCrimeState>());
+            EntityQuery query = PlayerCrimeQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
             crime = entityManager.GetComponentData<PlayerCrimeState>(query.GetSingletonEntity());
@@ -836,7 +836,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool TryReadPlayerEntity(EntityManager entityManager, out Entity player)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            EntityQuery query = PlayerQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 player = Entity.Null;
@@ -850,7 +850,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryReadPlayerVitals(EntityManager entityManager, out ActorVitalSet vitals)
         {
             vitals = default;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorVitalSet>());
+            EntityQuery query = PlayerVitalsQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
             vitals = entityManager.GetComponentData<ActorVitalSet>(query.GetSingletonEntity());
@@ -872,11 +872,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return true;
             }
 
-            using var playerQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>());
+            EntityQuery playerQuery = PlayerFactionQueryCache.Get(entityManager);
             if (playerQuery.IsEmptyIgnoreFilter)
                 return true;
 
-            using var dialogueQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindDialogueState>(), ComponentType.ReadOnly<MorrowindFactionReactionOverride>());
+            EntityQuery dialogueQuery = DialogueFactionReactionQueryCache.Get(entityManager);
             if (dialogueQuery.IsEmptyIgnoreFilter)
                 return true;
 
@@ -905,7 +905,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             out int value)
         {
             value = 0;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>());
+            EntityQuery query = PlayerEquipmentQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
 
@@ -937,8 +937,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         static bool TryResolvePlayerAttributeOrSkill(EntityManager entityManager, DialogueConditionFunction function, out float value)
         {
             value = 0f;
-            using var attrQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorAttributeSet>());
-            using var skillQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorSkillSet>());
+            EntityQuery attrQuery = PlayerAttributeQueryCache.Get(entityManager);
+            EntityQuery skillQuery = PlayerSkillQueryCache.Get(entityManager);
             if (!attrQuery.IsEmptyIgnoreFilter)
             {
                 var attributes = entityManager.GetComponentData<ActorAttributeSet>(attrQuery.GetSingletonEntity());
@@ -1025,7 +1025,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            EntityQuery query = WorldCellBlobQueryCache.Get(entityManager);
             if (query.CalculateEntityCount() != 1)
                 throw new InvalidOperationException("[VVardenfell][WorldCellBlob] dialogue filtering requires exactly one RuntimeWorldCellBlobReference singleton.");
 
@@ -1035,5 +1035,164 @@ namespace VVardenfell.Runtime.MorrowindScript
             return reference.Blob;
         }
 
+        static class PlayerFactionQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>());
+        }
+
+        static class InteriorTransitionQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<InteriorTransitionState>());
+        }
+
+        static class StreamingConfigQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<StreamingConfig>());
+        }
+
+        static class ScriptGlobalQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindScriptGlobalValue>());
+        }
+
+        static class QuestJournalQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindQuestJournalIndex>());
+        }
+
+        static class PlayerIdentityQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorIdentitySet>());
+        }
+
+        static class PlayerCrimeQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerCrimeState>());
+        }
+
+        static class PlayerQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>());
+        }
+
+        static class PlayerVitalsQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorVitalSet>());
+        }
+
+        static class DialogueFactionReactionQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindDialogueState>(), ComponentType.ReadOnly<MorrowindFactionReactionOverride>());
+        }
+
+        static class PlayerEquipmentQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>());
+        }
+
+        static class PlayerAttributeQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorAttributeSet>());
+        }
+
+        static class PlayerSkillQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorSkillSet>());
+        }
+
+        static class WorldCellBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+        }
+
+        static EntityQuery GetQuery(
+            EntityManager entityManager,
+            ref World worldCache,
+            ref EntityQuery queryCache,
+            ref bool queryCreated,
+            params ComponentType[] componentTypes)
+        {
+            World world = entityManager.World;
+            if (queryCreated && worldCache == world)
+                return queryCache;
+
+            if (queryCreated)
+                queryCache.Dispose();
+
+            worldCache = world;
+            queryCache = entityManager.CreateEntityQuery(componentTypes);
+            queryCreated = true;
+            return queryCache;
+        }
     }
 }

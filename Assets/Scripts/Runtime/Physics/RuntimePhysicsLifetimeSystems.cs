@@ -34,13 +34,16 @@ namespace VVardenfell.Runtime.Physics
     public static class RuntimeColliderBlobLifetime
     {
         const int DefaultDeferredPhysicsTicks = 2;
+        static World s_QueryWorld;
+        static EntityQuery s_DisposalQuery;
+        static bool s_DisposalQueryCreated;
 
         public static void DeferGeneratedBlobDisposal(EntityManager entityManager, BlobAssetReference<Collider> collider)
         {
             if (!collider.IsCreated)
                 return;
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadWrite<DeferredRuntimeColliderBlobDisposal>());
+            EntityQuery query = GetDisposalQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 Debug.LogWarning("[VVardenfell][Physics] generated collider blob disposal requested before runtime physics lifetime state was ready.");
@@ -53,6 +56,21 @@ namespace VVardenfell.Runtime.Physics
                 Value = collider,
                 PhysicsTicksRemaining = DefaultDeferredPhysicsTicks,
             });
+        }
+
+        static EntityQuery GetDisposalQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_DisposalQueryCreated && s_QueryWorld == world)
+                return s_DisposalQuery;
+
+            if (s_DisposalQueryCreated)
+                s_DisposalQuery.Dispose();
+
+            s_QueryWorld = world;
+            s_DisposalQuery = entityManager.CreateEntityQuery(ComponentType.ReadWrite<DeferredRuntimeColliderBlobDisposal>());
+            s_DisposalQueryCreated = true;
+            return s_DisposalQuery;
         }
     }
 

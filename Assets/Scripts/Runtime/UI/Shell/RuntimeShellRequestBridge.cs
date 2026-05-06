@@ -811,7 +811,7 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = SingletonQueryCache<T>.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 error = $"{label} is not ready.";
@@ -841,7 +841,7 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = SingletonBufferOwnerQueryCache<T>.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 error = $"{label} is not ready.";
@@ -851,6 +851,52 @@ namespace VVardenfell.Runtime.UI.Shell
             entity = query.GetSingletonEntity();
             error = null;
             return true;
+        }
+
+        static class SingletonQueryCache<T>
+            where T : unmanaged, IComponentData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class SingletonBufferOwnerQueryCache<T>
+            where T : unmanaged, IBufferElementData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

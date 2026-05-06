@@ -108,12 +108,18 @@ namespace VVardenfell.Runtime.WorldState
             return true;
         }
 
-        public static void ResetRuntimeForInitialization(World world, EntityManager entityManager, bool preserveShell)
+        public static void ResetRuntimeForInitialization(
+            World world,
+            EntityManager entityManager,
+            bool preserveShell,
+            EntityQuery localPlayerVisualQuery,
+            EntityQuery playerViewQuery,
+            EntityQuery playerQuery)
         {
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            LocalPlayerPresentationLifecycleUtility.QueueDestroyLocalPlayerVisuals(entityManager, ref ecb);
-            QueueDestroySingletonEntities<PlayerViewComponent>(entityManager, ref ecb);
-            QueueDestroySingletonEntities<PlayerTag>(entityManager, ref ecb);
+            LocalPlayerPresentationLifecycleUtility.QueueDestroyLocalPlayerVisuals(entityManager, localPlayerVisualQuery, ref ecb);
+            QueueDestroyEntities(entityManager, playerViewQuery, ref ecb);
+            QueueDestroyEntities(entityManager, playerQuery, ref ecb);
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
@@ -142,10 +148,8 @@ namespace VVardenfell.Runtime.WorldState
             }
         }
 
-        static void QueueDestroySingletonEntities<T>(EntityManager entityManager, ref EntityCommandBuffer ecb)
-            where T : unmanaged, IComponentData
+        static void QueueDestroyEntities(EntityManager entityManager, EntityQuery query, ref EntityCommandBuffer ecb)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -304,7 +308,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+            EntityQuery query = RuntimeContentBlobQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 throw new System.InvalidOperationException("[VVardenfell][Save] Save replay requires runtime content blob.");
 
@@ -388,7 +392,7 @@ namespace VVardenfell.Runtime.WorldState
             if (payload.InteriorActive
                 && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId))
             {
-                using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+                EntityQuery query = RuntimeWorldCellBlobQueryCache.Get(entityManager);
                 if (query.CalculateEntityCount() != 1)
                 {
                     error = "World cell blob is not ready for save replay.";
@@ -664,14 +668,12 @@ namespace VVardenfell.Runtime.WorldState
 
         static void QueueClearMapDiscovery(EntityManager entityManager, ref EntityCommandBuffer ecb, bool ensureState)
         {
-            using (var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ExteriorMapDiscoveryTile>()))
+            EntityQuery query = ExteriorMapDiscoveryTileQueryCache.Get(entityManager);
+            if (!query.IsEmptyIgnoreFilter)
             {
-                if (!query.IsEmptyIgnoreFilter)
-                {
-                    using var entities = query.ToEntityArray(Allocator.Temp);
-                    for (int i = 0; i < entities.Length; i++)
-                        ecb.DestroyEntity(entities[i]);
-                }
+                using var entities = query.ToEntityArray(Allocator.Temp);
+                for (int i = 0; i < entities.Length; i++)
+                    ecb.DestroyEntity(entities[i]);
             }
 
             if (ensureState)
@@ -1279,6 +1281,72 @@ namespace VVardenfell.Runtime.WorldState
                     SnowChance = payload[i].SnowChance,
                     BlizzardChance = payload[i].BlizzardChance,
                 });
+            }
+        }
+
+        static class RuntimeContentBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class RuntimeWorldCellBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class ExteriorMapDiscoveryTileQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ExteriorMapDiscoveryTile>());
+                s_QueryCreated = true;
+                return s_Query;
             }
         }
     }

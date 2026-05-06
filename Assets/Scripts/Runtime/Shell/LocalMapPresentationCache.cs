@@ -43,6 +43,9 @@ namespace VVardenfell.Runtime.Shell
         static Texture2D s_FullHiddenShroud;
         static Camera s_Camera;
         static GameObject s_CameraRoot;
+        static World s_WorldCellQueryWorld;
+        static EntityQuery s_WorldCellQuery;
+        static bool s_WorldCellQueryCreated;
 
         public static void Dispose()
         {
@@ -333,7 +336,7 @@ namespace VVardenfell.Runtime.Shell
             if (world == null || !world.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires a default world.");
 
-            using var query = world.EntityManager.CreateEntityQuery(Unity.Entities.ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            EntityQuery query = GetWorldCellQuery(world);
             if (query.CalculateEntityCount() != 1)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires exactly one RuntimeWorldCellBlobReference singleton.");
 
@@ -341,6 +344,20 @@ namespace VVardenfell.Runtime.Shell
             if (!reference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] local map presentation requires runtime world cell blob.");
             return reference.Blob;
+        }
+
+        static EntityQuery GetWorldCellQuery(World world)
+        {
+            if (s_WorldCellQueryCreated && s_WorldCellQueryWorld == world)
+                return s_WorldCellQuery;
+
+            if (s_WorldCellQueryCreated)
+                s_WorldCellQuery.Dispose();
+
+            s_WorldCellQueryWorld = world;
+            s_WorldCellQuery = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            s_WorldCellQueryCreated = true;
+            return s_WorldCellQuery;
         }
 
         static TileResources EnsureTile(int2 coord)

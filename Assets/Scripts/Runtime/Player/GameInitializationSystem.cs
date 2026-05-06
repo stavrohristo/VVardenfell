@@ -57,8 +57,19 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(RuntimeShellBootstrapSystem))]
     public partial class GameInitializationSystem : SystemBase
     {
+        EntityQuery _runtimeActiveQuery;
+        EntityQuery _runtimePausedQuery;
+        EntityQuery _localPlayerVisualQuery;
+        EntityQuery _playerViewQuery;
+        EntityQuery _playerQuery;
+
         protected override void OnCreate()
         {
+            _runtimeActiveQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
+            _runtimePausedQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+            _localPlayerVisualQuery = GetEntityQuery(ComponentType.ReadOnly<LocalPlayerVisual>());
+            _playerViewQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerViewComponent>());
+            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             RequireForUpdate<GameInitializationSingleton>();
             RequireForUpdate<WorldJournalState>();
             RequireForUpdate<RuntimeSpawnState>();
@@ -91,12 +102,18 @@ namespace VVardenfell.Runtime.Player
             if (!contentBlobReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Game initialization requires runtime content blob.");
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-            MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(em);
-            WorldSaveReplayUtility.ResetRuntimeForInitialization(World, em, preserveShell: true);
+            MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(em, _runtimePausedQuery, _runtimeActiveQuery);
+            WorldSaveReplayUtility.ResetRuntimeForInitialization(
+                World,
+                em,
+                preserveShell: true,
+                _localPlayerVisualQuery,
+                _playerViewQuery,
+                _playerQuery);
             if (init.SpawnLocalPlayer == 0)
             {
                 ConfigureStreamingAfterInitialization(em, init);
-                MorrowindRuntimeLifecycleUtility.EnsureActive(em);
+                MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
                 ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
                 return;
             }
@@ -265,7 +282,7 @@ namespace VVardenfell.Runtime.Player
 
             ConfigureStreamingAfterInitialization(em, init);
 
-            MorrowindRuntimeLifecycleUtility.EnsureActive(em);
+            MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
             ClearInitializationRequests(hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
         }
 

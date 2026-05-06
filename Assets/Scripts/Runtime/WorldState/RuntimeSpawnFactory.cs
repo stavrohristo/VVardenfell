@@ -272,9 +272,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static Entity FindLogicalRefByPlacedRef(EntityManager entityManager, uint placedRefId)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<LogicalRefTag>(),
-                ComponentType.ReadOnly<PlacedRefIdentity>());
+            EntityQuery query = LogicalRefIdentityQueryCache.Get(entityManager);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
@@ -288,9 +286,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static Entity FindRuntimeSpawnRenderRoot(EntityManager entityManager, uint runtimeRefId)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<RuntimeSpawnRenderRootTag>(),
-                ComponentType.ReadOnly<PlacedRefIdentity>());
+            EntityQuery query = RuntimeSpawnRenderRootQueryCache.Get(entityManager);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
@@ -300,6 +296,54 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             return Entity.Null;
+        }
+
+        static class LogicalRefIdentityQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<LogicalRefTag>(),
+                    ComponentType.ReadOnly<PlacedRefIdentity>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class RuntimeSpawnRenderRootQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<RuntimeSpawnRenderRootTag>(),
+                    ComponentType.ReadOnly<PlacedRefIdentity>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

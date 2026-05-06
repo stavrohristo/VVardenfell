@@ -41,7 +41,7 @@ namespace VVardenfell.Runtime.Streaming
             if (world == null || !world.IsCreated) return false;
 
             var entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MainLightSingleton>());
+            EntityQuery query = MainLightQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 var entity = entityManager.CreateSingleton(new MainLightSingleton
@@ -57,6 +57,28 @@ namespace VVardenfell.Runtime.Streaming
                 Value = _light,
             });
             return true;
+        }
+
+        static class MainLightQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MainLightSingleton>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

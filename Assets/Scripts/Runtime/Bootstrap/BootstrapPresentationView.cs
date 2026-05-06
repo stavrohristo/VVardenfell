@@ -144,6 +144,9 @@ namespace VVardenfell.Runtime.Bootstrap
         bool _activeMovieOwnsPhase;
         bool _phaseWaitingForMovieCompletion;
         bool _loadingPhaseSignaled;
+        World _runtimeActiveWorld;
+        EntityQuery _runtimeActiveQuery;
+        bool _runtimeActiveQueryCreated;
 
         Canvas _canvas;
         RectTransform _rootRect;
@@ -285,6 +288,9 @@ namespace VVardenfell.Runtime.Bootstrap
                 Destroy(_videoTexture);
             }
 
+            if (_runtimeActiveQueryCreated)
+                _runtimeActiveQuery.Dispose();
+
             _theme?.Dispose();
         }
 
@@ -310,15 +316,22 @@ namespace VVardenfell.Runtime.Bootstrap
                 Dismiss();
         }
 
-        static bool IsRuntimeActive()
+        bool IsRuntimeActive()
         {
             var world = World.DefaultGameObjectInjectionWorld;
             if (world == null || !world.IsCreated)
                 return false;
 
-            var entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
-            return !query.IsEmptyIgnoreFilter;
+            if (_runtimeActiveWorld != world)
+            {
+                if (_runtimeActiveQueryCreated)
+                    _runtimeActiveQuery.Dispose();
+                _runtimeActiveWorld = world;
+                _runtimeActiveQuery = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
+                _runtimeActiveQueryCreated = true;
+            }
+
+            return !_runtimeActiveQuery.IsEmptyIgnoreFilter;
         }
 
         void BuildCanvas()

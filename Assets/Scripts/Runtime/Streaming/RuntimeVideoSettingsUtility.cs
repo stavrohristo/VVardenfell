@@ -25,7 +25,7 @@ namespace VVardenfell.Runtime.Streaming
                 FogDistanceScale = RuntimeVideoSettings.NormalizeFogDistanceScale(scale),
             };
             EntityManager em = world.EntityManager;
-            using EntityQuery query = em.CreateEntityQuery(ComponentType.ReadWrite<RuntimeVideoSettings>());
+            EntityQuery query = RuntimeVideoSettingsQueryCache.Get(em);
             if (query.IsEmptyIgnoreFilter)
             {
                 Entity entity = em.CreateEntity(typeof(RuntimeVideoSettings));
@@ -35,6 +35,28 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             em.SetComponentData(query.GetSingletonEntity(), settings);
+        }
+
+        static class RuntimeVideoSettingsQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadWrite<RuntimeVideoSettings>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

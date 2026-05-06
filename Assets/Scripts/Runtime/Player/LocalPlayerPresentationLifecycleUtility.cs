@@ -5,9 +5,8 @@ namespace VVardenfell.Runtime.Player
 {
     static class LocalPlayerPresentationLifecycleUtility
     {
-        public static void QueueDestroyLocalPlayerVisuals(EntityManager entityManager, ref EntityCommandBuffer ecb)
+        public static void QueueDestroyLocalPlayerVisuals(EntityManager entityManager, EntityQuery query, ref EntityCommandBuffer ecb)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<LocalPlayerVisual>());
             if (query.IsEmptyIgnoreFilter)
                 return;
 

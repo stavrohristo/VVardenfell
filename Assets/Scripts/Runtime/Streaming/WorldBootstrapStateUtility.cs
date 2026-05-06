@@ -160,7 +160,7 @@ namespace VVardenfell.Runtime.Streaming
         public static void PublishSandboxStartRequest(EntityManager em)
         {
             RuntimeBootstrapRequestUtility.PublishAll(em);
-            using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<NewGameInitializationSingleton>());
+            EntityQuery requestQuery = NewGameInitializationQueryCache.Get(em);
             if (!requestQuery.IsEmptyIgnoreFilter)
                 return;
 
@@ -267,66 +267,96 @@ namespace VVardenfell.Runtime.Streaming
 
             var em = world.EntityManager;
 
-            foreach (var e in em.CreateEntityQuery(typeof(PlayerStanceColliders)).ToEntityArray(Allocator.Temp))
+            using (var entities = PlayerStanceCollidersQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var stance = em.GetComponentData<PlayerStanceColliders>(e);
-                if (stance.Standing.IsCreated) stance.Standing.Dispose();
-                if (stance.Crouching.IsCreated) stance.Crouching.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var stance = em.GetComponentData<PlayerStanceColliders>(entities[i]);
+                    if (stance.Standing.IsCreated) stance.Standing.Dispose();
+                    if (stance.Crouching.IsCreated) stance.Crouching.Dispose();
+                }
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(AvailableCells)).ToEntityArray(Allocator.Temp))
-                em.GetComponentData<AvailableCells>(e).Set.Dispose();
-
-            foreach (var e in em.CreateEntityQuery(typeof(LoadedCellsMap)).ToEntityArray(Allocator.Temp))
+            using (var entities = AvailableCellsQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var lc = em.GetComponentData<LoadedCellsMap>(e);
-                if (lc.Map.IsCreated) lc.Map.Dispose();
-                if (lc.Streamed.IsCreated) lc.Streamed.Dispose();
-                if (lc.Active.IsCreated) lc.Active.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                    em.GetComponentData<AvailableCells>(entities[i]).Set.Dispose();
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(LogicalRefLookup)).ToEntityArray(Allocator.Temp))
+            using (var entities = LoadedCellsMapQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var lookup = em.GetComponentData<LogicalRefLookup>(e);
-                if (lookup.Map.IsCreated)
-                    lookup.Map.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var lc = em.GetComponentData<LoadedCellsMap>(entities[i]);
+                    if (lc.Map.IsCreated) lc.Map.Dispose();
+                    if (lc.Streamed.IsCreated) lc.Streamed.Dispose();
+                    if (lc.Active.IsCreated) lc.Active.Dispose();
+                }
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(PlacedRefRuntimeStateLookup)).ToEntityArray(Allocator.Temp))
+            using (var entities = LogicalRefLookupQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var lookup = em.GetComponentData<PlacedRefRuntimeStateLookup>(e);
-                if (lookup.DisabledByPlacedRef.IsCreated)
-                    lookup.DisabledByPlacedRef.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var lookup = em.GetComponentData<LogicalRefLookup>(entities[i]);
+                    if (lookup.Map.IsCreated)
+                        lookup.Map.Dispose();
+                }
+            }
+
+            using (var entities = PlacedRefRuntimeStateLookupQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var lookup = em.GetComponentData<PlacedRefRuntimeStateLookup>(entities[i]);
+                    if (lookup.DisabledByPlacedRef.IsCreated)
+                        lookup.DisabledByPlacedRef.Dispose();
+                }
             }
 
             ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
 
-            foreach (var e in em.CreateEntityQuery(typeof(MorrowindScriptRuntimeCatalog)).ToEntityArray(Allocator.Temp))
+            using (var entities = MorrowindScriptRuntimeCatalogQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var catalog = em.GetComponentData<MorrowindScriptRuntimeCatalog>(e);
-                catalog.Dispose();
-                em.SetComponentData(e, default(MorrowindScriptRuntimeCatalog));
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var catalog = em.GetComponentData<MorrowindScriptRuntimeCatalog>(entities[i]);
+                    catalog.Dispose();
+                    em.SetComponentData(entities[i], default(MorrowindScriptRuntimeCatalog));
+                }
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(LoadQueue)).ToEntityArray(Allocator.Temp))
-                em.GetComponentData<LoadQueue>(e).Queue.Dispose();
-
-            foreach (var e in em.CreateEntityQuery(typeof(UnloadList)).ToEntityArray(Allocator.Temp))
+            using (var entities = LoadQueueQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var u = em.GetComponentData<UnloadList>(e);
-                u.PendingEntityDestroy.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                    em.GetComponentData<LoadQueue>(entities[i]).Queue.Dispose();
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(PendingCellPhysicsLoad)).ToEntityArray(Allocator.Temp))
+            using (var entities = UnloadListQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var pending = em.GetComponentData<PendingCellPhysicsLoad>(e);
-                pending.Cells.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var u = em.GetComponentData<UnloadList>(entities[i]);
+                    u.PendingEntityDestroy.Dispose();
+                }
             }
 
-            foreach (var e in em.CreateEntityQuery(typeof(PendingCellPhysicsUnload)).ToEntityArray(Allocator.Temp))
+            using (var entities = PendingCellPhysicsLoadQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
-                var pending = em.GetComponentData<PendingCellPhysicsUnload>(e);
-                pending.Cells.Dispose();
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var pending = em.GetComponentData<PendingCellPhysicsLoad>(entities[i]);
+                    pending.Cells.Dispose();
+                }
+            }
+
+            using (var entities = PendingCellPhysicsUnloadQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var pending = em.GetComponentData<PendingCellPhysicsUnload>(entities[i]);
+                    pending.Cells.Dispose();
+                }
             }
 
             WorldResources.Reset();
@@ -334,5 +364,135 @@ namespace VVardenfell.Runtime.Streaming
 
         static PlayerCharacterComponent ResolvePlayerMovementSettings()
             => BootstrapController.ResolvePlayerMovementSettings();
+
+        static class NewGameInitializationQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<NewGameInitializationSingleton>());
+        }
+
+        static class PlayerStanceCollidersQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlayerStanceColliders>());
+        }
+
+        static class AvailableCellsQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<AvailableCells>());
+        }
+
+        static class LoadedCellsMapQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LoadedCellsMap>());
+        }
+
+        static class LogicalRefLookupQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LogicalRefLookup>());
+        }
+
+        static class PlacedRefRuntimeStateLookupQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PlacedRefRuntimeStateLookup>());
+        }
+
+        static class MorrowindScriptRuntimeCatalogQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindScriptRuntimeCatalog>());
+        }
+
+        static class LoadQueueQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LoadQueue>());
+        }
+
+        static class UnloadListQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<UnloadList>());
+        }
+
+        static class PendingCellPhysicsLoadQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PendingCellPhysicsLoad>());
+        }
+
+        static class PendingCellPhysicsUnloadQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<PendingCellPhysicsUnload>());
+        }
+
+        static EntityQuery GetQuery(
+            EntityManager entityManager,
+            ref World worldCache,
+            ref EntityQuery queryCache,
+            ref bool queryCreated,
+            params ComponentType[] componentTypes)
+        {
+            World world = entityManager.World;
+            if (queryCreated && worldCache == world)
+                return queryCache;
+
+            if (queryCreated)
+                queryCache.Dispose();
+
+            worldCache = world;
+            queryCache = entityManager.CreateEntityQuery(componentTypes);
+            queryCreated = true;
+            return queryCache;
+        }
     }
 }

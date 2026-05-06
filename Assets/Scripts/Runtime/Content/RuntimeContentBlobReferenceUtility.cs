@@ -6,6 +6,10 @@ namespace VVardenfell.Runtime.Content
 {
     internal static class RuntimeContentBlobReferenceUtility
     {
+        static World s_QueryWorld;
+        static EntityQuery s_Query;
+        static bool s_QueryCreated;
+
         public static BlobAssetReference<RuntimeContentBlob> RequireBlob(string context)
         {
             if (!TryGetBlob(out var blob))
@@ -20,18 +24,25 @@ namespace VVardenfell.Runtime.Content
             if (world == null || !world.IsCreated)
                 return false;
 
-            EntityQuery query = world.EntityManager.CreateEntityQuery(typeof(RuntimeContentBlobReference));
-            try
-            {
-                if (!query.TryGetSingleton(out RuntimeContentBlobReference reference) || !reference.Blob.IsCreated)
-                    return false;
-                blob = reference.Blob;
-                return true;
-            }
-            finally
-            {
-                query.Dispose();
-            }
+            EntityQuery query = GetQuery(world);
+            if (!query.TryGetSingleton(out RuntimeContentBlobReference reference) || !reference.Blob.IsCreated)
+                return false;
+            blob = reference.Blob;
+            return true;
+        }
+
+        static EntityQuery GetQuery(World world)
+        {
+            if (s_QueryCreated && s_QueryWorld == world)
+                return s_Query;
+
+            if (s_QueryCreated)
+                s_Query.Dispose();
+
+            s_QueryWorld = world;
+            s_Query = world.EntityManager.CreateEntityQuery(typeof(RuntimeContentBlobReference));
+            s_QueryCreated = true;
+            return s_Query;
         }
     }
 }

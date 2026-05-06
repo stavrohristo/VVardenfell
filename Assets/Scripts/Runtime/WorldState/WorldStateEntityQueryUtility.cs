@@ -7,21 +7,21 @@ namespace VVardenfell.Runtime.WorldState
         public static Entity GetSingletonEntity<T>(EntityManager entityManager)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = ComponentQueryCache<T>.Get(entityManager);
             return query.IsEmptyIgnoreFilter ? Entity.Null : query.GetSingletonEntity();
         }
 
         public static Entity GetSingletonBufferOwner<T>(EntityManager entityManager)
             where T : unmanaged, IBufferElementData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = BufferQueryCache<T>.Get(entityManager);
             return query.IsEmptyIgnoreFilter ? Entity.Null : query.GetSingletonEntity();
         }
 
         public static bool HasExactlyOne<T>(EntityManager entityManager)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = ComponentQueryCache<T>.Get(entityManager);
             return query.CalculateEntityCount() == 1;
         }
 
@@ -33,7 +33,7 @@ namespace VVardenfell.Runtime.WorldState
             string notReadySuffix = null)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = ComponentQueryCache<T>.Get(entityManager);
             return TryGetExactlyOne(query, out entity, out error, label, notReadySuffix);
         }
 
@@ -45,23 +45,11 @@ namespace VVardenfell.Runtime.WorldState
             string notReadySuffix = null)
             where T : unmanaged, IBufferElementData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = BufferQueryCache<T>.Get(entityManager);
             return TryGetExactlyOne(query, out entity, out error, label, notReadySuffix);
         }
 
         public static bool TryGetExactlyOne(
-            EntityManager entityManager,
-            out Entity entity,
-            out string error,
-            string label,
-            string notReadySuffix,
-            params ComponentType[] requiredTypes)
-        {
-            using var query = entityManager.CreateEntityQuery(requiredTypes);
-            return TryGetExactlyOne(query, out entity, out error, label, notReadySuffix);
-        }
-
-        static bool TryGetExactlyOne(
             EntityQuery query,
             out Entity entity,
             out string error,
@@ -86,6 +74,52 @@ namespace VVardenfell.Runtime.WorldState
         static string FormatNotReadySuffix(string suffix)
         {
             return string.IsNullOrEmpty(suffix) ? "." : $" {suffix}.";
+        }
+
+        static class ComponentQueryCache<T>
+            where T : unmanaged, IComponentData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class BufferQueryCache<T>
+            where T : unmanaged, IBufferElementData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

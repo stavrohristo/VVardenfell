@@ -10,14 +10,13 @@ namespace VVardenfell.Runtime.WorldState
     {
         public static bool TryGetJournalEntity(EntityManager entityManager, out Entity journalEntity)
         {
+            EntityQuery query = JournalQueryCache.Get(entityManager);
             return WorldStateEntityQueryUtility.TryGetExactlyOne(
-                entityManager,
+                query,
                 out journalEntity,
                 out _,
                 "world journal",
-                null,
-                ComponentType.ReadOnly<WorldJournalState>(),
-                ComponentType.ReadWrite<WorldJournalEntry>());
+                null);
         }
 
         public static uint AppendLooseItemRemoved(EntityManager entityManager, uint placedRefId, ContentReference content)
@@ -134,6 +133,30 @@ namespace VVardenfell.Runtime.WorldState
             entry.Sequence = sequence;
             journal.Add(entry);
             return sequence;
+        }
+
+        static class JournalQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<WorldJournalState>(),
+                    ComponentType.ReadWrite<WorldJournalEntry>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

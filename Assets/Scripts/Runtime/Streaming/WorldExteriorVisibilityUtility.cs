@@ -18,13 +18,8 @@ namespace VVardenfell.Runtime.Streaming
         public static void HideExteriorVisibility(World world, ref LoadedCellsMap loaded)
         {
             var em = world.EntityManager;
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink>()
-                .WithPresent<MaterialMeshInfo>();
-            var query = em.CreateEntityQuery(queryBuilder);
+            EntityQuery query = CellRenderStateQueryCache.Get(em);
             em.SetComponentEnabled<MaterialMeshInfo>(query, false);
-            query.Dispose();
-            queryBuilder.Dispose();
             WorldExteriorPhysicsUtility.DisableExteriorPhysics(em);
             if (loaded.Active.Count > 0)
             {
@@ -118,10 +113,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static Entity TryGetStreamingEntity(EntityManager em)
         {
-            using var query = em.CreateEntityQuery(
-                ComponentType.ReadOnly<StreamingConfig>(),
-                ComponentType.ReadOnly<LoadedCellsMap>(),
-                ComponentType.ReadOnly<LogicalRefLookup>());
+            EntityQuery query = StreamingEntityQueryCache.Get(em);
             return query.CalculateEntityCount() > 0 ? query.GetSingletonEntity() : Entity.Null;
         }
 
@@ -171,6 +163,57 @@ namespace VVardenfell.Runtime.Streaming
 
                     em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
                 }
+            }
+        }
+
+        static class CellRenderStateQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager em)
+            {
+                World world = em.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                    .WithAll<CellLink>()
+                    .WithPresent<MaterialMeshInfo>();
+                s_World = world;
+                s_Query = em.CreateEntityQuery(queryBuilder);
+                s_QueryCreated = true;
+                queryBuilder.Dispose();
+                return s_Query;
+            }
+        }
+
+        static class StreamingEntityQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager em)
+            {
+                World world = em.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = em.CreateEntityQuery(
+                    ComponentType.ReadOnly<StreamingConfig>(),
+                    ComponentType.ReadOnly<LoadedCellsMap>(),
+                    ComponentType.ReadOnly<LogicalRefLookup>());
+                s_QueryCreated = true;
+                return s_Query;
             }
         }
     }

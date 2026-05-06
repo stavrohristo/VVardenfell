@@ -6,6 +6,10 @@ namespace VVardenfell.Runtime.Combat
 {
     public static class MorrowindCombatSettingsBridge
     {
+        static World s_SettingsQueryWorld;
+        static EntityQuery s_SettingsQuery;
+        static bool s_SettingsQueryCreated;
+
         public static void PublishPersisted(EntityManager entityManager)
             => PublishDifficulty(entityManager, ResolvePersistedDifficulty());
 
@@ -22,7 +26,7 @@ namespace VVardenfell.Runtime.Combat
         {
             ValidateDifficulty(difficulty);
 
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadWrite<MorrowindCombatSettings>());
+            EntityQuery query = GetSettingsQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 Entity entity = entityManager.CreateEntity(typeof(MorrowindCombatSettings));
@@ -36,6 +40,21 @@ namespace VVardenfell.Runtime.Combat
 
             Entity settingsEntity = query.GetSingletonEntity();
             entityManager.SetComponentData(settingsEntity, new MorrowindCombatSettings { Difficulty = difficulty });
+        }
+
+        static EntityQuery GetSettingsQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_SettingsQueryCreated && s_SettingsQueryWorld == world)
+                return s_SettingsQuery;
+
+            if (s_SettingsQueryCreated)
+                s_SettingsQuery.Dispose();
+
+            s_SettingsQueryWorld = world;
+            s_SettingsQuery = entityManager.CreateEntityQuery(ComponentType.ReadWrite<MorrowindCombatSettings>());
+            s_SettingsQueryCreated = true;
+            return s_SettingsQuery;
         }
 
         static int ResolvePersistedDifficulty()

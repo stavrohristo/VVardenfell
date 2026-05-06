@@ -8,53 +8,34 @@ namespace VVardenfell.Runtime.Physics
 {
     public static class RuntimePhysicsMutationQueueUtility
     {
+        static World s_QueryWorld;
+        static EntityQuery s_QueueQuery;
+        static bool s_QueueQueryCreated;
+
         public static Entity RequireQueueEntity(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
-                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>());
+            EntityQuery query = GetQueueQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 throw new InvalidOperationException("[VVardenfell][Physics] Runtime physics mutation queue has not been created.");
 
             return query.GetSingletonEntity();
         }
 
-        public static void EnqueueEnable(EntityManager entityManager, Entity entity)
+        static EntityQuery GetQueueQuery(EntityManager entityManager)
         {
-            if (entity == Entity.Null || !entityManager.Exists(entity))
-                return;
+            World world = entityManager.World;
+            if (s_QueueQueryCreated && s_QueryWorld == world)
+                return s_QueueQuery;
 
-            Entity queueEntity = RequireQueueEntity(entityManager);
-            var buffer = entityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
-            EnqueueEnable(ref buffer, entity);
-            MarkFlushRequested(entityManager, queueEntity);
-        }
+            if (s_QueueQueryCreated)
+                s_QueueQuery.Dispose();
 
-        public static void EnqueueDisable(EntityManager entityManager, Entity entity)
-        {
-            if (entity == Entity.Null || !entityManager.Exists(entity))
-                return;
-
-            Entity queueEntity = RequireQueueEntity(entityManager);
-            var buffer = entityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
-            EnqueueDisable(ref buffer, entity);
-            MarkFlushRequested(entityManager, queueEntity);
-        }
-
-        public static void EnqueueSetPhysicsCollider(
-            EntityManager entityManager,
-            Entity entity,
-            BlobAssetReference<Collider> collider)
-        {
-            if (entity == Entity.Null || !entityManager.Exists(entity))
-                return;
-            if (!collider.IsCreated)
-                throw new InvalidOperationException("[VVardenfell][Physics] Cannot queue an empty PhysicsCollider swap.");
-
-            Entity queueEntity = RequireQueueEntity(entityManager);
-            var buffer = entityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
-            EnqueueSetPhysicsCollider(ref buffer, entity, collider);
-            MarkFlushRequested(entityManager, queueEntity);
+            s_QueryWorld = world;
+            s_QueueQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
+                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>());
+            s_QueueQueryCreated = true;
+            return s_QueueQuery;
         }
 
         public static bool QueueEnablePhysics(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity entity)

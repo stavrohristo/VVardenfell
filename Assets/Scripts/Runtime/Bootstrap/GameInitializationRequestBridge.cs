@@ -124,7 +124,7 @@ namespace VVardenfell.Runtime.Bootstrap
             RuntimeBootstrapRequestUtility.PublishAll(em);
             MorrowindCombatSettingsBridge.PublishPersisted(em);
 
-            using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery requestQuery = RequestQueryCache<T>.Get(em);
             if (requestQuery.IsEmptyIgnoreFilter)
             {
                 var entity = em.CreateEntity();
@@ -156,7 +156,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 return false;
             RuntimeBootstrapRequestUtility.PublishAll(em);
 
-            using var requestQuery = em.CreateEntityQuery(ComponentType.ReadOnly<LoadGameInitializationSingleton>());
+            EntityQuery requestQuery = LoadGameInitializationQueryCache.Get(em);
             Entity entity = requestQuery.IsEmptyIgnoreFilter
                 ? em.CreateEntity()
                 : requestQuery.GetSingletonEntity();
@@ -185,7 +185,7 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             var em = world.EntityManager;
-            using var payloadQuery = em.CreateEntityQuery(ComponentType.ReadOnly<GameInitializationSingleton>());
+            EntityQuery payloadQuery = GameInitializationPayloadQueryCache.Get(em);
             if (payloadQuery.IsEmptyIgnoreFilter)
             {
                 if (!EnsureInitializationPayload(em, out error))
@@ -199,7 +199,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
         static bool EnsureInitializationPayload(EntityManager em, out string error)
         {
-            using var payloadQuery = em.CreateEntityQuery(ComponentType.ReadOnly<GameInitializationSingleton>());
+            EntityQuery payloadQuery = GameInitializationPayloadQueryCache.Get(em);
             if (!payloadQuery.IsEmptyIgnoreFilter)
             {
                 MorrowindCombatSettingsBridge.PublishPersisted(em);
@@ -301,6 +301,73 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 if (inventory[i].Count > 0 && inventory[i].Content.IsValid)
                     buffer.Add(inventory[i]);
+            }
+        }
+
+        static class RequestQueryCache<T>
+            where T : unmanaged, IComponentData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class LoadGameInitializationQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<LoadGameInitializationSingleton>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class GameInitializationPayloadQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<GameInitializationSingleton>());
+                s_QueryCreated = true;
+                return s_Query;
             }
         }
 

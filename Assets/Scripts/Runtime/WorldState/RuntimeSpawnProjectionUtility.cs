@@ -466,9 +466,7 @@ namespace VVardenfell.Runtime.WorldState
         static bool TryGetRegistryEntity(EntityManager entityManager, out Entity registryEntity)
         {
             registryEntity = Entity.Null;
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<RuntimeSpawnState>(),
-                ComponentType.ReadWrite<RuntimeSpawnedRef>());
+            EntityQuery query = RegistryQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return false;
 
@@ -478,7 +476,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+            EntityQuery query = RuntimeContentBlobQueryCache.Get(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Runtime spawn projection requires runtime content blob.");
 
@@ -490,7 +488,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static BlobAssetReference<RuntimeWorldCellBlob> RequireRuntimeWorldCellBlob(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            EntityQuery query = RuntimeWorldCellBlobQueryCache.Get(entityManager);
             if (query.CalculateEntityCount() != 1)
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] Runtime spawn projection requires exactly one RuntimeWorldCellBlobReference singleton.");
 
@@ -508,6 +506,74 @@ namespace VVardenfell.Runtime.WorldState
             int dx = math.abs(exteriorCell.x - config.CameraCell.x);
             int dy = math.abs(exteriorCell.y - config.CameraCell.y);
             return dx <= config.ViewRadius && dy <= config.ViewRadius;
+        }
+
+        static class RegistryQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<RuntimeSpawnState>(),
+                    ComponentType.ReadWrite<RuntimeSpawnedRef>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class RuntimeContentBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeContentBlobReference>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class RuntimeWorldCellBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
 
         static int2 ComputeExteriorCell(float3 worldPosition)

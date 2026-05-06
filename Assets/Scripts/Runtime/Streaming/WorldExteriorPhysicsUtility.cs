@@ -21,9 +21,7 @@ namespace VVardenfell.Runtime.Streaming
         {
             using var _ = k_PhysicsSync.Auto();
 
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
-            var query = em.CreateEntityQuery(queryBuilder);
+            EntityQuery query = ActiveLinkedExteriorColliderQueryCache.Get(em);
             using var entities = query.ToEntityArray(Allocator.Temp);
             if (entities.Length > 0)
             {
@@ -33,8 +31,6 @@ namespace VVardenfell.Runtime.Streaming
                     RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entities[i]);
                 RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
             }
-            query.Dispose();
-            queryBuilder.Dispose();
         }
 
         internal static void SyncExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
@@ -128,9 +124,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static void SyncLinkedExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
         {
-            var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
-                .WithAll<CellLink, RuntimeColliderSource>();
-            var query = em.CreateEntityQuery(queryBuilder);
+            EntityQuery query = LinkedExteriorColliderQueryCache.Get(em);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var links = query.ToComponentDataArray<CellLink>(Allocator.Temp);
             Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
@@ -160,9 +154,56 @@ namespace VVardenfell.Runtime.Streaming
 
             if (queued)
                 RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
+        }
 
-            query.Dispose();
-            queryBuilder.Dispose();
+        static class ActiveLinkedExteriorColliderQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager em)
+            {
+                World world = em.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                    .WithAll<CellLink, RuntimeColliderSource, PhysicsCollider>();
+                s_World = world;
+                s_Query = em.CreateEntityQuery(queryBuilder);
+                s_QueryCreated = true;
+                queryBuilder.Dispose();
+                return s_Query;
+            }
+        }
+
+        static class LinkedExteriorColliderQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager em)
+            {
+                World world = em.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
+                    .WithAll<CellLink, RuntimeColliderSource>();
+                s_World = world;
+                s_Query = em.CreateEntityQuery(queryBuilder);
+                s_QueryCreated = true;
+                queryBuilder.Dispose();
+                return s_Query;
+            }
         }
     }
 }

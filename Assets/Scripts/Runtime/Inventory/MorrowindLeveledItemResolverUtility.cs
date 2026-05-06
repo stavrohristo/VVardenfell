@@ -19,17 +19,35 @@ namespace VVardenfell.Runtime.Inventory
         const int MaxLeveledResolutionDepth = 16;
         const int ItemLeveledEachFlag = 0x01;
         const int ItemLeveledAllLevelsFlag = 0x02;
+        static World s_PlayerQueryWorld;
+        static EntityQuery s_PlayerQuery;
+        static bool s_PlayerQueryCreated;
 
         public static int ResolvePlayerLevel(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<ActorIdentitySet>());
+            EntityQuery query = GetPlayerQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return 1;
 
             var player = query.GetSingletonEntity();
             return math.max(1, entityManager.GetComponentData<ActorIdentitySet>(player).Level);
+        }
+
+        static EntityQuery GetPlayerQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_PlayerQueryCreated && s_PlayerQueryWorld == world)
+                return s_PlayerQuery;
+
+            if (s_PlayerQueryCreated)
+                s_PlayerQuery.Dispose();
+
+            s_PlayerQueryWorld = world;
+            s_PlayerQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<ActorIdentitySet>());
+            s_PlayerQueryCreated = true;
+            return s_PlayerQuery;
         }
 
         public static uint BuildResolutionSeed(uint sourceSeed, int authoredEntryIndex, int iteration)

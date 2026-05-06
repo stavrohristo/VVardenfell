@@ -5,9 +5,8 @@ namespace VVardenfell.Runtime.Systems
 {
     internal static class MorrowindRuntimeLifecycleUtility
     {
-        public static void EnsureActive(EntityManager entityManager)
+        public static void EnsureActive(EntityManager entityManager, EntityQuery query)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
             if (!query.IsEmptyIgnoreFilter)
                 return;
 
@@ -16,9 +15,8 @@ namespace VVardenfell.Runtime.Systems
             entityManager.AddComponentData(entity, new MorrowindRuntimeActive());
         }
 
-        public static void EnsurePaused(EntityManager entityManager)
+        public static void EnsurePaused(EntityManager entityManager, EntityQuery query)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
             if (!query.IsEmptyIgnoreFilter)
                 return;
 
@@ -27,9 +25,8 @@ namespace VVardenfell.Runtime.Systems
             entityManager.AddComponentData(entity, new MorrowindRuntimePaused());
         }
 
-        public static void RemoveActive(EntityManager entityManager)
+        public static void RemoveActive(EntityManager entityManager, EntityQuery query)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -41,9 +38,8 @@ namespace VVardenfell.Runtime.Systems
             }
         }
 
-        public static void RemovePaused(EntityManager entityManager)
+        public static void RemovePaused(EntityManager entityManager, EntityQuery query)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -55,10 +51,10 @@ namespace VVardenfell.Runtime.Systems
             }
         }
 
-        public static void RemoveRuntimeLifecycle(EntityManager entityManager)
+        public static void RemoveRuntimeLifecycle(EntityManager entityManager, EntityQuery pausedQuery, EntityQuery activeQuery)
         {
-            RemovePaused(entityManager);
-            RemoveActive(entityManager);
+            RemovePaused(entityManager, pausedQuery);
+            RemoveActive(entityManager, activeQuery);
         }
     }
 }

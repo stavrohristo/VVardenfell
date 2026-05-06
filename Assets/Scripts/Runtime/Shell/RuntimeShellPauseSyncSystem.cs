@@ -8,8 +8,11 @@ namespace VVardenfell.Runtime.Shell
     [UpdateAfter(typeof(MorrowindMenuMutationSystemGroup))]
     public partial class RuntimeShellPauseSyncSystem : SystemBase
     {
+        EntityQuery _pausedQuery;
+
         protected override void OnCreate()
         {
+            _pausedQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
             RequireForUpdate<RuntimeShellState>();
         }
 
@@ -28,9 +31,9 @@ namespace VVardenfell.Runtime.Shell
                 || shell.RestMenuAdvancing != 0;
 
             if (paused)
-                MorrowindRuntimeLifecycleUtility.EnsurePaused(EntityManager);
+                MorrowindRuntimeLifecycleUtility.EnsurePaused(EntityManager, _pausedQuery);
             else
-                MorrowindRuntimeLifecycleUtility.RemovePaused(EntityManager);
+                MorrowindRuntimeLifecycleUtility.RemovePaused(EntityManager, _pausedQuery);
         }
     }
 }

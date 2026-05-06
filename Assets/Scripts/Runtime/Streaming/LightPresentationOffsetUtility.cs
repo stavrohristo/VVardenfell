@@ -19,26 +19,41 @@ namespace VVardenfell.Runtime.Streaming
             if (light.ModelPathHash == 0UL)
                 return false;
 
-            EntityQuery query = World.DefaultGameObjectInjectionWorld.EntityManager.CreateEntityQuery(typeof(RuntimeModelPrefabBlobReference));
-            try
-            {
-                if (!query.TryGetSingleton(out RuntimeModelPrefabBlobReference modelReference)
-                    || !modelReference.Blob.IsCreated)
-                    return false;
+            EntityQuery query = RuntimeModelPrefabBlobQueryCache.Get(World.DefaultGameObjectInjectionWorld.EntityManager);
+            if (!query.TryGetSingleton(out RuntimeModelPrefabBlobReference modelReference)
+                || !modelReference.Blob.IsCreated)
+                return false;
 
-                ref RuntimeModelPrefabBlob modelBlob = ref modelReference.Blob.Value;
-                if (!RuntimeModelPrefabBlobUtility.TryGetIndexByContentModelPathHash(ref modelBlob, light.ModelPathHash, out int modelPrefabIndex))
-                    return false;
+            ref RuntimeModelPrefabBlob modelBlob = ref modelReference.Blob.Value;
+            if (!RuntimeModelPrefabBlobUtility.TryGetIndexByContentModelPathHash(ref modelBlob, light.ModelPathHash, out int modelPrefabIndex))
+                return false;
 
-                ref RuntimeModelPrefabDefBlob model = ref RuntimeModelPrefabBlobUtility.RequireRecord(ref modelBlob, modelPrefabIndex);
-                if (model.HasAttachLightOffset == 0)
-                    return false;
-                localPosition = model.AttachLightOffset;
-                return true;
-            }
-            finally
+            ref RuntimeModelPrefabDefBlob model = ref RuntimeModelPrefabBlobUtility.RequireRecord(ref modelBlob, modelPrefabIndex);
+            if (model.HasAttachLightOffset == 0)
+                return false;
+            localPosition = model.AttachLightOffset;
+            return true;
+        }
+
+        static class RuntimeModelPrefabBlobQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
             {
-                query.Dispose();
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeModelPrefabBlobReference>());
+                s_QueryCreated = true;
+                return s_Query;
             }
         }
     }

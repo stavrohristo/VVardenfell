@@ -9,10 +9,13 @@ namespace VVardenfell.Runtime.WorldRefs
     internal static class ActiveExplicitRefLookupLifecycleUtility
     {
         const int InitialCapacity = 1024;
+        static World s_QueryWorld;
+        static EntityQuery s_LookupQuery;
+        static bool s_LookupQueryCreated;
 
         public static Entity CreateOrRepairForBootstrap(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActiveExplicitRefLookup>());
+            EntityQuery query = GetLookupQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return Create(entityManager);
 
@@ -41,7 +44,7 @@ namespace VVardenfell.Runtime.WorldRefs
 
         public static void DisposeAll(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActiveExplicitRefLookup>());
+            EntityQuery query = GetLookupQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -71,7 +74,7 @@ namespace VVardenfell.Runtime.WorldRefs
 
         public static void MarkDirty(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActiveExplicitRefLookup>());
+            EntityQuery query = GetLookupQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
                 return;
 
@@ -80,6 +83,21 @@ namespace VVardenfell.Runtime.WorldRefs
                 throw new InvalidOperationException("[VVardenfell][WorldRefs] active explicit-ref lookup exists without its dirty marker.");
 
             entityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(entity, true);
+        }
+
+        static EntityQuery GetLookupQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_LookupQueryCreated && s_QueryWorld == world)
+                return s_LookupQuery;
+
+            if (s_LookupQueryCreated)
+                s_LookupQuery.Dispose();
+
+            s_QueryWorld = world;
+            s_LookupQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ActiveExplicitRefLookup>());
+            s_LookupQueryCreated = true;
+            return s_LookupQuery;
         }
 
         static Entity Create(EntityManager entityManager)

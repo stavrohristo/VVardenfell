@@ -11,6 +11,13 @@ namespace VVardenfell.Runtime.WorldRefs
 {
     public static class MorrowindRuntimeTargetResolver
     {
+        static World s_PlayerQueryWorld;
+        static EntityQuery s_PlayerQuery;
+        static bool s_PlayerQueryCreated;
+        static World s_ActorQueryWorld;
+        static EntityQuery s_ActorQuery;
+        static bool s_ActorQueryCreated;
+
         public static Entity ResolveLiveTarget(
             EntityManager entityManager,
             Entity targetEntity,
@@ -125,9 +132,8 @@ namespace VVardenfell.Runtime.WorldRefs
 
         public static Entity ResolvePlayerEntity(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            return entities.Length == 1 ? entities[0] : Entity.Null;
+            EntityQuery query = GetPlayerQuery(entityManager);
+            return query.CalculateEntityCount() == 1 ? query.GetSingletonEntity() : Entity.Null;
         }
 
         public static bool IsPlayerEntity(EntityManager entityManager, Entity entity)
@@ -153,9 +159,7 @@ namespace VVardenfell.Runtime.WorldRefs
             Entity matchEntity = Entity.Null;
             uint matchPlacedRefId = 0u;
             int matchCount = 0;
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<ActorSpawnSource>(),
-                ComponentType.ReadOnly<PlacedRefIdentity>());
+            EntityQuery query = GetActorQuery(entityManager);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var sources = query.ToComponentDataArray<ActorSpawnSource>(Allocator.Temp);
             using var placedRefs = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
@@ -182,6 +186,38 @@ namespace VVardenfell.Runtime.WorldRefs
             targetEntity = matchEntity;
             targetPlacedRefId = matchPlacedRefId;
             return true;
+        }
+
+        static EntityQuery GetPlayerQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_PlayerQueryCreated && s_PlayerQueryWorld == world)
+                return s_PlayerQuery;
+
+            if (s_PlayerQueryCreated)
+                s_PlayerQuery.Dispose();
+
+            s_PlayerQueryWorld = world;
+            s_PlayerQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            s_PlayerQueryCreated = true;
+            return s_PlayerQuery;
+        }
+
+        static EntityQuery GetActorQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_ActorQueryCreated && s_ActorQueryWorld == world)
+                return s_ActorQuery;
+
+            if (s_ActorQueryCreated)
+                s_ActorQuery.Dispose();
+
+            s_ActorQueryWorld = world;
+            s_ActorQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ActorSpawnSource>(),
+                ComponentType.ReadOnly<PlacedRefIdentity>());
+            s_ActorQueryCreated = true;
+            return s_ActorQuery;
         }
 
         static bool ActorIdMatches(ref RuntimeActorDefBlob actor, ulong targetHash)

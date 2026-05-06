@@ -210,9 +210,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static void EnsurePhysicsMutationQueueReadyForDirectCellSpawn(World world, EntityManager em)
         {
-            using var query = em.CreateEntityQuery(
-                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
-                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>());
+            EntityQuery query = PhysicsMutationQueueQueryCache.Get(em);
             if (!query.IsEmptyIgnoreFilter)
                 return;
 
@@ -234,6 +232,30 @@ namespace VVardenfell.Runtime.Streaming
         internal static bool EnsureModelPrefabBuilt(EntityManager em, int modelPrefabIndex)
         {
             return WorldModelPrefabUtility.EnsureModelPrefabBuilt(em, WorldResources.Cache, modelPrefabIndex);
+        }
+
+        static class PhysicsMutationQueueQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
+                    ComponentType.ReadWrite<RuntimePhysicsMutationRequest>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

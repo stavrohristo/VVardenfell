@@ -95,6 +95,10 @@ namespace VVardenfell.Runtime.Bootstrap
         private bool _loadStartRequested;
         private BootstrapRuntimeMode _selectedRuntimeMode = BootstrapRuntimeMode.Vanilla;
         private WorldBootstrapOptions _bootstrapOptions = WorldBootstrapOptions.Vanilla;
+        private World _runtimeLifecycleWorld;
+        private EntityQuery _runtimeActiveQuery;
+        private EntityQuery _runtimePausedQuery;
+        private bool _runtimeLifecycleQueriesCreated;
 
         public static PlayerCharacterComponent ResolvePlayerMovementSettings()
         {
@@ -476,7 +480,10 @@ namespace VVardenfell.Runtime.Bootstrap
 
             var world = World.DefaultGameObjectInjectionWorld;
             if (world != null && world.IsCreated)
-                MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(world.EntityManager);
+            {
+                EnsureRuntimeLifecycleQueries(world);
+                MorrowindRuntimeLifecycleUtility.RemoveRuntimeLifecycle(world.EntityManager, _runtimePausedQuery, _runtimeActiveQuery);
+            }
 
             DestroyPresentation();
             try
@@ -660,11 +667,36 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private void OnDestroy()
         {
+            DisposeRuntimeLifecycleQueries();
+
             if (_fallbackView != null)
                 Destroy(_fallbackView.gameObject);
 
             if (Active == this)
                 Active = null;
+        }
+
+        private void EnsureRuntimeLifecycleQueries(World world)
+        {
+            if (_runtimeLifecycleWorld == world)
+                return;
+
+            DisposeRuntimeLifecycleQueries();
+            _runtimeLifecycleWorld = world;
+            _runtimeActiveQuery = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimeActive>());
+            _runtimePausedQuery = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+            _runtimeLifecycleQueriesCreated = true;
+        }
+
+        private void DisposeRuntimeLifecycleQueries()
+        {
+            if (_runtimeLifecycleQueriesCreated)
+            {
+                _runtimeActiveQuery.Dispose();
+                _runtimePausedQuery.Dispose();
+            }
+            _runtimeLifecycleWorld = null;
+            _runtimeLifecycleQueriesCreated = false;
         }
     }
 }

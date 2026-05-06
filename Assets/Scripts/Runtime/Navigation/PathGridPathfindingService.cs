@@ -383,6 +383,10 @@ namespace VVardenfell.Runtime.Pathfinding
 
     public static class PathGridPathfindingRequestBridge
     {
+        static World s_PathfindingQueryWorld;
+        static EntityQuery s_PathfindingQuery;
+        static bool s_PathfindingQueryCreated;
+
         public static bool TryRequestPath(
             int startNodeIndex,
             int goalNodeIndex,
@@ -574,12 +578,7 @@ namespace VVardenfell.Runtime.Pathfinding
             }
 
             entityManager = world.EntityManager;
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PathGridPathfindingState>(),
-                ComponentType.ReadWrite<PendingPathGridPathRequest>(),
-                ComponentType.ReadWrite<CompletedPathGridPath>(),
-                ComponentType.ReadWrite<CompletedPathGridPathNode>(),
-                ComponentType.ReadWrite<CanceledPathGridPathRequest>());
+            EntityQuery query = GetPathfindingQuery(entityManager);
             if (query.IsEmptyIgnoreFilter)
             {
                 error = "Pathgrid pathfinding service is not ready.";
@@ -589,6 +588,26 @@ namespace VVardenfell.Runtime.Pathfinding
             pathfindingEntity = query.GetSingletonEntity();
             error = null;
             return true;
+        }
+
+        static EntityQuery GetPathfindingQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_PathfindingQueryCreated && s_PathfindingQueryWorld == world)
+                return s_PathfindingQuery;
+
+            if (s_PathfindingQueryCreated)
+                s_PathfindingQuery.Dispose();
+
+            s_PathfindingQueryWorld = world;
+            s_PathfindingQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<PathGridPathfindingState>(),
+                ComponentType.ReadWrite<PendingPathGridPathRequest>(),
+                ComponentType.ReadWrite<CompletedPathGridPath>(),
+                ComponentType.ReadWrite<CompletedPathGridPathNode>(),
+                ComponentType.ReadWrite<CanceledPathGridPathRequest>());
+            s_PathfindingQueryCreated = true;
+            return s_PathfindingQuery;
         }
 
     }

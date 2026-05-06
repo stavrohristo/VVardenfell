@@ -119,7 +119,7 @@ namespace VVardenfell.Runtime.Bootstrap
         static bool TryGetSingletonEntity<T>(EntityManager entityManager, out Entity entity)
             where T : unmanaged, IComponentData
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+            EntityQuery query = SingletonEntityQueryCache<T>.Get(entityManager);
             if (!query.IsEmptyIgnoreFilter)
             {
                 entity = query.GetSingletonEntity();
@@ -128,6 +128,29 @@ namespace VVardenfell.Runtime.Bootstrap
 
             entity = Entity.Null;
             return false;
+        }
+
+        static class SingletonEntityQueryCache<T>
+            where T : unmanaged, IComponentData
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                if (s_QueryCreated)
+                    s_Query.Dispose();
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<T>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
         }
     }
 }

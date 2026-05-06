@@ -80,6 +80,10 @@ namespace VVardenfell.Runtime.Pathfinding
 
     public static class PathGridTraversalBridge
     {
+        static World s_SettingsQueryWorld;
+        static EntityQuery s_SettingsQuery;
+        static bool s_SettingsQueryCreated;
+
         public static bool TryRequestNodeTraversal(
             Entity owner,
             int startNodeIndex,
@@ -239,10 +243,25 @@ namespace VVardenfell.Runtime.Pathfinding
 
         static PathGridTraversalSettings ResolveSettings(EntityManager entityManager)
         {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PathGridTraversalSettings>());
+            EntityQuery query = GetSettingsQuery(entityManager);
             return query.IsEmptyIgnoreFilter
                 ? PathGridTraversalSettings.Defaults
                 : query.GetSingleton<PathGridTraversalSettings>();
+        }
+
+        static EntityQuery GetSettingsQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_SettingsQueryCreated && s_SettingsQueryWorld == world)
+                return s_SettingsQuery;
+
+            if (s_SettingsQueryCreated)
+                s_SettingsQuery.Dispose();
+
+            s_SettingsQueryWorld = world;
+            s_SettingsQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PathGridTraversalSettings>());
+            s_SettingsQueryCreated = true;
+            return s_SettingsQuery;
         }
 
         static bool TryGetWorld(out EntityManager entityManager, out string error)
