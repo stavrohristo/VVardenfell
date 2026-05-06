@@ -103,6 +103,8 @@ namespace VVardenfell.Runtime.Combat
 
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
             TryQueueMeleeConfirmation(
                 ref content,
@@ -116,6 +118,8 @@ namespace VVardenfell.Runtime.Combat
                 hitAttackType,
                 hitAttackStrength,
                 runtimeEntity,
+                deferredPhysicsQueueEntity,
+                fixedTick,
                 out _,
                 out _);
 
@@ -137,6 +141,8 @@ namespace VVardenfell.Runtime.Combat
             ActorWeaponAttackType attackType,
             float attackStrength,
             Entity runtimeEntity,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             out uint querySequence,
             out uint targetPlacedRefId)
         {
@@ -161,6 +167,8 @@ namespace VVardenfell.Runtime.Combat
 
             querySequence = DeferredPhysicsQueryUtility.EnqueueRay(
                 EntityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
                 DeferredPhysicsQueryKind.MeleeConfirmation,
                 player,
                 target,
@@ -171,7 +179,7 @@ namespace VVardenfell.Runtime.Combat
             EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
             {
                 QuerySequence = querySequence,
-                RequestFixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick,
+                RequestFixedTick = fixedTick,
                 Attacker = player,
                 Target = target,
                 WeaponContent = weaponContent,

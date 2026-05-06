@@ -8,6 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Rendering
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPresentationSystemGroup))]
     public partial struct ActorEntitiesGraphicsVisibilitySyncSystem : ISystem
     {

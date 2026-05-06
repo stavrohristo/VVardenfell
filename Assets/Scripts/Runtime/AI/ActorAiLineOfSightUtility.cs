@@ -9,6 +9,8 @@ namespace VVardenfell.Runtime.AI
     {
         public static bool HasLineOfSightOrRequest(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             Entity sourceEntity,
             Entity targetEntity,
             float3 source,
@@ -21,6 +23,8 @@ namespace VVardenfell.Runtime.AI
 
             return DeferredPhysicsQueryUtility.TryGetLineOfSightOrRequest(
                        entityManager,
+                       queueEntity,
+                       fixedTick,
                        sourceEntity,
                        targetEntity,
                        source,

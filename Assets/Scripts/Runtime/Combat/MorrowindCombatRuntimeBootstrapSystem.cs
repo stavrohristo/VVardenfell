@@ -8,19 +8,19 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Combat
 {
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup))]
-    public partial class MorrowindCombatRuntimeBootstrapSystem : SystemBase
+    public partial struct MorrowindCombatRuntimeBootstrapSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindCombatRuntimeBootstrapRequest>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindCombatRuntimeBootstrapRequest>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             if (SystemAPI.HasSingleton<MorrowindCombatRuntimeState>())
             {
-                RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(EntityManager);
+                RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(state.EntityManager);
                 return;
             }
 
@@ -28,14 +28,14 @@ namespace VVardenfell.Runtime.Combat
             if (!contentBlobReference.Blob.IsCreated)
                 return;
 
-            Entity entity = EntityManager.CreateEntity(typeof(MorrowindCombatRuntimeState));
-            EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
-            EntityManager.SetComponentData(entity, new MorrowindCombatRuntimeState
+            Entity entity = state.EntityManager.CreateEntity(typeof(MorrowindCombatRuntimeState));
+            state.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
+            state.EntityManager.SetComponentData(entity, new MorrowindCombatRuntimeState
             {
                 RandomState = 0x6E624EB7u,
             });
-            EntityManager.AddBuffer<PendingMeleeHitConfirmation>(entity);
-            RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(EntityManager);
+            state.EntityManager.AddBuffer<PendingMeleeHitConfirmation>(entity);
+            RuntimeBootstrapRequestUtility.Consume<MorrowindCombatRuntimeBootstrapRequest>(state.EntityManager);
         }
     }
 }

@@ -5,7 +5,6 @@ using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -26,6 +25,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<MorrowindScriptAnimationGroupRequest>());
 
             RequireForUpdate(_runtimeQuery);
+            RequireForUpdate<MorrowindScriptRuntimeCatalog>();
             RequireForUpdate<LogicalRefLookup>();
         }
 
@@ -36,8 +36,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            var scriptCatalog = WorldResources.MorrowindScriptCatalog;
-            if (scriptCatalog == null || !scriptCatalog.IsCreated)
+            var scriptCatalog = SystemAPI.GetSingleton<MorrowindScriptRuntimeCatalog>();
+            if (!scriptCatalog.IsCreated)
                 throw new InvalidOperationException("[VVardenfell][MWScript] Animation group request has no script runtime catalog.");
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();

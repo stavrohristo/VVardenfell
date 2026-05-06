@@ -4,6 +4,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorPoseSamplingSystem))]
     public partial struct ActorSkinnedMeshRenderSystem : ISystem

@@ -56,55 +56,229 @@ namespace VVardenfell.Core.Cache
             => ref Require(ref blob.PathGrids, handle.Index, "path grid");
 
         public static bool TryGetActorHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out ActorDefHandle handle)
-            => TryGetHandle(ref blob.ActorIdLookup, hash, ActorDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ActorIdLookup, hash, out int index))
+                return false;
+            handle = ActorDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetActivatorHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out ActivatorDefHandle handle)
-            => TryGetHandle(ref blob.ActivatorIdLookup, hash, ActivatorDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ActivatorIdLookup, hash, out int index))
+                return false;
+            handle = ActivatorDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetDoorHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out DoorDefHandle handle)
-            => TryGetHandle(ref blob.DoorIdLookup, hash, DoorDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.DoorIdLookup, hash, out int index))
+                return false;
+            handle = DoorDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetContainerHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out ContainerDefHandle handle)
-            => TryGetHandle(ref blob.ContainerIdLookup, hash, ContainerDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ContainerIdLookup, hash, out int index))
+                return false;
+            handle = ContainerDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetItemHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out ItemDefHandle handle)
-            => TryGetHandle(ref blob.ItemIdLookup, hash, ItemDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ItemIdLookup, hash, out int index))
+                return false;
+            handle = ItemDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetLightHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out LightDefHandle handle)
-            => TryGetHandle(ref blob.LightIdLookup, hash, LightDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.LightIdLookup, hash, out int index))
+                return false;
+            handle = LightDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetItemLeveledListHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out ItemLeveledListDefHandle handle)
-            => TryGetHandle(ref blob.ItemLeveledListIdLookup, hash, ItemLeveledListDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ItemLeveledListIdLookup, hash, out int index))
+                return false;
+            handle = ItemLeveledListDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetCreatureLeveledListHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out CreatureLeveledListDefHandle handle)
-            => TryGetHandle(ref blob.CreatureLeveledListIdLookup, hash, CreatureLeveledListDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.CreatureLeveledListIdLookup, hash, out int index))
+                return false;
+            handle = CreatureLeveledListDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetSpellHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out SpellDefHandle handle)
-            => TryGetHandle(ref blob.SpellIdLookup, hash, SpellDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.SpellIdLookup, hash, out int index))
+                return false;
+            handle = SpellDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetEnchantmentHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out EnchantmentDefHandle handle)
-            => TryGetHandle(ref blob.EnchantmentIdLookup, hash, EnchantmentDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.EnchantmentIdLookup, hash, out int index))
+                return false;
+            handle = EnchantmentDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetSoundHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out SoundDefHandle handle)
-            => TryGetHandle(ref blob.SoundIdLookup, hash, SoundDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.SoundIdLookup, hash, out int index))
+                return false;
+            handle = SoundDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetDialogueHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out DialogueDefHandle handle)
-            => TryGetHandle(ref blob.DialogueIdLookup, hash, DialogueDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.DialogueIdLookup, hash, out int index))
+                return false;
+            handle = DialogueDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetRegionHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out RegionDefHandle handle)
-            => TryGetHandle(ref blob.RegionIdLookup, hash, RegionDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.RegionIdLookup, hash, out int index))
+                return false;
+            handle = RegionDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetGameSettingHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.GameSettingIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.GameSettingIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetGlobalHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.GlobalIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.GlobalIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetClassHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.ClassIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ClassIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetFactionHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.FactionIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.FactionIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetRaceHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.RaceIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.RaceIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetStaticHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.StaticIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.StaticIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetScriptHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.ScriptIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ScriptIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetMorrowindScriptProgramHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out MorrowindScriptProgramDefHandle handle)
-            => TryGetHandle(ref blob.MorrowindScriptProgramIdLookup, hash, MorrowindScriptProgramDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.MorrowindScriptProgramIdLookup, hash, out int index))
+                return false;
+            handle = MorrowindScriptProgramDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetMagicEffectHandleByIndex(ref RuntimeContentBlob blob, int index, out MagicEffectDefHandle handle)
-            => TryGetIntHandle(ref blob.MagicEffectIndexLookup, index, MagicEffectDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.MagicEffectIndexLookup, index, out int handleIndex))
+                return false;
+            handle = MagicEffectDefHandle.FromIndex(handleIndex);
+            return true;
+        }
+
         public static bool TryGetPathGridHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.PathGridIdLookup, hash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.PathGridIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetInteriorPathGridHandleByCellHash(ref RuntimeContentBlob blob, ulong cellHash, out GenericRecordDefHandle handle)
-            => TryGetHandle(ref blob.InteriorPathGridHashLookup, cellHash, GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.InteriorPathGridHashLookup, cellHash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetExteriorPathGridHandle(ref RuntimeContentBlob blob, int gridX, int gridY, out GenericRecordDefHandle handle)
-            => TryGetLongHandle(ref blob.ExteriorPathGridCoordLookup, PackExteriorPathGridKey(gridX, gridY), GenericRecordDefHandle.FromIndex, out handle);
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ExteriorPathGridCoordLookup, PackExteriorPathGridKey(gridX, gridY), out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
 
         public static float RequireGameSettingFloatByIdHash(ref RuntimeContentBlob blob, ulong idHash)
         {
@@ -447,42 +621,30 @@ namespace VVardenfell.Core.Cache
             return ref array[index];
         }
 
-        static bool TryGetHandle<THandle>(
-            ref BlobArray<RuntimeContentHashLookupBlob> lookup,
-            ulong hash,
-            Func<int, THandle> handleFromIndex,
-            out THandle handle)
+        static bool TryGetHandleIndex(ref BlobArray<RuntimeContentHashLookupBlob> lookup, ulong hash, out int index)
         {
-            handle = default;
+            index = default;
             if (hash == 0UL || !TryFind(ref lookup, hash, out int value))
                 return false;
-            handle = handleFromIndex(value - 1);
+            index = value - 1;
             return true;
         }
 
-        static bool TryGetIntHandle<THandle>(
-            ref BlobArray<RuntimeContentIntLookupBlob> lookup,
-            int key,
-            Func<int, THandle> handleFromIndex,
-            out THandle handle)
+        static bool TryGetHandleIndex(ref BlobArray<RuntimeContentIntLookupBlob> lookup, int key, out int index)
         {
-            handle = default;
+            index = default;
             if (!TryFind(ref lookup, key, out int value))
                 return false;
-            handle = handleFromIndex(value - 1);
+            index = value - 1;
             return true;
         }
 
-        static bool TryGetLongHandle<THandle>(
-            ref BlobArray<RuntimeContentLongLookupBlob> lookup,
-            long key,
-            Func<int, THandle> handleFromIndex,
-            out THandle handle)
+        static bool TryGetHandleIndex(ref BlobArray<RuntimeContentLongLookupBlob> lookup, long key, out int index)
         {
-            handle = default;
+            index = default;
             if (!TryFind(ref lookup, key, out int value))
                 return false;
-            handle = handleFromIndex(value - 1);
+            index = value - 1;
             return true;
         }
 

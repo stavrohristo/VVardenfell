@@ -7,6 +7,7 @@ using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.WorldState;
@@ -299,6 +300,13 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
+
+            foreach (var e in em.CreateEntityQuery(typeof(MorrowindScriptRuntimeCatalog)).ToEntityArray(Allocator.Temp))
+            {
+                var catalog = em.GetComponentData<MorrowindScriptRuntimeCatalog>(e);
+                catalog.Dispose();
+                em.SetComponentData(e, default(MorrowindScriptRuntimeCatalog));
+            }
 
             foreach (var e in em.CreateEntityQuery(typeof(LoadQueue)).ToEntityArray(Allocator.Temp))
                 em.GetComponentData<LoadQueue>(e).Queue.Dispose();

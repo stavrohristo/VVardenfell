@@ -9,6 +9,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorAnimationControllerSystem))]
     public partial struct ActorPoseSamplingSystem : ISystem

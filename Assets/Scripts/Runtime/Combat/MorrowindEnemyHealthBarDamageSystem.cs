@@ -12,16 +12,16 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindDamageApplySystem))]
     [UpdateBefore(typeof(MorrowindHitAftermathStateSystem))]
-    public partial class MorrowindEnemyHealthBarDamageSystem : SystemBase
+    public partial struct MorrowindEnemyHealthBarDamageSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindDamageAppliedEvent>();
-            RequireForUpdate<RuntimeEnemyHealthBarState>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindDamageAppliedEvent>();
+            state.RequireForUpdate<RuntimeEnemyHealthBarState>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -35,59 +35,60 @@ namespace VVardenfell.Runtime.Combat
             if (fadeSeconds < 0f)
                 throw new InvalidOperationException($"[VVardenfell][HUD] GMST 'fNPCHealthBarFade' must be non-negative, got {fadeSeconds}.");
 
-            ref var state = ref SystemAPI.GetSingletonRW<RuntimeEnemyHealthBarState>().ValueRW;
+            ref var healthBarState = ref SystemAPI.GetSingletonRW<RuntimeEnemyHealthBarState>().ValueRW;
             foreach (var damage in SystemAPI.Query<RefRO<MorrowindDamageAppliedEvent>>())
             {
-                if (!IsPlayerAttacker(damage.ValueRO.Attacker))
+                if (!IsPlayerAttacker(state.EntityManager, damage.ValueRO.Attacker))
                     continue;
 
-                RefreshEnemyHealthState(ref state, damage.ValueRO.Target, displaySeconds, fadeSeconds);
+                RefreshEnemyHealthState(state.EntityManager, ref healthBarState, damage.ValueRO.Target, displaySeconds, fadeSeconds);
             }
         }
 
-        bool IsPlayerAttacker(Entity attacker)
+        static bool IsPlayerAttacker(EntityManager entityManager, Entity attacker)
         {
             return attacker != Entity.Null
-                   && EntityManager.Exists(attacker)
-                   && EntityManager.HasComponent<PlayerTag>(attacker);
+                   && entityManager.Exists(attacker)
+                   && entityManager.HasComponent<PlayerTag>(attacker);
         }
 
-        void RefreshEnemyHealthState(
+        static void RefreshEnemyHealthState(
+            EntityManager entityManager,
             ref RuntimeEnemyHealthBarState state,
             Entity target,
             float displaySeconds,
             float fadeSeconds)
         {
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !entityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][HUD] Enemy health target entity is missing.");
-            if (EntityManager.HasComponent<PlayerTag>(target))
+            if (entityManager.HasComponent<PlayerTag>(target))
                 return;
-            if (!EntityManager.HasComponent<ActorSpawnSource>(target))
+            if (!entityManager.HasComponent<ActorSpawnSource>(target))
                 throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target entity={target.Index}:{target.Version} has no ActorSpawnSource.");
-            if (!EntityManager.HasComponent<PlacedRefIdentity>(target))
+            if (!entityManager.HasComponent<PlacedRefIdentity>(target))
                 throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target entity={target.Index}:{target.Version} has no PlacedRefIdentity.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(target)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
-                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(target)} has no ActorHitAftermathState.");
+            if (!entityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(entityManager, target)} has no ActorVitalSet.");
+            if (!entityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(entityManager, target)} has no ActorHitAftermathState.");
 
-            var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
-            var vitals = EntityManager.GetComponentData<ActorVitalSet>(target);
+            var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(target);
+            var vitals = entityManager.GetComponentData<ActorVitalSet>(target);
             if (aftermath.Dead != 0 && vitals.CurrentHealth <= 0f)
                 return;
 
             state.Target = target;
-            state.TargetPlacedRefId = PlacedRefId(target);
+            state.TargetPlacedRefId = PlacedRefId(entityManager, target);
             state.SecondsRemaining = displaySeconds;
             state.FadeSeconds = fadeSeconds;
-            state.LastKnownHealthFill = ComputeHealthFill(target, vitals);
+            state.LastKnownHealthFill = ComputeHealthFill(entityManager, target, vitals);
             state.Visible = 1;
         }
 
-        float ComputeHealthFill(Entity target, in ActorVitalSet vitals)
+        static float ComputeHealthFill(EntityManager entityManager, Entity target, in ActorVitalSet vitals)
         {
             if (vitals.ModifiedHealthBase <= 0f)
-                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(target)} has non-positive modified health base {vitals.ModifiedHealthBase}.");
+                throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(entityManager, target)} has non-positive modified health base {vitals.ModifiedHealthBase}.");
 
             if (vitals.CurrentHealth < 1f)
                 return 0f;
@@ -95,8 +96,8 @@ namespace VVardenfell.Runtime.Combat
             return math.saturate(vitals.CurrentHealth / vitals.ModifiedHealthBase);
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value;
+        static uint PlacedRefId(EntityManager entityManager, Entity entity)
+            => entityManager.GetComponentData<PlacedRefIdentity>(entity).Value;
     }
 }
 

@@ -37,6 +37,7 @@ namespace VVardenfell.Runtime.AI
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<ActorAiPassiveGreetingSayRequest>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
             RequireForUpdate<RuntimeContentBlobReference>();
         }
 
@@ -54,6 +55,8 @@ namespace VVardenfell.Runtime.AI
             Entity player = _playerQuery.GetSingletonEntity();
             var playerTransform = EntityManager.GetComponentData<LocalTransform>(player);
             var playerVitals = EntityManager.GetComponentData<ActorVitalSet>(player);
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             if (playerVitals.CurrentHealth <= 0f)
             {
                 ResetAllGreetingsAndRelease();
@@ -122,6 +125,8 @@ namespace VVardenfell.Runtime.AI
 
                 if (!ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
                         EntityManager,
+                        deferredPhysicsQueueEntity,
+                        fixedTick,
                         entity,
                         player,
                         EyePosition(playerPosition),

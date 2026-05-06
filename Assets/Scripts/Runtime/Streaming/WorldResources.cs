@@ -10,7 +10,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Animation;
-using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Vfx;
@@ -63,7 +62,6 @@ namespace VVardenfell.Runtime.Streaming
         public static RuntimeSpawnPrefabDescriptor[] SpawnableItemPrefabs;
         public static RuntimeSpawnPrefabDescriptor[] SpawnableLightPrefabs;
         public static PathGridNavigationWorld PathGridNavigation;
-        public static MorrowindScriptRuntimeCatalog MorrowindScriptCatalog;
         public static ActorGpuAnimationResources ActorGpuAnimation;
         public static MorrowindVfxResources Vfx;
         public static ActorEntitiesGraphicsRenderResources ActorEntitiesGraphicsRenderer;
@@ -385,8 +383,6 @@ namespace VVardenfell.Runtime.Streaming
             Desc = default;
             if (PathGridNavigation.IsCreated)
                 PathGridNavigation.Dispose();
-            MorrowindScriptCatalog?.Dispose();
-            MorrowindScriptCatalog = null;
         }
 
         private static void DisposeCellResidentBlobs(CellData data)

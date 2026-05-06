@@ -10,15 +10,15 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindArmorDamageSystem))]
     [UpdateBefore(typeof(MorrowindDamageApplySystem))]
-    public partial class MorrowindDifficultyDamageSystem : SystemBase
+    public partial struct MorrowindDifficultyDamageSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindPendingDamageEvent>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -38,8 +38,8 @@ namespace VVardenfell.Runtime.Combat
                 if (damage.ValueRO.TargetVital != MorrowindDamageTargetVital.Health || damage.ValueRO.Amount <= 0f)
                     continue;
 
-                bool attackerIsPlayer = IsPlayer(damage.ValueRO.Attacker);
-                bool targetIsPlayer = IsPlayer(damage.ValueRO.Target);
+                bool attackerIsPlayer = IsPlayer(state.EntityManager, damage.ValueRO.Attacker);
+                bool targetIsPlayer = IsPlayer(state.EntityManager, damage.ValueRO.Target);
                 if (attackerIsPlayer == targetIsPlayer)
                     continue;
 
@@ -54,12 +54,12 @@ namespace VVardenfell.Runtime.Combat
             }
         }
 
-        bool IsPlayer(Entity entity)
+        static bool IsPlayer(EntityManager entityManager, Entity entity)
         {
-            if (entity == Entity.Null || !EntityManager.Exists(entity))
+            if (entity == Entity.Null || !entityManager.Exists(entity))
                 throw new InvalidOperationException("[VVardenfell][Damage] Difficulty scaling attack participant entity is missing.");
 
-            return EntityManager.HasComponent<PlayerTag>(entity);
+            return entityManager.HasComponent<PlayerTag>(entity);
         }
     }
 }

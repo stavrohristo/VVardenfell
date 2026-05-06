@@ -29,12 +29,13 @@ namespace VVardenfell.Runtime.Projectiles
                 return;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             foreach (var (projectile, transform, collider, entity) in
                      SystemAPI.Query<RefRW<MorrowindProjectile>, RefRW<LocalTransform>, RefRO<PhysicsCollider>>()
                          .WithEntityAccess())
             {
-                MoveProjectile(dt, ref projectile.ValueRW, ref transform.ValueRW, collider.ValueRO, entity, fixedTick, ref ecb);
+                MoveProjectile(dt, ref projectile.ValueRW, ref transform.ValueRW, collider.ValueRO, entity, deferredPhysicsQueueEntity, fixedTick, ref ecb);
             }
 
             ecb.Playback(EntityManager);
@@ -47,6 +48,7 @@ namespace VVardenfell.Runtime.Projectiles
             ref LocalTransform transform,
             in PhysicsCollider collider,
             Entity projectileEntity,
+            Entity deferredPhysicsQueueEntity,
             uint fixedTick,
             ref EntityCommandBuffer ecb)
         {
@@ -59,6 +61,8 @@ namespace VVardenfell.Runtime.Projectiles
             {
                 if (DeferredPhysicsQueryUtility.TryGetResultBySequence(
                         EntityManager,
+                        deferredPhysicsQueueEntity,
+                        fixedTick,
                         DeferredPhysicsQueryKind.ProjectileSegment,
                         projectile.PendingQuerySequence,
                         DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
@@ -92,6 +96,8 @@ namespace VVardenfell.Runtime.Projectiles
 
             projectile.PendingQuerySequence = DeferredPhysicsQueryUtility.EnqueueColliderCast(
                 EntityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
                 DeferredPhysicsQueryKind.ProjectileSegment,
                 projectileEntity,
                 projectile.Target,

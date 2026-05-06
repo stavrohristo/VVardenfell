@@ -6,6 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
 {
+    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup))]
     [UpdateAfter(typeof(ActorPresentationSpawnSystem))]
     public partial struct ActorGpuAnimationRequestSystem : ISystem

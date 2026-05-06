@@ -11,25 +11,10 @@ namespace VVardenfell.Runtime.Physics
     {
         public const byte DefaultMaxResultAgeTicks = 1;
 
-        public static Entity RequireQueueEntity(EntityManager entityManager)
-        {
-            using var query = entityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<DeferredPhysicsQueryQueueTag>(),
-                ComponentType.ReadWrite<DeferredPhysicsQueryRuntime>(),
-                ComponentType.ReadWrite<DeferredPhysicsQueryRequest>(),
-                ComponentType.ReadWrite<DeferredPhysicsQueryResult>());
-            if (query.IsEmptyIgnoreFilter)
-                throw new InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue has not been created.");
-
-            Entity queueEntity = query.GetSingletonEntity();
-            if (!entityManager.HasComponent<DeferredPhysicsQueryPending>(queueEntity))
-                throw new InvalidOperationException("[VVardenfell][Physics] Deferred physics query queue is missing its pending marker.");
-
-            return queueEntity;
-        }
-
         public static uint EnqueueRay(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             DeferredPhysicsQueryKind kind,
             Entity requesterEntity,
             Entity targetEntity,
@@ -41,16 +26,11 @@ namespace VVardenfell.Runtime.Physics
             if (!math.all(math.isfinite(start)) || !math.all(math.isfinite(end)))
                 throw new InvalidOperationException("[VVardenfell][Physics] Deferred ray query endpoints must be finite.");
 
-            Entity queueEntity = RequireQueueEntity(entityManager);
             var runtime = entityManager.GetComponentData<DeferredPhysicsQueryRuntime>(queueEntity);
             runtime.NextSequence++;
             if (runtime.NextSequence == 0u)
                 runtime.NextSequence = 1u;
             entityManager.SetComponentData(queueEntity, runtime);
-
-            uint fixedTick = 0u;
-            if (TryGetPhysicsFrame(entityManager, out var frame))
-                fixedTick = frame.FixedTick;
 
             var requests = entityManager.GetBuffer<DeferredPhysicsQueryRequest>(queueEntity);
             requests.Add(new DeferredPhysicsQueryRequest
@@ -71,6 +51,8 @@ namespace VVardenfell.Runtime.Physics
 
         public static uint EnqueueColliderCast(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             DeferredPhysicsQueryKind kind,
             Entity requesterEntity,
             Entity targetEntity,
@@ -85,16 +67,11 @@ namespace VVardenfell.Runtime.Physics
             if (!math.all(math.isfinite(start)) || !math.all(math.isfinite(end)))
                 throw new InvalidOperationException("[VVardenfell][Physics] Deferred collider cast endpoints must be finite.");
 
-            Entity queueEntity = RequireQueueEntity(entityManager);
             var runtime = entityManager.GetComponentData<DeferredPhysicsQueryRuntime>(queueEntity);
             runtime.NextSequence++;
             if (runtime.NextSequence == 0u)
                 runtime.NextSequence = 1u;
             entityManager.SetComponentData(queueEntity, runtime);
-
-            uint fixedTick = 0u;
-            if (TryGetPhysicsFrame(entityManager, out var frame))
-                fixedTick = frame.FixedTick;
 
             var requests = entityManager.GetBuffer<DeferredPhysicsQueryRequest>(queueEntity);
             requests.Add(new DeferredPhysicsQueryRequest
@@ -116,6 +93,8 @@ namespace VVardenfell.Runtime.Physics
 
         public static bool TryGetResultBySequence(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             DeferredPhysicsQueryKind kind,
             uint sequence,
             byte maxAgeTicks,
@@ -125,14 +104,13 @@ namespace VVardenfell.Runtime.Physics
             if (sequence == 0u)
                 return false;
 
-            Entity queueEntity = RequireQueueEntity(entityManager);
             var results = entityManager.GetBuffer<DeferredPhysicsQueryResult>(queueEntity, true);
             for (int i = results.Length - 1; i >= 0; i--)
             {
                 var candidate = results[i];
                 if (candidate.Kind != kind || candidate.Sequence != sequence)
                     continue;
-                if (!IsResultFresh(entityManager, candidate, maxAgeTicks))
+                if (!IsResultFresh(fixedTick, candidate, maxAgeTicks))
                     return false;
 
                 result = candidate;
@@ -144,19 +122,20 @@ namespace VVardenfell.Runtime.Physics
 
         public static bool TryGetLatestResult(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             DeferredPhysicsQueryKind kind,
             byte maxAgeTicks,
             out DeferredPhysicsQueryResult result)
         {
             result = default;
-            Entity queueEntity = RequireQueueEntity(entityManager);
             var results = entityManager.GetBuffer<DeferredPhysicsQueryResult>(queueEntity, true);
             for (int i = results.Length - 1; i >= 0; i--)
             {
                 var candidate = results[i];
                 if (candidate.Kind != kind)
                     continue;
-                if (!IsResultFresh(entityManager, candidate, maxAgeTicks))
+                if (!IsResultFresh(fixedTick, candidate, maxAgeTicks))
                     return false;
 
                 result = candidate;
@@ -168,6 +147,8 @@ namespace VVardenfell.Runtime.Physics
 
         public static bool TryGetLineOfSightOrRequest(
             EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
             Entity sourceEntity,
             Entity targetEntity,
             float3 source,
@@ -183,7 +164,6 @@ namespace VVardenfell.Runtime.Physics
                 return true;
             }
 
-            Entity queueEntity = RequireQueueEntity(entityManager);
             var results = entityManager.GetBuffer<DeferredPhysicsQueryResult>(queueEntity, true);
             for (int i = results.Length - 1; i >= 0; i--)
             {
@@ -195,7 +175,7 @@ namespace VVardenfell.Runtime.Physics
                     continue;
                 }
 
-                if (!IsResultFresh(entityManager, result, maxAgeTicks))
+                if (!IsResultFresh(fixedTick, result, maxAgeTicks))
                     break;
 
                 hasLineOfSight = result.Status == DeferredPhysicsQueryStatus.Miss;
@@ -205,6 +185,7 @@ namespace VVardenfell.Runtime.Physics
             QueueLineOfSightRequestIfMissing(
                 entityManager,
                 queueEntity,
+                fixedTick,
                 sourceEntity,
                 targetEntity,
                 source,
@@ -216,6 +197,7 @@ namespace VVardenfell.Runtime.Physics
         static void QueueLineOfSightRequestIfMissing(
             EntityManager entityManager,
             Entity queueEntity,
+            uint fixedTick,
             Entity sourceEntity,
             Entity targetEntity,
             float3 source,
@@ -236,6 +218,8 @@ namespace VVardenfell.Runtime.Physics
 
             EnqueueRay(
                 entityManager,
+                queueEntity,
+                fixedTick,
                 DeferredPhysicsQueryKind.LineOfSight,
                 sourceEntity,
                 targetEntity,
@@ -245,27 +229,12 @@ namespace VVardenfell.Runtime.Physics
                 filter);
         }
 
-        static bool IsResultFresh(EntityManager entityManager, in DeferredPhysicsQueryResult result, byte maxAgeTicks)
+        static bool IsResultFresh(uint fixedTick, in DeferredPhysicsQueryResult result, byte maxAgeTicks)
         {
             if (maxAgeTicks == byte.MaxValue)
                 return true;
-            if (!TryGetPhysicsFrame(entityManager, out var frame))
-                return false;
 
-            return frame.FixedTick <= result.RequestFixedTick + maxAgeTicks;
-        }
-
-        static bool TryGetPhysicsFrame(EntityManager entityManager, out MorrowindPhysicsFrameState frame)
-        {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<MorrowindPhysicsFrameState>());
-            if (query.IsEmptyIgnoreFilter)
-            {
-                frame = default;
-                return false;
-            }
-
-            frame = query.GetSingleton<MorrowindPhysicsFrameState>();
-            return true;
+            return fixedTick <= result.RequestFixedTick + maxAgeTicks;
         }
     }
 }

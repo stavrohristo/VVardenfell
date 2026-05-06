@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Combat
             RequireForUpdate<ActorMeleeCombatAiState>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
             RequireForUpdate<RuntimeContentBlobReference>();
         }
 
@@ -38,6 +39,8 @@ namespace VVardenfell.Runtime.Combat
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
 
             float deltaTime = math.max(0f, SystemAPI.Time.DeltaTime);
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
 
@@ -91,7 +94,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 if (weapon.Drawn == 0 || weapon.Phase != ActorWeaponAnimationPhase.Equipped)
                     continue;
-                if (!CanStartMeleeAttack(ref content, entity, actorBounds.ValueRO, transform.ValueRO, target))
+                if (!CanStartMeleeAttack(ref content, deferredPhysicsQueueEntity, fixedTick, entity, actorBounds.ValueRO, transform.ValueRO, target))
                     continue;
 
                 FaceTarget(ref transform.ValueRW, target);
@@ -220,6 +223,8 @@ namespace VVardenfell.Runtime.Combat
 
         bool CanStartMeleeAttack(
             ref RuntimeContentBlob content,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             Entity actor,
             in ActorLocalBounds actorBounds,
             in LocalTransform actorTransform,
@@ -247,7 +252,14 @@ namespace VVardenfell.Runtime.Combat
             float3 source = math.transform(
                 float4x4.TRS(actorTransform.Position, actorTransform.Rotation, new float3(actorTransform.Scale)),
                 actorBounds.Center);
-            return ActorAiLineOfSightUtility.HasLineOfSightOrRequest(EntityManager, actor, target, source, targetCenter);
+            return ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
+                EntityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
+                actor,
+                target,
+                source,
+                targetCenter);
         }
 
         bool TryResolveTargetBounds(

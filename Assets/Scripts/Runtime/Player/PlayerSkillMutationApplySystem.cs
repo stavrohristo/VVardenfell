@@ -8,32 +8,32 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class PlayerSkillMutationApplySystem : SystemBase
+    public partial struct PlayerSkillMutationApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<PlayerSkillMutationRequest>();
+            state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<PlayerSkillMutationRequest>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<PlayerSkillMutationRequest>(runtimeEntity);
+            var requests = state.EntityManager.GetBuffer<PlayerSkillMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
-            using var query = EntityManager.CreateEntityQuery(
+            using var query = state.EntityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorSkillSet>());
             if (query.IsEmptyIgnoreFilter)
                 throw new InvalidOperationException("[VVardenfell][Player] Player skill mutation requires an active player skill set.");
 
             Entity player = query.GetSingletonEntity();
-            var skills = EntityManager.GetComponentData<ActorSkillSet>(player);
+            var skills = state.EntityManager.GetComponentData<ActorSkillSet>(player);
             for (int i = 0; i < requests.Length; i++)
                 ApplyRequest(ref skills, requests[i]);
-            EntityManager.SetComponentData(player, skills);
+            state.EntityManager.SetComponentData(player, skills);
 
             requests.Clear();
         }

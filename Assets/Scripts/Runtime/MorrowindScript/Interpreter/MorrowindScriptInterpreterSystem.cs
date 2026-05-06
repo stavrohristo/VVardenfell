@@ -21,11 +21,12 @@ using VVardenfell.Runtime.WorldState;
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-        public unsafe partial struct MorrowindScriptInterpreterSystem : ISystem
-        {
-            EntityQuery _scriptQuery;
-            EntityQuery _globalScriptQuery;
-            EntityQuery _playerInventoryQuery;
+    [BurstCompile]
+    public unsafe partial struct MorrowindScriptInterpreterSystem : ISystem
+    {
+        EntityQuery _scriptQuery;
+        EntityQuery _globalScriptQuery;
+        EntityQuery _playerInventoryQuery;
         BufferLookup<MorrowindScriptGlobalValue> _globalsLookup;
         BufferLookup<MorrowindActorDeathCount> _deathCountsLookup;
         BufferLookup<MorrowindQuestJournalIndex> _questJournalLookup;
@@ -70,10 +71,11 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<MusicState>();
+            state.RequireForUpdate<MorrowindWeatherState>();
             _scriptQuery = state.GetEntityQuery(
                 ComponentType.ReadWrite<MorrowindScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
-                ComponentType.ReadWrite<MorrowindScriptStackValue>(),
                 ComponentType.ReadOnly<PlacedRefIdentity>(),
                 ComponentType.ReadOnly<PlacedRefRuntimeState>(),
                 ComponentType.ReadOnly<LogicalRefLocation>(),
@@ -81,8 +83,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             _globalScriptQuery = state.GetEntityQuery(
                 ComponentType.ReadWrite<MorrowindGlobalScriptInstance>(),
                 ComponentType.ReadWrite<MorrowindScriptInstance>(),
-                ComponentType.ReadWrite<MorrowindScriptLocalValue>(),
-                ComponentType.ReadWrite<MorrowindScriptStackValue>());
+                ComponentType.ReadWrite<MorrowindScriptLocalValue>());
             _playerInventoryQuery = state.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<PlayerInventoryItem>());
@@ -100,6 +101,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             _actorDeathCountedLookup = state.GetComponentLookup<MorrowindActorDeathCounted>(true);
             _actorOnDeathConsumedLookup = state.GetComponentLookup<MorrowindActorOnDeathConsumed>(true);
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<MorrowindScriptRuntimeCatalog>();
             state.RequireForUpdate<MorrowindScriptInterpreterScratch>();
             state.RequireForUpdate<InteractionRuntimeState>();
             state.RequireForUpdate<ScriptActivationEvent>();
@@ -136,22 +138,26 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.RequireForUpdate<PlacedRefRuntimeStateLookup>();
             state.RequireForUpdate<ActiveExplicitRefLookup>();
             state.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            state.RequireForUpdate<MorrowindPhysicsFrameState>();
             state.RequireForUpdate<RuntimeContentBlobReference>();
             state.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         public void OnDestroy(ref SystemState state)
         {
+            foreach (var catalogRef in SystemAPI.Query<RefRW<MorrowindScriptRuntimeCatalog>>())
+                catalogRef.ValueRW.Dispose();
             foreach (var scratchRef in SystemAPI.Query<RefRW<MorrowindScriptInterpreterScratch>>())
                 scratchRef.ValueRW.Dispose();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            var catalog = WorldResources.MorrowindScriptCatalog;
+            var catalog = SystemAPI.GetSingleton<MorrowindScriptRuntimeCatalog>();
             bool objectScriptsEmpty = _scriptQuery.IsEmptyIgnoreFilter;
             bool globalScriptsEmpty = _globalScriptQuery.IsEmptyIgnoreFilter;
-            if (catalog == null || !catalog.IsCreated || (objectScriptsEmpty && globalScriptsEmpty))
+            if (!catalog.IsCreated || (objectScriptsEmpty && globalScriptsEmpty))
                 return;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
@@ -217,6 +223,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             actorEventConsumeRequests.Clear();
 
             ref var scratch = ref SystemAPI.GetSingletonRW<MorrowindScriptInterpreterScratch>().ValueRW;
+            scratch.ActiveSources.Clear();
+            if (scratch.ActiveSources.Capacity < scriptCount)
+                scratch.ActiveSources.Capacity = scriptCount;
             NativeArray<MorrowindScriptRunningProgramSnapshot> runningPrograms;
             MorrowindScriptRequirementMask activeRequirements;
             using (k_RequirementScan.Auto())
@@ -375,6 +384,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ? CopyActorLineOfSightSnapshots(
                     ref state,
                     state.EntityManager,
+                    SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>(),
+                    SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick,
                     catalog,
                     playerEntity,
                     logicalRefs,
@@ -480,6 +491,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ActorDeathCountedStates = _actorDeathCountedLookup,
                 ActorOnDeathConsumedStates = _actorOnDeathConsumedLookup,
                 RuntimeEntity = runtimeEntity,
+                ActiveSources = scratch.ActiveSources.AsParallelWriter(),
                 RefStateRuntimeEntity = runtimeEntity,
                 TransformRuntimeEntity = runtimeEntity,
                 AiRuntimeEntity = runtimeEntity,
@@ -576,6 +588,11 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             using (k_PlaybackCommands.Auto())
             {
+                activeSources = state.EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
+                activeSources.ResizeUninitialized(scratch.ActiveSources.Length);
+                for (int i = 0; i < scratch.ActiveSources.Length; i++)
+                    activeSources[i] = scratch.ActiveSources[i];
+
                 ecb.Playback(state.EntityManager);
                 ecb.Dispose();
             }
@@ -1363,6 +1380,8 @@ namespace VVardenfell.Runtime.MorrowindScript
         NativeArray<MorrowindScriptActorLineOfSightSnapshot> CopyActorLineOfSightSnapshots(
             ref SystemState state,
             EntityManager entityManager,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             MorrowindScriptRuntimeCatalog catalog,
             Entity playerEntity,
             in LogicalRefLookup logicalRefs,
@@ -1400,6 +1419,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
                 AddLineOfSightInstructionPairs(
                     entityManager,
+                    deferredPhysicsQueueEntity,
+                    fixedTick,
                     catalog,
                     instance.ProgramIndex,
                     self,
@@ -1421,6 +1442,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 AddLineOfSightInstructionPairs(
                     entityManager,
+                    deferredPhysicsQueueEntity,
+                    fixedTick,
                     catalog,
                     instance.ProgramIndex,
                     self,
@@ -1501,6 +1524,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static void AddLineOfSightInstructionPairs(
             EntityManager entityManager,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             MorrowindScriptRuntimeCatalog catalog,
             int programIndex,
             in ScriptLineOfSightActor self,
@@ -1541,7 +1566,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
-                AddLineOfSightSnapshot(entityManager, source, target, ref snapshots, ref pairKeys);
+                AddLineOfSightSnapshot(entityManager, deferredPhysicsQueueEntity, fixedTick, source, target, ref snapshots, ref pairKeys);
             }
         }
 
@@ -1636,6 +1661,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static void AddLineOfSightSnapshot(
             EntityManager entityManager,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             in ScriptLineOfSightActor source,
             in ScriptLineOfSightActor target,
             ref NativeList<MorrowindScriptActorLineOfSightSnapshot> snapshots,
@@ -1651,6 +1678,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetPlacedRefId = target.PlacedRefId,
                 HasLineOfSight = HasActorLineOfSight(
                     entityManager,
+                    deferredPhysicsQueueEntity,
+                    fixedTick,
                     source.Entity,
                     target.Entity,
                     source.EyePosition,
@@ -1666,6 +1695,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static bool HasActorLineOfSight(
             EntityManager entityManager,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick,
             Entity sourceEntity,
             Entity targetEntity,
             float3 source,
@@ -1676,6 +1707,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return DeferredPhysicsQueryUtility.TryGetLineOfSightOrRequest(
                        entityManager,
+                       deferredPhysicsQueueEntity,
+                       fixedTick,
                        sourceEntity,
                        targetEntity,
                        source,
@@ -1711,6 +1744,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public ComponentLookup<MorrowindActorDeathCounted> ActorDeathCountedStates;
             [ReadOnly] public ComponentLookup<MorrowindActorOnDeathConsumed> ActorOnDeathConsumedStates;
             public Entity RuntimeEntity;
+            public NativeList<MorrowindScriptActiveSource>.ParallelWriter ActiveSources;
             public Entity RefStateRuntimeEntity;
             public Entity TransformRuntimeEntity;
             public Entity AiRuntimeEntity;
@@ -1772,6 +1806,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             public Entity ContainerSessionEntity;
             [ReadOnly] public NativeArray<ScriptActivationEvent> ActivationEvents;
 
+            [BurstCompile]
             public bool TryInterpret(
                 int sortKey,
                 Entity scriptEntity,
@@ -1781,8 +1816,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 float3 position,
                 quaternion rotation,
                 ref MorrowindScriptInstance instance,
-                DynamicBuffer<MorrowindScriptLocalValue> locals,
-                DynamicBuffer<MorrowindScriptStackValue> stack)
+                DynamicBuffer<MorrowindScriptLocalValue> locals)
             {
                 if ((uint)instance.ProgramIndex >= (uint)Programs.Length)
                 {
@@ -1795,7 +1829,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled || program.InstructionCount <= 0)
                     return false;
 
-                Ecb.AppendToBuffer(sortKey, RuntimeEntity, new MorrowindScriptActiveSource
+                ActiveSources.AddNoResize(new MorrowindScriptActiveSource
                 {
                     LoopSourceKey = MorrowindScriptOpcodeTable.BuildScriptLoopSourceKey(placedRefId, scriptEntity),
                 });
@@ -1804,8 +1838,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     locals.ResizeUninitialized(program.LocalCount);
 
                 int stackCapacity = math.max(1, program.MaxStack);
-                if (stack.Length < stackCapacity)
-                    stack.ResizeUninitialized(stackCapacity);
+                MorrowindScriptStackValue* stack = stackalloc MorrowindScriptStackValue[stackCapacity];
 
                 if (!QuestJournal.HasBuffer(RuntimeEntity))
                 {
@@ -1824,7 +1857,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     ProgramCounter = 0,
                     StackLength = 0,
                     StackCapacity = stackCapacity,
-                    Stack = (MorrowindScriptStackValue*)stack.GetUnsafePtr(),
+                    Stack = stack,
                     Locals = locals.Length == 0 ? null : (MorrowindScriptLocalValue*)locals.GetUnsafePtr(),
                     LocalCount = locals.Length,
                     Globals = globalBuffer.Length == 0 ? null : (MorrowindScriptGlobalValue*)globalBuffer.GetUnsafePtr(),
@@ -2240,7 +2273,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Entity entity,
                 ref MorrowindScriptInstance instance,
                 DynamicBuffer<MorrowindScriptLocalValue> locals,
-                DynamicBuffer<MorrowindScriptStackValue> stack,
                 in PlacedRefIdentity placedRef,
                 in PlacedRefRuntimeState refState,
                 in LogicalRefLocation location,
@@ -2255,7 +2287,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (!IsScriptLocationActive(location))
                     return;
 
-                Common.TryInterpret(sortKey, entity, entity, placedRef.Value, refState.Disabled, transform.Position, transform.Rotation, ref instance, locals, stack);
+                Common.TryInterpret(sortKey, entity, entity, placedRef.Value, refState.Disabled, transform.Position, transform.Rotation, ref instance, locals);
             }
 
             bool IsScriptLocationActive(in LogicalRefLocation location)
@@ -2284,8 +2316,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Entity entity,
                 ref MorrowindScriptInstance instance,
                 ref MorrowindGlobalScriptInstance global,
-                DynamicBuffer<MorrowindScriptLocalValue> locals,
-                DynamicBuffer<MorrowindScriptStackValue> stack)
+                DynamicBuffer<MorrowindScriptLocalValue> locals)
             {
                 if (instance.Status != (byte)MorrowindScriptInstanceStatus.Running)
                     return;
@@ -2310,7 +2341,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     }
                 }
 
-                Common.TryInterpret(sortKey, entity, contextEntity, placedRefId, selfDisabled, position, rotation, ref instance, locals, stack);
+                Common.TryInterpret(sortKey, entity, contextEntity, placedRefId, selfDisabled, position, rotation, ref instance, locals);
             }
         }
     }

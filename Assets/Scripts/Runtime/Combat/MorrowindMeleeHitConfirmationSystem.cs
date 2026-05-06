@@ -44,12 +44,15 @@ namespace VVardenfell.Runtime.Combat
                 return;
 
             using var resolvedHits = new NativeList<ResolvedMeleeHitConfirmation>(Allocator.Temp);
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             for (int i = pending.Length - 1; i >= 0; i--)
             {
                 var request = pending[i];
                 if (!DeferredPhysicsQueryUtility.TryGetResultBySequence(
                         EntityManager,
+                        deferredPhysicsQueueEntity,
+                        fixedTick,
                         DeferredPhysicsQueryKind.MeleeConfirmation,
                         request.QuerySequence,
                         MeleeConfirmationMaxResultAgeTicks,

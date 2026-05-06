@@ -10,42 +10,42 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class ActorAttributeMutationApplySystem : SystemBase
+    public partial struct ActorAttributeMutationApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<ActorAttributeMutationRequest>();
-            RequireForUpdate<LogicalRefLookup>();
+            state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<ActorAttributeMutationRequest>();
+            state.RequireForUpdate<LogicalRefLookup>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<ActorAttributeMutationRequest>(runtimeEntity);
+            var requests = state.EntityManager.GetBuffer<ActorAttributeMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(requests[i], lookup);
+                ApplyRequest(state.EntityManager, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(in ActorAttributeMutationRequest request, in LogicalRefLookup lookup)
+        static void ApplyRequest(EntityManager entityManager, in ActorAttributeMutationRequest request, in LogicalRefLookup lookup)
         {
-            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(entityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
+            if (target == Entity.Null || !entityManager.Exists(target))
                 throw new InvalidOperationException($"[VVardenfell][Player] Actor attribute mutation target ref={request.TargetPlacedRefId} is not loaded.");
 
-            if (!EntityManager.HasComponent<ActorAttributeSet>(target))
+            if (!entityManager.HasComponent<ActorAttributeSet>(target))
                 throw new InvalidOperationException($"[VVardenfell][Player] Actor attribute mutation target ref={request.TargetPlacedRefId} has no ActorAttributeSet.");
 
             if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.None)
                 throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation requires a concrete attribute.");
 
-            var attributes = EntityManager.GetComponentData<ActorAttributeSet>(target);
+            var attributes = entityManager.GetComponentData<ActorAttributeSet>(target);
             float current = GetAttribute(attributes, (ActorAttributeKind)request.Attribute);
             float value = (ActorAttributeMutationKind)request.Kind switch
             {
@@ -54,9 +54,9 @@ namespace VVardenfell.Runtime.Player
                 _ => throw new InvalidOperationException($"[VVardenfell][Player] Unknown actor attribute mutation kind {request.Kind}."),
             };
             SetAttribute(ref attributes, (ActorAttributeKind)request.Attribute, value);
-            EntityManager.SetComponentData(target, attributes);
+            entityManager.SetComponentData(target, attributes);
             if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.Strength)
-                PlayerEncumbranceDirtyUtility.MarkIfPlayer(EntityManager, target);
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(entityManager, target);
         }
 
         static float GetAttribute(in ActorAttributeSet attributes, ActorAttributeKind attribute)

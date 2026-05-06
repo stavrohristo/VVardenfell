@@ -9,15 +9,15 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindMeleeDamageRollSystem))]
     [UpdateBefore(typeof(MorrowindArmorDamageSystem))]
-    public partial class MorrowindNormalWeaponResistanceSystem : SystemBase
+    public partial struct MorrowindNormalWeaponResistanceSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindPendingDamageEvent>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -30,12 +30,12 @@ namespace VVardenfell.Runtime.Combat
                     continue;
 
                 Entity target = damage.ValueRO.Target;
-                if (target == Entity.Null || !EntityManager.Exists(target))
+                if (target == Entity.Null || !state.EntityManager.Exists(target))
                     throw new InvalidOperationException("[VVardenfell][Damage] Normal weapon damage target entity is missing.");
-                if (!EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
+                if (!state.EntityManager.HasBuffer<ActorActiveMagicEffect>(target))
                     throw new InvalidOperationException("[VVardenfell][Damage] Normal weapon damage target has no ActorActiveMagicEffect buffer.");
 
-                var targetEffects = EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
+                var targetEffects = state.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
                 damage.ValueRW.Amount = MorrowindMeleeCombatMechanics.ApplyNormalWeaponResistanceEffects(
                     ref content,
                     targetEffects,

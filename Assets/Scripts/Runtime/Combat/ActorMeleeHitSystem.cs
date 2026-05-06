@@ -41,6 +41,8 @@ namespace VVardenfell.Runtime.Combat
                 : default;
             var audioEcb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindCombatRuntimeState>();
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
 
             foreach (var (combat, transform, actorBounds, weaponState, entity) in
                      SystemAPI.Query<
@@ -74,7 +76,9 @@ namespace VVardenfell.Runtime.Combat
                         actorBounds.ValueRO,
                         target,
                         weapon,
-                        runtimeEntity))
+                        runtimeEntity,
+                        deferredPhysicsQueueEntity,
+                        fixedTick))
                 {
                     SpendAttackFatigue(ref content, entity, weapon.MeleeHitWeaponContent, math.saturate(weapon.MeleeHitAttackStrength));
                 }
@@ -97,7 +101,9 @@ namespace VVardenfell.Runtime.Combat
             in ActorLocalBounds attackerBounds,
             Entity target,
             in ActorWeaponAnimationState weaponState,
-            Entity runtimeEntity)
+            Entity runtimeEntity,
+            Entity deferredPhysicsQueueEntity,
+            uint fixedTick)
         {
             if (!ValidateAttacker(attacker))
                 return false;
@@ -125,6 +131,8 @@ namespace VVardenfell.Runtime.Combat
             float3 hitPosition = ComputeHitPosition(attackerTransform.Position, targetBase, targetRadius, targetHeight);
             uint sequence = DeferredPhysicsQueryUtility.EnqueueRay(
                 EntityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
                 DeferredPhysicsQueryKind.MeleeConfirmation,
                 attacker,
                 target,
@@ -135,7 +143,7 @@ namespace VVardenfell.Runtime.Combat
             EntityManager.GetBuffer<PendingMeleeHitConfirmation>(runtimeEntity).Add(new PendingMeleeHitConfirmation
             {
                 QuerySequence = sequence,
-                RequestFixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick,
+                RequestFixedTick = fixedTick,
                 Attacker = attacker,
                 Target = target,
                 WeaponContent = weaponState.MeleeHitWeaponContent,

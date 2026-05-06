@@ -1,6 +1,5 @@
 using Unity.Collections;
 using Unity.Entities;
-using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Bootstrap;
@@ -24,6 +23,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (SystemAPI.HasSingleton<MorrowindScriptRuntimeState>())
             {
                 Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
+                EnsureSessionTeardown(runtimeEntity);
+                CreateOrRepairScriptCatalog(runtimeEntity);
                 CreateOrRepairInterpreterScratch(runtimeEntity);
                 RuntimeBootstrapUtility.EnsureComponent(EntityManager, runtimeEntity, new MorrowindMagicRuntimeState
                 {
@@ -48,16 +49,18 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ref RuntimeContentBlob content = ref contentBlob.Value;
 
-            WorldResources.MorrowindScriptCatalog?.Dispose();
-            WorldResources.MorrowindScriptCatalog = MorrowindScriptRuntimeCatalog.Create(contentBlob);
-
-            Entity runtime = EntityManager.CreateEntity(typeof(MorrowindScriptRuntimeState));
+            Entity runtime = EntityManager.CreateEntity(
+                typeof(MorrowindScriptRuntimeState),
+                typeof(MorrowindScriptRuntimeCatalog),
+                typeof(SessionTeardown));
             EntityManager.SetName(runtime, "VVardenfell.MorrowindScriptRuntime");
             EntityManager.SetComponentData(runtime, new MorrowindScriptRuntimeState
             {
                 NextAudioRequestSequence = 1u,
                 RandomState = 0x6E624EB7u,
             });
+            EntityManager.SetComponentData(runtime, MorrowindScriptRuntimeCatalog.Create(contentBlob));
+            EntityManager.SetComponentEnabled<SessionTeardown>(runtime, false);
             CreateOrRepairInterpreterScratch(runtime);
 
             var globals = EntityManager.AddBuffer<MorrowindScriptGlobalValue>(runtime);
@@ -150,8 +153,43 @@ namespace VVardenfell.Runtime.MorrowindScript
                 NextActiveSpellId = 1,
             });
             ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(EntityManager);
-            Debug.LogWarning($"Script runtime initialized");
             RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(EntityManager);
+        }
+
+        void CreateOrRepairScriptCatalog(Entity runtimeEntity)
+        {
+            if (EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
+            {
+                var catalog = EntityManager.GetComponentData<MorrowindScriptRuntimeCatalog>(runtimeEntity);
+                if (catalog.IsCreated)
+                    return;
+
+                catalog.Dispose();
+                EntityManager.SetComponentData(runtimeEntity, default(MorrowindScriptRuntimeCatalog));
+            }
+
+            if (!SystemAPI.HasSingleton<RuntimeContentBlobReference>())
+                throw new System.InvalidOperationException("[VVardenfell][MWScript] Script runtime catalog repair requires runtime content blob.");
+
+            BlobAssetReference<RuntimeContentBlob> contentBlob = SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob;
+            if (!contentBlob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][MWScript] Script runtime catalog repair requires created runtime content blob.");
+
+            var repairedCatalog = MorrowindScriptRuntimeCatalog.Create(contentBlob);
+            if (EntityManager.HasComponent<MorrowindScriptRuntimeCatalog>(runtimeEntity))
+            {
+                EntityManager.SetComponentData(runtimeEntity, repairedCatalog);
+                return;
+            }
+
+            EntityManager.AddComponentData(runtimeEntity, repairedCatalog);
+        }
+
+        void EnsureSessionTeardown(Entity runtimeEntity)
+        {
+            if (!EntityManager.HasComponent<SessionTeardown>(runtimeEntity))
+                EntityManager.AddComponent<SessionTeardown>(runtimeEntity);
+            EntityManager.SetComponentEnabled<SessionTeardown>(runtimeEntity, false);
         }
 
         void CreateOrRepairInterpreterScratch(Entity runtimeEntity)

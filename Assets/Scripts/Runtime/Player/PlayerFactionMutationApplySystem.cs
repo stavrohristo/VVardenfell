@@ -10,45 +10,45 @@ namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
-    public partial class PlayerFactionMutationApplySystem : SystemBase
+    public partial struct PlayerFactionMutationApplySystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindScriptRuntimeState>();
-            RequireForUpdate<PlayerFactionMutationRequest>();
-            RequireForUpdate<LogicalRefLookup>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindScriptRuntimeState>();
+            state.RequireForUpdate<PlayerFactionMutationRequest>();
+            state.RequireForUpdate<LogicalRefLookup>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var requests = EntityManager.GetBuffer<PlayerFactionMutationRequest>(runtimeEntity);
+            var requests = state.EntityManager.GetBuffer<PlayerFactionMutationRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
-            using var query = EntityManager.CreateEntityQuery(
+            using var query = state.EntityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerFactionMembership>());
             if (query.IsEmptyIgnoreFilter)
                 throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation requires an active player faction buffer.");
 
             Entity player = query.GetSingletonEntity();
-            var factions = EntityManager.GetBuffer<PlayerFactionMembership>(player);
+            var factions = state.EntityManager.GetBuffer<PlayerFactionMembership>(player);
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref contentBlob, factions, requests[i], lookup);
+                ApplyRequest(state.EntityManager, ref contentBlob, factions, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerFactionMembership> factions, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
+        static void ApplyRequest(EntityManager entityManager, ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerFactionMembership> factions, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
         {
             int factionIndex = request.FactionIndex;
             if (factionIndex < 0)
-                factionIndex = ResolveSourceFactionIndex(ref contentBlob, request, lookup);
+                factionIndex = ResolveSourceFactionIndex(entityManager, ref contentBlob, request, lookup);
 
             int index = FindPlayerFactionIndex(factions, factionIndex);
             switch ((PlayerFactionMutationKind)request.Kind)
@@ -143,13 +143,13 @@ namespace VVardenfell.Runtime.Player
             }
         }
 
-        int ResolveSourceFactionIndex(ref RuntimeContentBlob contentBlob, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
+        static int ResolveSourceFactionIndex(EntityManager entityManager, ref RuntimeContentBlob contentBlob, in PlayerFactionMutationRequest request, in LogicalRefLookup lookup)
         {
-            Entity source = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.SourceEntity, request.SourcePlacedRefId, lookup);
-            if (source == Entity.Null || !EntityManager.HasComponent<ActorSpawnSource>(source))
+            Entity source = MorrowindRuntimeTargetResolver.ResolveLiveTarget(entityManager, request.SourceEntity, request.SourcePlacedRefId, lookup);
+            if (source == Entity.Null || !entityManager.HasComponent<ActorSpawnSource>(source))
                 throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation without explicit faction requires an actor source.");
 
-            ActorDefHandle actorHandle = EntityManager.GetComponentData<ActorSpawnSource>(source).Definition;
+            ActorDefHandle actorHandle = entityManager.GetComponentData<ActorSpawnSource>(source).Definition;
             if (!actorHandle.IsValid)
                 throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation source has an invalid actor definition.");
 

@@ -10,15 +10,15 @@ namespace VVardenfell.Runtime.Combat
     [UpdateInGroup(typeof(MorrowindDamageSystemGroup))]
     [UpdateAfter(typeof(MorrowindNormalWeaponResistanceSystem))]
     [UpdateBefore(typeof(MorrowindBlockDamageSystem))]
-    public partial class MorrowindKnockoutDamageMultiplierSystem : SystemBase
+    public partial struct MorrowindKnockoutDamageMultiplierSystem : ISystem
     {
-        protected override void OnCreate()
+        public void OnCreate(ref SystemState state)
         {
-            RequireForUpdate<MorrowindPendingDamageEvent>();
-            RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate<MorrowindPendingDamageEvent>();
+            state.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        protected override void OnUpdate()
+        public void OnUpdate(ref SystemState state)
         {
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
@@ -34,11 +34,11 @@ namespace VVardenfell.Runtime.Combat
                     continue;
 
                 Entity target = damage.ValueRO.Target;
-                RequireTargetComposition(target);
+                RequireTargetComposition(state.EntityManager, target);
                 if (damage.ValueRO.Amount <= 0f)
                     continue;
 
-                var aftermath = EntityManager.GetComponentData<ActorHitAftermathState>(target);
+                var aftermath = state.EntityManager.GetComponentData<ActorHitAftermathState>(target);
                 if (aftermath.KnockedDown == 0)
                     continue;
 
@@ -50,19 +50,19 @@ namespace VVardenfell.Runtime.Combat
             => sourceKind == MorrowindDamageSourceKind.Weapon
                || sourceKind == MorrowindDamageSourceKind.HandToHand;
 
-        void RequireTargetComposition(Entity target)
+        static void RequireTargetComposition(EntityManager entityManager, Entity target)
         {
-            if (target == Entity.Null || !EntityManager.Exists(target))
+            if (target == Entity.Null || !entityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][Damage] KO damage target entity is missing.");
-            if (!EntityManager.HasComponent<ActorVitalSet>(target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] KO damage target ref={PlacedRefId(target)} has no ActorVitalSet.");
-            if (!EntityManager.HasComponent<ActorHitAftermathState>(target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] KO damage target ref={PlacedRefId(target)} has no ActorHitAftermathState.");
+            if (!entityManager.HasComponent<ActorVitalSet>(target))
+                throw new InvalidOperationException($"[VVardenfell][Damage] KO damage target ref={PlacedRefId(entityManager, target)} has no ActorVitalSet.");
+            if (!entityManager.HasComponent<ActorHitAftermathState>(target))
+                throw new InvalidOperationException($"[VVardenfell][Damage] KO damage target ref={PlacedRefId(entityManager, target)} has no ActorHitAftermathState.");
         }
 
-        uint PlacedRefId(Entity entity)
-            => EntityManager.HasComponent<PlacedRefIdentity>(entity)
-                ? EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+        static uint PlacedRefId(EntityManager entityManager, Entity entity)
+            => entityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
     }
 }

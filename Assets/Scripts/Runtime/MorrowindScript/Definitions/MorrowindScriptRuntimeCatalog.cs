@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public byte ValueKind;
     }
 
-    public sealed class MorrowindScriptRuntimeCatalog : IDisposable
+    public struct MorrowindScriptRuntimeCatalog : IComponentData, IDisposable
     {
         public NativeArray<MorrowindScriptProgramRuntime> Programs;
         public NativeArray<FixedString128Bytes> ProgramIds;

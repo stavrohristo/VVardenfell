@@ -236,16 +236,21 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_raycastHitQuery);
             RequireForUpdate(_playerQuery);
             RequireForUpdate<DeferredPhysicsQueryQueueTag>();
+            RequireForUpdate<MorrowindPhysicsFrameState>();
         }
 
         protected override void OnUpdate()
         {
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
+            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
+            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             uint fallbackSequence = hitRef.ValueRO.Sequence + 1u;
 
             if (DeferredPhysicsQueryUtility.TryGetLatestResult(
                     EntityManager,
+                    deferredPhysicsQueueEntity,
+                    fixedTick,
                     DeferredPhysicsQueryKind.InteractionPick,
                     DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
                     out var result))
@@ -270,6 +275,8 @@ namespace VVardenfell.Runtime.Interactions
             Entity player = _playerQuery.GetSingletonEntity();
             DeferredPhysicsQueryUtility.EnqueueRay(
                 EntityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
                 DeferredPhysicsQueryKind.InteractionPick,
                 player,
                 Entity.Null,
