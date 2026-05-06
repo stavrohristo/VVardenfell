@@ -89,6 +89,7 @@ namespace VVardenfell.Runtime.Physics
     public partial class RuntimeGeneratedColliderBlobCleanupSystem : SystemBase
     {
         EntityQuery _query;
+        EntityQuery _allCleanupQuery;
 
         protected override void OnCreate()
         {
@@ -97,6 +98,7 @@ namespace VVardenfell.Runtime.Physics
                 All = new[] { ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>() },
                 None = new[] { ComponentType.ReadOnly<RuntimeColliderSource>() },
             });
+            _allCleanupQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>());
             RequireForUpdate(_query);
         }
 
@@ -118,11 +120,10 @@ namespace VVardenfell.Runtime.Physics
 
         protected override void OnDestroy()
         {
-            using var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeGeneratedColliderBlobCleanup>());
-            if (query.IsEmptyIgnoreFilter)
+            if (_allCleanupQuery.IsEmptyIgnoreFilter)
                 return;
 
-            using var cleanups = query.ToComponentDataArray<RuntimeGeneratedColliderBlobCleanup>(Allocator.Temp);
+            using var cleanups = _allCleanupQuery.ToComponentDataArray<RuntimeGeneratedColliderBlobCleanup>(Allocator.Temp);
             for (int i = 0; i < cleanups.Length; i++)
             {
                 if (cleanups[i].Value.IsCreated)

@@ -14,8 +14,11 @@ namespace VVardenfell.Runtime.AI
     [UpdateBefore(typeof(ActorAiPlannerSystem))]
     public partial class ActorAiPackageTargetResolveSystem : SystemBase
     {
+        EntityQuery _playerQuery;
+
         protected override void OnCreate()
         {
+            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             RequireForUpdate<ActorAiPackageRuntime>();
             RequireForUpdate<ActiveExplicitRefLookup>();
             RequireForUpdate<LogicalRefLookup>();
@@ -31,7 +34,7 @@ namespace VVardenfell.Runtime.AI
 
             var activeExplicitRefs = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
             var logicalRefs = SystemAPI.GetSingleton<LogicalRefLookup>();
-            Entity player = MorrowindRuntimeTargetResolver.ResolvePlayerEntity(EntityManager);
+            Entity player = _playerQuery.CalculateEntityCount() == 1 ? _playerQuery.GetSingletonEntity() : Entity.Null;
 
             foreach (var packages in SystemAPI.Query<DynamicBuffer<ActorAiPackageRuntime>>())
             {

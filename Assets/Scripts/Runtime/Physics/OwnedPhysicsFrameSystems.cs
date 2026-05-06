@@ -143,10 +143,17 @@ namespace VVardenfell.Runtime.Physics
     [UpdateInGroup(typeof(MorrowindPhysicsPreBuildSystemGroup))]
     public partial class CellStreamingColliderSyncSystem : SystemBase
     {
+        EntityQuery _mutationQueueQuery;
+
         protected override void OnCreate()
         {
+            _mutationQueueQuery = GetEntityQuery(
+                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
+                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
+                ComponentType.ReadWrite<PhysicsFlushRequested>());
             RequireForUpdate<PendingCellPhysicsLoad>();
             RequireForUpdate<PendingCellPhysicsUnload>();
+            RequireForUpdate(_mutationQueueQuery);
         }
 
         protected override void OnUpdate()
@@ -188,7 +195,7 @@ namespace VVardenfell.Runtime.Physics
 
             if (entitiesToEnable.Length > 0 || entitiesToDisable.Length > 0)
             {
-                Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(EntityManager);
+                Entity queueEntity = _mutationQueueQuery.GetSingletonEntity();
                 var mutations = EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
                 for (int i = 0; i < entitiesToEnable.Length; i++)
                     RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entitiesToEnable[i]);

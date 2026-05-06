@@ -24,6 +24,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<MorrowindDialogueSession>();
             RequireForUpdate<DialogueReadinessState>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -35,13 +36,17 @@ namespace VVardenfell.Runtime.Interactions
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] ForceGreeting requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref contentBlob, requests[i], lookup);
+                ApplyRequest(ref contentBlob, ref worldCells, requests[i], lookup);
 
             requests.Clear();
         }
 
-        void ApplyRequest(ref RuntimeContentBlob contentBlob, in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
+        void ApplyRequest(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, in ActorForceGreetingRequest request, in LogicalRefLookup lookup)
         {
             Entity target = MorrowindRuntimeTargetResolver.ResolveLiveTarget(EntityManager, request.TargetEntity, request.TargetPlacedRefId, lookup);
             if (target == Entity.Null || !EntityManager.Exists(target))
@@ -56,7 +61,7 @@ namespace VVardenfell.Runtime.Interactions
                 throw new InvalidOperationException($"[VVardenfell][Interaction] ForceGreeting target ref={request.TargetPlacedRefId} is disabled.");
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, InteractableKind.Npc)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, EntityManager, target, InteractableKind.Npc)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Npc);
             ActorDefHandle actor = EntityManager.GetComponentData<ActorSpawnSource>(target).Definition;
             uint placedRefId = request.TargetPlacedRefId;

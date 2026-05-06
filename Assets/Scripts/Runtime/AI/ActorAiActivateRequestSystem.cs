@@ -5,6 +5,7 @@ using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.AI
@@ -24,6 +25,7 @@ namespace VVardenfell.Runtime.AI
             RequireForUpdate(_runtimeQuery);
             RequireForUpdate<ActorAiPackageRuntime>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -33,6 +35,10 @@ namespace VVardenfell.Runtime.AI
             ref var runtimeState = ref _runtimeQuery.GetSingletonRW<InteractionRuntimeState>().ValueRW;
             var activationRequests = EntityManager.GetBuffer<ScriptDefaultActivationRequest>(runtimeEntity);
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] AiActivate requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
 
             foreach (var (aiStateRef, packages, transform) in SystemAPI
                          .Query<RefRW<ActorAiState>, DynamicBuffer<ActorAiPackageRuntime>, RefRO<LocalTransform>>())
@@ -64,7 +70,7 @@ namespace VVardenfell.Runtime.AI
                 if (math.lengthsq(FlatDelta(targetPosition, transform.ValueRO.Position)) > activateDistance * activateDistance)
                     continue;
 
-                if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, package.FollowTargetEntity, out InteractableKind kind))
+                if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, package.FollowTargetEntity, out InteractableKind kind))
                 {
                     throw new InvalidOperationException(
                         $"[VVardenfell][AI] AiActivate target ref={package.FollowTargetPlacedRefId} is loaded but has no supported activation kind.");

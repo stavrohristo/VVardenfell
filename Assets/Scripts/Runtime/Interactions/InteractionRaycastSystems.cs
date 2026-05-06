@@ -67,6 +67,7 @@ namespace VVardenfell.Runtime.Interactions
 
         public static bool TryResolveFromRaycastHit(
             ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
             EntityManager entityManager,
             in LogicalRefLookup logicalRefLookup,
             in PlayerInteractionRaycastHit hit,
@@ -80,7 +81,7 @@ namespace VVardenfell.Runtime.Interactions
                 return false;
 
             hitEntity = hit.HitEntity;
-            if (!TryResolveEntity(ref contentBlob, entityManager, logicalRefLookup, hit.HitEntity, out resolved))
+            if (!TryResolveEntity(ref contentBlob, ref worldCells, entityManager, logicalRefLookup, hit.HitEntity, out resolved))
                 return false;
 
             resolved = new ResolvedInteractionTarget(
@@ -91,13 +92,13 @@ namespace VVardenfell.Runtime.Interactions
             return true;
         }
 
-        public static bool TryResolveSupportedKind(ref RuntimeContentBlob contentBlob, EntityManager entityManager, Entity logicalEntity, out InteractableKind kind)
+        public static bool TryResolveSupportedKind(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, Entity logicalEntity, out InteractableKind kind)
         {
             kind = InteractableKind.None;
 
             if (entityManager.HasComponent<DoorInteractable>(logicalEntity)
                 || (entityManager.HasComponent<DoorAuthoring>(logicalEntity)
-                    && DoorInteractableResolver.TryResolve(entityManager, logicalEntity, out _)))
+                    && DoorInteractableResolver.TryResolve(entityManager, ref worldCells, logicalEntity, out _)))
             {
                 kind = InteractableKind.Door;
                 return true;
@@ -175,6 +176,7 @@ namespace VVardenfell.Runtime.Interactions
 
         public static bool TryResolveEntity(
             ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
             EntityManager entityManager,
             in LogicalRefLookup logicalRefLookup,
             Entity hitEntity,
@@ -204,7 +206,7 @@ namespace VVardenfell.Runtime.Interactions
                 return false;
             }
 
-            if (!TryResolveSupportedKind(ref contentBlob, entityManager, logicalEntity, out InteractableKind kind))
+            if (!TryResolveSupportedKind(ref contentBlob, ref worldCells, entityManager, logicalEntity, out InteractableKind kind))
                 return false;
 
             uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
@@ -302,6 +304,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate(_focusQuery);
             RequireForUpdate<LogicalRefLookup>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -317,8 +320,13 @@ namespace VVardenfell.Runtime.Interactions
             var raycastHit = _raycastHitQuery.GetSingleton<PlayerInteractionRaycastHit>();
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction target resolution requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             if (!InteractionTargetResolver.TryResolveFromRaycastHit(
                     ref contentBlob,
+                    ref worldCells,
                     EntityManager,
                     logicalRefLookup,
                     raycastHit,

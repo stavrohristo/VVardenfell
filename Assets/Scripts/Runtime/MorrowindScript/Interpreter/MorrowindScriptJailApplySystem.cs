@@ -29,6 +29,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         EntityQuery _streamingQuery;
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
+        EntityQuery _playerVisualQuery;
 
         protected override void OnCreate()
         {
@@ -56,6 +57,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<PlayerViewComponent>(),
                 ComponentType.ReadWrite<LocalTransform>(),
                 ComponentType.ReadWrite<LocalToWorld>());
+            _playerVisualQuery = GetEntityQuery(
+                ComponentType.ReadOnly<LocalPlayerVisual>(),
+                ComponentType.ReadWrite<ActorWeaponAnimationState>());
 
             RequireForUpdate(_runtimeQuery);
             RequireForUpdate(_transitionQuery);
@@ -376,11 +380,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         void SheathePlayerWeapon(Entity playerEntity)
         {
-            using var visualQuery = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<LocalPlayerVisual>(),
-                ComponentType.ReadWrite<ActorWeaponAnimationState>());
-            using var entities = visualQuery.ToEntityArray(Allocator.Temp);
-            using var visuals = visualQuery.ToComponentDataArray<LocalPlayerVisual>(Allocator.Temp);
+            using var entities = _playerVisualQuery.ToEntityArray(Allocator.Temp);
+            using var visuals = _playerVisualQuery.ToComponentDataArray<LocalPlayerVisual>(Allocator.Temp);
 
             for (int i = 0; i < entities.Length; i++)
             {

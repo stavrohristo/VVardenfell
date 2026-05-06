@@ -1,12 +1,13 @@
 using Unity.Entities;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Interactions
 {
     static class InteractionActivationProxyBuildUtility
     {
-        public static bool QueueEnsureQueued(ref RuntimeContentBlob contentBlob, EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
+        public static bool QueueEnsureQueued(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
         {
             if (!entityManager.Exists(logicalEntity))
                 return false;
@@ -29,7 +30,7 @@ namespace VVardenfell.Runtime.Interactions
                     return false;
             }
 
-            if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, entityManager, logicalEntity, out _))
+            if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, entityManager, logicalEntity, out _))
                 return false;
 
             ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);

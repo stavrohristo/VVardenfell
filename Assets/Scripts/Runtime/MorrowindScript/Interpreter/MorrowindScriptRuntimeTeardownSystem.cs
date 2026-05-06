@@ -10,16 +10,21 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateAfter(typeof(RuntimeSessionTeardownMarkSystem))]
     public partial struct MorrowindScriptRuntimeTeardownSystem : ISystem
     {
-        public void OnUpdate(ref SystemState state)
+        EntityQuery _teardownQuery;
+
+        public void OnCreate(ref SystemState state)
         {
-            using var query = state.EntityManager.CreateEntityQuery(
+            _teardownQuery = state.GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadOnly<SessionTeardown>());
+        }
 
-            if (query.IsEmpty)
+        public void OnUpdate(ref SystemState state)
+        {
+            if (_teardownQuery.IsEmpty)
                 return;
 
-            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var entities = _teardownQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
                 DisposeAndDestroy(state.EntityManager, entities[i]);
         }

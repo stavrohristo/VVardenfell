@@ -31,7 +31,11 @@ namespace VVardenfell.Runtime.Interactions
 
     static class DoorInteractableResolver
     {
-        public static bool TryResolve(EntityManager entityManager, Entity logicalEntity, out DoorInteractable interactable)
+        public static bool TryResolve(
+            EntityManager entityManager,
+            ref RuntimeWorldCellBlob worldCells,
+            Entity logicalEntity,
+            out DoorInteractable interactable)
         {
             interactable = default;
             if (!entityManager.Exists(logicalEntity)
@@ -43,20 +47,12 @@ namespace VVardenfell.Runtime.Interactions
 
             uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
             var location = entityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
-            return TryBuild(entityManager, location, placedRefId, out interactable);
+            return TryBuild(ref worldCells, location, placedRefId, out interactable);
         }
 
-        static bool TryBuild(EntityManager entityManager, in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
+        static bool TryBuild(ref RuntimeWorldCellBlob worldCells, in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
         {
             interactable = default;
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
-            if (query.CalculateEntityCount() != 1)
-                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] door resolution requires exactly one RuntimeWorldCellBlobReference singleton.");
-
-            var blobReference = query.GetSingleton<RuntimeWorldCellBlobReference>();
-            if (!blobReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] door resolution requires runtime world cell blob.");
-            ref RuntimeWorldCellBlob worldCells = ref blobReference.Blob.Value;
             int cellIndex;
             if (location.IsInterior != 0)
             {
@@ -170,9 +166,14 @@ namespace VVardenfell.Runtime.Interactions
             request.Pending = 0;
             request.TargetEntity = Entity.Null;
 
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] teleport door transition requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+
             if (!EntityManager.Exists(target)
                 || (!EntityManager.HasComponent<DoorInteractable>(target)
-                    && !DoorInteractableResolver.TryResolve(EntityManager, target, out DoorInteractable _)))
+                    && !DoorInteractableResolver.TryResolve(EntityManager, ref worldCells, target, out DoorInteractable _)))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] door activation request resolved to a missing or non-door logical entity.");
                 ClearFocus();
@@ -182,7 +183,7 @@ namespace VVardenfell.Runtime.Interactions
 
             var door = EntityManager.HasComponent<DoorInteractable>(target)
                 ? EntityManager.GetComponentData<DoorInteractable>(target)
-                : DoorInteractableResolver.TryResolve(EntityManager, target, out DoorInteractable resolvedDoor)
+                : DoorInteractableResolver.TryResolve(EntityManager, ref worldCells, target, out DoorInteractable resolvedDoor)
                     ? resolvedDoor
                     : default;
             if (door.IsTeleport == 0)
@@ -199,11 +200,6 @@ namespace VVardenfell.Runtime.Interactions
                 transition.TransitionInProgress = 0;
                 return;
             }
-
-            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
-            if (!worldCellReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] teleport door transition requires runtime world cell blob.");
-            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
 
             bool goesToInterior = door.DestinationCellHash != 0UL;
             BlobAssetReference<Collider> destinationInteriorStaticCollider = default;

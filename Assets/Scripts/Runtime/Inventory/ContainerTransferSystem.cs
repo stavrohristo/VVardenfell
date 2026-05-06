@@ -106,7 +106,7 @@ namespace VVardenfell.Runtime.Inventory
 
             if (transferredStacks > 0)
             {
-                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
                 TryQueueInteractionAudio(state.OpenTargetEntity, InteractionAudioKind.Container, "container");
             }
         }

@@ -10,10 +10,16 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct PlayerSkillMutationApplySystem : ISystem
     {
+        EntityQuery _playerQuery;
+
         public void OnCreate(ref SystemState state)
         {
+            _playerQuery = state.GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<ActorSkillSet>());
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
             state.RequireForUpdate<PlayerSkillMutationRequest>();
+            state.RequireForUpdate(_playerQuery);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -23,13 +29,7 @@ namespace VVardenfell.Runtime.Player
             if (requests.Length == 0)
                 return;
 
-            using var query = state.EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<ActorSkillSet>());
-            if (query.IsEmptyIgnoreFilter)
-                throw new InvalidOperationException("[VVardenfell][Player] Player skill mutation requires an active player skill set.");
-
-            Entity player = query.GetSingletonEntity();
+            Entity player = _playerQuery.GetSingletonEntity();
             var skills = state.EntityManager.GetComponentData<ActorSkillSet>(player);
             for (int i = 0; i < requests.Length; i++)
                 ApplyRequest(ref skills, requests[i]);

@@ -21,14 +21,24 @@ namespace VVardenfell.Runtime.MorrowindScript
     public partial class MorrowindScriptTransformApplySystem : SystemBase
     {
         EntityQuery _runtimeQuery;
+        EntityQuery _standingActorQuery;
+        EntityQuery _mutationQueueQuery;
 
         protected override void OnCreate()
         {
             _runtimeQuery = GetEntityQuery(
                 ComponentType.ReadOnly<MorrowindScriptRuntimeState>(),
                 ComponentType.ReadWrite<MorrowindScriptTransformRequest>());
+            _standingActorQuery = GetEntityQuery(
+                ComponentType.ReadOnly<MorrowindMovementState>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            _mutationQueueQuery = GetEntityQuery(
+                ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
+                ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
+                ComponentType.ReadWrite<PhysicsFlushRequested>());
 
             RequireForUpdate(_runtimeQuery);
+            RequireForUpdate(_mutationQueueQuery);
             RequireForUpdate<LogicalRefLookup>();
             RequireForUpdate<LoadedCellsMap>();
             RequireForUpdate<RuntimeWorldCellBlobReference>();
@@ -306,11 +316,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (math.lengthsq(delta) <= 0f)
                 return;
 
-            using var query = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<MorrowindMovementState>(),
-                ComponentType.ReadOnly<LocalTransform>());
-            using var entities = query.ToEntityArray(Allocator.Temp);
-            using var states = query.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
+            using var entities = _standingActorQuery.ToEntityArray(Allocator.Temp);
+            using var states = _standingActorQuery.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
                 if (states[i].StandingOn != target || entities[i] == target || !EntityManager.Exists(entities[i]))
@@ -431,10 +438,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!EntityManager.HasComponent<RuntimeColliderSource>(entity))
                 return;
 
+            Entity queueEntity = _mutationQueueQuery.GetSingletonEntity();
+            var mutations = EntityManager.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
             if (active)
-                RuntimePhysicsMutationQueueUtility.EnqueueEnable(EntityManager, entity);
+                RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
             else
-                RuntimePhysicsMutationQueueUtility.EnqueueDisable(EntityManager, entity);
+                RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
+            RuntimePhysicsMutationQueueUtility.MarkFlushRequested(EntityManager, queueEntity);
         }
 
         Entity ResolveLiveTarget(in MorrowindScriptTransformRequest request, in LogicalRefLookup lookup)

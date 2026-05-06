@@ -10,10 +10,16 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct PlayerReputationMutationApplySystem : ISystem
     {
+        EntityQuery _playerQuery;
+
         public void OnCreate(ref SystemState state)
         {
+            _playerQuery = state.GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<ActorIdentitySet>());
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
             state.RequireForUpdate<PlayerReputationMutationRequest>();
+            state.RequireForUpdate(_playerQuery);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -23,13 +29,7 @@ namespace VVardenfell.Runtime.Player
             if (requests.Length == 0)
                 return;
 
-            using var query = state.EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<ActorIdentitySet>());
-            if (query.IsEmptyIgnoreFilter)
-                throw new InvalidOperationException("[VVardenfell][Player] ModReputation requires an active player identity.");
-
-            Entity player = query.GetSingletonEntity();
+            Entity player = _playerQuery.GetSingletonEntity();
             var identity = state.EntityManager.GetComponentData<ActorIdentitySet>(player);
             for (int i = 0; i < requests.Length; i++)
                 identity.Reputation += requests[i].Delta;

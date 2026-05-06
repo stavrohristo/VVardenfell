@@ -4,6 +4,7 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
@@ -28,6 +29,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<MorrowindDialogueState>();
             RequireForUpdate<MorrowindDialogueSession>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -50,14 +52,18 @@ namespace VVardenfell.Runtime.Interactions
             request.TargetEntity = Entity.Null;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-            if (!EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] deferred npc activation requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+            if (!EntityManager.Exists(target) || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, target, out InteractableKind resolvedKind) || resolvedKind != kind)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred npc activation resolved to a missing or mismatched logical entity.");
                 ClearFocus();
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, kind)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, EntityManager, target, kind)
                 ?? InteractionMetadataResolver.ResolveKindLabel(kind);
 
             ref var dialogue = ref SystemAPI.GetSingletonRW<DialogueReadinessState>().ValueRW;
@@ -123,6 +129,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<RuntimeShellState>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -141,8 +148,12 @@ namespace VVardenfell.Runtime.Interactions
             request.TargetEntity = Entity.Null;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] deferred activator activation requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             if (!EntityManager.Exists(target)
-                || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, target, out InteractableKind resolvedKind)
+                || !InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, target, out InteractableKind resolvedKind)
                 || resolvedKind != InteractableKind.Activator)
             {
                 Debug.LogWarning("[VVardenfell][Interaction] deferred activator activation resolved to a missing or mismatched logical entity.");
@@ -150,7 +161,7 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, EntityManager, target, InteractableKind.Activator)
+            string displayName = InteractionMetadataResolver.ResolveDisplayName(ref contentBlob, ref worldCells, EntityManager, target, InteractableKind.Activator)
                 ?? InteractionMetadataResolver.ResolveKindLabel(InteractableKind.Activator);
 
             ClearFocus();

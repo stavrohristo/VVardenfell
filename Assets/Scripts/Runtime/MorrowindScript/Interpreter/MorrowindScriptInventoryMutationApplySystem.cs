@@ -66,7 +66,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     AddPlayerItem(ref contentBlob, inventory, request.Content, count);
                 else
                     RemovePlayerItem(inventory, request.Content, count);
-                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+                PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
                 return;
             }
 
@@ -92,7 +92,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity inventoryEntity = RequirePlayerInventoryEntity("[VVardenfell][MWScript] RemoveSoulGem requested before player inventory was bootstrapped.");
 
             RemovePlayerSoulGem(EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity), request.SoulActorHandleValue);
-            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
         }
 
         Entity RequirePlayerInventoryEntity(string error)

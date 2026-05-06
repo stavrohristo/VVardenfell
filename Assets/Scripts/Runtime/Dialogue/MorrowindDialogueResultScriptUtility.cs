@@ -1849,7 +1849,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     ? InventoryMutationUtility.TryAddPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel)
                     : InventoryMutationUtility.TryRemovePlayerItem(ref contentBlob, inventory, itemId, count);
                 if (changed)
-                    PlayerEncumbranceDirtyUtility.MarkPlayerDirty(entityManager);
+                    PlayerEncumbranceDirtyUtility.MarkPlayerDirty(entityManager, playerInventoryEntity);
                 return changed;
             }
 

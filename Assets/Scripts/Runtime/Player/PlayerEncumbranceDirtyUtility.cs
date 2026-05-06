@@ -16,8 +16,16 @@ namespace VVardenfell.Runtime.Player
             entityManager.SetComponentEnabled<PlayerEncumbranceDirty>(player, enabled);
         }
 
-        public static void MarkPlayerDirty(EntityManager entityManager)
-            => entityManager.SetComponentEnabled<PlayerEncumbranceDirty>(RequirePlayerEntity(entityManager), true);
+        public static void MarkPlayerDirty(EntityManager entityManager, Entity player)
+        {
+            if (player == Entity.Null || !entityManager.Exists(player) || !entityManager.HasComponent<PlayerTag>(player))
+                throw new InvalidOperationException("[VVardenfell][Player] Player encumbrance dirty marker requires a live player entity.");
+            if (!entityManager.HasComponent<PlayerEncumbranceDirty>(player))
+                throw new InvalidOperationException("[VVardenfell][Player] Player entity is missing PlayerEncumbranceDirty marker.");
+
+            entityManager.SetComponentEnabled<PlayerEncumbranceDirty>(player, true);
+        }
+
 
         public static void MarkIfPlayer(EntityManager entityManager, Entity entity)
         {
@@ -30,18 +38,5 @@ namespace VVardenfell.Runtime.Player
             entityManager.SetComponentEnabled<PlayerEncumbranceDirty>(entity, true);
         }
 
-        static Entity RequirePlayerEntity(EntityManager entityManager)
-        {
-            using var query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            int count = query.CalculateEntityCount();
-            if (count != 1)
-                throw new InvalidOperationException($"[VVardenfell][Player] Expected exactly one player entity; found {count}.");
-
-            Entity player = query.GetSingletonEntity();
-            if (!entityManager.HasComponent<PlayerEncumbranceDirty>(player))
-                throw new InvalidOperationException("[VVardenfell][Player] Player entity is missing PlayerEncumbranceDirty marker.");
-
-            return player;
-        }
     }
 }

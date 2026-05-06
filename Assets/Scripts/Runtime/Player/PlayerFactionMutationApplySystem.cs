@@ -12,12 +12,18 @@ namespace VVardenfell.Runtime.Player
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct PlayerFactionMutationApplySystem : ISystem
     {
+        EntityQuery _playerQuery;
+
         public void OnCreate(ref SystemState state)
         {
+            _playerQuery = state.GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadWrite<PlayerFactionMembership>());
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
             state.RequireForUpdate<PlayerFactionMutationRequest>();
             state.RequireForUpdate<LogicalRefLookup>();
             state.RequireForUpdate<RuntimeContentBlobReference>();
+            state.RequireForUpdate(_playerQuery);
         }
 
         public void OnUpdate(ref SystemState state)
@@ -29,13 +35,7 @@ namespace VVardenfell.Runtime.Player
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
-            using var query = state.EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<PlayerFactionMembership>());
-            if (query.IsEmptyIgnoreFilter)
-                throw new InvalidOperationException("[VVardenfell][Player] Player faction mutation requires an active player faction buffer.");
-
-            Entity player = query.GetSingletonEntity();
+            Entity player = _playerQuery.GetSingletonEntity();
             var factions = state.EntityManager.GetBuffer<PlayerFactionMembership>(player);
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             for (int i = 0; i < requests.Length; i++)

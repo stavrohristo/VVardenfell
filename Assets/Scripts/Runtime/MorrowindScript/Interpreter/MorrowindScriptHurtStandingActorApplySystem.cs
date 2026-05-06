@@ -14,8 +14,13 @@ namespace VVardenfell.Runtime.MorrowindScript
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial class MorrowindScriptHurtStandingActorApplySystem : SystemBase
     {
+        EntityQuery _standingActorQuery;
+
         protected override void OnCreate()
         {
+            _standingActorQuery = GetEntityQuery(
+                ComponentType.ReadOnly<MorrowindMovementState>(),
+                ComponentType.ReadWrite<ActorVitalSet>());
             RequireForUpdate<MorrowindScriptHurtStandingActorRequest>();
             RequireForUpdate<LogicalRefLookup>();
         }
@@ -57,11 +62,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (healthDelta == 0f)
                 return;
 
-            using var query = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<MorrowindMovementState>(),
-                ComponentType.ReadWrite<ActorVitalSet>());
-            using NativeArray<Entity> entities = query.ToEntityArray(Allocator.Temp);
-            using NativeArray<MorrowindMovementState> movementStates = query.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
+            using NativeArray<Entity> entities = _standingActorQuery.ToEntityArray(Allocator.Temp);
+            using NativeArray<MorrowindMovementState> movementStates = _standingActorQuery.ToComponentDataArray<MorrowindMovementState>(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
                 if (entities[i] == standingTarget || movementStates[i].StandingOn != standingTarget)

@@ -26,6 +26,7 @@ namespace VVardenfell.Runtime.Interactions
             ComponentType.ReadOnly<PlacedRefIdentity>());
             RequireForUpdate<LoadedCellsMap>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
             RequireForUpdate(_pendingQuery);
         }
 
@@ -34,6 +35,10 @@ namespace VVardenfell.Runtime.Interactions
             EntityManager.CompleteDependencyBeforeRO<LocalToWorld>();
             var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction proxy resolution requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
             using (var pending = _pendingQuery.ToEntityArray(Allocator.Temp))
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -56,7 +61,7 @@ namespace VVardenfell.Runtime.Interactions
                     if (!exteriorActive)
                         continue;
 
-                    if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, EntityManager, logicalEntity, out _))
+                    if (!InteractionTargetResolver.TryResolveSupportedKind(ref contentBlob, ref worldCells, EntityManager, logicalEntity, out _))
                     {
                         InteractionActivationProxyBuildUtility.QueuePendingCleared(EntityManager, ref ecb, logicalEntity);
                         continue;

@@ -74,7 +74,7 @@ namespace VVardenfell.Runtime.Inventory
 
             if (request.Pending == 0)
             {
-                MarkPlayerEncumbranceDirtyIfChanged(inventory, previousInventorySignature);
+                MarkPlayerEncumbranceDirtyIfChanged(inventoryEntity, inventory, previousInventorySignature);
                 MarkPlayerPresentationEquipmentDirtyIfChanged(hasEquipment, playerEquipmentEntity, equipment, previousEquipmentSignature);
                 return;
             }
@@ -95,7 +95,7 @@ namespace VVardenfell.Runtime.Inventory
             };
             request = default;
             ProcessAction(ref contentBlob, componentRequest, inventory, hasEquipment ? equipment : default, hasEquipment, ref held);
-            MarkPlayerEncumbranceDirtyIfChanged(inventory, previousInventorySignature);
+            MarkPlayerEncumbranceDirtyIfChanged(inventoryEntity, inventory, previousInventorySignature);
             MarkPlayerPresentationEquipmentDirtyIfChanged(hasEquipment, playerEquipmentEntity, equipment, previousEquipmentSignature);
         }
 
@@ -151,13 +151,14 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         void MarkPlayerEncumbranceDirtyIfChanged(
+            Entity player,
             DynamicBuffer<PlayerInventoryItem> inventory,
             ulong previousInventorySignature)
         {
             if (previousInventorySignature == BuildInventoryWeightSignature(inventory))
                 return;
 
-            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, player);
         }
 
         static ulong BuildInventoryWeightSignature(DynamicBuffer<PlayerInventoryItem> inventory)

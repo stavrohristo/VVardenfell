@@ -22,13 +22,18 @@ namespace VVardenfell.Runtime.MorrowindScript
         const float ActorSafetyLiftMw = 30f;
         const float ActorSafetyTargetLiftMw = 20f;
 
+        EntityQuery _playerQuery;
+
         protected override void OnCreate()
         {
+            _playerQuery = GetEntityQuery(
+                ComponentType.ReadOnly<PlayerTag>(),
+                ComponentType.ReadOnly<LocalTransform>());
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindScriptPlaceAtRequest>();
             RequireForUpdate<RuntimeSpawnState>();
             RequireForUpdate<RuntimeSpawnRequest>();
-            RequireForUpdate<PlayerTag>();
+            RequireForUpdate(_playerQuery);
             RequireForUpdate<MorrowindMovementSettings>();
             RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate<RuntimeWorldCellBlobReference>();
@@ -100,16 +105,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         Entity ResolvePlayer()
-        {
-            using var query = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<LocalTransform>());
-
-            if (query.CalculateEntityCount() != 1)
-                throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC requires exactly one player with a LocalTransform.");
-
-            return query.GetSingletonEntity();
-        }
+            => _playerQuery.GetSingletonEntity();
 
         bool TryResolveInteriorContext(out FixedString128Bytes interiorCellId, out ulong interiorCellHash)
         {

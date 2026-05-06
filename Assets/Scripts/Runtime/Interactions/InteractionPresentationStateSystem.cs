@@ -2,6 +2,7 @@ using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
@@ -17,6 +18,7 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionActivationResult>();
             RequireForUpdate<InteractionPresentationState>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnUpdate()
@@ -30,7 +32,11 @@ namespace VVardenfell.Runtime.Interactions
             if (focus.HasTarget != 0 && EntityManager.Exists(focus.TargetEntity))
             {
                 ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-                string prompt = BuildFocusPrompt(ref contentBlob, focus);
+                var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+                if (!worldCellReference.Blob.IsCreated)
+                    throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction presentation requires runtime world cell blob.");
+                ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+                string prompt = BuildFocusPrompt(ref contentBlob, ref worldCells, focus);
                 if (!string.IsNullOrWhiteSpace(prompt))
                 {
                     presentation.ShowFocus = 1;
@@ -58,9 +64,9 @@ namespace VVardenfell.Runtime.Interactions
             }
         }
 
-        string BuildFocusPrompt(ref RuntimeContentBlob contentBlob, PlayerInteractionFocus focus)
+        string BuildFocusPrompt(ref RuntimeContentBlob contentBlob, ref RuntimeWorldCellBlob worldCells, PlayerInteractionFocus focus)
         {
-            return InteractionMetadataResolver.BuildFocusPrompt(ref contentBlob, EntityManager, focus);
+            return InteractionMetadataResolver.BuildFocusPrompt(ref contentBlob, ref worldCells, EntityManager, focus);
         }
 
     }

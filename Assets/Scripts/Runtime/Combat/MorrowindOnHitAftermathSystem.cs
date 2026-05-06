@@ -26,8 +26,11 @@ namespace VVardenfell.Runtime.Combat
         const int FriendlyHitForgivenessLimit = 4;
         static readonly short VampirismEffectId = RequireEffectId("sEffectVampirism");
 
+        EntityQuery _playerQuery;
+
         protected override void OnCreate()
         {
+            _playerQuery = GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
             RequireForUpdate<MorrowindDamageAppliedEvent>();
             RequireForUpdate<MorrowindScriptRuntimeState>();
             RequireForUpdate<MorrowindCombatRuntimeState>();
@@ -727,11 +730,10 @@ namespace VVardenfell.Runtime.Combat
 
         Entity TryGetPlayerEntity()
         {
-            using var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<PlayerTag>());
-            if (query.IsEmptyIgnoreFilter)
+            if (_playerQuery.IsEmptyIgnoreFilter)
                 return Entity.Null;
 
-            return query.GetSingletonEntity();
+            return _playerQuery.GetSingletonEntity();
         }
 
         int AddPlayerBountyAndAdvanceCrimeId(int bounty)

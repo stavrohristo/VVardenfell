@@ -97,7 +97,7 @@ namespace VVardenfell.Runtime.Interactions
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
             var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity);
             AddInventoryItem(ref contentBlob, inventory, content, target);
-            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager);
+            PlayerEncumbranceDirtyUtility.MarkPlayerDirty(EntityManager, inventoryEntity);
             if (!isRuntimeSpawnedItem)
             {
                 pickedItems.Add(new PickedItemRecord
