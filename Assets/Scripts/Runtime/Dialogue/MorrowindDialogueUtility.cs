@@ -295,15 +295,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return 0;
 
             ref RuntimeFactionDefBlob source = ref contentBlob.Factions[sourceFactionIndex];
-            string targetId = contentBlob.Factions[targetFactionIndex].Id.ToString();
-            if (string.IsNullOrWhiteSpace(targetId))
+            ulong targetIdHash = contentBlob.Factions[targetFactionIndex].IdHash;
+            if (targetIdHash == 0UL)
                 return 0;
 
             RuntimeContentBlobUtility.RequireRange(source.FirstReactionIndex, source.ReactionCount, contentBlob.FactionReactions.Length, "faction reaction");
             for (int i = 0; i < source.ReactionCount; i++)
             {
                 ref RuntimeFactionReactionDefBlob reaction = ref contentBlob.FactionReactions[source.FirstReactionIndex + i];
-                if (string.Equals(ContentId.NormalizeId(reaction.FactionId.ToString()), ContentId.NormalizeId(targetId), StringComparison.Ordinal))
+                if (reaction.FactionIdHash == targetIdHash)
                     return reaction.Reaction;
             }
 

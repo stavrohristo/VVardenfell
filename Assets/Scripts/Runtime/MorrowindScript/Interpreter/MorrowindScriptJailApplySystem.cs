@@ -18,7 +18,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptShellApplySystem))]
     public partial struct MorrowindScriptJailApplySystem : ISystem
     {

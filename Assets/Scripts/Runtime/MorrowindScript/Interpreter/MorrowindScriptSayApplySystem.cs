@@ -9,11 +9,10 @@ using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
-using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptSayApplySystem : ISystem
     {
@@ -22,6 +21,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
             systemState.RequireForUpdate<MorrowindScriptSayRequest>();
             systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeHudPreferences>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -38,7 +38,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var lookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             ref var runtimeState = ref SystemAPI.GetSingletonRW<MorrowindScriptRuntimeState>().ValueRW;
-            bool showSubtitles = HudUserPreferences.ShowSubtitles;
+            bool showSubtitles = SystemAPI.GetSingleton<RuntimeHudPreferences>().ShowSubtitles != 0;
 
             for (int i = 0; i < requestCopy.Length; i++)
             {

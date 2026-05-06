@@ -175,8 +175,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
             RuntimeUiScaleSettings.GlobalScale = config.UiScale;
             RuntimeUiScaleSettings.HudScale = config.HudScale;
-            VVardenfell.Runtime.UI.Shell.HudUserPreferences.ShowCrosshair = config.ShowCrosshair;
-            VVardenfell.Runtime.UI.Shell.HudUserPreferences.ShowSubtitles = config.ShowSubtitles;
             RuntimeVideoSettingsUtility.ApplyFogDistanceScale(config.FogDistanceScale);
 
             Screen.brightness = config.Gamma;

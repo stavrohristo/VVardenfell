@@ -1,4 +1,5 @@
 using System;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -11,19 +12,21 @@ using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
+using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
-using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(ActorAiPlannerSystem))]
     [UpdateBefore(typeof(PathGridTraversalRequestSystem))]
+    [BurstCompile]
     public partial struct ActorAiGreetingSystem : ISystem
     {
         const float InitialGreetingDelaySeconds = 0.5f;
 
         EntityQuery _playerQuery;
+        MorrowindDialogueFilterUtility.QueryContext _dialogueFilterQueries;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -32,6 +35,23 @@ namespace VVardenfell.Runtime.AI
                 ComponentType.ReadOnly<LocalTransform>(),
                 ComponentType.ReadOnly<ActorVitalSet>());
 
+            _dialogueFilterQueries = new MorrowindDialogueFilterUtility.QueryContext
+            {
+                PlayerFaction = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerFactionMembership>()),
+                InteriorTransition = systemState.GetEntityQuery(ComponentType.ReadOnly<InteriorTransitionState>()),
+                StreamingConfig = systemState.GetEntityQuery(ComponentType.ReadOnly<StreamingConfig>()),
+                ScriptGlobal = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindScriptGlobalValue>()),
+                QuestJournal = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindQuestJournalIndex>()),
+                PlayerIdentity = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorIdentitySet>()),
+                PlayerCrime = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<PlayerCrimeState>()),
+                Player = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>()),
+                PlayerVitals = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorVitalSet>()),
+                DialogueFactionReaction = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDialogueState>(), ComponentType.ReadOnly<MorrowindFactionReactionOverride>()),
+                PlayerEquipment = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorEquipmentSlot>()),
+                PlayerAttribute = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorAttributeSet>()),
+                PlayerSkill = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorSkillSet>()),
+            };
+
             systemState.RequireForUpdate(_playerQuery);
             systemState.RequireForUpdate<ActorAiGreetingState>();
             systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
@@ -39,11 +59,15 @@ namespace VVardenfell.Runtime.AI
             systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
             systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<RuntimeHudPreferences>();
         }
 
+        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            ref RuntimeWorldCellBlob worldCells = ref SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>().Blob.Value;
 
             int greetDistanceMultiplier = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref contentBlob, RuntimeContentKnownHashes.iGreetDistanceMultiplier);
             int greetDuration = RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref contentBlob, RuntimeContentKnownHashes.iGreetDuration);
@@ -57,6 +81,7 @@ namespace VVardenfell.Runtime.AI
             var playerVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(player);
             Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
+            bool showSubtitles = SystemAPI.GetSingleton<RuntimeHudPreferences>().ShowSubtitles != 0;
             if (playerVitals.CurrentHealth <= 0f)
             {
                 ResetAllGreetingsAndRelease(ref systemState);
@@ -147,18 +172,20 @@ namespace VVardenfell.Runtime.AI
                     continue;
                 }
 
-                if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfo(
+                if (!MorrowindDialogueFilterUtility.TryFindFirstMatchingInfoBurst(
                         ref contentBlob,
+                        ref worldCells,
                         systemState.EntityManager,
                         entity,
                         source.ValueRO.Definition,
                         helloDialogueIndex,
                         choice: 0,
+                        ref _dialogueFilterQueries,
                         out int infoIndex,
-                        out string unsupportedReason))
+                        out byte unsupportedFunction))
                 {
-                    if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                        throw new InvalidOperationException($"[VVardenfell][AI] Passive hello dialogue for actor ref={placedRef.ValueRO.Value} is unsupported: {unsupportedReason}");
+                    if (unsupportedFunction != 0)
+                        throw new InvalidOperationException("[VVardenfell][AI] Passive hello dialogue has an unsupported select function.");
 
                     greeting.Phase = (byte)ActorAiGreetingPhase.Done;
                     greeting.Timer = 0f;
@@ -178,7 +205,7 @@ namespace VVardenfell.Runtime.AI
                         Subtitle = response,
                     });
                 }
-                else if (HudUserPreferences.ShowSubtitles
+                else if (showSubtitles
                          && response.Length > 0
                          && SystemAPI.TryGetSingletonRW<RuntimeSubtitleState>(out var subtitle))
                 {

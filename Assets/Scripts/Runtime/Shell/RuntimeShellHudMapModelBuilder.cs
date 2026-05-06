@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.Shell
             bool showHud,
             ref RuntimeContentBlob contentBlob,
             in InteractionPresentationState interaction,
+            in RuntimeHudPreferences hudPreferences,
             in PlayerPresentationStats playerStats,
             in LocationPresentation location,
             in InventoryWindowState inventoryState,
@@ -32,7 +33,7 @@ namespace VVardenfell.Runtime.Shell
             // preference - the Options "Show Crosshair" checkbox flips the
             // preference, hiding the crosshair even when the gameplay
             // interaction state would normally display it.
-            _hudModel.ShowCrosshair = showHud && interaction.ShowCrosshair != 0 && HudUserPreferences.ShowCrosshair;
+            _hudModel.ShowCrosshair = showHud && interaction.ShowCrosshair != 0 && hudPreferences.ShowCrosshair != 0;
             _hudModel.FocusText = showHud ? ResolveFocusText(interaction) : null;
             _hudModel.NotificationText = showHud ? ResolveNotificationText(interaction) : null;
             _hudModel.SubtitleText = showHud ? ResolveSubtitleText(subtitle) : null;

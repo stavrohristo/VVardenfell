@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.WorldRefs
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
     public partial struct PlacedRefLockApplySystem : ISystem
     {

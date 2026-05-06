@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct MorrowindActorDeathCountSystem : ISystem
     {
         public void OnCreate(ref SystemState state)

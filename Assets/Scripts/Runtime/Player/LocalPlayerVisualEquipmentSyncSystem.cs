@@ -2,16 +2,12 @@ using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Inventory;
-using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    [UpdateAfter(typeof(InventoryItemActionSystem))]
-    [UpdateBefore(typeof(RuntimeShellInputSystem))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct LocalPlayerVisualEquipmentSyncSystem : ISystem
     {
         EntityQuery _playerQuery;

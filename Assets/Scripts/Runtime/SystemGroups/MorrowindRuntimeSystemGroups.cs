@@ -61,6 +61,13 @@ namespace VVardenfell.Runtime.Systems
     }
 
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateBefore(typeof(MorrowindMenuMutationSystemGroup))]
+    public partial class MorrowindGameplayMutationSystemGroup : MorrowindRuntimeGatedSystemGroup
+    {
+    }
+
+    [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
+    [UpdateAfter(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateBefore(typeof(VVardenfell.Runtime.Shell.RuntimeShellPauseSyncSystem))]
     public partial class MorrowindMenuMutationSystemGroup : MorrowindRuntimeGatedSystemGroup
     {

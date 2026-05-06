@@ -7,7 +7,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.AI
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     [UpdateBefore(typeof(MorrowindScriptSayApplySystem))]
     public partial struct ActorAiPassiveGreetingSayRequestSystem : ISystem

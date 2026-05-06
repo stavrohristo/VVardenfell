@@ -11,7 +11,6 @@ using VVardenfell.Runtime.WorldRefs;
 namespace VVardenfell.Runtime.Interactions
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ActorForceGreetingApplySystem : ISystem
     {
         public void OnCreate(ref SystemState systemState)

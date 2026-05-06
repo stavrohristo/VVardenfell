@@ -6,7 +6,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptStopRequestSystem : ISystem
     {

@@ -18,7 +18,7 @@ using Random = Unity.Mathematics.Random;
 
 namespace VVardenfell.Runtime.Magic
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ActorSpellCastApplySystem : ISystem
     {

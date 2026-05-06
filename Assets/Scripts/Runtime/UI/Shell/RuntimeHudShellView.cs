@@ -1789,12 +1789,14 @@ namespace VVardenfell.Runtime.UI.Shell
                 VoiceVolume = null,
                 ShowCrosshair = v =>
                 {
-                    // HUD crosshair visibility is gated by a static preference that
-                    // BuildHudModel reads — the next presentation tick picks it up
-                    // automatically, so no need to poke the view directly.
-                    HudUserPreferences.ShowCrosshair = v;
+                    if (!RuntimeShellRequestBridge.TrySetHudShowCrosshair(v, out string error))
+                        Debug.LogWarning($"[VVardenfell][UI] failed updating crosshair preference: {error}");
                 },
-                ShowSubtitles = v => HudUserPreferences.ShowSubtitles = v,
+                ShowSubtitles = v =>
+                {
+                    if (!RuntimeShellRequestBridge.TrySetHudShowSubtitles(v, out string error))
+                        Debug.LogWarning($"[VVardenfell][UI] failed updating subtitle preference: {error}");
+                },
                 MenuTransparency = null,
                 Difficulty = VVardenfell.Runtime.Combat.MorrowindCombatSettingsBridge.PublishDifficultyInDefaultWorld,
                 Fov = v =>
@@ -1840,8 +1842,10 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeAudioService.Active?.SetMasterVolume(_config.MasterVolume);
             RuntimeAudioService.Active?.SetMusicVolume(_config.MusicVolume);
             RuntimeAudioService.Active?.SetEffectsVolume(_config.EffectsVolume);
-            HudUserPreferences.ShowCrosshair = _config.ShowCrosshair;
-            HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
+            if (!RuntimeShellRequestBridge.TrySetHudShowCrosshair(_config.ShowCrosshair, out string crosshairError))
+                Debug.LogWarning($"[VVardenfell][UI] failed updating crosshair preference: {crosshairError}");
+            if (!RuntimeShellRequestBridge.TrySetHudShowSubtitles(_config.ShowSubtitles, out string subtitleError))
+                Debug.LogWarning($"[VVardenfell][UI] failed updating subtitle preference: {subtitleError}");
 
             MainCameraUtility.GetRequiredCamera().fieldOfView = _config.Fov;
             RuntimeVideoSettingsUtility.ApplyFogDistanceScale(_config.FogDistanceScale);

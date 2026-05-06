@@ -67,6 +67,7 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<PlayerInventoryItem>());
 
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<RuntimeHudPreferences>();
             RequireForUpdate<InteractionPresentationState>();
             RequireForUpdate<InventoryWindowState>();
             RequireForUpdate<ContainerWindowState>();
@@ -112,6 +113,7 @@ namespace VVardenfell.Runtime.Shell
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
+            var hudPreferences = SystemAPI.GetSingleton<RuntimeHudPreferences>();
             var subtitle = SystemAPI.TryGetSingleton<RuntimeSubtitleState>(out var subtitleState)
                 ? subtitleState
                 : default;
@@ -160,6 +162,7 @@ namespace VVardenfell.Runtime.Shell
                 showHud,
                 ref contentBlob,
                 interaction,
+                hudPreferences,
                 playerStats,
                 location,
                 inventoryState,

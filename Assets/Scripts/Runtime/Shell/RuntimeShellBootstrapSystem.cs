@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Core.Config;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.Shell
             });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellActionRequest());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeSubtitleState());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, LoadHudPreferences());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeEnemyHealthBarState());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SaveLoadBrowserState
             {
@@ -123,6 +125,24 @@ namespace VVardenfell.Runtime.Shell
                 RevealRadiusFraction = 0.17f,
             });
             RuntimeBootstrapRequestUtility.Consume<RuntimeShellBootstrapRequest>(systemState.EntityManager);
+        }
+
+        static RuntimeHudPreferences LoadHudPreferences()
+        {
+            if (ConfigStorage.TryLoad(out var config) && config != null)
+            {
+                return new RuntimeHudPreferences
+                {
+                    ShowCrosshair = config.ShowCrosshair ? (byte)1 : (byte)0,
+                    ShowSubtitles = config.ShowSubtitles ? (byte)1 : (byte)0,
+                };
+            }
+
+            return new RuntimeHudPreferences
+            {
+                ShowCrosshair = 1,
+                ShowSubtitles = 1,
+            };
         }
     }
 }

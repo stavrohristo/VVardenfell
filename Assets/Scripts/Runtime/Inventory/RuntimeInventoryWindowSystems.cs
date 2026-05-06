@@ -35,9 +35,6 @@ namespace VVardenfell.Runtime.Inventory
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<InventoryWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<InventoryWindowRequest>().ValueRW;
-            Entity playerInventoryEntity = _playerInventoryQuery.GetSingletonEntity();
-            var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
-            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ApplyRequests(ref state, ref request);
 
@@ -48,6 +45,10 @@ namespace VVardenfell.Runtime.Inventory
                 state.SelectedItemDetailsText = default;
                 return;
             }
+
+            Entity playerInventoryEntity = _playerInventoryQuery.GetSingletonEntity();
+            var inventory = systemState.EntityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity, true);
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             state.ActiveCategory = (byte)ClampCategory((InventoryWindowCategory)state.ActiveCategory);
 

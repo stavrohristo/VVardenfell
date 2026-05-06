@@ -28,8 +28,6 @@ namespace VVardenfell.Runtime.Inventory
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var state = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<ContainerWindowRequest>().ValueRW;
-            var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
-            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ApplyRequests(ref state, ref request);
             state.Visible = shell.ContainerOpen;
@@ -40,6 +38,9 @@ namespace VVardenfell.Runtime.Inventory
                 state.SelectedItemIndex = -1;
                 return;
             }
+
+            var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             int selectedIndex = ValidateSelection(items, state.OpenPlacedRefId, state.SelectedItemIndex);
             if (selectedIndex < 0)

@@ -21,6 +21,8 @@ namespace VVardenfell.Runtime.Inventory
 
         public void OnCreate(ref SystemState systemState)
         {
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<InventoryWindowState>();
             systemState.RequireForUpdate<PlayerTag>();
             systemState.RequireForUpdate<ActorEquipmentSlot>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
@@ -34,6 +36,14 @@ namespace VVardenfell.Runtime.Inventory
 
         public void OnUpdate(ref SystemState systemState)
         {
+            var shell = SystemAPI.GetSingleton<RuntimeShellState>();
+            var inventoryState = SystemAPI.GetSingleton<InventoryWindowState>();
+            if (!ShouldShowPreview(shell, inventoryState))
+            {
+                DestroyPreview(ref systemState);
+                return;
+            }
+
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             if (!RuntimeContentBlobUtility.TryGetActorHandleByIdHash(ref contentBlob, RuntimeContentKnownHashes.player, out var actorHandle) || !actorHandle.IsValid)
             {
@@ -137,6 +147,14 @@ namespace VVardenfell.Runtime.Inventory
             _previewEntity = Entity.Null;
             _lastActor = default;
             _lastSignature = 0ul;
+        }
+
+        static bool ShouldShowPreview(in RuntimeShellState shell, in InventoryWindowState inventoryState)
+        {
+            if (shell.ContainerOpen != 0 || shell.InventoryMenuDisabled != 0)
+                return false;
+
+            return shell.InventoryOpen != 0 || inventoryState.Pinned != 0;
         }
 
         static ulong BuildSignature(DynamicBuffer<ActorEquipmentSlot> equipment)

@@ -6,7 +6,6 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct ShellMessageBoxApplySystem : ISystem
     {
         public void OnCreate(ref SystemState systemState)

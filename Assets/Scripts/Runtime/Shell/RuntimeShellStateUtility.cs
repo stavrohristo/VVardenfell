@@ -260,7 +260,7 @@ namespace VVardenfell.Runtime.Shell
 
         public static float EstimateSubtitleDurationSeconds(FixedString512Bytes text)
         {
-            int wordCount = CountSubtitleWords(text.ToString());
+            int wordCount = CountSubtitleWords(text);
             if (wordCount == 0)
                 return 0f;
 
@@ -270,16 +270,16 @@ namespace VVardenfell.Runtime.Shell
                 SubtitleMaxSeconds);
         }
 
-        static int CountSubtitleWords(string text)
+        static int CountSubtitleWords(FixedString512Bytes text)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (text.Length == 0)
                 return 0;
 
             int count = 0;
             bool inWord = false;
             for (int i = 0; i < text.Length; i++)
             {
-                if (char.IsWhiteSpace(text[i]))
+                if (IsAsciiWhiteSpace(text[i]))
                 {
                     inWord = false;
                     continue;
@@ -294,6 +294,14 @@ namespace VVardenfell.Runtime.Shell
 
             return count;
         }
+
+        static bool IsAsciiWhiteSpace(byte value)
+            => value == (byte)' '
+               || value == (byte)'\t'
+               || value == (byte)'\n'
+               || value == (byte)'\r'
+               || value == (byte)'\f'
+               || value == (byte)'\v';
 
         public static void OpenSaveLoadBrowser(ref RuntimeShellState state, ref SaveLoadBrowserState browser, SaveLoadBrowserMode mode, string saveName)
         {

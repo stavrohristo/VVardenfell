@@ -8,8 +8,7 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    [UpdateAfter(typeof(MorrowindDialogueSessionSystem))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct MorrowindScriptStartRequestSystem : ISystem
     {
         EntityQuery _globalScriptQuery;

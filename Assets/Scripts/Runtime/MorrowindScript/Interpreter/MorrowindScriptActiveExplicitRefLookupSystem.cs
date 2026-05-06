@@ -9,8 +9,7 @@ using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
-    [UpdateBefore(typeof(MorrowindDialogueSessionSystem))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct MorrowindScriptActiveExplicitRefLookupSystem : ISystem
     {
         EntityQuery _logicalRefQuery;

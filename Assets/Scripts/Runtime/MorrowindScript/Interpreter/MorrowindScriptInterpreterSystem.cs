@@ -20,7 +20,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [BurstCompile]
     public unsafe partial struct MorrowindScriptInterpreterSystem : ISystem
     {

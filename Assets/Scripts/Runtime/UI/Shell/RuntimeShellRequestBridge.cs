@@ -11,6 +11,9 @@ namespace VVardenfell.Runtime.UI.Shell
         delegate void RequestMutation<T>(ref T request)
             where T : unmanaged, IComponentData;
 
+        delegate void ComponentMutation<T>(ref T component)
+            where T : unmanaged, IComponentData;
+
         delegate void SaveLoadRequestMutation(ref SaveLoadBrowserRequest request, in SaveLoadBrowserState state);
 
         public static bool TryRequestAction(RuntimeShellMenuActionId action, out string error)
@@ -81,6 +84,28 @@ namespace VVardenfell.Runtime.UI.Shell
                 static (ref RuntimeShellActionRequest request) =>
                 {
                     request.CloseMovie = 1;
+                },
+                out error);
+        }
+
+        public static bool TrySetHudShowCrosshair(bool show, out string error)
+        {
+            return TryMutateComponent<RuntimeHudPreferences>(
+                "Runtime HUD preferences",
+                (ref RuntimeHudPreferences preferences) =>
+                {
+                    preferences.ShowCrosshair = show ? (byte)1 : (byte)0;
+                },
+                out error);
+        }
+
+        public static bool TrySetHudShowSubtitles(bool show, out string error)
+        {
+            return TryMutateComponent<RuntimeHudPreferences>(
+                "Runtime HUD preferences",
+                (ref RuntimeHudPreferences preferences) =>
+                {
+                    preferences.ShowSubtitles = show ? (byte)1 : (byte)0;
                 },
                 out error);
         }
@@ -759,6 +784,22 @@ namespace VVardenfell.Runtime.UI.Shell
             var request = entityManager.GetComponentData<T>(entity);
             mutate(ref request);
             entityManager.SetComponentData(entity, request);
+            error = null;
+            return true;
+        }
+
+        static bool TryMutateComponent<T>(
+            string label,
+            ComponentMutation<T> mutate,
+            out string error)
+            where T : unmanaged, IComponentData
+        {
+            if (!TryGetSingleton<T>(label, out var entityManager, out Entity entity, out error))
+                return false;
+
+            var component = entityManager.GetComponentData<T>(entity);
+            mutate(ref component);
+            entityManager.SetComponentData(entity, component);
             error = null;
             return true;
         }

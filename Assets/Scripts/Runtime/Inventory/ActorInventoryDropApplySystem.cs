@@ -16,7 +16,7 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
+    [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     public partial struct ActorInventoryDropApplySystem : ISystem
     {
         public void OnCreate(ref SystemState systemState)

@@ -94,8 +94,8 @@ namespace VVardenfell.Runtime.Bootstrap
                 EffectsVolume = v => RuntimeAudioService.Active?.SetEffectsVolume(v),
                 FootstepsVolume = null,
                 VoiceVolume = null,
-                ShowCrosshair = v => HudUserPreferences.ShowCrosshair = v,
-                ShowSubtitles = v => HudUserPreferences.ShowSubtitles = v,
+                ShowCrosshair = v => RuntimeShellRequestBridge.TrySetHudShowCrosshair(v, out _),
+                ShowSubtitles = v => RuntimeShellRequestBridge.TrySetHudShowSubtitles(v, out _),
                 MenuTransparency = null,
                 Difficulty = VVardenfell.Runtime.Combat.MorrowindCombatSettingsBridge.PublishDifficultyInDefaultWorld,
                 Fov = v => { camera.fieldOfView = v; },
@@ -149,8 +149,8 @@ namespace VVardenfell.Runtime.Bootstrap
             RuntimeAudioService.Active?.SetMasterVolume(_config.MasterVolume);
             RuntimeAudioService.Active?.SetMusicVolume(_config.MusicVolume);
             RuntimeAudioService.Active?.SetEffectsVolume(_config.EffectsVolume);
-            HudUserPreferences.ShowCrosshair = _config.ShowCrosshair;
-            HudUserPreferences.ShowSubtitles = _config.ShowSubtitles;
+            RuntimeShellRequestBridge.TrySetHudShowCrosshair(_config.ShowCrosshair, out _);
+            RuntimeShellRequestBridge.TrySetHudShowSubtitles(_config.ShowSubtitles, out _);
             camera.fieldOfView = _config.Fov;
             RuntimeVideoSettingsUtility.ApplyFogDistanceScale(_config.FogDistanceScale);
             Screen.brightness = _config.Gamma;

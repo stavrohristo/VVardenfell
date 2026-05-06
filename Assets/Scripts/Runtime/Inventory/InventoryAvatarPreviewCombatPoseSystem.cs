@@ -17,6 +17,8 @@ namespace VVardenfell.Runtime.Inventory
     {
         public void OnCreate(ref SystemState systemState)
         {
+            systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<InventoryWindowState>();
             systemState.RequireForUpdate<InventoryAvatarPreviewTag>();
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
@@ -24,6 +26,11 @@ namespace VVardenfell.Runtime.Inventory
         [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
+            var shell = SystemAPI.GetSingleton<RuntimeShellState>();
+            var inventoryState = SystemAPI.GetSingleton<InventoryWindowState>();
+            if (!ShouldShowPreview(shell, inventoryState))
+                return;
+
             var catalogRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             if (!catalogRef.IsCreated)
                 return;
@@ -56,6 +63,14 @@ namespace VVardenfell.Runtime.Inventory
                     ref state,
                     overlays);
             }
+        }
+
+        static bool ShouldShowPreview(in RuntimeShellState shell, in InventoryWindowState inventoryState)
+        {
+            if (shell.ContainerOpen != 0 || shell.InventoryMenuDisabled != 0)
+                return false;
+
+            return shell.InventoryOpen != 0 || inventoryState.Pinned != 0;
         }
     }
 }

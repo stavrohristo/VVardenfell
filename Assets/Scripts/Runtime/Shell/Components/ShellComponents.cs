@@ -155,6 +155,12 @@ namespace VVardenfell.Runtime.Components
         public byte Visible;
     }
 
+    public struct RuntimeHudPreferences : IComponentData
+    {
+        public byte ShowCrosshair;
+        public byte ShowSubtitles;
+    }
+
     public struct GlobalMapRevealRequest : IBufferElementData
     {
         public FixedString512Bytes CellNamePrefix;
