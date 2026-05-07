@@ -75,7 +75,7 @@ namespace VVardenfell.Runtime.Streaming
         /// Model-prefab render leaves bind these arrays through their bucket-specific
         /// material variants.
         /// </summary>
-        public static RenderTexture[] RefBaseArrays;
+        public static Texture2DArray[] RefBaseArrays;
         public static int[] RefBucketKeys;
         public static Dictionary<int, int> RefBucketIndexByKey;
 
@@ -363,12 +363,13 @@ namespace VVardenfell.Runtime.Streaming
             }
             ActorEntitiesGraphicsRenderer?.Dispose();
             ActorEntitiesGraphicsRenderer = null;
+            Cache?.DisposeTextureResources();
             if (RefBaseArrays != null)
             {
                 for (int i = 0; i < RefBaseArrays.Length; i++)
                 {
                     var rt = RefBaseArrays[i];
-                    if (rt != null) { rt.Release(); Object.Destroy(rt); }
+                    if (rt != null) Object.Destroy(rt);
                 }
                 RefBaseArrays = null;
             }

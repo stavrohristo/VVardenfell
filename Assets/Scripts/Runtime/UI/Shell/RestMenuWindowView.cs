@@ -121,8 +121,7 @@ namespace VVardenfell.Runtime.UI.Shell
             if (model.Advancing)
             {
                 _progressText.Text = model.ProgressText ?? string.Empty;
-                float fraction = model.TargetHours > 0 ? (float)model.ProgressHours / model.TargetHours : 0f;
-                RuntimeUiFactory.SetProgressBarFill(_progressBar, fraction);
+                RuntimeUiFactory.SetProgressBarFill(_progressBar, Mathf.Clamp01(model.ProgressFraction));
             }
         }
 

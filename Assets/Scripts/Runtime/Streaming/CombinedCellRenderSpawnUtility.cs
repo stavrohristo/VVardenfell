@@ -16,9 +16,8 @@ namespace VVardenfell.Runtime.Streaming
 {
     internal static class CombinedCellRenderSpawnUtility
     {
-        public static Entity[] SpawnChunks(EntityManager em, int2 coord, CellData data, bool active, out int multiTextureChunkCount)
+        public static Entity[] SpawnChunks(EntityManager em, int2 coord, CellData data, bool active)
         {
-            multiTextureChunkCount = 0;
             var chunks = data?.CombinedRenderChunks;
             if (chunks == null || chunks.Length == 0)
                 return System.Array.Empty<Entity>();
@@ -33,9 +32,7 @@ namespace VVardenfell.Runtime.Streaming
             for (int i = 0; i < chunks.Length; i++)
             {
                 var chunk = chunks[i];
-                Mesh mesh = CombinedCellRenderMeshUploadUtility.Upload(chunk, $"CombinedCellRender({coord.x},{coord.y})#{i}", out int uniqueTextureCount);
-                if (uniqueTextureCount > 1)
-                    multiTextureChunkCount++;
+                Mesh mesh = CombinedCellRenderMeshUploadUtility.Upload(chunk, $"CombinedCellRender({coord.x},{coord.y})#{i}");
                 RenderMeshArray rma = CreateRenderMeshArray(chunk, mesh);
                 managed.CombinedRenderMeshes.Add(mesh);
                 managed.CombinedRenderRmas.Add(rma);
@@ -46,16 +43,15 @@ namespace VVardenfell.Runtime.Streaming
             return result;
         }
 
-        public static int AttachMembershipLinks(
+        public static void AttachMembershipLinks(
             EntityManager em,
             CombinedCellRenderChunkDef[] chunkDefs,
             Entity[] chunkEntities,
             ref LogicalRefLookup logicalRefs)
         {
             if (chunkDefs == null || chunkEntities == null || !logicalRefs.Map.IsCreated)
-                return 0;
+                return;
 
-            int suppressedLeafCount = 0;
             for (int i = 0; i < chunkDefs.Length && i < chunkEntities.Length; i++)
             {
                 Entity chunkEntity = chunkEntities[i];
@@ -115,7 +111,6 @@ namespace VVardenfell.Runtime.Streaming
                             PlacedRefId = placedRefId,
                             NodeIndex = member.NodeIndex,
                         });
-                        suppressedLeafCount++;
                         break;
                     }
                 }
@@ -127,8 +122,6 @@ namespace VVardenfell.Runtime.Streaming
                 for (int memberIndex = 0; memberIndex < pendingMembers.Count; memberIndex++)
                     memberBuffer.Add(pendingMembers[memberIndex]);
             }
-
-            return suppressedLeafCount;
         }
 
         static RenderMeshArray CreateRenderMeshArray(CombinedCellRenderChunkDef chunk, Mesh mesh)

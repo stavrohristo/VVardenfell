@@ -162,14 +162,9 @@ namespace VVardenfell.Importer.Bake
 
         static int GetCombinedCellRenderTextureBucketKey(int textureIndex, TextureBakery textures)
         {
-            int2 dimensions = textureIndex >= 0 && textures != null
-                ? textures.GetBucketDimensions(textureIndex)
-                : new int2(1, 1);
-            int width = math.max(1, dimensions.x);
-            int height = math.max(1, dimensions.y);
-            if (width > 0xFFFF || height > 0xFFFF)
-                throw new InvalidDataException($"Combined render texture bucket dimensions {width}x{height} exceed packed-key limits.");
-            return (width << 16) | (height & 0xFFFF);
+            return textureIndex >= 0 && textures != null
+                ? textures.GetBucketKey(textureIndex)
+                : RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1);
         }
 
         static int GetCombinedCellRenderMaterialIndex(uint materialFlags)

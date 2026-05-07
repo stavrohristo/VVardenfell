@@ -74,6 +74,7 @@ namespace VVardenfell.Runtime.Components
         public int RestMenuSelectedHours;
         public int RestMenuProgressHours;
         public int RestMenuTargetHours;
+        public float RestMenuProgressHourFraction;
         public Entity RestMenuBedEntity;
         public uint RestMenuBedPlacedRefId;
         public FixedString128Bytes MovieName;

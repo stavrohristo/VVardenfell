@@ -161,14 +161,16 @@ namespace VVardenfell.Runtime.Systems
     {
     }
 
-    [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(MorrowindWorldMutationSystemGroup))]
-    public partial class MorrowindEnvironmentSystemGroup : MorrowindRuntimePauseGatedSystemGroup
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(MorrowindPostTransformSimulationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindInteractionPresentationSystemGroup))]
+    public partial class MorrowindEnvironmentSystemGroup : MorrowindRuntimeGatedSystemGroup
     {
     }
 
-    [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindEnvironmentSystemGroup))]
+    [UpdateBefore(typeof(MorrowindInteractionPresentationSystemGroup))]
     public partial class MorrowindAudioSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }

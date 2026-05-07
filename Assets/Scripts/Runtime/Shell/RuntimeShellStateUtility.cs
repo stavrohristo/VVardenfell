@@ -110,6 +110,7 @@ namespace VVardenfell.Runtime.Shell
             state.RestMenuSelectedHours = 1;
             state.RestMenuProgressHours = 0;
             state.RestMenuTargetHours = 0;
+            state.RestMenuProgressHourFraction = 0f;
             state.RestMenuBedEntity = bedEntity;
             state.RestMenuBedPlacedRefId = bedPlacedRefId;
             state.PlayerSleeping = 0;
@@ -124,6 +125,7 @@ namespace VVardenfell.Runtime.Shell
             state.RestMenuSelectedHours = 1;
             state.RestMenuProgressHours = 0;
             state.RestMenuTargetHours = 0;
+            state.RestMenuProgressHourFraction = 0f;
             state.RestMenuBedEntity = Entity.Null;
             state.RestMenuBedPlacedRefId = 0u;
             state.PlayerSleeping = 0;

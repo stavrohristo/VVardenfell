@@ -106,9 +106,9 @@ namespace VVardenfell.Runtime.Shell
                     }
                 }
             }
-            else if (state.RestMenuOpen != 0 || state.RestMenuAdvancing != 0)
+            else if (state.RestMenuOpen != 0)
             {
-                if (togglePausePressed || backPressed)
+                if (state.RestMenuAdvancing == 0 && (togglePausePressed || backPressed))
                     RuntimeShellStateUtility.CloseRestMenu(ref state);
             }
             else if (toggleInventoryPressed)

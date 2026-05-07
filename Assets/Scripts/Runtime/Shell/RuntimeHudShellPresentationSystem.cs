@@ -311,6 +311,7 @@ namespace VVardenfell.Runtime.Shell
             int selectedHours = RuntimeRestUtility.ClampHours(shell.RestMenuSelectedHours <= 0 ? 1 : shell.RestMenuSelectedHours);
             int targetHours = RuntimeRestUtility.ClampHours(shell.RestMenuTargetHours <= 0 ? selectedHours : shell.RestMenuTargetHours);
             int progressHours = Math.Clamp(shell.RestMenuProgressHours, 0, targetHours);
+            float progressFraction = targetHours > 0 ? Math.Clamp(shell.RestMenuProgressHourFraction / targetHours, 0f, 1f) : 0f;
             return new RestMenuViewModel
             {
                 CanSleep = shell.RestMenuCanSleep != 0,
@@ -319,6 +320,7 @@ namespace VVardenfell.Runtime.Shell
                 SelectedHours = selectedHours,
                 ProgressHours = progressHours,
                 TargetHours = targetHours,
+                ProgressFraction = progressFraction,
                 DateText = FormatRestDate(ref contentBlob, time),
                 TimeText = FormatRestTime(time),
                 HoursText = selectedHours == 1 ? "1 hour" : $"{selectedHours} hours",

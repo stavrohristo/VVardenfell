@@ -1,35 +1,29 @@
 using System.Collections;
 using UnityEngine;
-using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Bake;
 using VVardenfell.Runtime.Bootstrap;
 
 namespace VVardenfell.Runtime.Cache
 {
     /// <summary>
-    /// Loads terrain_layers.bin and materialises a single Texture2DArray that the terrain
-    /// shader samples. Each slice is a 256x256 RGBA32 copy of one LTEX texture, produced
-    /// by blitting the already-decoded runtime Texture2D through one reusable temporary
-    /// RenderTexture and CPU Texture2D scratch buffer.
+    /// Loads the baked runtime-ready terrain layer Texture2DArray.
     /// </summary>
     public sealed class TerrainLayers
     {
         const int BatchSize = 32;
 
-        public const int LayerSize = 256;
-
         public Texture2DArray Array { get; private set; }
         public int LayerCount { get; private set; }
 
-        public void Build(string terrainLayersPath, Texture2D[] textures)
+        public void Build(string terrainLayersPath)
         {
-            RuntimeCoroutinePump.RunToCompletion(BuildIncremental(terrainLayersPath, textures, null));
+            RuntimeCoroutinePump.RunToCompletion(BuildIncremental(terrainLayersPath, null));
         }
 
-        public IEnumerator BuildIncremental(string terrainLayersPath, Texture2D[] textures, RuntimeLoadProgress progress)
+        public IEnumerator BuildIncremental(string terrainLayersPath, RuntimeLoadProgress progress)
         {
-            int[] texIdxByLayer = TerrainLayerBakery.ReadAll(terrainLayersPath);
-            LayerCount = texIdxByLayer.Length;
+            TerrainLayerPayload payload = TerrainLayerBakery.ReadPayload(terrainLayersPath);
+            LayerCount = payload.Layers?.Length ?? 0;
             if (LayerCount == 0)
             {
                 progress?.BeginStage("Terrain layer arrays", "No terrain layers", 1);
@@ -38,9 +32,8 @@ namespace VVardenfell.Runtime.Cache
                 yield break;
             }
 
-            progress?.Report("Allocating terrain layer array", 0, LayerCount);
-
-            Array = new Texture2DArray(LayerSize, LayerSize, LayerCount, TextureFormat.RGBA32, mipChain: true, linear: false)
+            progress?.Report("Allocating baked terrain layer array", 0, LayerCount);
+            Array = new Texture2DArray(payload.Width, payload.Height, LayerCount, payload.Format, payload.MipCount, linear: false)
             {
                 name = "VV:TerrainLayers",
                 wrapMode = TextureWrapMode.Repeat,
@@ -48,37 +41,23 @@ namespace VVardenfell.Runtime.Cache
                 anisoLevel = 4,
             };
 
-            var rt = RenderTexture.GetTemporary(LayerSize, LayerSize, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
-            rt.filterMode = FilterMode.Bilinear;
-
-            var tmp = new Texture2D(LayerSize, LayerSize, TextureFormat.RGBA32, mipChain: false, linear: false);
-            var prevActive = RenderTexture.active;
-
             bool success = false;
             try
             {
                 for (int layer = 0; layer < LayerCount; layer++)
                 {
-                    int texIdx = texIdxByLayer[layer];
-                    Texture src = (texIdx >= 0 && texIdx < textures.Length) ? textures[texIdx] : null;
-                    if (src == null)
-                        src = Texture2D.whiteTexture;
-
-                    Graphics.Blit(src, rt);
-                    RenderTexture.active = rt;
-                    tmp.ReadPixels(new Rect(0, 0, LayerSize, LayerSize), 0, 0, recalculateMipMaps: false);
-                    tmp.Apply(updateMipmaps: false, makeNoLongerReadable: false);
-                    Graphics.CopyTexture(tmp, 0, 0, Array, layer, 0);
+                    for (int mip = 0; mip < payload.MipCount; mip++)
+                        Array.SetPixelData(payload.Layers[layer][mip], mip, layer);
 
                     int completed = layer + 1;
                     if (completed == LayerCount || (completed % BatchSize) == 0)
                     {
-                        progress?.Report($"Uploading terrain layers {completed}/{LayerCount}", completed, LayerCount);
+                        progress?.Report($"Uploading baked terrain layers {completed}/{LayerCount}", completed, LayerCount);
                         yield return null;
                     }
                 }
 
-                Array.Apply(updateMipmaps: true, makeNoLongerReadable: true);
+                Array.Apply(updateMipmaps: false, makeNoLongerReadable: true);
                 progress?.CompleteStage("Terrain layers ready");
                 success = true;
             }
@@ -90,9 +69,6 @@ namespace VVardenfell.Runtime.Cache
                     Array = null;
                     LayerCount = 0;
                 }
-                RenderTexture.active = prevActive;
-                RenderTexture.ReleaseTemporary(rt);
-                Object.Destroy(tmp);
             }
         }
 

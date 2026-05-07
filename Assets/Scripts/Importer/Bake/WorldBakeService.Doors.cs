@@ -76,5 +76,14 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
+        private static void PruneLegacyTextureFiles(string directory)
+        {
+            if (!Directory.Exists(directory))
+                return;
+
+            foreach (var file in Directory.EnumerateFiles(directory, "*.dds"))
+                File.Delete(file);
+        }
+
         }
     }

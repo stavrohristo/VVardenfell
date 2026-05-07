@@ -78,7 +78,7 @@ namespace VVardenfell.Runtime.Streaming
             if (interiorActive)
             {
                 AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
-                AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
+                AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0, time.Paused != 0);
                 weather.RandomState = random.state;
                 return;
             }
@@ -87,7 +87,7 @@ namespace VVardenfell.Runtime.Streaming
             weather.RegionHandleValue = regionHandleValue;
 
             bool expiredWeather = AdvanceWeatherUpdateTimer(ref weather, regionWeather, hoursBetweenChanges, time.LastAdvancedHours);
-            AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0);
+            AdvanceTransition(ref weather, ref content, SystemAPI.Time.DeltaTime, time.FastForwarding != 0, time.Paused != 0);
             if (weather.Transitioning != 0)
                 return;
 
@@ -385,7 +385,7 @@ namespace VVardenfell.Runtime.Streaming
                 weather.QueuedWeather = next;
         }
 
-        static void AdvanceTransition(ref MorrowindWeatherState weather, ref RuntimeContentBlob content, float elapsedSeconds, bool fastForward)
+        static void AdvanceTransition(ref MorrowindWeatherState weather, ref RuntimeContentBlob content, float elapsedSeconds, bool fastForward, bool paused)
         {
             if (weather.NextWeather < 0)
             {
@@ -405,6 +405,9 @@ namespace VVardenfell.Runtime.Streaming
                 weather.Transitioning = 0;
                 return;
             }
+
+            if (paused)
+                return;
 
             weather.TransitionFactor -= math.max(0f, elapsedSeconds) * math.max(0.001f, weather.TransitionDelta);
             if (weather.TransitionFactor <= 0f)

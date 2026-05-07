@@ -99,7 +99,6 @@ namespace VVardenfell.Runtime.Audio
             if (!_bsaEntriesByPath.TryGetValue(archivePath, out var source))
                 return false;
 
-            CachePaths.EnsureExists();
             string extension = Path.GetExtension(archivePath);
             if (string.IsNullOrWhiteSpace(extension))
                 throw new InvalidDataException($"[VVardenfell][Audio] BSA sound entry '{archivePath}' has no audio extension.");

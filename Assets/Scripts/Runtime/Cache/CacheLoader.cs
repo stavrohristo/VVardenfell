@@ -4,7 +4,6 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Entities;
@@ -14,7 +13,6 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Unity.Profiling;
 using VVardenfell.Core.Cache;
-using VVardenfell.Importer.Dds;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Pathfinding;
@@ -25,7 +23,7 @@ namespace VVardenfell.Runtime.Cache
 {
     /// <summary>
     /// Reads the baked cache and produces the runtime-side Unity resources:
-    /// Mesh[], Texture2D[], Material[]. Runs once at boot.
+    /// Mesh[], texture arrays, Material[]. Runs once at boot.
     /// </summary>
     public sealed class CacheLoader
     {
@@ -34,7 +32,6 @@ namespace VVardenfell.Runtime.Cache
             CacheFormat.MeshFlagHasUVs |
             CacheFormat.MeshFlagIndex32;
         const int MeshBatchSize = 256;
-        const int TextureBatchSize = 128;
         const int BucketYieldStride = 512;
 
         static readonly ProfilerMarker k_Load = new("VV.CacheLoader.Load");
@@ -42,7 +39,6 @@ namespace VVardenfell.Runtime.Cache
         static readonly ProfilerMarker k_Meshes = new("VV.CacheLoader.Meshes");
         static readonly ProfilerMarker k_MeshPayloadRead = new("VV.CacheLoader.MeshPayloadRead");
         static readonly ProfilerMarker k_MeshUpload = new("VV.CacheLoader.MeshUpload");
-        static readonly ProfilerMarker k_Textures = new("VV.CacheLoader.Textures");
         static readonly ProfilerMarker k_RefBuckets = new("VV.CacheLoader.RefBuckets");
         static readonly ProfilerMarker k_TerrainLayers = new("VV.CacheLoader.TerrainLayers");
         static readonly ProfilerMarker k_GameplayContent = new("VV.CacheLoader.GameplayContent");
@@ -56,13 +52,15 @@ namespace VVardenfell.Runtime.Cache
         public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
         public MorrowindVfxCatalogData VfxCatalog { get; private set; }
         public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
-        public Texture2D[] Textures { get; private set; }
+        public Texture2D[] Textures => _lazyTextures;
         public TerrainLayers TerrainLayers { get; private set; }
         public MaterialRegistry Registry { get; private set; }
         public BlobAssetReference<RuntimeContentBlob> ContentBlob { get; private set; }
 
         Dictionary<string, int> _textureIndexByPath;
         Dictionary<ulong, int> _textureIndexByPathHash;
+        RefTextureBucketData _refTextureBuckets;
+        Texture2D[] _lazyTextures;
         Dictionary<ulong, int> _actorVisualRecipesByActorAndView;
         Dictionary<ulong, int> _equipmentVisualsByItemRigViewAndVariant;
 
@@ -82,12 +80,27 @@ namespace VVardenfell.Runtime.Cache
             }
         }
 
+        public void DisposeTextureResources()
+        {
+            if (_lazyTextures != null)
+            {
+                for (int i = 0; i < _lazyTextures.Length; i++)
+                {
+                    if (_lazyTextures[i] != null)
+                        UnityEngine.Object.Destroy(_lazyTextures[i]);
+                }
+                _lazyTextures = null;
+            }
+
+            TerrainLayers?.Dispose();
+            TerrainLayers = null;
+            _refTextureBuckets = null;
+        }
+
         public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
         {
             Task<ActorAnimationCatalogData> actorAnimationCatalogTask = null;
             Task<MeshPayload[]> meshPayloadTask = null;
-            Task<TexturePayload[]> texturePayloadTask = null;
-            TexturePayloadReadState texturePayloadState = null;
             string[] textureHashes = null;
 
             progress?.BeginStage("Manifest + metadata", "Reading manifest", 1);
@@ -103,8 +116,7 @@ namespace VVardenfell.Runtime.Cache
                 meshPayloadTask = Task.Run(ReadMeshPayloadsOnWorker);
                 textureHashes = TextureBakeryReadOrder(CachePaths.TexturesIndex);
                 BuildTexturePathLookup(textureHashes);
-                texturePayloadState = new TexturePayloadReadState(textureHashes.Length);
-                texturePayloadTask = StartLongRunningTask(() => ReadTexturePayloadsOnWorker(textureHashes, texturePayloadState));
+                _lazyTextures = new Texture2D[textureHashes.Length];
                 if (!ModelPrefabFile.TryRead(CachePaths.ModelPrefabs, out var modelPrefabCatalog) || modelPrefabCatalog?.Records == null)
                     throw new InvalidDataException("model_prefabs.bin unreadable");
                 ModelPrefabCatalog = modelPrefabCatalog;
@@ -141,14 +153,11 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage();
             yield return null;
 
-            progress?.BeginStage("Texture decode/load", "Loading textures", 0);
-            yield return LoadTexturesIncremental(progress, textureHashes, texturePayloadTask, texturePayloadState);
-
             progress?.BeginStage("Mesh deserialization", "Preparing meshes", 0);
             yield return ReadMeshesIncremental(progress, meshPayloadTask);
 
-            progress?.BeginStage("Ref materials", "Building reference texture buckets", 0);
-            yield return BuildReferenceMaterialBucketsIncremental(progress);
+            progress?.BeginStage("Ref texture buckets", "Loading baked reference texture buckets", 0);
+            yield return LoadReferenceTextureBucketsIncremental(progress, textureHashes);
 
             progress?.BeginStage("Terrain layer arrays", "Preparing terrain layers", 1);
             if (File.Exists(CachePaths.TerrainLayers))
@@ -157,7 +166,7 @@ namespace VVardenfell.Runtime.Cache
                 try
                 {
                     TerrainLayers = new TerrainLayers();
-                    yield return TerrainLayers.BuildIncremental(CachePaths.TerrainLayers, Textures, progress);
+                    yield return TerrainLayers.BuildIncremental(CachePaths.TerrainLayers, progress);
                 }
                 finally
                 {
@@ -250,10 +259,7 @@ namespace VVardenfell.Runtime.Cache
             if (!TryGetTextureIndexByPath(sourcePath, out int index))
                 return false;
 
-            if ((uint)index >= (uint)(Textures?.Length ?? 0))
-                return false;
-
-            texture = Textures[index];
+            texture = MaterializeTexture(index);
             return texture != null;
         }
 
@@ -274,6 +280,53 @@ namespace VVardenfell.Runtime.Cache
             return sourcePathHash != 0UL
                    && _textureIndexByPathHash != null
                    && _textureIndexByPathHash.TryGetValue(sourcePathHash, out index);
+        }
+
+        Texture2D MaterializeTexture(int textureIndex)
+        {
+            if (_lazyTextures == null || (uint)textureIndex >= (uint)_lazyTextures.Length)
+                return null;
+            if (_lazyTextures[textureIndex] != null)
+                return _lazyTextures[textureIndex];
+            if (_refTextureBuckets == null
+                || _refTextureBuckets.TextureBucketKeys == null
+                || _refTextureBuckets.TextureSlices == null
+                || (uint)textureIndex >= (uint)_refTextureBuckets.TextureBucketKeys.Length)
+                throw new InvalidOperationException($"Texture index {textureIndex} cannot be materialized because baked ref texture buckets are not loaded.");
+
+            int key = _refTextureBuckets.TextureBucketKeys[textureIndex];
+            int sliceIndex = _refTextureBuckets.TextureSlices[textureIndex];
+            var bucket = FindRefTextureBucket(key);
+            if (bucket == null)
+                throw new InvalidOperationException($"Texture index {textureIndex} references missing baked ref texture bucket 0x{key:X8}.");
+            if ((uint)sliceIndex >= (uint)bucket.SliceCount)
+                throw new InvalidOperationException($"Texture index {textureIndex} references invalid slice {sliceIndex} in baked ref texture bucket 0x{key:X8}.");
+
+            var slice = bucket.Slices[sliceIndex];
+            var texture = new Texture2D(bucket.Width, bucket.Height, bucket.Format, bucket.MipCount, linear: false)
+            {
+                name = $"VV:Texture[{textureIndex}]",
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Trilinear,
+                anisoLevel = 8,
+            };
+            for (int mip = 0; mip < bucket.MipCount; mip++)
+                texture.SetPixelData(slice.Mips[mip], mip);
+            texture.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+            _lazyTextures[textureIndex] = texture;
+            return texture;
+        }
+
+        RefTextureBucketDef FindRefTextureBucket(int bucketKey)
+        {
+            var buckets = _refTextureBuckets?.Buckets;
+            for (int i = 0; i < (buckets?.Length ?? 0); i++)
+            {
+                if (buckets[i] != null && buckets[i].BucketKey == bucketKey)
+                    return buckets[i];
+            }
+
+            return null;
         }
 
         void BuildActorVisualLookup()
@@ -368,55 +421,6 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage("Meshes ready");
         }
 
-        private IEnumerator LoadTexturesIncremental(
-            RuntimeLoadProgress progress,
-            string[] texHashes,
-            Task<TexturePayload[]> texturePayloadTask,
-            TexturePayloadReadState texturePayloadState)
-        {
-            if (texHashes == null)
-                throw new InvalidDataException("texture hash table was not loaded");
-            if (texturePayloadTask == null)
-                throw new InvalidDataException("texture payload task was not scheduled");
-
-            while (!texturePayloadTask.IsCompleted)
-            {
-                int completed = texturePayloadState != null ? Volatile.Read(ref texturePayloadState.Completed) : 0;
-                int total = texturePayloadState != null ? texturePayloadState.Total : texHashes.Length;
-                progress?.Report($"Reading texture payloads {completed}/{total}", completed, total);
-                yield return null;
-            }
-
-            var payloads = texturePayloadTask.GetAwaiter().GetResult();
-            if (payloads.Length != texHashes.Length)
-                throw new InvalidDataException($"texture payload count mismatch ({payloads.Length} != {texHashes.Length}).");
-
-            Textures = new Texture2D[texHashes.Length];
-            progress?.Report("Loading textures", 0, texHashes.Length);
-
-            for (int i = 0; i < texHashes.Length; i++)
-            {
-                k_Textures.Begin();
-                try
-                {
-                    Textures[i] = LoadTexture(payloads[i]);
-                }
-                finally
-                {
-                    k_Textures.End();
-                }
-
-                int completed = i + 1;
-                if (completed == texHashes.Length || (completed % TextureBatchSize) == 0)
-                {
-                    progress?.Report($"Loading textures {completed}/{texHashes.Length}", completed, texHashes.Length);
-                    yield return null;
-                }
-            }
-
-            progress?.CompleteStage("Textures ready");
-        }
-
         void BuildTexturePathLookup(string[] texHashes)
         {
             _textureIndexByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -508,8 +512,11 @@ namespace VVardenfell.Runtime.Cache
             return dot >= 0 ? path.Substring(0, dot) + extension : path + extension;
         }
 
-        private IEnumerator BuildReferenceMaterialBucketsIncremental(RuntimeLoadProgress progress)
+        private IEnumerator LoadReferenceTextureBucketsIncremental(RuntimeLoadProgress progress, string[] textureHashes)
         {
+            if (textureHashes == null)
+                throw new InvalidDataException("texture hash table was not loaded");
+
             var matRecords = Importer.Bake.MaterialBakery.ReadAll(CachePaths.Materials);
             MaterialRecords = matRecords;
             var refShader = Shader.Find("VVardenfell/MwRef");
@@ -523,48 +530,28 @@ namespace VVardenfell.Runtime.Cache
             Registry = MaterialRegistry.LoadOrCreate();
 #endif
 
-            const int fallbackBucketKey = (1 << 16) | 1; // 0x00010001
-            var groups = new Dictionary<int, List<int>>();
-            for (int i = 0; i < Textures.Length; i++)
-            {
-                int w = Textures[i] != null ? Textures[i].width : 1;
-                int h = Textures[i] != null ? Textures[i].height : 1;
-                int key = (w << 16) | (h & 0xFFFF);
-                if (!groups.TryGetValue(key, out var list))
-                    groups[key] = list = new List<int>();
-                list.Add(i);
-            }
+            _refTextureBuckets = RefTextureBucketFile.Read(CachePaths.RefTextureBuckets);
+            if (_refTextureBuckets.TextureBucketKeys.Length != textureHashes.Length || _refTextureBuckets.TextureSlices.Length != textureHashes.Length)
+                throw new InvalidDataException($"ref_texture_buckets.bin texture map count mismatch ({_refTextureBuckets.TextureBucketKeys.Length} != {textureHashes.Length}); rebake required.");
 
-            if (groups.Count == 0)
-                groups[(1 << 16) | 1] = new List<int>();
-
-            if (!groups.ContainsKey(fallbackBucketKey))
-                groups[fallbackBucketKey] = new List<int>();
-
-            var keys = new int[groups.Count];
-            groups.Keys.CopyTo(keys, 0);
-            System.Array.Sort(keys);
+            var buckets = _refTextureBuckets.Buckets;
             int fallbackBucket = -1;
 
-            int totalTextureOps = 0;
-            foreach (var key in keys)
-                totalTextureOps += groups[key].Count + 1;
             const int combinedRenderVariantCount = 2;
-            int totalMaterialOps = keys.Length * (matRecords.Length + combinedRenderVariantCount);
+            int totalTextureOps = 0;
+            for (int i = 0; i < buckets.Length; i++)
+                totalTextureOps += buckets[i].SliceCount * buckets[i].MipCount;
+            int totalMaterialOps = buckets.Length * (matRecords.Length + combinedRenderVariantCount);
             int totalOps = System.Math.Max(1, totalTextureOps + totalMaterialOps);
-            progress?.Report("Grouping textures into buckets", 0, totalOps);
+            progress?.Report("Uploading baked ref texture buckets", 0, totalOps);
 
-            RenderTexture[] rts = new RenderTexture[keys.Length];
-            Material[] materials = new Material[keys.Length * matRecords.Length];
-            Material[] combinedMaterials = new Material[keys.Length * combinedRenderVariantCount];
-            int[] bucketKeys = new int[keys.Length];
-            var bucketIndexByKey = new Dictionary<int, int>(keys.Length);
+            Texture2DArray[] arrays = new Texture2DArray[buckets.Length];
+            Material[] materials = new Material[buckets.Length * matRecords.Length];
+            Material[] combinedMaterials = new Material[buckets.Length * combinedRenderVariantCount];
+            int[] bucketKeys = new int[buckets.Length];
+            var bucketIndexByKey = new Dictionary<int, int>(buckets.Length);
             var texBucketInfo = new NativeArray<int2>(
-                Textures.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-
-            var white = new Texture2D(1, 1, TextureFormat.RGBA32, mipChain: false, linear: false);
-            white.SetPixel(0, 0, Color.white);
-            white.Apply();
+                textureHashes.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
             int completed = 0;
             int yieldedAt = 0;
@@ -573,67 +560,58 @@ namespace VVardenfell.Runtime.Cache
             bool success = false;
             try
             {
-                for (int b = 0; b < keys.Length; b++)
+                for (int b = 0; b < buckets.Length; b++)
                 {
-                    int key = keys[b];
+                    var bucket = buckets[b];
+                    int key = bucket.BucketKey;
                     bucketKeys[b] = key;
                     bucketIndexByKey[key] = b;
-                    if (key == fallbackBucketKey)
+                    if (key == RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1))
                         fallbackBucket = b;
-
-                    int w = key >> 16;
-                    int h = key & 0xFFFF;
-                    var list = groups[key];
-                    int sliceCount = list.Count + 1;
 
                     k_RefBuckets.Begin();
                     try
                     {
-                        var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
+                        var array = new Texture2DArray(bucket.Width, bucket.Height, bucket.SliceCount, bucket.Format, bucket.MipCount, linear: false)
                         {
-                            name = $"VV:RefBaseArray[{w}x{h}][{sliceCount}]",
-                            dimension = TextureDimension.Tex2DArray,
-                            volumeDepth = sliceCount,
-                            useMipMap = true,
-                            autoGenerateMips = false,
+                            name = $"VV:RefBaseArray[{bucket.Width}x{bucket.Height}:{bucket.Format}:m{bucket.MipCount}][{bucket.SliceCount}]",
                             filterMode = FilterMode.Trilinear,
                             wrapMode = TextureWrapMode.Repeat,
                             anisoLevel = 8,
                         };
-                        rt.Create();
-                        rts[b] = rt;
+                        arrays[b] = array;
 
-                        for (int s = 0; s < list.Count; s++)
+                        for (int s = 0; s < bucket.SliceCount; s++)
                         {
-                            int globalTex = list[s];
-                            var source = Textures[globalTex] != null ? (Texture)Textures[globalTex] : white;
-                            Graphics.Blit(source, rt, 0, s);
-                            texBucketInfo[globalTex] = new int2(b, s);
-                            completed++;
-
-                            if ((completed - yieldedAt) >= BucketYieldStride)
+                            var slice = bucket.Slices[s];
+                            if (slice?.Mips == null || slice.Mips.Length != bucket.MipCount)
+                                throw new InvalidDataException($"ref texture bucket {b} slice {s} has invalid mip payloads.");
+                            for (int mip = 0; mip < bucket.MipCount; mip++)
                             {
-                                progress?.Report($"Uploading ref textures {completed}/{totalOps}", completed, totalOps);
-                                yieldedAt = completed;
-                                yield return null;
+                                array.SetPixelData(slice.Mips[mip], mip, s);
+                                completed++;
+
+                                if ((completed - yieldedAt) >= BucketYieldStride)
+                                {
+                                    progress?.Report($"Uploading baked ref textures {completed}/{totalOps}", completed, totalOps);
+                                    yieldedAt = completed;
+                                    yield return null;
+                                }
                             }
                         }
 
-                        int whiteSliceInBucket = list.Count;
-                        Graphics.Blit(white, rt, 0, whiteSliceInBucket);
-                        rt.GenerateMips();
-                        completed++;
+                        array.Apply(updateMipmaps: false, makeNoLongerReadable: true);
 
                         for (int mi = 0; mi < matRecords.Length; mi++)
                         {
                             var record = matRecords[mi];
                             var material = new Material(refShader)
                             {
-                                name = $"{MaterialNameForFlags(record.Flags, mi)}[b{b}:{w}x{h}]",
+                                name = $"{MaterialNameForFlags(record.Flags, mi)}[b{b}:{bucket.Width}x{bucket.Height}:{bucket.Format}:m{bucket.MipCount}]",
                                 enableInstancing = true,
                                 doubleSidedGI = true,
                             };
-                            material.SetTexture("_BaseArray", rt);
+                            material.SetTexture("_BaseArray", array);
                             ApplyAlpha(material, record.Flags);
                             materials[b * matRecords.Length + mi] = material;
                             completed++;
@@ -643,36 +621,47 @@ namespace VVardenfell.Runtime.Cache
                         {
                             var combinedMaterial = new Material(combinedRefShader)
                             {
-                                name = $"VV:CombinedRender{ci}[b{b}:{w}x{h}]",
+                                name = $"VV:CombinedRender{ci}[b{b}:{bucket.Width}x{bucket.Height}:{bucket.Format}:m{bucket.MipCount}]",
                                 enableInstancing = true,
                                 doubleSidedGI = true,
                             };
-                            combinedMaterial.SetTexture("_BaseArray", rt);
+                            combinedMaterial.SetTexture("_BaseArray", array);
                             ApplyCombinedRenderAlpha(combinedMaterial, ci);
                             combinedMaterials[b * combinedRenderVariantCount + ci] = combinedMaterial;
                             completed++;
                         }
 
                         if (b == fallbackBucket)
-                            fallbackSlice = whiteSliceInBucket;
+                            fallbackSlice = bucket.FallbackSlice;
                     }
                     finally
                     {
                         k_RefBuckets.End();
                     }
 
-                    if ((completed - yieldedAt) >= BucketYieldStride || b == keys.Length - 1)
+                    if ((completed - yieldedAt) >= BucketYieldStride || b == buckets.Length - 1)
                     {
-                        progress?.Report($"Built ref bucket {b + 1}/{keys.Length}", completed, totalOps);
+                        progress?.Report($"Loaded baked ref bucket {b + 1}/{buckets.Length}", completed, totalOps);
                         yieldedAt = completed;
                         yield return null;
                     }
                 }
 
                 if (fallbackBucket < 0)
-                    throw new InvalidDataException($"runtime texture bucket map missing fallback key 0x{fallbackBucketKey:X8}.");
+                    throw new InvalidDataException("runtime texture bucket map missing 1x1 RGBA32 fallback bucket.");
 
-                WorldResources.RefBaseArrays = rts;
+                for (int i = 0; i < textureHashes.Length; i++)
+                {
+                    int key = _refTextureBuckets.TextureBucketKeys[i];
+                    int slice = _refTextureBuckets.TextureSlices[i];
+                    if (!bucketIndexByKey.TryGetValue(key, out int bucketIndex))
+                        throw new InvalidDataException($"Texture index {i} references missing ref texture bucket 0x{key:X8}.");
+                    if ((uint)slice >= (uint)buckets[bucketIndex].SliceCount)
+                        throw new InvalidDataException($"Texture index {i} references invalid slice {slice} in bucket 0x{key:X8}.");
+                    texBucketInfo[i] = new int2(bucketIndex, slice);
+                }
+
+                WorldResources.RefBaseArrays = arrays;
                 WorldResources.TexBucketInfo = texBucketInfo;
                 WorldResources.RefBucketKeys = bucketKeys;
                 WorldResources.RefBucketIndexByKey = bucketIndexByKey;
@@ -682,21 +671,18 @@ namespace VVardenfell.Runtime.Cache
                 Materials = materials;
                 CombinedMaterials = combinedMaterials;
 
-                progress?.CompleteStage("Reference materials ready");
+                progress?.CompleteStage("Baked reference texture buckets ready");
                 success = true;
             }
             finally
             {
                 if (!success)
                 {
-                    for (int i = 0; i < rts.Length; i++)
+                    for (int i = 0; i < arrays.Length; i++)
                     {
-                        var rt = rts[i];
-                        if (rt != null)
-                        {
-                            rt.Release();
-                            UnityEngine.Object.Destroy(rt);
-                        }
+                        var array = arrays[i];
+                        if (array != null)
+                            UnityEngine.Object.Destroy(array);
                     }
 
                     for (int i = 0; i < materials.Length; i++)
@@ -714,8 +700,6 @@ namespace VVardenfell.Runtime.Cache
                     if (texBucketInfo.IsCreated)
                         texBucketInfo.Dispose();
                 }
-
-                UnityEngine.Object.Destroy(white);
             }
 
         }
@@ -789,101 +773,6 @@ namespace VVardenfell.Runtime.Cache
 
         private static string[] TextureBakeryReadOrder(string indexPath)
             => Importer.Bake.TextureBakery.ReadIndex(indexPath);
-
-        static Task<T> StartLongRunningTask<T>(Func<T> action)
-            => Task.Factory.StartNew(
-                action,
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default);
-
-        static TexturePayload[] ReadTexturePayloadsOnWorker(
-            string[] texHashes,
-            TexturePayloadReadState state)
-        {
-            var payloads = new TexturePayload[texHashes?.Length ?? 0];
-            if (state != null)
-                Volatile.Write(ref state.Total, payloads.Length);
-            for (int i = 0; i < payloads.Length; i++)
-            {
-                string hashHex = texHashes[i];
-                string path = CachePaths.TextureFile(hashHex);
-                if (!File.Exists(path))
-                {
-                    payloads[i] = new TexturePayload
-                    {
-                        HashHex = hashHex,
-                        Error = "file missing",
-                    };
-                    if (state != null)
-                        Volatile.Write(ref state.Completed, i + 1);
-                    continue;
-                }
-
-                try
-                {
-                    payloads[i] = new TexturePayload
-                    {
-                        HashHex = hashHex,
-                        Bytes = File.ReadAllBytes(path),
-                    };
-                }
-                catch (System.Exception ex)
-                {
-                    payloads[i] = new TexturePayload
-                    {
-                        HashHex = hashHex,
-                        Error = ex.Message,
-                    };
-                }
-
-                if (state != null)
-                    Volatile.Write(ref state.Completed, i + 1);
-            }
-
-            return payloads;
-        }
-
-        private static Texture2D LoadTexture(TexturePayload payload)
-        {
-            if (payload == null)
-                return null;
-            if (!string.IsNullOrEmpty(payload.Error))
-            {
-                Debug.LogWarning($"[VVardenfell] tex {payload.HashHex} load failed: {payload.Error}");
-                return null;
-            }
-            if (payload.Bytes == null)
-                return null;
-
-            try
-            {
-                return DdsTexture.Load(payload.Bytes, payload.HashHex);
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogWarning($"[VVardenfell] tex {payload.HashHex} load failed: {ex.Message}");
-                return null;
-            }
-        }
-
-        sealed class TexturePayload
-        {
-            public string HashHex;
-            public byte[] Bytes;
-            public string Error;
-        }
-
-        sealed class TexturePayloadReadState
-        {
-            public TexturePayloadReadState(int total)
-            {
-                Total = total;
-            }
-
-            public int Total;
-            public int Completed;
-        }
 
         static MeshPayload[] ReadMeshPayloadsOnWorker()
         {

@@ -259,7 +259,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 13;
+            progress.Total = 14;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -301,20 +301,27 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "textures.bin";
             progress.Current = 6;
             yield return null;
-            if (bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog))
+            bool texturesNeedWrite = bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog);
+            if (texturesNeedWrite)
             {
                 bakeryTextures.WriteIndex(CachePaths.TexturesIndex);
                 bakeryTextures.WriteCatalog(CachePaths.TextureCatalog);
             }
 
-            progress.Label = "terrain_layers.bin";
+            progress.Label = "ref_texture_buckets.bin";
             progress.Current = 7;
             yield return null;
-            if (bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
-                bakeryLayers.WriteTo(CachePaths.TerrainLayers);
+            if (texturesNeedWrite || !File.Exists(CachePaths.RefTextureBuckets))
+                RefTextureBucketFile.Write(CachePaths.RefTextureBuckets, bakeryTextures.BuildRefTextureBuckets());
+
+            progress.Label = "terrain_layers.bin";
+            progress.Current = 8;
+            yield return null;
+            if (texturesNeedWrite || bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
+                bakeryLayers.WriteTo(CachePaths.TerrainLayers, bakeryTextures);
 
             progress.Label = "collisions.bin";
-            progress.Current = 8;
+            progress.Current = 9;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -323,26 +330,27 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 9;
+            progress.Current = 10;
             yield return null;
             PruneOrphans(CachePaths.CellsDir, expectedOutputs);
             PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
+            PruneLegacyTextureFiles(CachePaths.TexturesDir);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 10;
-            yield return null;
-
-            progress.Label = "world_collision_validation.txt";
             progress.Current = 11;
             yield return null;
 
-            progress.Label = "ui.bin";
+            progress.Label = "world_collision_validation.txt";
             progress.Current = 12;
+            yield return null;
+
+            progress.Label = "ui.bin";
+            progress.Current = 13;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 13;
+            progress.Current = 14;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,

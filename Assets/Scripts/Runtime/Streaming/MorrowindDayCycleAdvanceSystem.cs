@@ -11,10 +11,12 @@ namespace VVardenfell.Runtime.Streaming
     public partial struct MorrowindTimeAdvanceSystem : ISystem
     {
         EntityQuery _timeQuery;
+        EntityQuery _pausedQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
             _timeQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<MorrowindTimeState>(), ComponentType.ReadWrite<MorrowindTimeAdvanceRequest>());
+            _pausedQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
             systemState.RequireForUpdate(_timeQuery);
         }
         [BurstCompile]
@@ -37,8 +39,11 @@ namespace VVardenfell.Runtime.Streaming
             }
             requests.Clear();
 
+            bool runtimePaused = !_pausedQuery.IsEmptyIgnoreFilter;
+            time.Paused = runtimePaused && fastForwarding == 0 ? (byte)1 : (byte)0;
+
             float advancedHours = requestedHours;
-            if (time.Paused == 0 && time.TimeScale > 0f)
+            if (fastForwarding == 0 && time.Paused == 0 && time.TimeScale > 0f)
             {
                 float realSeconds = SystemAPI.Time.DeltaTime;
                 advancedHours += realSeconds * (time.TimeScale / 3600f);

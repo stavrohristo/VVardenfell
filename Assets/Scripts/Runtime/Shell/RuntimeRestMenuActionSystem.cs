@@ -16,20 +16,28 @@ namespace VVardenfell.Runtime.Shell
     [UpdateAfter(typeof(RuntimeShellActionSystem))]
     public partial struct RuntimeRestMenuActionSystem : ISystem
     {
+        const float RestTimelapseRealSecondsPerGameHour = 1f;
+
         EntityQuery _playerQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
-            _playerQuery = systemState.GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<ActorAttributeSet>(),
-                ComponentType.ReadOnly<ActorSkillSet>(),
-                ComponentType.ReadWrite<ActorVitalSet>(),
-                ComponentType.ReadOnly<ActorEffectStatModifiers>(),
-                ComponentType.ReadOnly<ActorDerivedMovementStats>(),
-                ComponentType.ReadOnly<MorrowindMovementSpeed>(),
-                ComponentType.ReadWrite<ActorActiveMagicEffect>(),
-                ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
+            _playerQuery = systemState.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new ComponentType[]
+                {
+                    ComponentType.ReadOnly<PlayerTag>(),
+                    ComponentType.ReadOnly<ActorAttributeSet>(),
+                    ComponentType.ReadOnly<ActorSkillSet>(),
+                    ComponentType.ReadWrite<ActorVitalSet>(),
+                    ComponentType.ReadOnly<ActorEffectStatModifiers>(),
+                    ComponentType.ReadOnly<ActorDerivedMovementStats>(),
+                    ComponentType.ReadOnly<MorrowindMovementSpeed>(),
+                    ComponentType.ReadWrite<ActorActiveMagicEffect>(),
+                    ComponentType.ReadOnly<ActorActiveMagicEffectDirty>(),
+                },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
+            });
 
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<RuntimeShellActionRequest>();
@@ -55,13 +63,19 @@ namespace VVardenfell.Runtime.Shell
             if (shell.RestMenuAdvancing == 0)
                 return;
 
+            if (IsPlayerDead())
+            {
+                RuntimeShellStateUtility.CloseRestMenu(ref shell);
+                return;
+            }
+
             if (shell.RestMenuProgressHours >= shell.RestMenuTargetHours)
             {
                 RuntimeShellStateUtility.CloseRestMenu(ref shell);
                 return;
             }
 
-            AdvanceOneHour(ref systemState, ref shell);
+            AdvanceTimelapse(ref systemState, ref shell);
         }
 
         void HandleAction(ref SystemState systemState, ref RuntimeShellState shell, ref RuntimeShellActionRequest request, RuntimeShellRestMenuActionId action)
@@ -112,22 +126,34 @@ namespace VVardenfell.Runtime.Shell
             shell.RestMenuSleeping = sleeping ? (byte)1 : (byte)0;
             shell.RestMenuProgressHours = 0;
             shell.RestMenuTargetHours = RuntimeRestUtility.ClampHours(hours);
+            shell.RestMenuProgressHourFraction = 0f;
             shell.PlayerSleeping = sleeping ? (byte)1 : (byte)0;
         }
 
-        void AdvanceOneHour(ref SystemState systemState, ref RuntimeShellState shell)
+        void AdvanceTimelapse(ref SystemState systemState, ref RuntimeShellState shell)
         {
             bool sleeping = shell.RestMenuSleeping != 0;
-            RestorePlayerVitalsForHour(ref systemState, sleeping);
+            float remainingHours = math.max(0f, shell.RestMenuTargetHours - shell.RestMenuProgressHourFraction);
+            if (remainingHours <= 0f)
+                return;
+
+            float deltaHours = math.min(
+                remainingHours,
+                math.max(0f, SystemAPI.Time.DeltaTime) / RestTimelapseRealSecondsPerGameHour);
+            if (deltaHours <= 0f)
+                return;
+
+            RestorePlayerVitalsForElapsedHours(ref systemState, sleeping, deltaHours);
 
             var timeRequests = SystemAPI.GetSingletonBuffer<MorrowindTimeAdvanceRequest>();
             timeRequests.Add(new MorrowindTimeAdvanceRequest
             {
-                Hours = 1f,
+                Hours = deltaHours,
                 Kind = (byte)(sleeping ? MorrowindTimeAdvanceKind.Sleep : MorrowindTimeAdvanceKind.Rest),
             });
 
-            shell.RestMenuProgressHours = math.min(shell.RestMenuProgressHours + 1, shell.RestMenuTargetHours);
+            shell.RestMenuProgressHourFraction = math.min(shell.RestMenuProgressHourFraction + deltaHours, shell.RestMenuTargetHours);
+            shell.RestMenuProgressHours = math.min((int)math.floor(shell.RestMenuProgressHourFraction), shell.RestMenuTargetHours);
             shell.PlayerSleeping = sleeping ? (byte)1 : (byte)0;
         }
 
@@ -141,7 +167,13 @@ namespace VVardenfell.Runtime.Shell
             return RuntimeRestUtility.ComputeUntilHealedHours(ref contentBlob, vitals, attributes, stuntedMagicka);
         }
 
-        void RestorePlayerVitalsForHour(ref SystemState systemState, bool sleeping)
+        bool IsPlayerDead()
+        {
+            var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
+            return vitals.CurrentHealth <= 0f;
+        }
+
+        void RestorePlayerVitalsForElapsedHours(ref SystemState systemState, bool sleeping, float gameHours)
         {
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
@@ -155,15 +187,15 @@ namespace VVardenfell.Runtime.Shell
 
             MorrowindActorMovementStats.ApplyVitalBases(ref contentBlob, attributes, ref vitals, initializeMissingCurrents: false);
             var context = MorrowindPlayerSpeedResolver.Build(ref contentBlob, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
-            vitals.CurrentFatigue = math.min(vitals.ModifiedFatigueBase, vitals.CurrentFatigue + context.GetFatigueRestorePerSecond() * 3600f);
+            vitals.CurrentFatigue = math.min(vitals.ModifiedFatigueBase, vitals.CurrentFatigue + context.GetFatigueRestorePerSecond() * 3600f * gameHours);
 
             if (sleeping)
             {
                 vitals.CurrentHealth = math.min(
                     vitals.ModifiedHealthBase,
-                    vitals.CurrentHealth + RuntimeRestUtility.HealthPerSleepHour(attributes));
+                    vitals.CurrentHealth + RuntimeRestUtility.HealthPerSleepHour(attributes) * gameHours);
 
-                float magickaRestoreHours = RuntimeRestUtility.MagickaRestoreHoursForSleep(1f, time.TimeScale, activeEffects);
+                float magickaRestoreHours = RuntimeRestUtility.MagickaRestoreHoursForSleep(gameHours, time.TimeScale, activeEffects);
                 if (magickaRestoreHours > 0f)
                 {
                     vitals.CurrentMagicka = math.min(
@@ -172,7 +204,7 @@ namespace VVardenfell.Runtime.Shell
                 }
             }
 
-            if (RuntimeRestUtility.AdvanceTimedActiveMagicEffects(activeEffects, 1f, time.TimeScale))
+            if (RuntimeRestUtility.AdvanceTimedActiveMagicEffects(activeEffects, gameHours, time.TimeScale))
                 systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(_playerQuery.GetSingletonEntity(), true);
 
             vitals.CurrentHealth = math.clamp(vitals.CurrentHealth, 0f, math.max(0f, vitals.ModifiedHealthBase));

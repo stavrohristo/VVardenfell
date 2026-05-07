@@ -10,9 +10,8 @@ namespace VVardenfell.Runtime.Streaming
 {
     internal static class CombinedCellRenderMeshUploadUtility
     {
-        public static Mesh Upload(CombinedCellRenderChunkDef chunk, string name, out int uniqueTextureCount)
+        public static Mesh Upload(CombinedCellRenderChunkDef chunk, string name)
         {
-            uniqueTextureCount = 0;
             if (chunk == null)
                 throw new InvalidDataException("Combined render chunk is null.");
             if ((chunk.MeshFlags & CacheFormat.MeshFlagHasNormals) == 0 || (chunk.MeshFlags & CacheFormat.MeshFlagHasUVs) == 0)
@@ -32,7 +31,7 @@ namespace VVardenfell.Runtime.Streaming
             if (chunk.IndexBytes == null || chunk.IndexBytes.Length != expectedIndexBytes)
                 throw new InvalidDataException($"Combined render chunk '{name}' index payload size mismatch.");
 
-            byte[] runtimeVertexBytes = BuildRuntimeVertexBytes(chunk, name, out uniqueTextureCount);
+            byte[] runtimeVertexBytes = BuildRuntimeVertexBytes(chunk, name);
             var mesh = new Mesh
             {
                 name = name,
@@ -80,7 +79,7 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        static byte[] BuildRuntimeVertexBytes(CombinedCellRenderChunkDef chunk, string name, out int uniqueTextureCount)
+        static byte[] BuildRuntimeVertexBytes(CombinedCellRenderChunkDef chunk, string name)
         {
             if (WorldResources.RefBucketIndexByKey == null
                 || !WorldResources.RefBucketIndexByKey.TryGetValue(chunk.TextureBucketKey, out int expectedBucketIndex))
@@ -117,7 +116,6 @@ namespace VVardenfell.Runtime.Streaming
                 writer.Write(alphaCutoff);
             }
 
-            uniqueTextureCount = uniqueTextureIndices.Count;
             return runtimeVertexBytes;
         }
 

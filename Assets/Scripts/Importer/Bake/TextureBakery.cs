@@ -4,8 +4,10 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Unity.Mathematics;
+using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Importer.Bsa;
+using VVardenfell.Importer.Dds;
 
 namespace VVardenfell.Importer.Bake
 {
@@ -26,6 +28,8 @@ namespace VVardenfell.Importer.Bake
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _resolvedByIndex = new List<string>();
         private readonly List<string> _hashHexByIndex = new List<string>();
+        private readonly Dictionary<int, DdsTexture.Payload> _payloadByIndex = new Dictionary<int, DdsTexture.Payload>();
+        private readonly Dictionary<int, DdsTexture.Payload> _rgba32PayloadByIndex = new Dictionary<int, DdsTexture.Payload>();
 
         public int Count => _hashHexByIndex.Count;
         public bool Modified { get; private set; }
@@ -88,13 +92,11 @@ namespace VVardenfell.Importer.Bake
 
                 if (_indexByResolved.TryGetValue(resolved, out idx))
                 {
-                    EnsureTextureFile(entry, _hashHexByIndex[idx]);
                     _indexByRaw[rawTexPath] = idx;
                     return idx;
                 }
 
                 string hex = Sha1Hex16(resolved);
-                EnsureTextureFile(entry, hex);
 
                 idx = _hashHexByIndex.Count;
                 _resolvedByIndex.Add(resolved);
@@ -125,10 +127,212 @@ namespace VVardenfell.Importer.Bake
             if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
                 return new int2(1, 1);
 
-            string path = CachePaths.TextureFile(_hashHexByIndex[textureIndex]);
-            return TryReadCachedDdsDimensions(path, out int width, out int height)
-                ? new int2(math.max(1, width), math.max(1, height))
-                : new int2(1, 1);
+            var payload = GetPayload(textureIndex);
+            return new int2(math.max(1, payload.Width), math.max(1, payload.Height));
+        }
+
+        public int GetBucketKey(int textureIndex)
+        {
+            if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
+                return RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1);
+
+            var payload = GetPayload(textureIndex);
+            return RefTextureBucketFile.MakeBucketKey(payload.Width, payload.Height, payload.Format, payload.MipCount);
+        }
+
+        public DdsTexture.Payload GetPayload(int textureIndex)
+        {
+            lock (_gate)
+            {
+                if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
+                    throw new InvalidDataException($"Texture index {textureIndex} is out of range.");
+                if (_payloadByIndex.TryGetValue(textureIndex, out var payload))
+                    return payload;
+
+                string resolved = _resolvedByIndex[textureIndex];
+                if (!_resolver.TryResolve(resolved, out var entry, out var actualResolved))
+                    throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build texture buckets.");
+                if (!string.Equals(resolved, actualResolved, StringComparison.OrdinalIgnoreCase))
+                {
+                    _resolvedByIndex[textureIndex] = actualResolved;
+                    _indexByResolved.Remove(resolved);
+                    _indexByResolved[actualResolved] = textureIndex;
+                }
+
+                payload = DdsTexture.DecodePayload(_bsa.Read(entry), actualResolved);
+                _payloadByIndex[textureIndex] = payload;
+                return payload;
+            }
+        }
+
+        public DdsTexture.Payload GetRgba32Payload(int textureIndex)
+        {
+            lock (_gate)
+            {
+                if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
+                    throw new InvalidDataException($"Texture index {textureIndex} is out of range.");
+                if (_rgba32PayloadByIndex.TryGetValue(textureIndex, out var payload))
+                    return payload;
+
+                string resolved = _resolvedByIndex[textureIndex];
+                if (!_resolver.TryResolve(resolved, out var entry, out var actualResolved))
+                    throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build terrain texture layers.");
+
+                payload = DdsTexture.DecodeToRgba32Payload(_bsa.Read(entry), actualResolved);
+                _rgba32PayloadByIndex[textureIndex] = payload;
+                return payload;
+            }
+        }
+
+        public RefTextureBucketData BuildRefTextureBuckets()
+        {
+            int count = _hashHexByIndex.Count;
+            var textureBucketKeys = new int[count];
+            var textureSlices = new int[count];
+            var groups = new Dictionary<int, List<int>>();
+            var bucketMetadata = new Dictionary<int, DdsTexture.Payload>();
+
+            for (int i = 0; i < count; i++)
+            {
+                var payload = GetPayload(i);
+                int key = RefTextureBucketFile.MakeBucketKey(payload.Width, payload.Height, payload.Format, payload.MipCount);
+                if (bucketMetadata.TryGetValue(key, out var existing))
+                {
+                    if (existing.Width != payload.Width || existing.Height != payload.Height || existing.Format != payload.Format || existing.MipCount != payload.MipCount)
+                        throw new InvalidDataException($"Ref texture bucket key collision for texture index {i}.");
+                }
+                else
+                {
+                    bucketMetadata.Add(key, payload);
+                }
+
+                if (!groups.TryGetValue(key, out var list))
+                    groups[key] = list = new List<int>();
+                textureBucketKeys[i] = key;
+                textureSlices[i] = list.Count;
+                list.Add(i);
+            }
+
+            int fallbackKey = RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1);
+            if (!groups.ContainsKey(fallbackKey))
+            {
+                groups[fallbackKey] = new List<int>();
+                bucketMetadata[fallbackKey] = new DdsTexture.Payload
+                {
+                    Width = 1,
+                    Height = 1,
+                    MipCount = 1,
+                    Format = TextureFormat.RGBA32,
+                    Mips = new[] { new byte[] { 255, 255, 255, 255 } },
+                };
+            }
+
+            var keys = new int[groups.Count];
+            groups.Keys.CopyTo(keys, 0);
+            Array.Sort(keys);
+
+            var buckets = new RefTextureBucketDef[keys.Length];
+            for (int b = 0; b < keys.Length; b++)
+            {
+                int key = keys[b];
+                var metadata = bucketMetadata[key];
+                var list = groups[key];
+                int fallbackSlice = list.Count;
+                var slices = new RefTextureBucketSlice[list.Count + 1];
+                for (int s = 0; s < list.Count; s++)
+                {
+                    var payload = GetPayload(list[s]);
+                    slices[s] = new RefTextureBucketSlice { Mips = CloneMips(payload.Mips) };
+                }
+                slices[fallbackSlice] = new RefTextureBucketSlice
+                {
+                    Mips = BuildWhiteMips(metadata.Width, metadata.Height, metadata.MipCount, metadata.Format),
+                };
+
+                buckets[b] = new RefTextureBucketDef
+                {
+                    BucketKey = key,
+                    Width = metadata.Width,
+                    Height = metadata.Height,
+                    MipCount = metadata.MipCount,
+                    Format = metadata.Format,
+                    SliceCount = slices.Length,
+                    FallbackSlice = fallbackSlice,
+                    Slices = slices,
+                };
+            }
+
+            return new RefTextureBucketData
+            {
+                TextureBucketKeys = textureBucketKeys,
+                TextureSlices = textureSlices,
+                Buckets = buckets,
+            };
+        }
+
+        static byte[][] CloneMips(byte[][] source)
+        {
+            var result = new byte[source.Length][];
+            for (int i = 0; i < source.Length; i++)
+            {
+                result[i] = new byte[source[i].Length];
+                Buffer.BlockCopy(source[i], 0, result[i], 0, source[i].Length);
+            }
+
+            return result;
+        }
+
+        static byte[][] BuildWhiteMips(int width, int height, int mipCount, TextureFormat format)
+        {
+            var mips = new byte[mipCount][];
+            for (int mip = 0; mip < mipCount; mip++)
+            {
+                int w = math.max(1, width >> mip);
+                int h = math.max(1, height >> mip);
+                if (format == TextureFormat.DXT1)
+                {
+                    int blocks = math.max(1, (w + 3) / 4) * math.max(1, (h + 3) / 4);
+                    byte[] bytes = new byte[blocks * 8];
+                    for (int i = 0; i < blocks; i++)
+                    {
+                        int offset = i * 8;
+                        bytes[offset + 0] = 0xFF;
+                        bytes[offset + 1] = 0xFF;
+                        bytes[offset + 2] = 0xFF;
+                        bytes[offset + 3] = 0xFF;
+                    }
+                    mips[mip] = bytes;
+                }
+                else if (format == TextureFormat.DXT5)
+                {
+                    int blocks = math.max(1, (w + 3) / 4) * math.max(1, (h + 3) / 4);
+                    byte[] bytes = new byte[blocks * 16];
+                    for (int i = 0; i < blocks; i++)
+                    {
+                        int offset = i * 16;
+                        bytes[offset + 0] = 0xFF;
+                        bytes[offset + 1] = 0xFF;
+                        bytes[offset + 8] = 0xFF;
+                        bytes[offset + 9] = 0xFF;
+                        bytes[offset + 10] = 0xFF;
+                        bytes[offset + 11] = 0xFF;
+                    }
+                    mips[mip] = bytes;
+                }
+                else if (format == TextureFormat.RGBA32)
+                {
+                    byte[] bytes = new byte[w * h * 4];
+                    for (int i = 0; i < bytes.Length; i++)
+                        bytes[i] = 0xFF;
+                    mips[mip] = bytes;
+                }
+                else
+                {
+                    throw new InvalidDataException($"Unsupported ref texture bucket fallback format {format}.");
+                }
+            }
+
+            return mips;
         }
 
         public void WriteCatalog(string path)
@@ -190,16 +394,6 @@ namespace VVardenfell.Importer.Bake
             return result;
         }
 
-        private void EnsureTextureFile(BsaEntry entry, string hex)
-        {
-            string dst = CachePaths.TextureFile(hex);
-            if (File.Exists(dst))
-                return;
-
-            var bytes = _bsa.Read(entry);
-            File.WriteAllBytes(dst, bytes);
-        }
-
         private static string Sha1Hex16(string key)
         {
             using var sha = SHA1.Create();
@@ -210,35 +404,5 @@ namespace VVardenfell.Importer.Bake
             return sb.ToString();
         }
 
-        private static bool TryReadCachedDdsDimensions(string path, out int width, out int height)
-        {
-            width = 1;
-            height = 1;
-
-            if (!File.Exists(path))
-                return false;
-
-            try
-            {
-                using var fs = File.OpenRead(path);
-                using var r = new BinaryReader(fs);
-                if (fs.Length < 20)
-                    return false;
-
-                const uint MagicDds = 0x20534444u;
-                if (r.ReadUInt32() != MagicDds)
-                    return false;
-
-                _ = r.ReadUInt32(); // header size
-                _ = r.ReadUInt32(); // flags
-                height = r.ReadInt32();
-                width = r.ReadInt32();
-                return width > 0 && height > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
     }
 }

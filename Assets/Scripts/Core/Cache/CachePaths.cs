@@ -27,6 +27,7 @@ namespace VVardenfell.Core.Cache
         public static string MeshCatalog => Path.Combine(Root, "mesh_catalog.bin");
         public static string MaterialCatalog => Path.Combine(Root, "material_catalog.bin");
         public static string TextureCatalog => Path.Combine(Root, "texture_catalog.bin");
+        public static string RefTextureBuckets => Path.Combine(Root, "ref_texture_buckets.bin");
         public static string CollisionCatalog => Path.Combine(Root, "collision_catalog.bin");
         public static string UiManifest => Path.Combine(Root, "ui.bin");
         public static string UiPayloads => Path.Combine(Root, "ui_payloads.bin");
@@ -63,8 +64,6 @@ namespace VVardenfell.Core.Cache
         public static void EnsureExists()
         {
             Directory.CreateDirectory(Root);
-            Directory.CreateDirectory(TexturesDir);
-            Directory.CreateDirectory(AudioDir);
             Directory.CreateDirectory(CellsDir);
             Directory.CreateDirectory(InteriorCellsDir);
             Directory.CreateDirectory(UiMoviesDir);
