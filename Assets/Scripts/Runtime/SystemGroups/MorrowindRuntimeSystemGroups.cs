@@ -1,6 +1,9 @@
 using Unity.Entities;
+using Unity.Core;
+using Unity.Mathematics;
 using Unity.Physics.Systems;
 using Unity.Transforms;
+using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Systems
 {
@@ -24,20 +27,89 @@ namespace VVardenfell.Runtime.Systems
 
     public abstract partial class MorrowindRuntimePauseGatedSystemGroup : MorrowindRuntimeGatedSystemGroup
     {
+        static int s_RestSimulationDepth;
+
         EntityQuery _pauseQuery;
+        EntityQuery _shellQuery;
 
         protected override void OnCreate()
         {
             base.OnCreate();
             _pauseQuery = GetEntityQuery(ComponentType.ReadOnly<MorrowindRuntimePaused>());
+            _shellQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeShellState>());
         }
 
         protected override void OnUpdate()
         {
-            if (!_pauseQuery.IsEmptyIgnoreFilter)
+            bool paused = !_pauseQuery.IsEmptyIgnoreFilter;
+            if (!paused)
+            {
+                base.OnUpdate();
+                return;
+            }
+
+            if (!ShouldUpdateDuringRestAdvancing || !IsRestAdvancing())
                 return;
 
-            base.OnUpdate();
+            if (s_RestSimulationDepth > 0)
+            {
+                base.OnUpdate();
+                return;
+            }
+
+            UpdateForRestSimulation();
+        }
+
+        protected virtual bool ShouldUpdateDuringRestAdvancing => true;
+        protected virtual float RestSimulationSecondsPerRealSecond => 3600f;
+        protected virtual float MaxRestSimulationStepSeconds => 10f;
+        protected virtual int MaxRestSimulationStepsPerUpdate => 16;
+
+        bool IsRestAdvancing()
+        {
+            if (_shellQuery.IsEmptyIgnoreFilter)
+                return false;
+
+            return _shellQuery.GetSingleton<RuntimeShellState>().RestMenuAdvancing != 0;
+        }
+
+        void UpdateForRestSimulation()
+        {
+            TimeData sourceTime = World.Time;
+            float sourceDelta = math.max(0f, sourceTime.DeltaTime);
+            float requestedSimulatedSeconds = sourceDelta * math.max(0f, RestSimulationSecondsPerRealSecond);
+            float maxStepSeconds = math.max(0.0001f, MaxRestSimulationStepSeconds);
+            int maxSteps = math.max(1, MaxRestSimulationStepsPerUpdate);
+            float simulatedSeconds = math.min(requestedSimulatedSeconds, maxStepSeconds * maxSteps);
+            if (simulatedSeconds <= 0f)
+                return;
+
+            int stepCount = math.clamp((int)math.ceil(simulatedSeconds / maxStepSeconds), 1, maxSteps);
+            float stepSeconds = simulatedSeconds / stepCount;
+
+            s_RestSimulationDepth++;
+            try
+            {
+                for (int i = 0; i < stepCount; i++)
+                {
+                    World.PushTime(new TimeData(
+                        elapsedTime: sourceTime.ElapsedTime + stepSeconds * (i + 1),
+                        deltaTime: stepSeconds));
+
+                    try
+                    {
+                        base.OnUpdate();
+                    }
+                    finally
+                    {
+                        World.PopTime();
+                    }
+                }
+            }
+            finally
+            {
+                s_RestSimulationDepth--;
+            }
         }
     }
 
@@ -58,11 +130,12 @@ namespace VVardenfell.Runtime.Systems
     [UpdateAfter(typeof(VVardenfell.Runtime.Shell.RuntimeShellPauseSyncSystem))]
     public partial class MorrowindGameplayInputSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override bool ShouldUpdateDuringRestAdvancing => false;
     }
 
     [UpdateInGroup(typeof(MorrowindInputSystemGroup))]
     [UpdateBefore(typeof(MorrowindMenuMutationSystemGroup))]
-    public partial class MorrowindGameplayMutationSystemGroup : MorrowindRuntimeGatedSystemGroup
+    public partial class MorrowindGameplayMutationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
     }
 
@@ -77,6 +150,9 @@ namespace VVardenfell.Runtime.Systems
     [UpdateBefore(typeof(PhysicsSystemGroup))]
     public partial class MorrowindOwnedPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(MorrowindOwnedPhysicsSystemGroup), OrderFirst = true)]
@@ -105,12 +181,18 @@ namespace VVardenfell.Runtime.Systems
     [UpdateBefore(typeof(PhysicsSystemGroup))]
     public partial class MorrowindFixedPrePhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(FixedStepSimulationSystemGroup))]
     [UpdateAfter(typeof(PhysicsSystemGroup))]
     public partial class MorrowindFixedPostPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
@@ -118,16 +200,25 @@ namespace VVardenfell.Runtime.Systems
     [UpdateBefore(typeof(MorrowindPreTransformSimulationSystemGroup))]
     public partial class MorrowindFramePhysicsQuerySystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(BeforePhysicsSystemGroup))]
     public partial class MorrowindPrePhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(AfterPhysicsSystemGroup))]
     public partial class MorrowindPostPhysicsSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override float RestSimulationSecondsPerRealSecond => 12f;
+        protected override float MaxRestSimulationStepSeconds => 0.05f;
+        protected override int MaxRestSimulationStepsPerUpdate => 8;
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]
@@ -173,6 +264,7 @@ namespace VVardenfell.Runtime.Systems
     [UpdateBefore(typeof(MorrowindInteractionPresentationSystemGroup))]
     public partial class MorrowindAudioSimulationSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
+        protected override bool ShouldUpdateDuringRestAdvancing => false;
     }
 
     [UpdateInGroup(typeof(SimulationSystemGroup))]

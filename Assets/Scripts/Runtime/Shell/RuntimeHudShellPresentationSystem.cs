@@ -321,32 +321,34 @@ namespace VVardenfell.Runtime.Shell
                 ProgressHours = progressHours,
                 TargetHours = targetHours,
                 ProgressFraction = progressFraction,
-                DateText = FormatRestDate(ref contentBlob, time),
-                TimeText = FormatRestTime(time),
-                HoursText = selectedHours == 1 ? "1 hour" : $"{selectedHours} hours",
+                DateTimeText = FormatRestDateTime(ref contentBlob, time),
+                RestText = shell.RestMenuCanSleep != 0
+                    ? "REST"
+                    : "Resting here is illegal. You'll need to find a bed.",
+                HoursText = $"{selectedHours} Hours",
                 ProgressText = BuildRestProgressText(shell.RestMenuSleeping != 0, progressHours, targetHours, stuntedMagicka),
             };
         }
 
-        static string FormatRestDate(ref RuntimeContentBlob contentBlob, in MorrowindTimeState time)
+        static string FormatRestDateTime(ref RuntimeContentBlob contentBlob, in MorrowindTimeState time)
         {
             int month = Math.Clamp(time.Month, 0, k_DefaultMonthNames.Length - 1);
             string monthName = ResolveMonthName(ref contentBlob, month);
-            return $"{time.Day} {monthName}, {time.Year}";
+            int dayNumber = time.DaysPassed > 0 ? time.DaysPassed : time.Day;
+            return $"{time.Day} {monthName} (Day {dayNumber}) {FormatRestTime(time)}";
         }
 
         static string FormatRestTime(in MorrowindTimeState time)
         {
             float normalizedHour = MorrowindDayCycleUtility.NormalizeGameHour(time.GameHour);
             int hour = (int)Math.Floor(normalizedHour);
-            int minute = (int)Math.Floor((normalizedHour - hour) * 60f);
-            if (minute >= 60)
-            {
-                minute = 0;
-                hour = (hour + 1) % 24;
-            }
+            bool pm = hour >= 12;
+            if (hour >= 13)
+                hour -= 12;
+            if (hour == 0)
+                hour = 12;
 
-            return $"{hour:00}:{minute:00}";
+            return $"{hour} {(pm ? "p.m." : "a.m.")}";
         }
 
         static string BuildRestProgressText(bool sleeping, int progressHours, int targetHours, bool stuntedMagicka)

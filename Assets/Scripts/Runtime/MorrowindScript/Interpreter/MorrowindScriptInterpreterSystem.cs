@@ -395,7 +395,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     interiorActive,
                     loadedCells.Active.IsCreated ? (byte)1 : (byte)0,
                     ref scratch.ActorLineOfSight,
-                    ref scratch.ActorLineOfSightPairs)
+                    ref scratch.ActorLineOfSightPairs,
+                    ref scratch.PendingLineOfSightScripts)
                 : CreateEmptyTempJobArray<MorrowindScriptActorLineOfSightSnapshot>();
             k_ActorSnapshotPrep.End();
             k_SnapshotPrep.End();
@@ -520,6 +521,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ActorAiSettings = actorAiSettings,
                 ActorDispositions = actorDispositions,
                 ActorLineOfSight = actorLineOfSight,
+                PendingLineOfSightScripts = scratch.PendingLineOfSightScripts,
                 ActorKnownSpellSnapshots = actorKnownSpellSnapshots,
                 RunningPrograms = runningPrograms,
                 ActiveSays = activeSays,
@@ -1403,11 +1405,13 @@ namespace VVardenfell.Runtime.MorrowindScript
             byte interiorActive,
             byte hasActiveExteriorCells,
             ref NativeList<MorrowindScriptActorLineOfSightSnapshot> snapshots,
-            ref NativeParallelHashSet<ulong> pairKeys)
+            ref NativeParallelHashSet<ulong> pairKeys,
+            ref NativeParallelHashSet<Entity> pendingScripts)
         {
             using var lineOfSightScope = k_LineOfSightSnapshotPrep.Auto();
             snapshots.Clear();
             pairKeys.Clear();
+            pendingScripts.Clear();
 
             foreach (var (instanceRef, placedRefRef, runtimeStateRef, locationRef, transformRef, entity) in
                      SystemAPI.Query<RefRO<MorrowindScriptInstance>, RefRO<PlacedRefIdentity>, RefRO<PlacedRefRuntimeState>, RefRO<LogicalRefLocation>, RefRO<LocalTransform>>()
@@ -1435,15 +1439,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                     fixedTick,
                     catalog,
                     instance.ProgramIndex,
+                    entity,
                     self,
                     playerEntity,
                     logicalRefs,
                     activeExplicitRefs,
                     ref snapshots,
-                    ref pairKeys);
+                    ref pairKeys,
+                    ref pendingScripts);
             }
 
-            foreach (var (instanceRef, globalRef) in SystemAPI.Query<RefRO<MorrowindScriptInstance>, RefRO<MorrowindGlobalScriptInstance>>())
+            foreach (var (instanceRef, globalRef, entity) in SystemAPI.Query<RefRO<MorrowindScriptInstance>, RefRO<MorrowindGlobalScriptInstance>>().WithEntityAccess())
             {
                 var instance = instanceRef.ValueRO;
                 if (!ShouldPrepareLineOfSightForInstance(catalog, instance))
@@ -1458,12 +1464,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                     fixedTick,
                     catalog,
                     instance.ProgramIndex,
+                    entity,
                     self,
                     playerEntity,
                     logicalRefs,
                     activeExplicitRefs,
                     ref snapshots,
-                    ref pairKeys);
+                    ref pairKeys,
+                    ref pendingScripts);
             }
 
             return CopyToTempJobArray(snapshots);
@@ -1540,12 +1548,14 @@ namespace VVardenfell.Runtime.MorrowindScript
             uint fixedTick,
             MorrowindScriptRuntimeCatalog catalog,
             int programIndex,
+            Entity scriptEntity,
             in ScriptLineOfSightActor self,
             Entity playerEntity,
             in LogicalRefLookup logicalRefs,
             in ActiveExplicitRefLookup activeExplicitRefs,
             ref NativeList<MorrowindScriptActorLineOfSightSnapshot> snapshots,
-            ref NativeParallelHashSet<ulong> pairKeys)
+            ref NativeParallelHashSet<ulong> pairKeys,
+            ref NativeParallelHashSet<Entity> pendingScripts)
         {
             var program = catalog.Programs[programIndex];
             int end = program.FirstInstructionIndex + program.InstructionCount;
@@ -1578,7 +1588,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
-                AddLineOfSightSnapshot(entityManager, deferredPhysicsQueueEntity, fixedTick, source, target, ref snapshots, ref pairKeys);
+                if (!AddLineOfSightSnapshot(entityManager, deferredPhysicsQueueEntity, fixedTick, source, target, ref snapshots, ref pairKeys))
+                    pendingScripts.Add(scriptEntity);
             }
         }
 
@@ -1671,7 +1682,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
-        static void AddLineOfSightSnapshot(
+        static bool AddLineOfSightSnapshot(
             EntityManager entityManager,
             Entity deferredPhysicsQueueEntity,
             uint fixedTick,
@@ -1681,22 +1692,30 @@ namespace VVardenfell.Runtime.MorrowindScript
             ref NativeParallelHashSet<ulong> pairKeys)
         {
             ulong key = PackLineOfSightPairKey(source.PlacedRefId, target.PlacedRefId);
-            if (!pairKeys.Add(key))
-                return;
+            if (pairKeys.Contains(key))
+                return true;
 
-            snapshots.Add(new MorrowindScriptActorLineOfSightSnapshot
-            {
-                SourcePlacedRefId = source.PlacedRefId,
-                TargetPlacedRefId = target.PlacedRefId,
-                HasLineOfSight = HasActorLineOfSight(
+            if (!TryGetActorLineOfSight(
                     entityManager,
                     deferredPhysicsQueueEntity,
                     fixedTick,
                     source.Entity,
                     target.Entity,
                     source.EyePosition,
-                    target.EyePosition) ? (byte)1 : (byte)0,
+                    target.EyePosition,
+                    out bool hasLineOfSight))
+            {
+                return false;
+            }
+
+            pairKeys.Add(key);
+            snapshots.Add(new MorrowindScriptActorLineOfSightSnapshot
+            {
+                SourcePlacedRefId = source.PlacedRefId,
+                TargetPlacedRefId = target.PlacedRefId,
+                HasLineOfSight = hasLineOfSight ? (byte)1 : (byte)0,
             });
+            return true;
         }
 
         static ulong PackLineOfSightPairKey(uint sourcePlacedRefId, uint targetPlacedRefId)
@@ -1705,30 +1724,34 @@ namespace VVardenfell.Runtime.MorrowindScript
         static float3 GetActorEyePosition(in LocalTransform transform)
             => transform.Position + new float3(0f, 1.62f, 0f);
 
-        static bool HasActorLineOfSight(
+        static bool TryGetActorLineOfSight(
             EntityManager entityManager,
             Entity deferredPhysicsQueueEntity,
             uint fixedTick,
             Entity sourceEntity,
             Entity targetEntity,
             float3 source,
-            float3 target)
+            float3 target,
+            out bool hasLineOfSight)
         {
+            hasLineOfSight = false;
             if (math.distancesq(source, target) <= 0.0001f)
+            {
+                hasLineOfSight = true;
                 return true;
+            }
 
             return DeferredPhysicsQueryUtility.TryGetLineOfSightOrRequest(
-                       entityManager,
-                       deferredPhysicsQueueEntity,
-                       fixedTick,
-                       sourceEntity,
-                       targetEntity,
-                       source,
-                       target,
-                       InteractionCollisionLayers.LineOfSightQueryFilter,
-                       DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
-                       out bool hasLineOfSight)
-                   && hasLineOfSight;
+                entityManager,
+                deferredPhysicsQueueEntity,
+                fixedTick,
+                sourceEntity,
+                targetEntity,
+                source,
+                target,
+                InteractionCollisionLayers.LineOfSightQueryFilter,
+                DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
+                out hasLineOfSight);
         }
 
         [BurstCompile]
@@ -1786,6 +1809,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public NativeArray<MorrowindScriptActorAiSettingSnapshot> ActorAiSettings;
             [ReadOnly] public NativeArray<MorrowindScriptActorDispositionSnapshot> ActorDispositions;
             [ReadOnly] public NativeArray<MorrowindScriptActorLineOfSightSnapshot> ActorLineOfSight;
+            [ReadOnly] public NativeParallelHashSet<Entity> PendingLineOfSightScripts;
             [ReadOnly] public NativeArray<MorrowindScriptActorKnownSpellSnapshot> ActorKnownSpellSnapshots;
             [ReadOnly] public NativeArray<MorrowindScriptRunningProgramSnapshot> RunningPrograms;
             [ReadOnly] public NativeArray<MorrowindScriptActiveSaySnapshot> ActiveSays;
@@ -1835,6 +1859,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Fault(ref instance, FormatScriptFault(default, -1, 0, ScriptFaultReason.InvalidProgramIndex));
                     return false;
                 }
+
+                if (PendingLineOfSightScripts.IsCreated && PendingLineOfSightScripts.Contains(scriptEntity))
+                    return false;
 
                 var program = Programs[instance.ProgramIndex];
                 FixedString128Bytes programId = ProgramIds[instance.ProgramIndex];

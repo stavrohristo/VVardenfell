@@ -148,14 +148,20 @@ namespace VVardenfell.Runtime.AI
                     continue;
                 }
 
-                if (!ActorAiLineOfSightUtility.HasLineOfSightOrRequest(
+                if (!ActorAiLineOfSightUtility.TryGetLineOfSightOrRequest(
                         systemState.EntityManager,
                         deferredPhysicsQueueEntity,
                         fixedTick,
                         entity,
                         player,
                         EyePosition(playerPosition),
-                        EyePosition(actorPosition)))
+                        EyePosition(actorPosition),
+                        out bool hasLineOfSight))
+                {
+                    continue;
+                }
+
+                if (!hasLineOfSight)
                 {
                     greeting.Timer = 0f;
                     continue;

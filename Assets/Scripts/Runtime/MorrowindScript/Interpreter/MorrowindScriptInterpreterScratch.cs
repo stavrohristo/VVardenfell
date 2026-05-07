@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public NativeList<MorrowindScriptActorDispositionSnapshot> ActorDispositions;
         public NativeList<MorrowindScriptActorLineOfSightSnapshot> ActorLineOfSight;
         public NativeParallelHashSet<ulong> ActorLineOfSightPairs;
+        public NativeParallelHashSet<Entity> PendingLineOfSightScripts;
         public NativeList<MorrowindScriptRunningProgramSnapshot> RunningPrograms;
         public NativeList<MorrowindScriptActiveSource> ActiveSources;
 
@@ -45,6 +46,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ActorDispositions = new NativeList<MorrowindScriptActorDispositionSnapshot>(64, allocator),
                 ActorLineOfSight = new NativeList<MorrowindScriptActorLineOfSightSnapshot>(128, allocator),
                 ActorLineOfSightPairs = new NativeParallelHashSet<ulong>(128, allocator),
+                PendingLineOfSightScripts = new NativeParallelHashSet<Entity>(64, allocator),
                 RunningPrograms = new NativeList<MorrowindScriptRunningProgramSnapshot>(64, allocator),
                 ActiveSources = new NativeList<MorrowindScriptActiveSource>(64, allocator),
             };
@@ -81,6 +83,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ActorLineOfSight.Dispose();
             if (ActorLineOfSightPairs.IsCreated)
                 ActorLineOfSightPairs.Dispose();
+            if (PendingLineOfSightScripts.IsCreated)
+                PendingLineOfSightScripts.Dispose();
             if (RunningPrograms.IsCreated)
                 RunningPrograms.Dispose();
             if (ActiveSources.IsCreated)
