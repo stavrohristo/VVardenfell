@@ -164,6 +164,7 @@ namespace VVardenfell.Importer.Bake
         private readonly struct StagedPlacedRefData
         {
             public readonly string ModelPath;
+            public readonly ModelSource Model;
             public readonly uint PlacedRefId;
             public readonly int DoorMetaIndex;
             public readonly ContentReference ContentReference;
@@ -174,6 +175,7 @@ namespace VVardenfell.Importer.Bake
 
             public StagedPlacedRefData(
                 string modelPath,
+                ModelSource model,
                 uint placedRefId,
                 int doorMetaIndex,
                 ContentReference contentReference,
@@ -183,6 +185,7 @@ namespace VVardenfell.Importer.Bake
                 bool attachModelCollision = false)
             {
                 ModelPath = modelPath ?? string.Empty;
+                Model = model;
                 PlacedRefId = placedRefId;
                 DoorMetaIndex = doorMetaIndex;
                 ContentReference = contentReference;
@@ -337,6 +340,7 @@ namespace VVardenfell.Importer.Bake
             public List<DoorRefEntry> DoorEntries;
             public List<PlacedRefSoulEntry> CapturedSouls;
             public List<PlacedRefLockEntry> LockStates;
+            public List<CombinedCellRenderChunkDef> CombinedRenderChunks;
             public CellBakery.StaticCollision StaticCollision;
             public List<StagedPlacedRefData> PlacedRefs;
             public List<StagedRefData> PendingRefs;
@@ -347,6 +351,7 @@ namespace VVardenfell.Importer.Bake
             public int[] GlobalTextureIndices;
             public int[] GlobalCollisionIndices;
             public int[] GlobalTerrainLayerIndices;
+            public bool BakeCombinedCellRenderChunks;
             public bool NeedsWrite;
             public int PendingRefCount;
             public int PreparedWorkItemCount;
@@ -364,6 +369,23 @@ namespace VVardenfell.Importer.Bake
             public int CollisionAutoVisualStaticCount;
             public int CollisionExplicitNoCollisionCount;
             public int CollisionNoColliderCount;
+            public int CombinedRenderCandidateRefCount;
+            public int CombinedRenderCandidateLeafCount;
+            public int CombinedRenderRejectedNonStaticRefCount;
+            public int CombinedRenderRejectedOversizedLeafCount;
+            public int CombinedRenderRejectedWeakGroupCount;
+            public int CombinedRenderBucketGroupCount;
+            public int CombinedRenderRescuedWeakLeafCount;
+            public int CombinedRenderCellWideChunkCount;
+            public int CombinedRenderCoalescedSourceChunkCount;
+            public int CombinedRenderCoalescedChunkCount;
+            public int CombinedRenderEmittedChunkCount;
+            public int CombinedRenderEmittedMemberLeafCount;
+            public int CombinedRenderEmittedMemberRefCount;
+            public int CombinedRenderEmittedVertexCount;
+            public int CombinedRenderEmittedIndexCount;
+            public int CombinedRenderEmittedMultiTextureChunkCount;
+            public int CombinedRenderEmittedUniqueTextureCount;
             public List<string> CollisionMissingPayloadSamples;
         }
 
@@ -396,10 +418,12 @@ namespace VVardenfell.Importer.Bake
             public byte[] DoorBytes;
             public byte[] CapturedSoulBytes;
             public byte[] LockStateBytes;
+            public byte[] CombinedRenderChunkBytes;
             public int RefCount;
             public int DoorCount;
             public int CapturedSoulCount;
             public int LockStateCount;
+            public int CombinedRenderChunkCount;
             public BuiltCellBlobData BlobData;
             public FinalCellWriteBuffer FinalBuffer;
         }
@@ -429,6 +453,8 @@ namespace VVardenfell.Importer.Bake
             public byte[] CapturedSoulBytes;
             public byte[] LockStateCountBytes;
             public byte[] LockStateBytes;
+            public byte[] CombinedRenderChunkCountBytes;
+            public byte[] CombinedRenderChunkBytes;
         }
 
 

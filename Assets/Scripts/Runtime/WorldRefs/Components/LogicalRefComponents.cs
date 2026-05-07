@@ -89,6 +89,7 @@ namespace VVardenfell.Runtime.Components
 
     public struct ModelPrefabRenderLeaf : IComponentData
     {
+        public int NodeIndex;
         public int MeshIndex;
         public int MaterialIndex;
         public int TextureIndex;

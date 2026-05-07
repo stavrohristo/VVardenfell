@@ -37,6 +37,7 @@ namespace VVardenfell.Runtime.Cache
         public DoorRefEntry[] Doors;
         public PlacedRefSoulEntry[] CapturedSouls;
         public PlacedRefLockEntry[] LockStates;
+        public CombinedCellRenderChunkDef[] CombinedRenderChunks;
         public CellPlacementAuditData PlacementAudit;
 
         public bool HasStaticCollider => StaticColliderBlob.IsCreated;
@@ -61,6 +62,7 @@ namespace VVardenfell.Runtime.Cache
         static readonly ProfilerMarker k_ReadRefTable = new("VV.Runtime.CellRead.RefTable");
         static readonly ProfilerMarker k_ReadDoorTable = new("VV.Runtime.CellRead.DoorTable");
         static readonly ProfilerMarker k_ReadCapturedSoulTable = new("VV.Runtime.CellRead.CapturedSoulTable");
+        static readonly ProfilerMarker k_ReadCombinedRenderChunkTable = new("VV.Runtime.CellRead.CombinedRenderChunks");
 
         public static CellData Read(string path, bool isInterior = false, string cellId = null)
         {
@@ -246,6 +248,7 @@ namespace VVardenfell.Runtime.Cache
 
                 cell.CapturedSouls = System.Array.Empty<PlacedRefSoulEntry>();
                 cell.LockStates = System.Array.Empty<PlacedRefLockEntry>();
+                cell.CombinedRenderChunks = System.Array.Empty<CombinedCellRenderChunkDef>();
                 if (fs.Position < fs.Length)
                 {
                     currentSection = "captured soul table count";
@@ -289,6 +292,21 @@ namespace VVardenfell.Runtime.Cache
                             KeyId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} key id"),
                             TrapId = ReadCellString(r, path, cellId, isInterior, $"{entrySection} trap id"),
                         };
+                    }
+                }
+
+                if (fs.Position < fs.Length)
+                {
+                    currentSection = "combined render chunk table count";
+                    EnsureRemaining(r, sizeof(uint), path, cellId, isInterior, currentSection);
+                    uint combinedChunkCount = r.ReadUInt32();
+
+                    currentSection = "combined render chunk table";
+                    using (k_ReadCombinedRenderChunkTable.Auto())
+                    {
+                        cell.CombinedRenderChunks = new CombinedCellRenderChunkDef[combinedChunkCount];
+                        for (int i = 0; i < combinedChunkCount; i++)
+                            cell.CombinedRenderChunks[i] = ReadCombinedRenderChunk(r, path, cellId, isInterior, i);
                     }
                 }
 
@@ -407,6 +425,70 @@ namespace VVardenfell.Runtime.Cache
                 RegionId = ReadCellString(reader, path, cellId, isInterior, $"{section} region id"),
             };
             return environment;
+        }
+
+        static CombinedCellRenderChunkDef ReadCombinedRenderChunk(
+            BinaryReader reader,
+            string path,
+            string cellId,
+            bool isInterior,
+            int index)
+        {
+            string section = $"combined render chunk {index}";
+            EnsureRemaining(
+                reader,
+                sizeof(int) * 4L + sizeof(float) * 6L + sizeof(uint) * 6L,
+                path,
+                cellId,
+                isInterior,
+                section);
+
+            var chunk = new CombinedCellRenderChunkDef
+            {
+                TileX = reader.ReadInt32(),
+                TileY = reader.ReadInt32(),
+                MaterialIndex = reader.ReadInt32(),
+                TextureBucketKey = reader.ReadInt32(),
+                BoundsCenterX = reader.ReadSingle(),
+                BoundsCenterY = reader.ReadSingle(),
+                BoundsCenterZ = reader.ReadSingle(),
+                BoundsExtentsX = reader.ReadSingle(),
+                BoundsExtentsY = reader.ReadSingle(),
+                BoundsExtentsZ = reader.ReadSingle(),
+                VertexCount = checked((int)reader.ReadUInt32()),
+                IndexCount = checked((int)reader.ReadUInt32()),
+                MeshFlags = reader.ReadUInt32(),
+            };
+
+            uint vertexByteCount = reader.ReadUInt32();
+            uint indexByteCount = reader.ReadUInt32();
+            uint memberCount = reader.ReadUInt32();
+            if ((chunk.MeshFlags & CacheFormat.MeshFlagHasTextureSelector) == 0)
+                throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Combined render chunk is missing per-vertex texture selectors.");
+            if ((chunk.MeshFlags & CacheFormat.MeshFlagHasAlphaCutoff) == 0)
+                throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Combined render chunk is missing per-vertex alpha cutoffs.");
+            if (vertexByteCount > int.MaxValue || indexByteCount > int.MaxValue)
+                throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Combined render chunk buffer exceeds supported size.");
+            if (memberCount > int.MaxValue)
+                throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Combined render chunk member table exceeds supported size.");
+
+            EnsureRemaining(reader, vertexByteCount + indexByteCount + (long)memberCount * (sizeof(uint) + sizeof(int)), path, cellId, isInterior, section);
+            chunk.VertexBytes = reader.ReadBytes(checked((int)vertexByteCount));
+            chunk.IndexBytes = reader.ReadBytes(checked((int)indexByteCount));
+            chunk.Members = new CombinedCellRenderChunkMemberDef[checked((int)memberCount)];
+            for (int i = 0; i < chunk.Members.Length; i++)
+            {
+                chunk.Members[i] = new CombinedCellRenderChunkMemberDef
+                {
+                    PlacedRefId = reader.ReadUInt32(),
+                    NodeIndex = reader.ReadInt32(),
+                };
+            }
+
+            if (chunk.VertexBytes.Length != vertexByteCount || chunk.IndexBytes.Length != indexByteCount)
+                throw CreateInvalidDataException(path, cellId, isInterior, section, reader.BaseStream, "Truncated combined render chunk buffers.");
+
+            return chunk;
         }
 
         static string BuildBlobContext(string path, string cellId, bool isInterior, string section)

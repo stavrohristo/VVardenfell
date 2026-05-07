@@ -152,6 +152,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
+            CombinedCellRenderDecombineUtility.DecombineIfLinked(systemState.EntityManager, logicalEntity);
             ecb.SetComponent(logicalEntity, new PlacedRefRuntimeState { Disabled = disabled });
             if (disabled != 0)
             {

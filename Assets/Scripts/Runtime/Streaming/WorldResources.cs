@@ -76,6 +76,8 @@ namespace VVardenfell.Runtime.Streaming
         /// material variants.
         /// </summary>
         public static RenderTexture[] RefBaseArrays;
+        public static int[] RefBucketKeys;
+        public static Dictionary<int, int> RefBucketIndexByKey;
 
         /// <summary>
         /// Per-global-texture bucket info: <c>(bucketIdx, localSliceIdx)</c>. Indexed by the
@@ -95,6 +97,7 @@ namespace VVardenfell.Runtime.Streaming
         /// AlphaBlend). Equal to the number of material records baked per texture bucket.
         /// </summary>
         public static int BlendVariantCount;
+        public static int CombinedRenderVariantCount;
 
         /// <summary>
         /// Managed per-cell Unity objects created at spawn. Keyed by grid coord.
@@ -297,6 +300,8 @@ namespace VVardenfell.Runtime.Streaming
             public Texture2D SplatMap;
             public Material TerrainMat;      // null if shared fallback
             public RenderMeshArray TerrainRma;
+            public List<Mesh> CombinedRenderMeshes;
+            public List<RenderMeshArray> CombinedRenderRmas;
         }
 
         public static void Reset()
@@ -311,6 +316,14 @@ namespace VVardenfell.Runtime.Streaming
                 // Per-cell terrain mats are clones of the template — always ephemeral.
                 // Skip only if it happens to be the shared fallback (guarded below).
                 if (m.TerrainMat  != null && m.TerrainMat != TerrainFallbackMat) Object.Destroy(m.TerrainMat);
+                if (m.CombinedRenderMeshes != null)
+                {
+                    for (int i = 0; i < m.CombinedRenderMeshes.Count; i++)
+                    {
+                        if (m.CombinedRenderMeshes[i] != null)
+                            Object.Destroy(m.CombinedRenderMeshes[i]);
+                    }
+                }
             }
             LoadedManaged.Clear();
             ExteriorCellEntities.Clear();
@@ -360,6 +373,8 @@ namespace VVardenfell.Runtime.Streaming
                 RefBaseArrays = null;
             }
             if (TexBucketInfo.IsCreated) TexBucketInfo.Dispose();
+            RefBucketKeys = null;
+            RefBucketIndexByKey = null;
             ActorGpuAnimation?.Dispose();
             ActorGpuAnimation = null;
             Vfx?.Dispose();
@@ -369,6 +384,7 @@ namespace VVardenfell.Runtime.Streaming
             MaxActorShadowCasters = 128;
             FallbackBucketSlice = default;
             BlendVariantCount = 0;
+            CombinedRenderVariantCount = 0;
             // TerrainFallbackMat / TerrainTemplate are registry-owned assets in editor —
             // Object.Destroy would log an error and no-op. Just drop the references.
             TerrainFallbackMat = null;

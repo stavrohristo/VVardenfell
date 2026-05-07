@@ -242,6 +242,8 @@ namespace VVardenfell.Importer.Bake
                 CapturedSoulBytes = preparedWrite.CapturedSoulBytes,
                 LockStateCountBytes = BuildUInt32Bytes((uint)preparedWrite.LockStateCount),
                 LockStateBytes = preparedWrite.LockStateBytes,
+                CombinedRenderChunkCountBytes = BuildUInt32Bytes((uint)preparedWrite.CombinedRenderChunkCount),
+                CombinedRenderChunkBytes = preparedWrite.CombinedRenderChunkBytes,
             };
         }
 
@@ -335,6 +337,8 @@ namespace VVardenfell.Importer.Bake
                 WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.LockStateCountBytes);
                 WriteSegment(fs, preparedWrite.FinalBuffer.LockStateBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.CombinedRenderChunkCountBytes);
+                WriteSegment(fs, preparedWrite.FinalBuffer.CombinedRenderChunkBytes);
 
                 fs.Flush(flushToDisk: true);
 
@@ -515,6 +519,50 @@ namespace VVardenfell.Importer.Bake
             return ms.ToArray();
         }
 
+        private static byte[] BuildCombinedRenderChunkBytes(IReadOnlyList<CombinedCellRenderChunkDef> chunks)
+        {
+            int count = chunks?.Count ?? 0;
+            if (count == 0)
+                return null;
+
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            for (int i = 0; i < count; i++)
+            {
+                var chunk = chunks[i] ?? throw new InvalidDataException($"Combined render chunk {i} is null.");
+                var vertexBytes = chunk.VertexBytes ?? Array.Empty<byte>();
+                var indexBytes = chunk.IndexBytes ?? Array.Empty<byte>();
+                var members = chunk.Members ?? Array.Empty<CombinedCellRenderChunkMemberDef>();
+
+                w.Write(chunk.TileX);
+                w.Write(chunk.TileY);
+                w.Write(chunk.MaterialIndex);
+                w.Write(chunk.TextureBucketKey);
+                w.Write(chunk.BoundsCenterX);
+                w.Write(chunk.BoundsCenterY);
+                w.Write(chunk.BoundsCenterZ);
+                w.Write(chunk.BoundsExtentsX);
+                w.Write(chunk.BoundsExtentsY);
+                w.Write(chunk.BoundsExtentsZ);
+                w.Write((uint)chunk.VertexCount);
+                w.Write((uint)chunk.IndexCount);
+                w.Write(chunk.MeshFlags);
+                w.Write((uint)vertexBytes.Length);
+                w.Write((uint)indexBytes.Length);
+                w.Write((uint)members.Length);
+                w.Write(vertexBytes);
+                w.Write(indexBytes);
+                for (int m = 0; m < members.Length; m++)
+                {
+                    var member = members[m] ?? throw new InvalidDataException($"Combined render chunk {i} member {m} is null.");
+                    w.Write(member.PlacedRefId);
+                    w.Write(member.NodeIndex);
+                }
+            }
+
+            return ms.ToArray();
+        }
+
 
         private static byte[] BuildCellHeaderBytes(PreparedCellWriteData preparedWrite)
         {
@@ -667,6 +715,19 @@ namespace VVardenfell.Importer.Bake
                     r.ReadString();
                 }
 
+                uint combinedRenderChunkCount = r.ReadUInt32();
+                for (int i = 0; i < combinedRenderChunkCount; i++)
+                {
+                    SkipExact(r, sizeof(int) * 4L + sizeof(float) * 6L + sizeof(uint) * 3L, "combined render chunk fixed fields");
+                    uint vertexByteCount = r.ReadUInt32();
+                    uint indexByteCount = r.ReadUInt32();
+                    uint memberCount = r.ReadUInt32();
+                    SkipExact(
+                        r,
+                        checked((long)vertexByteCount + indexByteCount + (long)memberCount * (sizeof(uint) + sizeof(int))),
+                        "combined render chunk payload");
+                }
+
                 if (fs.Position != fs.Length)
                 {
                     error = $"unexpected trailing data at offset {fs.Position}/{fs.Length}";
@@ -786,7 +847,8 @@ namespace VVardenfell.Importer.Bake
             List<CellReference> refs,
             LandRecord land,
             RecordIndex recordIndex,
-            Dictionary<int, string> ltexMap)
+            Dictionary<int, string> ltexMap,
+            bool bakeCombinedCellRenderChunks)
         {
             using var ms = new MemoryStream();
             using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
@@ -803,6 +865,7 @@ namespace VVardenfell.Importer.Bake
                 w.Write(workItem.Cell.Environment.FogDensity);
                 w.Write(workItem.Cell.Environment.WaterHeight);
                 w.Write(workItem.Cell.Environment.RegionId ?? string.Empty);
+                w.Write(bakeCombinedCellRenderChunks);
                 w.Write(refs.Count);
                 for (int i = 0; i < refs.Count; i++)
                 {

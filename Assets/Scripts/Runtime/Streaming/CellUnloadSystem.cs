@@ -44,6 +44,7 @@ namespace VVardenfell.Runtime.Streaming
             _refsOnlyQuery = SystemAPI.QueryBuilder()
                 .WithAll<CellLink>()
                 .WithPresent<MaterialMeshInfo>()
+                .WithNone<CombinedCellRenderSuppressed>()
                 .WithNone<CellCoord>()
                 .Build();
             _cellLinkHandle = state.GetComponentTypeHandle<CellLink>(isReadOnly: true);

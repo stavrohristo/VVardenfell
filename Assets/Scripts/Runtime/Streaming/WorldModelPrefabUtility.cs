@@ -196,6 +196,7 @@ namespace VVardenfell.Runtime.Streaming
                     });
                     em.AddComponentData(entity, new ModelPrefabRenderLeaf
                     {
+                        NodeIndex = i,
                         MeshIndex = node.GlobalMeshIndex,
                         MaterialIndex = node.MaterialIndex,
                         TextureIndex = node.TextureIndex,

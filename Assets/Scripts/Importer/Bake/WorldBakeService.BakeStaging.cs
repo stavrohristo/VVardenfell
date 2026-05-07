@@ -193,6 +193,7 @@ namespace VVardenfell.Importer.Bake
                                     ltexMap,
                                     previousStateByKey,
                                     modelCache,
+                                    config.BakeCombinedCellRenderChunks,
                                     false);
                                 Interlocked.Increment(ref plannedCount);
                             }
@@ -370,6 +371,8 @@ namespace VVardenfell.Importer.Bake
                     dirtyCount++;
             }
             progress.Label = $"{dirtyCount}/{stagedCells.Length} cells rebuilt, {bakeryMeshes.Count} meshes, {bakeryMaterials.Count} mats, {bakeryTextures.Count} textures, {bakeryLayers.Count} terrain layers, {bakeryCollisions.Count} collisions, {bakeryActorAnimations.SkeletonCount} actor skeletons, {bakeryActorAnimations.ClipCount} actor clips";
+            if (config.BakeCombinedCellRenderChunks)
+                LogCombinedCellRenderBakeStats(stagedCells);
             progress.Done = true;
         }
 
@@ -634,6 +637,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<int, string> ltexMap,
             Dictionary<string, BakeManifest.BakedCellState> previousStateByKey,
             ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
+            bool bakeCombinedCellRenderChunks,
             bool forceRebuild)
         {
             List<CellReference> refs;
@@ -659,7 +663,7 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
-            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMap);
+            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMap, bakeCombinedCellRenderChunks);
             bool hasPrevious = previousStateByKey.TryGetValue(workItem.Key, out var previousState);
             bool canReuse = !forceRebuild
                 && hasPrevious
@@ -675,12 +679,14 @@ namespace VVardenfell.Importer.Bake
                 Fingerprint = fingerprint,
                 Environment = workItem.Cell.Environment,
                 Land = land,
+                BakeCombinedCellRenderChunks = bakeCombinedCellRenderChunks,
                 NeedsWrite = !canReuse,
                 PlacedRefs = canReuse ? null : new List<StagedPlacedRefData>(refs.Count),
                 PendingRefs = canReuse ? null : new List<StagedRefData>(refs.Count),
                 DoorEntries = canReuse ? null : new List<DoorRefEntry>(),
                 CapturedSouls = canReuse ? null : new List<PlacedRefSoulEntry>(),
                 LockStates = canReuse ? null : new List<PlacedRefLockEntry>(),
+                CombinedRenderChunks = canReuse ? null : new List<CombinedCellRenderChunkDef>(),
                 CollisionMissingPayloadSamples = canReuse ? null : new List<string>(4),
             };
 
@@ -739,6 +745,7 @@ namespace VVardenfell.Importer.Bake
                     staged.CollisionNoColliderCount++;
                     staged.PlacedRefs.Add(new StagedPlacedRefData(
                         string.Empty,
+                        null,
                         reference.FormId,
                         -1,
                         contentReference,
@@ -757,6 +764,7 @@ namespace VVardenfell.Importer.Bake
                         staged.CollisionNoColliderCount++;
                         staged.PlacedRefs.Add(new StagedPlacedRefData(
                             string.Empty,
+                            null,
                             reference.FormId,
                             -1,
                             contentReference,
@@ -836,6 +844,7 @@ namespace VVardenfell.Importer.Bake
 
                 staged.PlacedRefs.Add(new StagedPlacedRefData(
                     model.ModelPath,
+                    model,
                     reference.FormId,
                     doorMetaIndex,
                     contentReference,

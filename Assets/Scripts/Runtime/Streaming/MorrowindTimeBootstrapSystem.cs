@@ -84,7 +84,6 @@ namespace VVardenfell.Runtime.Streaming
                 Month = RuntimeContentBlobUtility.RequireGlobalIntByIdHash(ref content, RuntimeContentKnownHashes.month),
                 Year = RuntimeContentBlobUtility.RequireGlobalIntByIdHash(ref content, RuntimeContentKnownHashes.year),
                 TimeScale = RuntimeContentBlobUtility.RequireGlobalFloatByIdHash(ref content, RuntimeContentKnownHashes.timescale),
-                SimulationTimeScale = 1,
             };
         }
 

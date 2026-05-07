@@ -116,7 +116,6 @@ namespace VVardenfell.Runtime.Components
         public int Month;
         public int Year;
         public float TimeScale;
-        public float SimulationTimeScale;
         public byte Paused;
         public byte FastForwarding;
         public float LastAdvancedHours;

@@ -1145,8 +1145,7 @@ namespace VVardenfell.Runtime.WorldState
                     Day = payload.Day,
                     Month = payload.Month,
                     Year = payload.Year,
-                    TimeScale = payload.TimeScale,
-                    SimulationTimeScale = payload.SimulationTimeScale > 0f ? payload.SimulationTimeScale : 1f,
+                    TimeScale = payload.TimeScale
                 }
                 : MorrowindTimeBootstrapSystem.CreateDefaultTime();
 

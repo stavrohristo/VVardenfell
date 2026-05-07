@@ -527,7 +527,6 @@ namespace VVardenfell.Runtime.WorldState
                 Month = time.Month,
                 Year = time.Year,
                 TimeScale = time.TimeScale,
-                SimulationTimeScale = time.SimulationTimeScale,
             };
         }
 

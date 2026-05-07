@@ -486,9 +486,6 @@ namespace VVardenfell.Runtime.Streaming
             if (queryCreated && worldCache == world)
                 return queryCache;
 
-            if (queryCreated)
-                queryCache.Dispose();
-
             worldCache = world;
             queryCache = entityManager.CreateEntityQuery(componentTypes);
             queryCreated = true;

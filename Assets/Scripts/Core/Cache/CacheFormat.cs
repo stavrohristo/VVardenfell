@@ -15,14 +15,14 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 50;
+        public const uint FormatVersion = 54;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 31;
+        public const uint WorldBakePipelineVersion = 40;
         public const uint GameplayContentVersion = 64;
         public const int RuntimeContentBlobVersion = 2;
 
@@ -39,6 +39,8 @@ namespace VVardenfell.Core.Cache
         public const uint MeshFlagHasUVs     = 1 << 1;
         public const uint MeshFlagHasColors  = 1 << 2;
         public const uint MeshFlagIndex32    = 1 << 3;  // indices are uint32 instead of uint16
+        public const uint MeshFlagHasTextureSelector = 1 << 4; // combined render payload carries per-vertex texture selector
+        public const uint MeshFlagHasAlphaCutoff = 1 << 5; // combined render payload carries per-vertex alpha cutoff
 
         // Flags on MaterialRecord.Flags (low byte = flags, top byte = alpha-clip threshold 0..255)
         public const uint MatFlagAlphaBlend  = 1 << 0;

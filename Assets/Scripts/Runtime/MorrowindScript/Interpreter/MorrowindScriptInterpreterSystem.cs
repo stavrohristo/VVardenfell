@@ -1223,6 +1223,20 @@ namespace VVardenfell.Runtime.MorrowindScript
                     throw new InvalidOperationException($"[VVardenfell][MWScript] Running script program index {instance.ProgramIndex} is outside the runtime catalog.");
 
                 activeRequirements |= (MorrowindScriptRequirementMask)catalog.Programs[instance.ProgramIndex].RequirementMask;
+            }
+
+            if (!HasRequirement(activeRequirements, MorrowindScriptRequirementMask.RunningPrograms))
+                return CreateEmptyTempJobArray<MorrowindScriptRunningProgramSnapshot>();
+
+            foreach (var instanceRef in SystemAPI.Query<RefRO<MorrowindScriptInstance>>().WithAll<MorrowindGlobalScriptInstance>())
+            {
+                var instance = instanceRef.ValueRO;
+                if (instance.Status != (byte)MorrowindScriptInstanceStatus.Running)
+                    continue;
+
+                if ((uint)instance.ProgramIndex >= (uint)catalog.Programs.Length)
+                    throw new InvalidOperationException($"[VVardenfell][MWScript] Running global script program index {instance.ProgramIndex} is outside the runtime catalog.");
+
                 snapshots.Add(new MorrowindScriptRunningProgramSnapshot
                 {
                     ProgramIndex = instance.ProgramIndex,
@@ -1230,9 +1244,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 });
             }
 
-            return HasRequirement(activeRequirements, MorrowindScriptRequirementMask.RunningPrograms)
-                ? CopyToTempJobArray(snapshots)
-                : CreateEmptyTempJobArray<MorrowindScriptRunningProgramSnapshot>();
+            return CopyToTempJobArray(snapshots);
         }
 
         static void ResolveDiseaseFlags(

@@ -135,6 +135,8 @@ namespace VVardenfell.Runtime.Streaming
                     continue;
                 if (em.HasComponent<CellCoord>(entity))
                     continue;
+                if (em.HasComponent<CombinedCellRenderSuppressed>(entity))
+                    continue;
 
                 em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
             }
@@ -160,6 +162,8 @@ namespace VVardenfell.Runtime.Streaming
 
                     if (em.HasComponent<CellCoord>(entity))
                         continue;
+                    if (em.HasComponent<CombinedCellRenderSuppressed>(entity))
+                        continue;
 
                     em.SetComponentEnabled<MaterialMeshInfo>(entity, active);
                 }
@@ -180,7 +184,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 var queryBuilder = new EntityQueryBuilder(Allocator.Temp)
                     .WithAll<CellLink>()
-                    .WithPresent<MaterialMeshInfo>();
+                    .WithPresent<MaterialMeshInfo>()
+                    .WithNone<CombinedCellRenderSuppressed>();
                 s_World = world;
                 s_Query = em.CreateEntityQuery(queryBuilder);
                 s_QueryCreated = true;

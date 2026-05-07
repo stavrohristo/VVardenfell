@@ -18,6 +18,10 @@ namespace VVardenfell.Core.Config
     {
         public string InstallPath;
 
+        // --- Bake ---------------------------------------------------------------
+
+        public bool BakeCombinedCellRenderChunks = false;
+
         // --- Video --------------------------------------------------------------
 
         /// <summary>UI scale applied to every menu / window chassis.</summary>

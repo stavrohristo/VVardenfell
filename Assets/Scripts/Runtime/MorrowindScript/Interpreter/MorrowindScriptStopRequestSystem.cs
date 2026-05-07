@@ -23,7 +23,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (requests.Length == 0)
                 return;
 
-            foreach (var (instance, entity) in SystemAPI.Query<RefRW<MorrowindScriptInstance>>().WithEntityAccess())
+            foreach (var instance in SystemAPI.Query<RefRW<MorrowindScriptInstance>>().WithAll<MorrowindGlobalScriptInstance>())
             {
                 if (!ShouldStop(instance.ValueRO.ProgramIndex, requests))
                     continue;

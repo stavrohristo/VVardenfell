@@ -79,6 +79,30 @@ namespace VVardenfell.Runtime.Streaming
             }
             progress?.CompleteStage("Static colliders ready");
 
+            var combinedChunkEntitiesByCell = new Dictionary<int2, Entity[]>();
+            int combinedChunkEntityCount = 0;
+            int combinedMultiTextureChunkCount = 0;
+            progress?.BeginStage("Spawn combined render chunks", "Creating combined render chunks", System.Math.Max(1, cellEntries.Length));
+            for (int i = 0; i < cellEntries.Length; i++)
+            {
+                var coord = cellEntries[i].Key;
+                var chunkEntities = CombinedCellRenderSpawnUtility.SpawnChunks(em, coord, cellEntries[i].Value, active: false, out int multiTextureChunks);
+                if (chunkEntities.Length > 0)
+                {
+                    combinedChunkEntitiesByCell[coord] = chunkEntities;
+                    combinedChunkEntityCount += chunkEntities.Length;
+                    combinedMultiTextureChunkCount += multiTextureChunks;
+                }
+
+                int completed = i + 1;
+                if (completed == cellEntries.Length || (completed % RefGatherBatchSize) == 0)
+                {
+                    progress?.Report($"Creating combined render chunks {completed}/{cellEntries.Length}", completed, cellEntries.Length);
+                    yield return null;
+                }
+            }
+            progress?.CompleteStage("Combined render chunks ready");
+
             int totalRefs = 0;
             for (int i = 0; i < cellEntries.Length; i++)
                 totalRefs += cellEntries[i].Value.Refs?.Length ?? 0;
@@ -158,6 +182,21 @@ namespace VVardenfell.Runtime.Streaming
                     ref logicalRefs,
                     progress,
                     out _);
+                int combinedSuppressedLeafCount = 0;
+                for (int i = 0; i < cellEntries.Length; i++)
+                {
+                    var coord = cellEntries[i].Key;
+                    if (!combinedChunkEntitiesByCell.TryGetValue(coord, out var chunkEntities))
+                        continue;
+
+                    combinedSuppressedLeafCount += CombinedCellRenderSpawnUtility.AttachMembershipLinks(
+                        em,
+                        cellEntries[i].Value.CombinedRenderChunks,
+                        chunkEntities,
+                        ref logicalRefs);
+                }
+                if (combinedChunkEntityCount > 0 || combinedSuppressedLeafCount > 0)
+                    UnityEngine.Debug.Log($"[VVardenfell][CombinedRender] spawnedChunks={combinedChunkEntityCount} multiTextureChunks={combinedMultiTextureChunkCount} suppressedLeaves={combinedSuppressedLeafCount}.");
                 progress?.CompleteStage("Logical refs ready");
             }
             else
@@ -184,6 +223,7 @@ namespace VVardenfell.Runtime.Streaming
             {
                 var disableQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
                     .WithAll<CellLink, MaterialMeshInfo>()
+                    .WithNone<CombinedCellRenderSuppressed>()
                     .WithNone<CellCoord>();
 
                 var disableQuery = em.CreateEntityQuery(disableQueryBuilder);
@@ -288,6 +328,11 @@ namespace VVardenfell.Runtime.Streaming
             if (!streamableAlreadySpawned && WorldResources.TryGetStaticCellCollider(coord, out var staticBlob))
                 WorldTerrainStaticSpawnUtility.SpawnStaticCellCollider(em, coord, staticBlob, active);
 
+            Entity[] combinedChunkEntities = System.Array.Empty<Entity>();
+            int combinedMultiTextureChunkCount = 0;
+            if (!streamableAlreadySpawned)
+                combinedChunkEntities = CombinedCellRenderSpawnUtility.SpawnChunks(em, coord, data, active, out combinedMultiTextureChunkCount);
+
             var refs = data.Refs;
             bool activeExplicitRefsDirty = false;
             if (!streamableAlreadySpawned && refs != null && refs.Length > 0)
@@ -314,6 +359,13 @@ namespace VVardenfell.Runtime.Streaming
                     ref logicalRefs,
                     null,
                     out _);
+                int combinedSuppressedLeafCount = CombinedCellRenderSpawnUtility.AttachMembershipLinks(
+                    em,
+                    data.CombinedRenderChunks,
+                    combinedChunkEntities,
+                    ref logicalRefs);
+                if (combinedChunkEntities.Length > 0 || combinedSuppressedLeafCount > 0)
+                    UnityEngine.Debug.Log($"[VVardenfell][CombinedRender] cell={coord.x},{coord.y} spawnedChunks={combinedChunkEntities.Length} multiTextureChunks={combinedMultiTextureChunkCount} suppressedLeaves={combinedSuppressedLeafCount}.");
                 activeExplicitRefsDirty = true;
                 coordArray.Dispose();
                 refArray.Dispose();

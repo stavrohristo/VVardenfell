@@ -29,7 +29,9 @@ namespace VVardenfell.Runtime.Streaming
             if (data == null || !data.HasTerrain)
                 return default;
 
-            var managed = new WorldResources.PerCellManaged();
+            var managed = WorldResources.LoadedManaged.TryGetValue(coord, out var existingManaged)
+                ? existingManaged
+                : new WorldResources.PerCellManaged();
             managed.TerrainMesh = BuildTerrainMesh(data);
             managed.TerrainMat = BuildTerrainMaterial(data);
             managed.SplatMap = (managed.TerrainMat != null && managed.TerrainMat != WorldResources.TerrainFallbackMat)

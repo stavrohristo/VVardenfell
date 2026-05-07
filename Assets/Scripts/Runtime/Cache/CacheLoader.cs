@@ -51,6 +51,8 @@ namespace VVardenfell.Runtime.Cache
         public Mesh[] Meshes { get; private set; }
         public string[] MeshNames { get; private set; }
         public Material[] Materials { get; private set; }
+        public Material[] CombinedMaterials { get; private set; }
+        public MaterialRecord[] MaterialRecords { get; private set; }
         public ModelPrefabCatalogData ModelPrefabCatalog { get; private set; }
         public MorrowindVfxCatalogData VfxCatalog { get; private set; }
         public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
@@ -509,9 +511,13 @@ namespace VVardenfell.Runtime.Cache
         private IEnumerator BuildReferenceMaterialBucketsIncremental(RuntimeLoadProgress progress)
         {
             var matRecords = Importer.Bake.MaterialBakery.ReadAll(CachePaths.Materials);
+            MaterialRecords = matRecords;
             var refShader = Shader.Find("VVardenfell/MwRef");
             if (refShader == null)
                 throw new InvalidDataException("VVardenfell/MwRef shader missing");
+            var combinedRefShader = Shader.Find("VVardenfell/MwRefCombined");
+            if (combinedRefShader == null)
+                throw new InvalidDataException("VVardenfell/MwRefCombined shader missing");
 
 #if UNITY_EDITOR
             Registry = MaterialRegistry.LoadOrCreate();
@@ -543,12 +549,16 @@ namespace VVardenfell.Runtime.Cache
             int totalTextureOps = 0;
             foreach (var key in keys)
                 totalTextureOps += groups[key].Count + 1;
-            int totalMaterialOps = keys.Length * matRecords.Length;
+            const int combinedRenderVariantCount = 2;
+            int totalMaterialOps = keys.Length * (matRecords.Length + combinedRenderVariantCount);
             int totalOps = System.Math.Max(1, totalTextureOps + totalMaterialOps);
             progress?.Report("Grouping textures into buckets", 0, totalOps);
 
             RenderTexture[] rts = new RenderTexture[keys.Length];
             Material[] materials = new Material[keys.Length * matRecords.Length];
+            Material[] combinedMaterials = new Material[keys.Length * combinedRenderVariantCount];
+            int[] bucketKeys = new int[keys.Length];
+            var bucketIndexByKey = new Dictionary<int, int>(keys.Length);
             var texBucketInfo = new NativeArray<int2>(
                 Textures.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
@@ -566,6 +576,8 @@ namespace VVardenfell.Runtime.Cache
                 for (int b = 0; b < keys.Length; b++)
                 {
                     int key = keys[b];
+                    bucketKeys[b] = key;
+                    bucketIndexByKey[key] = b;
                     if (key == fallbackBucketKey)
                         fallbackBucket = b;
 
@@ -627,6 +639,20 @@ namespace VVardenfell.Runtime.Cache
                             completed++;
                         }
 
+                        for (int ci = 0; ci < combinedRenderVariantCount; ci++)
+                        {
+                            var combinedMaterial = new Material(combinedRefShader)
+                            {
+                                name = $"VV:CombinedRender{ci}[b{b}:{w}x{h}]",
+                                enableInstancing = true,
+                                doubleSidedGI = true,
+                            };
+                            combinedMaterial.SetTexture("_BaseArray", rt);
+                            ApplyCombinedRenderAlpha(combinedMaterial, ci);
+                            combinedMaterials[b * combinedRenderVariantCount + ci] = combinedMaterial;
+                            completed++;
+                        }
+
                         if (b == fallbackBucket)
                             fallbackSlice = whiteSliceInBucket;
                     }
@@ -648,9 +674,13 @@ namespace VVardenfell.Runtime.Cache
 
                 WorldResources.RefBaseArrays = rts;
                 WorldResources.TexBucketInfo = texBucketInfo;
+                WorldResources.RefBucketKeys = bucketKeys;
+                WorldResources.RefBucketIndexByKey = bucketIndexByKey;
                 WorldResources.FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
                 WorldResources.BlendVariantCount = matRecords.Length;
+                WorldResources.CombinedRenderVariantCount = combinedRenderVariantCount;
                 Materials = materials;
+                CombinedMaterials = combinedMaterials;
 
                 progress?.CompleteStage("Reference materials ready");
                 success = true;
@@ -673,6 +703,12 @@ namespace VVardenfell.Runtime.Cache
                     {
                         if (materials[i] != null)
                             UnityEngine.Object.Destroy(materials[i]);
+                    }
+
+                    for (int i = 0; i < combinedMaterials.Length; i++)
+                    {
+                        if (combinedMaterials[i] != null)
+                            UnityEngine.Object.Destroy(combinedMaterials[i]);
                     }
 
                     if (texBucketInfo.IsCreated)
@@ -725,6 +761,29 @@ namespace VVardenfell.Runtime.Cache
             else
             {
                 m.DisableKeyword("_ALPHATEST_ON");
+            }
+        }
+
+        private static void ApplyCombinedRenderAlpha(Material m, int variant)
+        {
+            bool blend = variant == 1;
+            if (blend)
+            {
+                m.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+                m.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+                m.SetFloat("_ZWrite", 0f);
+                m.SetOverrideTag("RenderType", "Transparent");
+                m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                m.renderQueue = (int)RenderQueue.Transparent;
+            }
+            else
+            {
+                m.SetFloat("_SrcBlend", (float)BlendMode.One);
+                m.SetFloat("_DstBlend", (float)BlendMode.Zero);
+                m.SetFloat("_ZWrite", 1f);
+                m.SetOverrideTag("RenderType", "Opaque");
+                m.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                m.renderQueue = (int)RenderQueue.Geometry;
             }
         }
 

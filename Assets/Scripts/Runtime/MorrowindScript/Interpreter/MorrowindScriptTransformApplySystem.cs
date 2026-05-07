@@ -83,6 +83,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
                 }
 
+                CombinedCellRenderDecombineUtility.DecombineIfLinked(systemState.EntityManager, target);
                 if (request.Operation == 2)
                 {
                     ApplyPositionCell(ref systemState, target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);

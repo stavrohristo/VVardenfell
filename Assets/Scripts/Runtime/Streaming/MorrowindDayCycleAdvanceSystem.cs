@@ -38,10 +38,10 @@ namespace VVardenfell.Runtime.Streaming
             requests.Clear();
 
             float advancedHours = requestedHours;
-            if (time.Paused == 0 && time.TimeScale > 0f && time.SimulationTimeScale > 0f)
+            if (time.Paused == 0 && time.TimeScale > 0f)
             {
                 float realSeconds = SystemAPI.Time.DeltaTime;
-                advancedHours += realSeconds * (time.TimeScale / 3600f) * math.max(0f, time.SimulationTimeScale);
+                advancedHours += realSeconds * (time.TimeScale / 3600f);
             }
 
             time.FastForwarding = fastForwarding;

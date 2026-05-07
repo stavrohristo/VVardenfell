@@ -4184,17 +4184,37 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!Pop(context, out var rhs) || !Pop(context, out var lhs))
                 return;
 
-            float left = ToFloat(lhs);
-            float right = ToFloat(rhs);
-            bool result = operation switch
+            bool result;
+            if (lhs.ValueKind != (byte)MorrowindScriptValueKind.Float
+                && rhs.ValueKind != (byte)MorrowindScriptValueKind.Float)
             {
-                0 => math.abs(left - right) <= 0.000001f,
-                1 => math.abs(left - right) > 0.000001f,
-                2 => left < right,
-                3 => left <= right,
-                4 => left > right,
-                _ => left >= right,
-            };
+                int left = lhs.IntValue;
+                int right = rhs.IntValue;
+                result = operation switch
+                {
+                    0 => left == right,
+                    1 => left != right,
+                    2 => left < right,
+                    3 => left <= right,
+                    4 => left > right,
+                    _ => left >= right,
+                };
+            }
+            else
+            {
+                float left = ToFloat(lhs);
+                float right = ToFloat(rhs);
+                result = operation switch
+                {
+                    0 => left == right,
+                    1 => left != right,
+                    2 => left < right,
+                    3 => left <= right,
+                    4 => left > right,
+                    _ => left >= right,
+                };
+            }
+
             Push(context, new MorrowindScriptStackValue
             {
                 IntValue = result ? 1 : 0,
