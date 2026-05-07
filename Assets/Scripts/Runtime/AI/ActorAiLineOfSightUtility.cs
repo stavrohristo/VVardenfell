@@ -54,7 +54,7 @@ namespace VVardenfell.Runtime.AI
                 source,
                 source + delta / distance * math.max(0f, distance - 0.05f),
                 InteractionCollisionLayers.LineOfSightQueryFilter,
-                DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
+                DeferredPhysicsQueryUtility.FrameMaxResultAgeTicks,
                 out hasLineOfSight);
         }
     }

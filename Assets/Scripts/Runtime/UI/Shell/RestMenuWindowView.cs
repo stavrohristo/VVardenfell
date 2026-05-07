@@ -17,8 +17,6 @@ namespace VVardenfell.Runtime.UI.Shell
 
         const float DialogWidth = 600f;
         const float DialogHeight = 200f;
-        const float ProgressDialogWidth = 219f;
-        const float ProgressDialogHeight = 40f;
         const float DialogInset = 8f;
         const float ButtonHeight = 24f;
         const float UntilHealedButtonWidth = 116f;
@@ -31,7 +29,6 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeUiTheme _theme;
         readonly RectTransform _root;
         readonly RectTransform _dialogRoot;
-        readonly RectTransform _progressDialogRoot;
         readonly RectTransform _startButtonRect;
         readonly RectTransform _untilHealedButtonRect;
         readonly RectTransform _cancelButtonRect;
@@ -69,20 +66,17 @@ namespace VVardenfell.Runtime.UI.Shell
             _startButton = BuildButton(dialogClient, "StartButton", "Rest", StartButtonWidth, out _startButtonRect, () => RuntimeShellRequestBridge.TryStartRestMenu(out _));
             _cancelButton = BuildButton(dialogClient, "CancelButton", "Cancel", CancelButtonWidth, out _cancelButtonRect, () => RuntimeShellRequestBridge.TryCancelRestMenu(out _));
 
-            var progressDialog = CreateDialog("WaitProgressDialog", ProgressDialogWidth, ProgressDialogHeight, 0f);
-            _progressDialogRoot = progressDialog.root;
-            RectTransform progressClient = progressDialog.client;
             _progressBar = RuntimeUiFactory.CreateProgressBar(
                 "ProgressBar",
-                progressClient,
+                dialogClient,
                 theme,
                 SliderTrackCenterColor,
                 SliderFillColor);
             _progressBar.Root.anchorMin = new Vector2(0f, 1f);
-            _progressBar.Root.anchorMax = new Vector2(0f, 1f);
+            _progressBar.Root.anchorMax = new Vector2(1f, 1f);
             _progressBar.Root.pivot = new Vector2(0f, 1f);
-            _progressBar.Root.anchoredPosition = RuntimeClassicUiMetrics.Ui(new Vector2(5f, -6f));
-            _progressBar.Root.sizeDelta = RuntimeClassicUiMetrics.Ui(new Vector2(199f, 20f));
+            _progressBar.Root.anchoredPosition = RuntimeClassicUiMetrics.Ui(new Vector2(10f, -140f));
+            _progressBar.Root.sizeDelta = new Vector2(-RuntimeClassicUiMetrics.Ui(20f), RuntimeClassicUiMetrics.Ui(20f));
 
             _progressText = RuntimeUiFactory.CreateBitmapText("ProgressText", _progressBar.Root, _theme?.DefaultFont, 1f, BodyTextColor, BitmapTextAlignment.Right);
             _progressText.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.Body);
@@ -92,6 +86,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _progressText.rectTransform.anchorMax = Vector2.one;
             _progressText.rectTransform.offsetMin = Vector2.zero;
             _progressText.rectTransform.offsetMax = new Vector2(-RuntimeClassicUiMetrics.Ui(6f), 0f);
+            _progressBar.Root.gameObject.SetActive(false);
         }
 
         public RectTransform Root => _root;
@@ -105,19 +100,20 @@ namespace VVardenfell.Runtime.UI.Shell
 
             _dateTimeText.Text = model.DateTimeText ?? string.Empty;
             _restText.Text = model.RestText ?? string.Empty;
-            _hoursText.Text = model.HoursText ?? string.Empty;
+            _hoursText.Text = model.Advancing ? model.ProgressText ?? string.Empty : model.HoursText ?? string.Empty;
             _hoursSlider.SetValueWithoutNotify(Mathf.Clamp(model.SelectedHours, 1, 24));
+            _hoursSlider.interactable = !model.Advancing;
             _startButton.Label.Text = model.CanSleep ? "Rest" : "Wait";
 
-            bool showUntilHealed = model.CanUntilHealed && !model.Advancing;
+            bool showUntilHealed = model.CanUntilHealed;
             _untilHealedButtonRect.gameObject.SetActive(showUntilHealed);
-            SetButtonEnabled(_untilHealedButton, showUntilHealed);
+            SetButtonEnabled(_untilHealedButton, showUntilHealed && !model.Advancing);
             SetButtonEnabled(_startButton, !model.Advancing);
             SetButtonEnabled(_cancelButton, !model.Advancing);
             LayoutButtons(showUntilHealed);
 
-            _dialogRoot.gameObject.SetActive(!model.Advancing);
-            _progressDialogRoot.gameObject.SetActive(model.Advancing);
+            _dialogRoot.gameObject.SetActive(true);
+            _progressBar.Root.gameObject.SetActive(model.Advancing);
             if (model.Advancing)
             {
                 _progressText.Text = $"{model.ProgressHours}/{model.TargetHours}";
@@ -295,7 +291,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
         void SetProgressBarFill(float fraction)
         {
-            float fillWidth = RuntimeClassicUiMetrics.Ui(199f) * Mathf.Clamp01(fraction);
+            float fillWidth = Mathf.Max(0f, _progressBar.Root.rect.width) * Mathf.Clamp01(fraction);
             _progressBar.FillRect.sizeDelta = new Vector2(fillWidth, 0f);
         }
 

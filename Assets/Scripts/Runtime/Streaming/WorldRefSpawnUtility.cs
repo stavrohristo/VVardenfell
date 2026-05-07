@@ -783,8 +783,15 @@ namespace VVardenfell.Runtime.Streaming
             if (contentReference.Kind == ContentReferenceKind.Door)
             {
                 attachDoor = !isInterior
-                    ? TryResolveDoorInteractable(ref worldCells, exteriorCell, entry.PlacedRefId, out door)
-                    : TryResolveInteriorDoorInteractable(ref worldCells, entry.PlacedRefId, InteriorCellIdHash.Hash(interiorCellId), out door);
+                    ? TryResolveDoorInteractable(ref worldCells, exteriorCell, entry, out door)
+                    : TryResolveInteriorDoorInteractable(ref worldCells, entry, InteriorCellIdHash.Hash(interiorCellId), out door);
+                if (!attachDoor)
+                {
+                    string cellLabel = isInterior
+                        ? $"interior '{interiorCellId}'"
+                        : $"exterior ({exteriorCell.x},{exteriorCell.y})";
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] door ref {placedRefId:X8} is missing per-cell door metadata in {cellLabel}; doorMetaIndex={entry.DoorMetaIndex}.");
+                }
             }
 
             FixedString64Bytes capturedSoulId = default;
@@ -885,34 +892,34 @@ namespace VVardenfell.Runtime.Streaming
             return contentReference.IsValid;
         }
 
-        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, int2 coord, uint placedRefId, out DoorInteractable doorInteractable)
+        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, int2 coord, in RefEntry entry, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
-            if (placedRefId == 0u)
+            if (entry.PlacedRefId == 0u)
                 return false;
             if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, coord, out int cellIndex))
                 return false;
 
             ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
-            return TryResolveDoorInteractable(ref worldCells, ref cell, placedRefId, out doorInteractable);
+            return TryResolveDoorInteractable(ref worldCells, ref cell, entry, out doorInteractable);
         }
 
-        static bool TryResolveInteriorDoorInteractable(ref RuntimeWorldCellBlob worldCells, uint placedRefId, ulong interiorCellHash, out DoorInteractable doorInteractable)
+        static bool TryResolveInteriorDoorInteractable(ref RuntimeWorldCellBlob worldCells, in RefEntry entry, ulong interiorCellHash, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
-            if (placedRefId == 0u)
+            if (entry.PlacedRefId == 0u)
                 return false;
             if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, interiorCellHash, out int cellIndex))
                 return false;
 
             ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
-            return TryResolveDoorInteractable(ref worldCells, ref cell, placedRefId, out doorInteractable);
+            return TryResolveDoorInteractable(ref worldCells, ref cell, entry, out doorInteractable);
         }
 
-        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, ref RuntimeWorldCellDefBlob cell, uint placedRefId, out DoorInteractable doorInteractable)
+        static bool TryResolveDoorInteractable(ref RuntimeWorldCellBlob worldCells, ref RuntimeWorldCellDefBlob cell, in RefEntry entry, out DoorInteractable doorInteractable)
         {
             doorInteractable = default;
-            if (!RuntimeWorldCellBlobUtility.TryGetDoorByPlacedRefId(ref worldCells, ref cell, placedRefId, out var door))
+            if (!RuntimeWorldCellBlobUtility.TryGetDoorForRef(ref worldCells, ref cell, entry, out var door))
                 return false;
 
             doorInteractable = BuildDoorInteractable(door);

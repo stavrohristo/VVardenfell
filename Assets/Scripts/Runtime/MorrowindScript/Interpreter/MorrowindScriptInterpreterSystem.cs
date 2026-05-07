@@ -1750,7 +1750,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 source,
                 target,
                 InteractionCollisionLayers.LineOfSightQueryFilter,
-                DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
+                DeferredPhysicsQueryUtility.FrameMaxResultAgeTicks,
                 out hasLineOfSight);
         }
 
@@ -1860,9 +1860,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
                 }
 
-                if (PendingLineOfSightScripts.IsCreated && PendingLineOfSightScripts.Contains(scriptEntity))
-                    return false;
-
                 var program = Programs[instance.ProgramIndex];
                 FixedString128Bytes programId = ProgramIds[instance.ProgramIndex];
                 if (program.Status != (byte)MorrowindScriptProgramStatus.Compiled || program.InstructionCount <= 0)
@@ -1872,6 +1869,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     LoopSourceKey = MorrowindScriptOpcodeTable.BuildScriptLoopSourceKey(placedRefId, scriptEntity),
                 });
+
+                if (PendingLineOfSightScripts.IsCreated && PendingLineOfSightScripts.Contains(scriptEntity))
+                    return false;
 
                 if (locals.Length < program.LocalCount)
                     locals.ResizeUninitialized(program.LocalCount);

@@ -45,8 +45,8 @@ namespace VVardenfell.Runtime.Interactions
 
         public static CollisionFilter InteractionPickQueryFilter => new()
         {
-            BelongsTo = InteractionPickQuery,
-            CollidesWith = InteractionPick,
+            BelongsTo = InteractionPickQuery | ActivationQuery,
+            CollidesWith = InteractionPick | ActivationProxy,
             GroupIndex = 0,
         };
 

@@ -23,7 +23,7 @@ namespace VVardenfell.Core.Cache
         /// whether an existing cell file is still reusable.
         /// </summary>
         public const uint WorldBakePipelineVersion = 41;
-        public const uint GameplayContentVersion = 64;
+        public const uint GameplayContentVersion = 65;
         public const int RuntimeContentBlobVersion = 2;
 
         /// <summary>

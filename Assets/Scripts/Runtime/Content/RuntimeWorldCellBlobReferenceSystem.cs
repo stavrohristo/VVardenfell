@@ -14,7 +14,7 @@ namespace VVardenfell.Runtime.Content
         {
             if (SystemAPI.HasSingleton<RuntimeWorldCellBlobReference>())
                 return;
-            if (!WorldResources.HasAnyPreloadedCells())
+            if (!WorldResources.PreloadedCellsComplete)
                 return;
 
             var blob = RuntimeWorldCellBlobBuilder.Build();

@@ -430,6 +430,7 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             var refs = cell?.Refs ?? System.Array.Empty<RefEntry>();
+            var doors = cell?.Doors ?? System.Array.Empty<DoorRefEntry>();
             for (int i = 0; i < refs.Length; i++)
             {
                 int raw = refs[i].SpawnModeRaw;
@@ -445,6 +446,20 @@ namespace VVardenfell.Runtime.Streaming
                         WorldBootstrapPreloadFailureKind.UnsupportedSpawnMode,
                         $"ref {i} uses unsupported spawn mode {mode} for content kind {(ContentReferenceKind)refs[i].ContentKind}");
                 }
+
+                if ((ContentReferenceKind)refs[i].ContentKind != ContentReferenceKind.Door)
+                    continue;
+
+                string doorError = ValidateDoorMetadata(refs[i], doors);
+                if (!string.IsNullOrEmpty(doorError))
+                {
+                    return CreateValidationFailure(
+                        isInterior,
+                        cellLabel,
+                        path,
+                        WorldBootstrapPreloadFailureKind.PipelineMismatch,
+                        $"door ref {refs[i].PlacedRefId:X8} has invalid per-cell door metadata: {doorError}");
+                }
             }
 
             return null;
@@ -456,6 +471,20 @@ namespace VVardenfell.Runtime.Streaming
                 return true;
 
             return entry.SpawnModeRaw == (int)RefSpawnMode.ModelPrefab;
+        }
+
+        static string ValidateDoorMetadata(in RefEntry entry, DoorRefEntry[] doors)
+        {
+            if (entry.DoorMetaIndex < 0)
+                return "missing door meta index";
+            if ((uint)entry.DoorMetaIndex >= (uint)doors.Length)
+                return $"door meta index {entry.DoorMetaIndex} outside door table length {doors.Length}";
+
+            uint doorPlacedRefId = doors[entry.DoorMetaIndex].PlacedRefId;
+            if (doorPlacedRefId != entry.PlacedRefId)
+                return $"door table entry points at ref {doorPlacedRefId:X8}";
+
+            return string.Empty;
         }
 
         static void TryAttachPlacementAudit(CellData cell, string auditPath)

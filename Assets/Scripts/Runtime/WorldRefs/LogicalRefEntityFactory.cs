@@ -108,12 +108,31 @@ namespace VVardenfell.Runtime.WorldRefs
                 descriptor.PlacedRefId,
                 descriptor.AttachDoorInteractable,
                 descriptor.DoorInteractable);
+            if (descriptor.ContentReference.Kind == ContentReferenceKind.Door)
+                QueueEnsureInteractionProxyQueued(entityManager, ref ecb, logicalEntity, assumeNewEntity: true);
             return logicalEntity;
         }
 
         public static bool QueueEnsureInteractionProxyQueued(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity, bool assumeNewEntity = false)
         {
-            return false;
+            if (logicalEntity == Entity.Null)
+                return false;
+
+            if (assumeNewEntity)
+            {
+                ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+                return true;
+            }
+
+            if (!entityManager.Exists(logicalEntity)
+                || entityManager.HasComponent<InteractionActivationProxyBuildPending>(logicalEntity)
+                || InteractionActivationProxyBuildUtility.HasLiveProxy(entityManager, logicalEntity))
+            {
+                return false;
+            }
+
+            ecb.AddComponent<InteractionActivationProxyBuildPending>(logicalEntity);
+            return true;
         }
     }
 }

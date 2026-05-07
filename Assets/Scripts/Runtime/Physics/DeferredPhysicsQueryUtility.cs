@@ -10,6 +10,7 @@ namespace VVardenfell.Runtime.Physics
     public static class DeferredPhysicsQueryUtility
     {
         public const byte DefaultMaxResultAgeTicks = 1;
+        public const byte FrameMaxResultAgeTicks = 8;
 
         public static uint EnqueueRay(
             EntityManager entityManager,

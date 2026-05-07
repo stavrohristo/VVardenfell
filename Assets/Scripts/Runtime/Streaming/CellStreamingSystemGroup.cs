@@ -15,7 +15,6 @@ namespace VVardenfell.Runtime.Streaming
     /// </summary>
     [UpdateInGroup(typeof(MorrowindPostTransformSimulationSystemGroup))]
     [UpdateAfter(typeof(MorrowindWorldMutationSystemGroup))]
-    [UpdateBefore(typeof(MorrowindEnvironmentSystemGroup))]
     public partial class CellStreamingSystemGroup : MorrowindRuntimePauseGatedSystemGroup
     {
         protected override void OnDestroy()

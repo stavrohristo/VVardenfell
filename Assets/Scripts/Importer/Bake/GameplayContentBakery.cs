@@ -842,7 +842,7 @@ namespace VVardenfell.Importer.Bake
 
             int count = ReadInt32(bytes, 0);
             string itemId = ReadFixedString(bytes, 4, 32);
-            if (string.IsNullOrWhiteSpace(itemId) || count <= 0)
+            if (string.IsNullOrWhiteSpace(itemId) || count == 0)
                 return;
 
             items.Add(new ContainerItemDef

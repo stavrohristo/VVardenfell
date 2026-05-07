@@ -54,7 +54,7 @@ namespace VVardenfell.Runtime.Inventory
             ContentReference content,
             int count)
         {
-            AddOrIncrementContainerStack(items, placedRefId, content, default, 0, count);
+            AddOrIncrementContainerStack(items, placedRefId, content, default, 0, count, restocking: false);
         }
 
         public static void AddOrIncrementContainerStack(
@@ -65,6 +65,18 @@ namespace VVardenfell.Runtime.Inventory
             int soulActorHandleValue,
             int count)
         {
+            AddOrIncrementContainerStack(items, placedRefId, content, soulId, soulActorHandleValue, count, restocking: false);
+        }
+
+        public static void AddOrIncrementContainerStack(
+            DynamicBuffer<ContainerSessionItem> items,
+            uint placedRefId,
+            ContentReference content,
+            FixedString64Bytes soulId,
+            int soulActorHandleValue,
+            int count,
+            bool restocking)
+        {
             if (!content.IsValid || count <= 0)
                 return;
 
@@ -73,7 +85,8 @@ namespace VVardenfell.Runtime.Inventory
                 if (items[i].PlacedRefId != placedRefId
                     || items[i].Content.Kind != content.Kind
                     || items[i].Content.HandleValue != content.HandleValue
-                    || !items[i].SoulId.Equals(soulId))
+                    || !items[i].SoulId.Equals(soulId)
+                    || items[i].Restocking != (restocking ? 1 : 0))
                 {
                     continue;
                 }
@@ -91,6 +104,7 @@ namespace VVardenfell.Runtime.Inventory
                 SoulId = soulId,
                 SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
+                Restocking = (byte)(restocking ? 1 : 0),
             });
         }
 
@@ -220,9 +234,7 @@ namespace VVardenfell.Runtime.Inventory
 
                     if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, authored.ItemIdHash, out var directContent))
                     {
-                        if (authored.Count < 0)
-                            throw new System.InvalidOperationException($"[VVardenfell][Container] Container {definition.Value} has negative count {authored.Count} for direct item hash {authored.ItemIdHash}.");
-                        AddOrIncrementContainerStack(items, placedRefId, directContent, authored.Count);
+                        AddAuthoredContainerStack(items, placedRefId, directContent, authored.Count);
                         continue;
                     }
 
@@ -240,7 +252,7 @@ namespace VVardenfell.Runtime.Inventory
                     for (int resolvedIndex = 0; resolvedIndex < resolvedItems.Length; resolvedIndex++)
                     {
                         var resolved = resolvedItems[resolvedIndex];
-                        AddOrIncrementContainerStack(items, placedRefId, resolved.Content, resolved.Count);
+                        AddAuthoredContainerStack(items, placedRefId, resolved.Content, resolved.Count);
                     }
                 }
             }
@@ -249,6 +261,26 @@ namespace VVardenfell.Runtime.Inventory
                 if (resolvedItems.IsCreated)
                     resolvedItems.Dispose();
             }
+        }
+
+        static void AddAuthoredContainerStack(
+            DynamicBuffer<ContainerSessionItem> items,
+            uint placedRefId,
+            ContentReference content,
+            int authoredCount)
+        {
+            if (authoredCount == int.MinValue)
+                throw new System.InvalidOperationException("[VVardenfell][Container] Cannot hydrate int.MinValue container item count.");
+
+            int visibleCount = math.abs(authoredCount);
+            AddOrIncrementContainerStack(
+                items,
+                placedRefId,
+                content,
+                default,
+                0,
+                visibleCount,
+                restocking: authoredCount < 0);
         }
 
         internal static bool TryResolveDirectCarryable(

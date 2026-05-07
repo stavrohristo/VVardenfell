@@ -11,8 +11,11 @@ namespace VVardenfell.Runtime.Shell
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
     public partial struct RuntimeShellInputSystem : ISystem, ISystemStartStop
     {
+        EntityQuery _dialogueSessionQuery;
+
         public void OnCreate(ref SystemState systemState)
         {
+            _dialogueSessionQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDialogueSession>());
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<ContainerWindowState>();
         }
@@ -93,7 +96,7 @@ namespace VVardenfell.Runtime.Shell
             }
             else if (state.DialogueOpen != 0)
             {
-                if (togglePausePressed || backPressed)
+                if ((togglePausePressed || backPressed) && CanCloseDialogue(ref systemState, _dialogueSessionQuery))
                 {
                     RuntimeShellStateUtility.CloseDialogue(ref state);
                     if (SystemAPI.TryGetSingletonRW<MorrowindDialogueSession>(out var sessionRef))
@@ -129,6 +132,15 @@ namespace VVardenfell.Runtime.Shell
             }
 
             RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
+        }
+
+        static bool CanCloseDialogue(ref SystemState systemState, EntityQuery dialogueSessionQuery)
+        {
+            if (dialogueSessionQuery.IsEmptyIgnoreFilter)
+                return true;
+
+            var session = systemState.EntityManager.GetComponentData<MorrowindDialogueSession>(dialogueSessionQuery.GetSingletonEntity());
+            return session.ChoiceActive == 0;
         }
     }
 }

@@ -21,6 +21,7 @@ namespace VVardenfell.Runtime.Components
         public int Count;
         public int Condition;
         public int AuthoredOrder;
+        public byte Restocking;
     }
 
     public struct ActorEquipmentSlot : IBufferElementData
@@ -61,6 +62,7 @@ namespace VVardenfell.Runtime.Components
         public FixedString64Bytes SoulId;
         public int SoulActorHandleValue;
         public int Count;
+        public byte Restocking;
     }
 
     public struct PickedItemRecord : IBufferElementData

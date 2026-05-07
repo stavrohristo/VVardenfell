@@ -64,6 +64,55 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
+        public static bool TryApplyPursueRequest(
+            ref RuntimeContentBlob content,
+            EntityManager entityManager,
+            Entity target,
+            uint targetPlacedRefId,
+            Entity followTarget,
+            uint followTargetPlacedRefId,
+            float3 targetPosition,
+            float followDistance)
+        {
+            if (target == Entity.Null || followTarget == Entity.Null || !entityManager.Exists(target) || !entityManager.Exists(followTarget))
+                return false;
+            if (!entityManager.HasComponent<ActorSpawnSource>(target))
+                return true;
+
+            EnsureActorAiComponents(ref content, entityManager, target, targetPlacedRefId);
+            ResetTraversal(entityManager, target);
+
+            var packages = entityManager.HasBuffer<ActorAiPackageRuntime>(target)
+                ? entityManager.GetBuffer<ActorAiPackageRuntime>(target)
+                : entityManager.AddBuffer<ActorAiPackageRuntime>(target);
+            packages.Clear();
+            packages.Add(new ActorAiPackageRuntime
+            {
+                Type = (byte)ActorAiRuntimePackageType.Pursue,
+                ShouldRepeat = 1,
+                AllowPartial = 1,
+                TargetPathGridIndex = -1,
+                TargetPosition = targetPosition,
+                FollowTargetEntity = followTarget,
+                FollowTargetPlacedRefId = followTargetPlacedRefId,
+                FollowDistance = math.max(0f, followDistance),
+            });
+
+            var aiState = entityManager.GetComponentData<ActorAiState>(target);
+            aiState.CurrentPackageIndex = 0;
+            aiState.CurrentNodeIndex = -1;
+            aiState.GoalNodeIndex = -1;
+            aiState.WaitUntilTime = 0f;
+            aiState.FollowActive = 0;
+            aiState.PendingIdleGroup = 0;
+            aiState.ActiveIdleGroupHash = 0UL;
+            aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+            if (entityManager.HasComponent<LocalTransform>(target))
+                aiState.HomePosition = entityManager.GetComponentData<LocalTransform>(target).Position;
+            entityManager.SetComponentData(target, aiState);
+            return true;
+        }
+
         public static bool TryApplyRequest(
             ref RuntimeContentBlob content,
             EntityManager entityManager,

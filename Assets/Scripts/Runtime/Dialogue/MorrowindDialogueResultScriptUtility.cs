@@ -62,7 +62,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (string.IsNullOrWhiteSpace(script))
                 return false;
 
-            bool goodbye = false;
             bool choicesReset = false;
             string[] lines = script.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             for (int i = 0; i < lines.Length; i++)
@@ -154,7 +153,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (TryApplyGotoJailResult(ref contentBlob, entityManager, jailRequests, line))
                 {
-                    goodbye = true;
+                    session.Goodbye = 1;
                     continue;
                 }
 
@@ -196,7 +195,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (StartsWithCommand(line, "goodbye"))
                 {
-                    goodbye = true;
+                    session.Goodbye = 1;
                     continue;
                 }
 
@@ -204,7 +203,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     Debug.LogWarning($"[VVardenfell][Dialogue] unsupported V1 dialogue result command: '{line}'.");
             }
 
-            return goodbye;
+            return false;
         }
 
         static bool TryApplyForceGreetingResult(

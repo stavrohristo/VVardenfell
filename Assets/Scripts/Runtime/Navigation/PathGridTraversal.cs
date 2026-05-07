@@ -49,10 +49,12 @@ namespace VVardenfell.Runtime.Pathfinding
     {
         public int StartNodeIndex;
         public int GoalNodeIndex;
+        public float3 FinalTargetPosition;
         public int MaxFineIterations;
         public int MaxAbstractIterations;
         public byte AllowPartial;
         public byte Run;
+        public byte UseFinalTargetPosition;
     }
 
     public struct PathGridTraversalAwaitingResult : IComponentData, IEnableableComponent
@@ -67,10 +69,12 @@ namespace VVardenfell.Runtime.Pathfinding
         public int LastStartNodeIndex;
         public int LastGoalNodeIndex;
         public float PathCost;
+        public float3 FinalTargetPosition;
         public byte Status;
         public byte UsedAbstractRoute;
         public byte ReachedGoal;
         public byte Run;
+        public byte UseFinalTargetPosition;
     }
 
     public struct PathGridTraversalNode : IBufferElementData
@@ -126,6 +130,7 @@ namespace VVardenfell.Runtime.Pathfinding
                 MaxAbstractIterations = maxAbstractIterations > 0 ? maxAbstractIterations : settings.MaxAbstractIterations,
                 AllowPartial = allowPartial ? (byte)1 : settings.AllowPartial,
                 Run = run ? (byte)1 : settings.Run,
+                UseFinalTargetPosition = 0,
             });
             entityManager.SetComponentEnabled<PathGridTraversalPendingRequest>(owner, true);
             entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(owner, false);
@@ -369,8 +374,10 @@ namespace VVardenfell.Runtime.Pathfinding
                 nextState.PathNodeCount = 0;
                 nextState.LastStartNodeIndex = request.StartNodeIndex;
                 nextState.LastGoalNodeIndex = request.GoalNodeIndex;
+                nextState.FinalTargetPosition = request.FinalTargetPosition;
                 nextState.Status = (byte)PathGridTraversalStatus.RequestingPath;
                 nextState.Run = request.Run;
+                nextState.UseFinalTargetPosition = request.UseFinalTargetPosition;
                 systemState.EntityManager.SetComponentData(entity, nextState);
                 SystemAPI.SetComponentEnabled<PathGridTraversalPendingRequest>(entity, false);
                 SystemAPI.SetComponentEnabled<PathGridTraversalAwaitingResult>(entity, true);
@@ -449,7 +456,7 @@ namespace VVardenfell.Runtime.Pathfinding
                 }
 
                 nextState.CurrentNodeOffset = result.NodeCount > 1 ? 1 : 0;
-                nextState.Status = nextState.CurrentNodeOffset >= result.NodeCount
+                nextState.Status = nextState.CurrentNodeOffset >= result.NodeCount && nextState.UseFinalTargetPosition == 0
                     ? (byte)PathGridTraversalStatus.Reached
                     : (byte)PathGridTraversalStatus.Traversing;
                 systemState.EntityManager.SetComponentData(entity, nextState);
@@ -539,7 +546,7 @@ namespace VVardenfell.Runtime.Pathfinding
                     var input = inputs[i];
                     var traversalState = states[i];
                     var nodes = pathNodes[i];
-                    if (traversalState.Status != (byte)PathGridTraversalStatus.Traversing || nodes.Length == 0)
+                    if (traversalState.Status != (byte)PathGridTraversalStatus.Traversing)
                         continue;
 
                     if (AdvancePastReachedNodes(Navigation, transform.Position, nodes, Settings, ref traversalState))
@@ -551,8 +558,7 @@ namespace VVardenfell.Runtime.Pathfinding
                         continue;
                     }
 
-                    int nodeIndex = nodes[traversalState.CurrentNodeOffset].NodeIndex;
-                    if ((uint)nodeIndex >= (uint)Navigation.Nodes.Length)
+                    if (!TryResolveSteeringTarget(Navigation, nodes, traversalState, out float3 target))
                     {
                         traversalState.Status = (byte)PathGridTraversalStatus.Failed;
                         input.LocalMove = float2.zero;
@@ -561,7 +567,6 @@ namespace VVardenfell.Runtime.Pathfinding
                         continue;
                     }
 
-                    float3 target = PathGridNavigationWorld.GetNodePosition(Navigation.Nodes[nodeIndex]);
                     float3 delta = target - transform.Position;
                     delta.y = 0f;
                     float3 worldDirection = math.normalizesafe(delta);
@@ -573,11 +578,15 @@ namespace VVardenfell.Runtime.Pathfinding
                         quaternion targetRotation = quaternion.LookRotationSafe(worldDirection, math.up());
                         float t = 1f - math.exp(-math.max(0f, Settings.FacingSharpness) * DeltaTime);
                         transform.Rotation = math.slerp(transform.Rotation, targetRotation, math.saturate(t));
+                        input.LocalMove = new float2(0f, 1f);
+                    }
+                    else
+                    {
+                        float3 localDirection = math.mul(math.inverse(transform.Rotation), worldDirection);
+                        input.LocalMove.x = math.clamp(localDirection.x, -1f, 1f);
+                        input.LocalMove.y = math.clamp(localDirection.z, -1f, 1f);
                     }
 
-                    float3 localDirection = math.mul(math.inverse(transform.Rotation), worldDirection);
-                    input.LocalMove.x = math.clamp(localDirection.x, -1f, 1f);
-                    input.LocalMove.y = math.clamp(localDirection.z, -1f, 1f);
                     input.RunHeld = traversalState.Run != 0;
                     input.SneakHeld = false;
                     input.JumpPressed = false;
@@ -617,8 +626,46 @@ namespace VVardenfell.Runtime.Pathfinding
                 state.CurrentNodeOffset++;
             }
 
+            if (state.UseFinalTargetPosition != 0)
+            {
+                float3 delta = state.FinalTargetPosition - position;
+                delta.y = 0f;
+                float arrivalDistance = math.max(0.01f, settings.FinalArrivalDistance);
+                if (math.lengthsq(delta) > arrivalDistance * arrivalDistance)
+                    return false;
+            }
+
             state.Status = (byte)PathGridTraversalStatus.Reached;
             return true;
+        }
+
+        static bool TryResolveSteeringTarget(
+            PathGridNavigationWorld navigation,
+            DynamicBuffer<PathGridTraversalNode> pathNodes,
+            in PathGridTraversalState state,
+            out float3 target)
+        {
+            if ((uint)state.CurrentNodeOffset < (uint)pathNodes.Length)
+            {
+                int nodeIndex = pathNodes[state.CurrentNodeOffset].NodeIndex;
+                if ((uint)nodeIndex >= (uint)navigation.Nodes.Length)
+                {
+                    target = default;
+                    return false;
+                }
+
+                target = PathGridNavigationWorld.GetNodePosition(navigation.Nodes[nodeIndex]);
+                return true;
+            }
+
+            if (state.UseFinalTargetPosition != 0)
+            {
+                target = state.FinalTargetPosition;
+                return true;
+            }
+
+            target = default;
+            return false;
         }
     }
 }

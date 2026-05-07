@@ -374,7 +374,11 @@ namespace VVardenfell.Runtime.Physics
         static void EnsureMotionClassification(EntityManager entityManager, Entity entity, RuntimeColliderKind kind)
         {
             if (!RequiresDynamicKinematicBody(entityManager, entity, kind))
+            {
+                if (entityManager.HasComponent<PhysicsVelocity>(entity))
+                    entityManager.RemoveComponent<PhysicsVelocity>(entity);
                 return;
+            }
 
             if (entityManager.HasComponent<Unity.Transforms.Static>(entity))
                 entityManager.RemoveComponent<Unity.Transforms.Static>(entity);
@@ -388,12 +392,8 @@ namespace VVardenfell.Runtime.Physics
             {
                 case RuntimeColliderKind.Actor:
                 case RuntimeColliderKind.Player:
-                case RuntimeColliderKind.ActivationProxy:
                 case RuntimeColliderKind.Projectile:
                     return true;
-                case RuntimeColliderKind.InteractionPick:
-                    return entityManager.HasComponent<InteractionActorPickSurfaceTag>(entity)
-                           || entityManager.HasComponent<InteractionActivationProxyTag>(entity);
                 default:
                     return false;
             }

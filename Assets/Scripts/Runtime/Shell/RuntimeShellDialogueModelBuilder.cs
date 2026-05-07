@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.UI.Shell;
@@ -23,7 +24,7 @@ namespace VVardenfell.Runtime.Shell
                 return null;
 
             bool topicsEnabled = session.ChoiceActive == 0 && session.Goodbye == 0;
-            bool goodbyeEnabled = session.ChoiceActive == 0 || session.Goodbye != 0;
+            bool goodbyeEnabled = session.ChoiceActive == 0;
             int disposition = ResolveDisposition(ref contentBlob, entityManager, session, out bool dispositionVisible);
             string goodbyeText = ResolveGameSettingString(ref contentBlob, "sGoodbye", "Goodbye");
 
@@ -38,7 +39,7 @@ namespace VVardenfell.Runtime.Shell
                 DispositionFillNormalized = Math.Clamp(disposition / 100f, 0f, 1f),
                 TopicsEnabled = topicsEnabled,
                 GoodbyeEnabled = goodbyeEnabled,
-                ShowInlineGoodbye = session.Goodbye != 0,
+                ShowInlineGoodbye = session.Goodbye != 0 && session.ChoiceActive == 0,
                 GoodbyeText = goodbyeText,
             };
         }
@@ -265,14 +266,22 @@ namespace VVardenfell.Runtime.Shell
                 return 0;
 
             visible = true;
+            int modifier = 0;
+            if (session.SpeakerEntity != Entity.Null
+                && entityManager.Exists(session.SpeakerEntity)
+                && entityManager.HasComponent<ActorCrimeState>(session.SpeakerEntity))
+            {
+                modifier = entityManager.GetComponentData<ActorCrimeState>(session.SpeakerEntity).CrimeDispositionModifier;
+            }
+
             if (session.SpeakerEntity != Entity.Null
                 && entityManager.Exists(session.SpeakerEntity)
                 && entityManager.HasComponent<ActorDispositionState>(session.SpeakerEntity))
             {
-                return Math.Clamp(entityManager.GetComponentData<ActorDispositionState>(session.SpeakerEntity).BaseDisposition, 0, 100);
+                return Math.Clamp(entityManager.GetComponentData<ActorDispositionState>(session.SpeakerEntity).BaseDisposition + modifier, 0, 100);
             }
 
-            return Math.Clamp(actor.Disposition, 0, 100);
+            return Math.Clamp(actor.Disposition + modifier, 0, 100);
         }
 
         static bool TryResolveSpeakerActorIndex(ref RuntimeContentBlob contentBlob, in MorrowindDialogueSession session, out int index)

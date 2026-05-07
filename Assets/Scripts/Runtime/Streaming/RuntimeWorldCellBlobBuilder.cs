@@ -12,6 +12,9 @@ namespace VVardenfell.Runtime.Streaming
     {
         public static BlobAssetReference<RuntimeWorldCellBlob> Build()
         {
+            if (!WorldResources.PreloadedCellsComplete)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] cannot build runtime world-cell blob before cell preload is complete.");
+
             int exteriorCount = WorldResources.ExteriorCellCount;
             int interiorCount = WorldResources.InteriorCellHashCount;
             var cellSources = new List<CellSource>(exteriorCount + interiorCount);

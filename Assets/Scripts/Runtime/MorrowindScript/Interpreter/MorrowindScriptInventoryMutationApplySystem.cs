@@ -194,6 +194,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if (!SameContent(inventory[i].Content, content)
                     || !inventory[i].SoulId.IsEmpty
+                    || inventory[i].Restocking != 0
                     || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
                     continue;

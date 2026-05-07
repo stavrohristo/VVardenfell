@@ -67,21 +67,18 @@ namespace VVardenfell.Runtime.Interactions
             if (!entityManager.Exists(entity))
                 return "door";
 
-            if (entityManager.HasComponent<DoorInteractable>(entity)
-                || (entityManager.HasComponent<DoorAuthoring>(entity)
-                    && DoorInteractableResolver.TryResolve(entityManager, ref worldCells, entity, out _)))
+            if (entityManager.HasComponent<DoorInteractable>(entity))
             {
-                var door = entityManager.HasComponent<DoorInteractable>(entity)
-                    ? entityManager.GetComponentData<DoorInteractable>(entity)
-                    : DoorInteractableResolver.TryResolve(entityManager, ref worldCells, entity, out DoorInteractable resolvedDoor)
-                        ? resolvedDoor
-                        : default;
+                var door = entityManager.GetComponentData<DoorInteractable>(entity);
                 if (door.IsTeleport != 0 && door.DestinationCellId.Length > 0)
                     return ResolveInteriorDoorPromptName(ref worldCells, door);
 
                 if (door.IsTeleport != 0)
                     return ResolveExteriorDoorPromptName(ref contentBlob, ref worldCells, entityManager, entity, door);
             }
+
+            if (entityManager.HasComponent<DoorAuthoring>(entity))
+                throw new System.InvalidOperationException(BuildMissingDoorInteractableMessage(entityManager, entity, "focus prompt"));
 
             return ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity);
         }
@@ -216,6 +213,15 @@ namespace VVardenfell.Runtime.Interactions
                 ? entityManager.GetComponentData<ActorSpawnSource>(entity)
                 : default;
             return RuntimeContentMetadataResolver.ResolveActorDisplayName(ref contentBlob, source.Definition, actor.CanTalk != 0 ? "npc" : "creature");
+        }
+
+        static string BuildMissingDoorInteractableMessage(EntityManager entityManager, Entity entity, string context)
+        {
+            uint placedRefId = entityManager.Exists(entity) && entityManager.HasComponent<PlacedRefIdentity>(entity)
+                ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
+                : 0u;
+            bool hasLocation = entityManager.Exists(entity) && entityManager.HasComponent<LogicalRefLocation>(entity);
+            return $"[VVardenfell][Interaction] authored door {context} requires DoorInteractable metadata; placedRef={placedRefId:X8} hasLocation={hasLocation}.";
         }
     }
 }

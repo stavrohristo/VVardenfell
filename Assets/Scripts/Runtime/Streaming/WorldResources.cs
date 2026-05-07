@@ -116,6 +116,7 @@ namespace VVardenfell.Runtime.Streaming
         public static readonly Dictionary<string, CellData> InteriorCells = new(System.StringComparer.OrdinalIgnoreCase);
         public static readonly Dictionary<ulong, CellData> InteriorCellsByHash = new();
         public static readonly Dictionary<ulong, string> InteriorCellIdsByHash = new();
+        public static bool PreloadedCellsComplete { get; private set; }
 
         /// <summary>
         /// Global deduped interactable-collider blobs (indexed by <see cref="RefEntry.CollisionIndex"/>).
@@ -175,10 +176,19 @@ namespace VVardenfell.Runtime.Streaming
 
         public static void ClearPreloadedCells()
         {
+            PreloadedCellsComplete = false;
             Cells.Clear();
             InteriorCells.Clear();
             InteriorCellsByHash.Clear();
             InteriorCellIdsByHash.Clear();
+        }
+
+        public static void MarkPreloadedCellsComplete()
+        {
+            if (!HasAnyPreloadedCells())
+                throw new System.InvalidOperationException("[VVardenfell][Streaming] cannot complete world-cell preload with no registered cells.");
+
+            PreloadedCellsComplete = true;
         }
 
         public static void EnsurePreloadedCellCapacity(int totalPreloadedCells)
@@ -337,6 +347,7 @@ namespace VVardenfell.Runtime.Streaming
             InteriorCells.Clear();
             InteriorCellsByHash.Clear();
             InteriorCellIdsByHash.Clear();
+            PreloadedCellsComplete = false;
 
             // Dispose per-cell static + terrain collider blobs before clearing the dicts.
             foreach (var kv in StaticCellColliders)

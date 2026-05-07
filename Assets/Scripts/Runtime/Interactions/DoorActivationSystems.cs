@@ -28,60 +28,6 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Interactions
 {
-
-    static class DoorInteractableResolver
-    {
-        public static bool TryResolve(
-            EntityManager entityManager,
-            ref RuntimeWorldCellBlob worldCells,
-            Entity logicalEntity,
-            out DoorInteractable interactable)
-        {
-            interactable = default;
-            if (!entityManager.Exists(logicalEntity)
-                || !entityManager.HasComponent<PlacedRefIdentity>(logicalEntity)
-                || !entityManager.HasComponent<LogicalRefLocation>(logicalEntity))
-            {
-                return false;
-            }
-
-            uint placedRefId = entityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;
-            var location = entityManager.GetComponentData<LogicalRefLocation>(logicalEntity);
-            return TryBuild(ref worldCells, location, placedRefId, out interactable);
-        }
-
-        static bool TryBuild(ref RuntimeWorldCellBlob worldCells, in LogicalRefLocation location, uint placedRefId, out DoorInteractable interactable)
-        {
-            interactable = default;
-            int cellIndex;
-            if (location.IsInterior != 0)
-            {
-                if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, location.InteriorCellHash, out cellIndex))
-                    return false;
-            }
-            else
-            {
-                if (!RuntimeWorldCellBlobUtility.TryGetExteriorCellIndex(ref worldCells, location.ExteriorCell, out cellIndex))
-                    return false;
-            }
-
-            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
-            if (!RuntimeWorldCellBlobUtility.TryGetDoorByPlacedRefId(ref worldCells, ref cell, placedRefId, out var door))
-                return false;
-
-            interactable = new DoorInteractable
-            {
-                IsTeleport = (byte)((door.Flags & DoorRefEntry.FlagTeleport) != 0 ? 1 : 0),
-                DestinationCellId = door.DestinationCellId,
-                DestinationCellHash = door.DestinationCellHash,
-                DestinationPosition = new float3(door.DestPosX, door.DestPosY, door.DestPosZ),
-                DestinationRotation = new quaternion(door.DestRotX, door.DestRotY, door.DestRotZ, door.DestRotW),
-            };
-            return true;
-        }
-    }
-
-
     [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
     [UpdateAfter(typeof(DoorMotionActivationSystem))]
     [UpdateBefore(typeof(DoorMotionSystem))]
@@ -171,9 +117,7 @@ namespace VVardenfell.Runtime.Interactions
                 throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] teleport door transition requires runtime world cell blob.");
             ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
 
-            if (!EntityManager.Exists(target)
-                || (!EntityManager.HasComponent<DoorInteractable>(target)
-                    && !DoorInteractableResolver.TryResolve(EntityManager, ref worldCells, target, out DoorInteractable _)))
+            if (!EntityManager.Exists(target) || !EntityManager.HasComponent<DoorAuthoring>(target))
             {
                 Debug.LogWarning("[VVardenfell][Interaction] door activation request resolved to a missing or non-door logical entity.");
                 ClearFocus();
@@ -181,11 +125,10 @@ namespace VVardenfell.Runtime.Interactions
                 return;
             }
 
-            var door = EntityManager.HasComponent<DoorInteractable>(target)
-                ? EntityManager.GetComponentData<DoorInteractable>(target)
-                : DoorInteractableResolver.TryResolve(EntityManager, ref worldCells, target, out DoorInteractable resolvedDoor)
-                    ? resolvedDoor
-                    : default;
+            if (!EntityManager.HasComponent<DoorInteractable>(target))
+                throw new System.InvalidOperationException("[VVardenfell][Interaction] authored door activation requires DoorInteractable metadata.");
+
+            var door = EntityManager.GetComponentData<DoorInteractable>(target);
             if (door.IsTeleport == 0)
             {
                 TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");

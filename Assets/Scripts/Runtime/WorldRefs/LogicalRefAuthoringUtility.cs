@@ -82,12 +82,13 @@ namespace VVardenfell.Runtime.Components
                     ref RuntimeBaseDefBlob def = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new DoorAuthoring { Definition = handle });
                     bool hasScriptedDoorMotion = TryQueueScriptedDoorMotion(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
-                    if (!hasScriptedDoorMotion && attachDoorInteractable && doorInteractable.IsTeleport == 0)
+                    if (!attachDoorInteractable)
+                        throw new InvalidOperationException($"[VVardenfell][WorldRefs] door handle {handle.Value} has no placed door metadata.");
+                    if (!hasScriptedDoorMotion && doorInteractable.IsTeleport == 0)
                         QueueDoorMotion(ref ecb, logicalEntity, DoorMotionAuthoringUtility.BuildOpenMwDoorMotion());
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, def.ScriptIdHash);
                     TryQueueAudioEmitterAuthoring(ref ecb, logicalEntity, ref content, def.SoundIdHash, def.AuxSoundIdHash);
-                    if (attachDoorInteractable)
-                        ecb.AddComponent(logicalEntity, doorInteractable);
+                    ecb.AddComponent(logicalEntity, doorInteractable);
                     return true;
                 }
 
@@ -381,8 +382,6 @@ namespace VVardenfell.Runtime.Components
 
                     if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref content, authored.ItemIdHash, out var itemContent))
                     {
-                        if (authored.Count < 0)
-                            throw new InvalidOperationException($"[VVardenfell][WorldRefs] actor hash {actor.IdHash} has negative count {authored.Count} for direct inventory item hash {authored.ItemIdHash}.");
                         AddActorInventoryItem(ref content, itemContent, authored.Count, i, ref inventory);
                         continue;
                     }
@@ -421,15 +420,19 @@ namespace VVardenfell.Runtime.Components
             int authoredOrder,
             ref NativeList<ActorInventoryItem> inventory)
         {
-            if (!itemContent.IsValid || count <= 0)
+            if (count == int.MinValue)
+                throw new InvalidOperationException("[VVardenfell][WorldRefs] Cannot hydrate int.MinValue actor inventory count.");
+            int visibleCount = math.abs(count);
+            if (!itemContent.IsValid || visibleCount <= 0)
                 return;
 
             inventory.Add(new ActorInventoryItem
             {
                 Content = itemContent,
-                Count = count,
+                Count = visibleCount,
                 Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
                 AuthoredOrder = authoredOrder,
+                Restocking = (byte)(count < 0 ? 1 : 0),
             });
         }
 

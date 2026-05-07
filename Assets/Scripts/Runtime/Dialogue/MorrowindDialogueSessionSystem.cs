@@ -123,6 +123,9 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (action == MorrowindDialogueResponseAction.Goodbye)
             {
+                if (session.ChoiceActive != 0)
+                    return;
+
                 RuntimeShellStateUtility.CloseDialogue(ref shell);
                 session = CreateInactiveSession();
                 lines.Clear();
@@ -268,7 +271,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
                 bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
                 MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
-                if (closeDialogue)
+                if (ShouldCloseAfterResult(closeDialogue, in session))
                     CloseDialogue(ref shell, ref session, lines, choices);
                 return true;
             }
@@ -354,7 +357,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
             bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
             MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
-            if (closeDialogue)
+            if (ShouldCloseAfterResult(closeDialogue, in session))
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 
@@ -456,7 +459,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             FixedString512Bytes response = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.Response);
             bool closeDialogue = MorrowindDialogueResultScriptUtility.ExecuteSupported(ref contentBlob, systemState.EntityManager, activeExplicitRefs, ref dialogueState, ref questState, time, knownTopics, topicEntries, factionReactionOverrides, scriptStartRequests, refStateRequests, transformRequests, jailRequests, movementFlagRequests, placeAtRequests, castRequests, actorSpellRequests, shellMessageBoxRequests, globalMapRevealRequests, forceGreetingRequests, playerReputationRequests, playerAttributeRequests, playerSkillRequests, playerFactionRequests, actorFactionRequests, questStates, questEntries, choices, info.ResultScript.ToString(), ref shell, ref session);
             MorrowindDialogueUtility.AddTopicsFromResponseBurst(ref contentBlob, ref worldCells, knownTopics, response, systemState.EntityManager, session.SpeakerEntity, session.SpeakerActor, ref filterQueryContext);
-            if (closeDialogue)
+            if (session.Goodbye != 0 || ShouldCloseAfterResult(closeDialogue, in session))
                 CloseDialogue(ref shell, ref session, lines, choices);
         }
 
@@ -477,6 +480,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             lines.Clear();
             choices.Clear();
         }
+
+        static bool ShouldCloseAfterResult(bool closeDialogue, in MorrowindDialogueSession session)
+            => closeDialogue && session.ChoiceActive == 0;
 
         static BlobAssetReference<RuntimeWorldCellBlob> RequireWorldCellBlob(EntityQuery query)
         {

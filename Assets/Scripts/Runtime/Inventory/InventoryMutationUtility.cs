@@ -177,6 +177,7 @@ namespace VVardenfell.Runtime.Inventory
                 if (inventory[i].Content.Kind != content.Kind
                     || inventory[i].Content.HandleValue != content.HandleValue
                     || !inventory[i].SoulId.IsEmpty
+                    || inventory[i].Restocking != 0
                     || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
                     continue;

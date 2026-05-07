@@ -19,6 +19,7 @@ namespace VVardenfell.Runtime.AI
         Escort = 2,
         Follow = 3,
         Activate = 4,
+        Pursue = 5,
     }
 
     public enum ActorAiPlannerStatus : byte
@@ -480,10 +481,16 @@ namespace VVardenfell.Runtime.AI
             if (hasPendingRequest ||
                 awaitingResult ||
                 traversalState.ActivePathRequestId > 0 ||
-                traversalState.Status == (byte)PathGridTraversalStatus.RequestingPath ||
-                traversalState.Status == (byte)PathGridTraversalStatus.Traversing)
+                traversalState.Status == (byte)PathGridTraversalStatus.RequestingPath)
             {
                 aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
+                return;
+            }
+
+            if (traversalState.Status == (byte)PathGridTraversalStatus.Traversing)
+            {
+                if (!TryUpdateActivePursue(actorPosition, anchor.PathGridIndex, packages, ref hasPendingRequest, ref aiState, ref traversalState, ref traversalRequest))
+                    aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
                 return;
             }
 
@@ -530,6 +537,10 @@ namespace VVardenfell.Runtime.AI
             else if (package.Type == (byte)ActorAiRuntimePackageType.Follow)
             {
                 scheduled = TryScheduleFollow(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
+            }
+            else if (package.Type == (byte)ActorAiRuntimePackageType.Pursue)
+            {
+                scheduled = TrySchedulePursue(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
             }
             else if (package.Type == (byte)ActorAiRuntimePackageType.Activate)
             {
@@ -680,6 +691,97 @@ namespace VVardenfell.Runtime.AI
             return true;
         }
 
+        bool TrySchedulePursue(
+            in ActorAiPackageRuntime package,
+            int startNode,
+            float3 actorPosition,
+            ref ActorAiState aiState,
+            ref PathGridTraversalPendingRequest traversalRequest,
+            out bool waiting)
+        {
+            waiting = false;
+            if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
+            {
+                waiting = true;
+                return false;
+            }
+
+            float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            float stopDistance = math.max(0.5f, package.FollowDistance);
+            float distanceSq = math.lengthsq(FlatDelta(targetPosition, actorPosition));
+            if (distanceSq <= stopDistance * stopDistance)
+            {
+                waiting = true;
+                return false;
+            }
+
+            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
+            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
+            {
+                waiting = true;
+                return false;
+            }
+
+            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, run: true, targetPosition, useFinalTargetPosition: true);
+            aiState.GoalNodeIndex = goalNode;
+            return true;
+        }
+
+        bool TryUpdateActivePursue(
+            float3 actorPosition,
+            int anchorPathGridIndex,
+            DynamicBuffer<ActorAiPackageRuntime> packages,
+            ref bool hasPendingRequest,
+            ref ActorAiState aiState,
+            ref PathGridTraversalState traversalState,
+            ref PathGridTraversalPendingRequest traversalRequest)
+        {
+            if ((uint)aiState.CurrentPackageIndex >= (uint)packages.Length)
+                return false;
+
+            var package = packages[aiState.CurrentPackageIndex];
+            if (package.Type != (byte)ActorAiRuntimePackageType.Pursue)
+                return false;
+
+            if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
+                return false;
+
+            float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            traversalState.FinalTargetPosition = targetPosition;
+            traversalState.UseFinalTargetPosition = 1;
+
+            float stopDistance = math.max(0.5f, package.FollowDistance);
+            if (math.lengthsq(FlatDelta(targetPosition, actorPosition)) <= stopDistance * stopDistance)
+                return false;
+
+            if (!TryResolveNearestNode(anchorPathGridIndex, actorPosition, out int startNode))
+                return false;
+
+            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
+            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
+                return false;
+
+            if (goalNode == traversalState.LastGoalNodeIndex)
+            {
+                aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
+                return false;
+            }
+
+            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, run: true, targetPosition, useFinalTargetPosition: true);
+            traversalState.Status = (byte)PathGridTraversalStatus.Idle;
+            traversalState.ActivePathRequestId = 0;
+            traversalState.CurrentNodeOffset = 0;
+            traversalState.PathNodeCount = 0;
+            traversalState.Run = 1;
+            traversalState.FinalTargetPosition = targetPosition;
+            traversalState.UseFinalTargetPosition = 1;
+            aiState.CurrentNodeIndex = startNode;
+            aiState.GoalNodeIndex = goalNode;
+            aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
+            hasPendingRequest = true;
+            return true;
+        }
+
         bool TryScheduleActivate(
             in ActorAiPackageRuntime package,
             int startNode,
@@ -816,16 +918,25 @@ namespace VVardenfell.Runtime.AI
                 aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
         }
 
-        void WriteTraversalRequest(int startNode, int goalNode, byte allowPartial, ref PathGridTraversalPendingRequest traversalRequest, bool run = false)
+        void WriteTraversalRequest(
+            int startNode,
+            int goalNode,
+            byte allowPartial,
+            ref PathGridTraversalPendingRequest traversalRequest,
+            bool run = false,
+            float3 finalTargetPosition = default,
+            bool useFinalTargetPosition = false)
         {
             traversalRequest = new PathGridTraversalPendingRequest
             {
                 StartNodeIndex = startNode,
                 GoalNodeIndex = goalNode,
+                FinalTargetPosition = finalTargetPosition,
                 AllowPartial = allowPartial,
                 MaxFineIterations = 4096,
                 MaxAbstractIterations = 4096,
                 Run = run ? (byte)1 : (byte)0,
+                UseFinalTargetPosition = useFinalTargetPosition ? (byte)1 : (byte)0,
             };
         }
 

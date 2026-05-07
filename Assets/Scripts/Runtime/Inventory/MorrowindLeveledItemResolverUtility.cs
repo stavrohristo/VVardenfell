@@ -123,6 +123,8 @@ namespace VVardenfell.Runtime.Inventory
                 ? absoluteCount
                 : 1;
             int resultCount = iterations == 1 ? absoluteCount : 1;
+            if (count < 0)
+                resultCount = -resultCount;
 
             for (int i = 0; i < iterations; i++)
             {

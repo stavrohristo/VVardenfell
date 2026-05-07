@@ -316,6 +316,17 @@ namespace VVardenfell.Runtime.Streaming
 
             ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
 
+            using (var entities = RuntimeWorldCellBlobReferenceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var reference = em.GetComponentData<RuntimeWorldCellBlobReference>(entities[i]);
+                    if (reference.Blob.IsCreated)
+                        reference.Blob.Dispose();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
             using (var entities = MorrowindScriptRuntimeCatalogQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
                 for (int i = 0; i < entities.Length; i++)
@@ -433,6 +444,16 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindScriptRuntimeCatalog>());
+        }
+
+        static class RuntimeWorldCellBlobReferenceQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
         }
 
         static class LoadQueueQueryCache

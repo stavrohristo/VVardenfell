@@ -9,8 +9,11 @@ namespace VVardenfell.Runtime.Shell
     [UpdateAfter(typeof(SaveLoadBrowserActionSystem))]
     public partial struct RuntimeShellActionSystem : ISystem
     {
+        EntityQuery _dialogueSessionQuery;
+
         public void OnCreate(ref SystemState systemState)
         {
+            _dialogueSessionQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDialogueSession>());
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<RuntimeShellActionRequest>();
             systemState.RequireForUpdate<SaveLoadBrowserState>();
@@ -96,14 +99,17 @@ namespace VVardenfell.Runtime.Shell
             if (request.CloseDialogue != 0)
             {
                 request.CloseDialogue = 0;
-                RuntimeShellStateUtility.CloseDialogue(ref state);
-                if (SystemAPI.TryGetSingletonRW<MorrowindDialogueSession>(out var sessionRef))
-                    sessionRef.ValueRW = new MorrowindDialogueSession
-                    {
-                        SelectedTopicDialogueIndex = -1,
-                        ChoiceDialogueIndex = -1,
-                        LastInfoIndex = -1,
-                    };
+                if (CanCloseDialogue(ref systemState, _dialogueSessionQuery))
+                {
+                    RuntimeShellStateUtility.CloseDialogue(ref state);
+                    if (SystemAPI.TryGetSingletonRW<MorrowindDialogueSession>(out var sessionRef))
+                        sessionRef.ValueRW = new MorrowindDialogueSession
+                        {
+                            SelectedTopicDialogueIndex = -1,
+                            ChoiceDialogueIndex = -1,
+                            LastInfoIndex = -1,
+                        };
+                }
             }
 
             if (request.CloseMovie != 0)
@@ -169,6 +175,15 @@ namespace VVardenfell.Runtime.Shell
             }
 
             RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
+        }
+
+        static bool CanCloseDialogue(ref SystemState systemState, EntityQuery dialogueSessionQuery)
+        {
+            if (dialogueSessionQuery.IsEmptyIgnoreFilter)
+                return true;
+
+            var session = systemState.EntityManager.GetComponentData<MorrowindDialogueSession>(dialogueSessionQuery.GetSingletonEntity());
+            return session.ChoiceActive == 0;
         }
     }
 }

@@ -184,6 +184,10 @@ namespace VVardenfell.Runtime.Streaming
                     yield return null;
                 }
             }
+            if (installed != totalPreloadedCells)
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] installed {installed} preloaded cells, expected {totalPreloadedCells}.");
+
+            WorldResources.MarkPreloadedCellsComplete();
             progress?.CompleteStage("Preloaded cells installed");
         }
 

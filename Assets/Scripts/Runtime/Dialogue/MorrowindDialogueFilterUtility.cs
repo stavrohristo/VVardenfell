@@ -392,10 +392,14 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         static int ResolveBaseDisposition(EntityManager entityManager, Entity speakerEntity, ref RuntimeActorDefBlob actor)
         {
-            if (entityManager.Exists(speakerEntity) && entityManager.HasComponent<ActorDispositionState>(speakerEntity))
-                return entityManager.GetComponentData<ActorDispositionState>(speakerEntity).BaseDisposition;
+            int modifier = 0;
+            if (entityManager.Exists(speakerEntity) && entityManager.HasComponent<ActorCrimeState>(speakerEntity))
+                modifier = entityManager.GetComponentData<ActorCrimeState>(speakerEntity).CrimeDispositionModifier;
 
-            return actor.Disposition;
+            if (entityManager.Exists(speakerEntity) && entityManager.HasComponent<ActorDispositionState>(speakerEntity))
+                return Math.Clamp(entityManager.GetComponentData<ActorDispositionState>(speakerEntity).BaseDisposition + modifier, 0, 100);
+
+            return Math.Clamp(actor.Disposition + modifier, 0, 100);
         }
 
         static bool MatchesPlayerFactionAndRank(

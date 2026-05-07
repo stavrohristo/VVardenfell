@@ -48,6 +48,7 @@ namespace VVardenfell.Runtime.Inventory
                 if (!Matches(entry.Content, content)
                     || !entry.SoulId.Equals(soulId)
                     || entry.SoulActorHandleValue != soulActorHandleValue
+                    || entry.Restocking != 0
                     || !InventoryConditionUtility.CanStackCondition(content, entry.Condition, condition))
                 {
                     continue;

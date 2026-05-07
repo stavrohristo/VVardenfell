@@ -32,7 +32,7 @@ namespace VVardenfell.Runtime.Physics
     internal static class DeferredPhysicsQueryResolveUtility
     {
         const float MinUsableHitFraction = 0.001f;
-        const uint MaxRetainedResultAgeTicks = 8u;
+        const uint MaxRetainedResultAgeTicks = DeferredPhysicsQueryUtility.FrameMaxResultAgeTicks;
 
         static readonly ProfilerMarker k_ResolveQueries = new("VV.Physics.DeferredQuery.Resolve");
         static readonly ProfilerMarker k_PruneResults = new("VV.Physics.DeferredQuery.PruneResults");
