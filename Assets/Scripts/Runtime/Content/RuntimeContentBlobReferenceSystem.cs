@@ -26,12 +26,8 @@ namespace VVardenfell.Runtime.Content
 
         public void OnDestroy(ref SystemState systemState)
         {
-            if (!SystemAPI.HasSingleton<RuntimeContentBlobReference>())
-                return;
-
-            var reference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
-            if (reference.Blob.IsCreated)
-                reference.Blob.Dispose();
+            // RuntimeContentBlobReference is a non-owning ECS handle to
+            // WorldResources.Cache.ContentBlob. WorldResources.Reset owns disposal.
         }
     }
 }

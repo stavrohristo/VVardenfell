@@ -375,6 +375,7 @@ namespace VVardenfell.Runtime.Streaming
             ActorEntitiesGraphicsRenderer?.Dispose();
             ActorEntitiesGraphicsRenderer = null;
             Cache?.DisposeTextureResources();
+            Cache?.DisposeContentResources();
             if (RefBaseArrays != null)
             {
                 for (int i = 0; i < RefBaseArrays.Length; i++)

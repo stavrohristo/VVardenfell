@@ -97,6 +97,13 @@ namespace VVardenfell.Runtime.Cache
             _refTextureBuckets = null;
         }
 
+        public void DisposeContentResources()
+        {
+            if (ContentBlob.IsCreated)
+                ContentBlob.Dispose();
+            ContentBlob = default;
+        }
+
         public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
         {
             Task<ActorAnimationCatalogData> actorAnimationCatalogTask = null;

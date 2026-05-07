@@ -316,6 +316,23 @@ namespace VVardenfell.Runtime.Streaming
 
             ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
 
+            using (var entities = RuntimeContentBlobReferenceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                    em.DestroyEntity(entities[i]);
+            }
+
+            using (var entities = RuntimeModelPrefabBlobReferenceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var reference = em.GetComponentData<RuntimeModelPrefabBlobReference>(entities[i]);
+                    if (reference.Blob.IsCreated)
+                        reference.Blob.Dispose();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
             using (var entities = RuntimeWorldCellBlobReferenceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
                 for (int i = 0; i < entities.Length; i++)
@@ -454,6 +471,26 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+        }
+
+        static class RuntimeContentBlobReferenceQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeContentBlobReference>());
+        }
+
+        static class RuntimeModelPrefabBlobReferenceQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeModelPrefabBlobReference>());
         }
 
         static class LoadQueueQueryCache
