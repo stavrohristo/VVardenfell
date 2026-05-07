@@ -78,6 +78,8 @@ namespace VVardenfell.Runtime.Animation
             RemoveComponentIfPresent<ActorSkeleton>(ref systemState, ref ecb, actor);
             RemoveComponentIfPresent<ActorAnimationState>(ref systemState, ref ecb, actor);
             RemoveComponentIfPresent<ActorJumpAnimationState>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorAnimationMotionState>(ref systemState, ref ecb, actor);
+            RemoveComponentIfPresent<ActorHeadAnimationState>(ref systemState, ref ecb, actor);
             RemoveComponentIfPresent<ActorGpuAnimationState>(ref systemState, ref ecb, actor);
             RemoveComponentIfPresent<ActorLocalBounds>(ref systemState, ref ecb, actor);
 

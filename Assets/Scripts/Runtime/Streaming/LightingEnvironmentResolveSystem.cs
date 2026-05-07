@@ -218,8 +218,11 @@ namespace VVardenfell.Runtime.Streaming
             float clampedDensity = math.saturate(density);
             if (isInterior)
             {
-                fogFar = math.lerp(160f, 32f, clampedDensity);
-                fogNear = fogFar * 0.4f;
+                const float interiorViewDistanceMeters = 160f;
+                fogFar = interiorViewDistanceMeters;
+                fogNear = clampedDensity > 0f
+                    ? interiorViewDistanceMeters * (1f - clampedDensity)
+                    : interiorViewDistanceMeters;
                 return;
             }
 

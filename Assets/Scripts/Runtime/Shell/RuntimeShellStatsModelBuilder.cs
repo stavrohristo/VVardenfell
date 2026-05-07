@@ -17,7 +17,7 @@ namespace VVardenfell.Runtime.Shell
             in StatsWindowState state,
             in PlayerPresentationStats playerStats)
         {
-            var attributes = BuildAttributeRows(playerStats);
+            var attributes = BuildAttributeRows(ref contentBlob, playerStats);
             BuildSkillRows(ref contentBlob, playerStats, out var majorSkills, out var minorSkills, out var miscSkills);
 
             return new StatsWindowViewModel
@@ -49,7 +49,7 @@ namespace VVardenfell.Runtime.Shell
             };
         }
 
-        static StatsWindowAttributeRow[] BuildAttributeRows(in PlayerPresentationStats playerStats)
+        static StatsWindowAttributeRow[] BuildAttributeRows(ref RuntimeContentBlob contentBlob, in PlayerPresentationStats playerStats)
         {
             var rows = new StatsWindowAttributeRow[RuntimeContentMetadataResolver.AttributeCount];
             for (int i = 0; i < rows.Length; i++)
@@ -59,6 +59,8 @@ namespace VVardenfell.Runtime.Shell
                 {
                     Name = name,
                     Value = ResolveAttributeValue(i, playerStats),
+                    AttributeIndex = i,
+                    TooltipText = BuildAttributeTooltip(ref contentBlob, i),
                 };
             }
 
@@ -80,8 +82,8 @@ namespace VVardenfell.Runtime.Shell
                 && RuntimeContentMetadataResolver.TryResolveClassHandle(ref contentBlob, playerStats.Identity.ClassName, out var classHandle))
             {
                 ref RuntimeClassDefBlob classDef = ref RuntimeContentBlobUtility.GetClass(ref contentBlob, classHandle);
-                majorSkills = BuildSkillRows(ref contentBlob.ClassMajorSkills, classDef.FirstMajorSkillIndex, classDef.MajorSkillCount, playerStats, assigned);
-                minorSkills = BuildSkillRows(ref contentBlob.ClassMinorSkills, classDef.FirstMinorSkillIndex, classDef.MinorSkillCount, playerStats, assigned);
+                majorSkills = BuildSkillRows(ref contentBlob, ref contentBlob.ClassMajorSkills, classDef.FirstMajorSkillIndex, classDef.MajorSkillCount, playerStats, assigned);
+                minorSkills = BuildSkillRows(ref contentBlob, ref contentBlob.ClassMinorSkills, classDef.FirstMinorSkillIndex, classDef.MinorSkillCount, playerStats, assigned);
             }
 
             int miscCount = 0;
@@ -98,11 +100,12 @@ namespace VVardenfell.Runtime.Shell
                 if (assigned[i])
                     continue;
 
-                miscSkills[write++] = BuildSkillRow(i, playerStats);
+                miscSkills[write++] = BuildSkillRow(ref contentBlob, i, playerStats);
             }
         }
 
         static StatsWindowSkillRow[] BuildSkillRows(
+            ref RuntimeContentBlob contentBlob,
             ref BlobArray<int> skillIndices,
             int first,
             int count,
@@ -122,7 +125,7 @@ namespace VVardenfell.Runtime.Shell
                     continue;
 
                 assigned[skillIndex] = true;
-                rows[write++] = BuildSkillRow(skillIndex, playerStats);
+                rows[write++] = BuildSkillRow(ref contentBlob, skillIndex, playerStats);
             }
 
             if (write == rows.Length)
@@ -132,14 +135,62 @@ namespace VVardenfell.Runtime.Shell
             return rows;
         }
 
-        static StatsWindowSkillRow BuildSkillRow(int skillIndex, in PlayerPresentationStats playerStats)
+        static StatsWindowSkillRow BuildSkillRow(ref RuntimeContentBlob contentBlob, int skillIndex, in PlayerPresentationStats playerStats)
         {
             string name = RuntimeContentMetadataResolver.ResolveSkillName(skillIndex);
             return new StatsWindowSkillRow
             {
                 Name = string.IsNullOrWhiteSpace(name) ? "--" : name,
                 Value = ResolveSkillValue(skillIndex, playerStats),
+                SkillIndex = skillIndex,
+                TooltipText = BuildSkillTooltip(ref contentBlob, skillIndex),
             };
+        }
+
+        static string BuildAttributeTooltip(ref RuntimeContentBlob contentBlob, int attributeIndex)
+        {
+            string name = RuntimeContentMetadataResolver.ResolveAttributeName(attributeIndex);
+            return JoinTooltip(name);
+        }
+
+        static string BuildSkillTooltip(ref RuntimeContentBlob contentBlob, int skillIndex)
+        {
+            string name = RuntimeContentMetadataResolver.ResolveSkillName(skillIndex);
+            string description = string.Empty;
+            string governingAttribute = string.Empty;
+            string icon = string.Empty;
+            for (int i = 0; i < contentBlob.Skills.Length; i++)
+            {
+                ref RuntimeGenericRecordDefBlob skill = ref contentBlob.Skills[i];
+                if (skill.Int0 != skillIndex)
+                    continue;
+
+                string recordName = skill.Name.ToString();
+                if (!string.IsNullOrWhiteSpace(recordName))
+                    name = recordName.Trim();
+                description = skill.Text.ToString();
+                governingAttribute = RuntimeContentMetadataResolver.ResolveAttributeName(skill.Int1);
+                icon = skill.Icon.ToString();
+                break;
+            }
+
+            string attributeLine = string.IsNullOrWhiteSpace(governingAttribute) ? null : $"Governing Attribute: {governingAttribute}";
+            return JoinTooltip(name, description, attributeLine, string.IsNullOrWhiteSpace(icon) ? null : icon);
+        }
+
+        static string JoinTooltip(params string[] lines)
+        {
+            var builder = new System.Text.StringBuilder();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i]))
+                    continue;
+                if (builder.Length > 0)
+                    builder.Append('\n');
+                builder.Append(lines[i].Trim());
+            }
+
+            return builder.ToString();
         }
 
         static StatsWindowFactionRow[] BuildFactionRows(

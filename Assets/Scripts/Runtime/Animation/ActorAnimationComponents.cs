@@ -136,6 +136,15 @@ namespace VVardenfell.Runtime.Animation
         public byte Phase;
     }
 
+    public struct ActorAnimationMotionState : IComponentData
+    {
+        public float3 PreviousPosition;
+        public float2 LocalMove;
+        public float3 LastVelocity;
+        public byte Initialized;
+        public byte Moving;
+    }
+
     public enum ActorWeaponAnimationPhase : byte
     {
         Hidden = 0,
@@ -185,6 +194,8 @@ namespace VVardenfell.Runtime.Animation
         public float Weight;
         public int Priority;
         public ActorAnimationBlendMask Mask;
+        public byte SuppressWhenMoving;
+        public byte AllowMovingLowerBodyOverride;
     }
 
     public struct ActorAnimationEvent : IBufferElementData
@@ -194,6 +205,19 @@ namespace VVardenfell.Runtime.Animation
         public FixedString128Bytes Text;
         public float Time;
         public ActorAnimationTextMarkerKind Kind;
+    }
+
+    public struct ActorHeadAnimationState : IComponentData
+    {
+        public float TalkStart;
+        public float TalkStop;
+        public float BlinkStart;
+        public float BlinkStop;
+        public float CurrentTime;
+        public float BlinkTimer;
+        public uint RandomState;
+        public byte HasHeadMorph;
+        public byte Saying;
     }
 
     public static class ActorAnimationPlaybackUtility

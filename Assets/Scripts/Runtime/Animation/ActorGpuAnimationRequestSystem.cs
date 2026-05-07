@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -32,6 +33,7 @@ namespace VVardenfell.Runtime.Animation
             }
 
             state.Dependency = new BuildGpuAnimationRequestsWithOverlaysJob().ScheduleParallel(state.Dependency);
+            state.Dependency = new BuildGpuAnimationRequestsWithOverlaysWithoutMovementJob().ScheduleParallel(state.Dependency);
             state.Dependency = new BuildGpuAnimationRequestsWithoutOverlaysJob().ScheduleParallel(state.Dependency);
         }
 
@@ -56,11 +58,29 @@ namespace VVardenfell.Runtime.Animation
         {
             void Execute(
                 in ActorAnimationState animation,
+                in MorrowindMovementState movementState,
+                in ActorAnimationMotionState motionState,
                 ref ActorGpuAnimationState gpuState,
                 DynamicBuffer<ActorAnimationOverlayState> overlays,
                 DynamicBuffer<ActorGpuAnimationRequest> requests)
             {
-                BuildRequests(animation, overlays, ref gpuState, requests);
+                BuildRequests(animation, overlays, ref gpuState, requests, IsMoving(movementState, motionState));
+            }
+        }
+
+        [BurstCompile]
+        [WithAll(typeof(ActorPresentation))]
+        [WithNone(typeof(MorrowindMovementState))]
+        partial struct BuildGpuAnimationRequestsWithOverlaysWithoutMovementJob : IJobEntity
+        {
+            void Execute(
+                in ActorAnimationState animation,
+                in ActorAnimationMotionState motionState,
+                ref ActorGpuAnimationState gpuState,
+                DynamicBuffer<ActorAnimationOverlayState> overlays,
+                DynamicBuffer<ActorGpuAnimationRequest> requests)
+            {
+                BuildRequests(animation, overlays, ref gpuState, requests, motionState.Moving != 0);
             }
         }
 
@@ -88,7 +108,8 @@ namespace VVardenfell.Runtime.Animation
             in ActorAnimationState animation,
             DynamicBuffer<ActorAnimationOverlayState> overlays,
             ref ActorGpuAnimationState gpuState,
-            DynamicBuffer<ActorGpuAnimationRequest> requests)
+            DynamicBuffer<ActorGpuAnimationRequest> requests,
+            bool moving)
         {
             requests.Clear();
             gpuState.LayerOffset = 0;
@@ -99,10 +120,10 @@ namespace VVardenfell.Runtime.Animation
 
             AddMainPlaybackRequests(requests, animation);
 
-            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.LowerBody);
-            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.Torso);
-            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.LeftArm);
-            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.RightArm);
+            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.LowerBody, moving);
+            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.Torso, moving);
+            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.LeftArm, moving);
+            AddBestOverlayRequest(requests, overlays, ActorAnimationBlendMask.RightArm, moving);
         }
 
         static void AddMainPlaybackRequests(
@@ -160,9 +181,10 @@ namespace VVardenfell.Runtime.Animation
         static void AddBestOverlayRequest(
             DynamicBuffer<ActorGpuAnimationRequest> requests,
             DynamicBuffer<ActorAnimationOverlayState> overlays,
-            ActorAnimationBlendMask mask)
+            ActorAnimationBlendMask mask,
+            bool moving)
         {
-            int selectedIndex = SelectBestOverlay(overlays, mask);
+            int selectedIndex = SelectBestOverlay(overlays, mask, moving);
             if (selectedIndex < 0)
                 return;
 
@@ -179,7 +201,8 @@ namespace VVardenfell.Runtime.Animation
 
         static int SelectBestOverlay(
             DynamicBuffer<ActorAnimationOverlayState> overlays,
-            ActorAnimationBlendMask mask)
+            ActorAnimationBlendMask mask,
+            bool moving)
         {
             int bestIndex = -1;
             int bestPriority = int.MinValue;
@@ -192,6 +215,10 @@ namespace VVardenfell.Runtime.Animation
                 {
                     continue;
                 }
+                if (moving && overlay.SuppressWhenMoving != 0)
+                    continue;
+                if (moving && mask == ActorAnimationBlendMask.LowerBody && overlay.AllowMovingLowerBodyOverride == 0)
+                    continue;
 
                 if (overlay.Priority < bestPriority)
                     continue;
@@ -202,6 +229,9 @@ namespace VVardenfell.Runtime.Animation
 
             return bestIndex;
         }
+
+        static bool IsMoving(in MorrowindMovementState movementState, in ActorAnimationMotionState motionState)
+            => motionState.Moving != 0 || math.lengthsq(movementState.LocalMove) > 0.0001f;
 
         static void AddPlaybackRequest(
             DynamicBuffer<ActorGpuAnimationRequest> requests,

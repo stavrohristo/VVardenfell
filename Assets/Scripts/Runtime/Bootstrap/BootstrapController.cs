@@ -132,7 +132,6 @@ namespace VVardenfell.Runtime.Bootstrap
             DontDestroyOnLoad(gameObject);
             BootstrapPresentationGate.Reset();
             BootstrapPresentationAudioState.Reset();
-            RuntimeShellPresentationGate.Reset();
             _playerMovement?.Validate();
         }
 

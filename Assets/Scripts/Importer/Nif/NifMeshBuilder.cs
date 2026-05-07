@@ -78,13 +78,14 @@ namespace VVardenfell.Importer.Nif
         {
             bool debug = !string.IsNullOrEmpty(DebugMeshPath)
                          && nif.Path.IndexOf(DebugMeshPath, System.StringComparison.OrdinalIgnoreCase) >= 0;
+            bool hasEditorMarkers = HasRootEditorMarker(nif);
             var result = new List<RawBuiltMesh>();
             foreach (int rootIndex in nif.Roots)
             {
                 if (rootIndex < 0 || rootIndex >= nif.Records.Length)
                     continue;
                 if (nif.Records[rootIndex] is NiAVObject av)
-                    Walk(nif, av, Matrix4x4.identity, result);
+                    Walk(nif, av, Matrix4x4.identity, hasEditorMarkers, result);
             }
 
             if (debug)
@@ -113,7 +114,7 @@ namespace VVardenfell.Importer.Nif
             }
         }
 
-        private static void Walk(NifFile nif, NiAVObject obj, Matrix4x4 parent, List<RawBuiltMesh> result)
+        private static void Walk(NifFile nif, NiAVObject obj, Matrix4x4 parent, bool hasEditorMarkers, List<RawBuiltMesh> result)
         {
             if ((obj.Flags & 0x0001) != 0)
                 return;
@@ -129,9 +130,14 @@ namespace VVardenfell.Importer.Nif
 
             if (obj is RootCollisionNode)
                 return;
+            if (obj is NiCollisionSwitch && (obj.Flags & 0x0020) == 0)
+                return;
 
             if (obj is NiGeometry geometry && TryResolveRenderableGeometry(nif, geometry, out _))
             {
+                if (ShouldSkipMorrowindRenderGeometry(geometry.Name, hasEditorMarkers))
+                    return;
+
                 FindAlpha(nif, geometry, out ushort alphaFlags, out byte alphaThreshold);
                 var built = BuildRawMesh(nif, geometry, world, alphaFlags, alphaThreshold);
                 if (built.HasValue)
@@ -146,7 +152,7 @@ namespace VVardenfell.Importer.Nif
                     if (childIdx < 0 || childIdx >= nif.Records.Length)
                         continue;
                     if (nif.Records[childIdx] is NiAVObject child)
-                        Walk(nif, child, world, result);
+                        Walk(nif, child, world, hasEditorMarkers, result);
                 }
             }
         }
@@ -282,6 +288,49 @@ namespace VVardenfell.Importer.Nif
             return data != null
                 && data.Vertices != null
                 && data.NumVertices > 0;
+        }
+
+        private static bool ShouldSkipMorrowindRenderGeometry(string name, bool hasEditorMarkers)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            string trimmed = name.TrimStart();
+            return (hasEditorMarkers && trimmed.StartsWith("tri editormarker", System.StringComparison.OrdinalIgnoreCase))
+                || trimmed.StartsWith("shadow", System.StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("tri shadow", System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasRootEditorMarker(NifFile nif)
+        {
+            for (int i = 0; i < nif.Roots.Length; i++)
+            {
+                int rootIndex = nif.Roots[i];
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
+                if (nif.Records[rootIndex] is NiObjectNET root && HasStringExtra(nif, root, "MRK"))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasStringExtra(NifFile nif, NiObjectNET obj, string value)
+        {
+            int extraIndex = obj.ExtraData;
+            int guard = 0;
+            while (extraIndex >= 0 && extraIndex < nif.Records.Length && guard++ < nif.Records.Length)
+            {
+                if (nif.Records[extraIndex] is NiStringExtraData stringExtra
+                    && string.Equals(stringExtra.Data, value, System.StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                extraIndex = nif.Records[extraIndex] is Extra extra ? extra.NextExtra : -1;
+            }
+
+            return false;
         }
 
         private static Vector2[] ResolveUvSet(NiGeometryData data, int uvSet, int vertexCount)

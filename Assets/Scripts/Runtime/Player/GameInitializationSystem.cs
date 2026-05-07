@@ -7,7 +7,9 @@ using UnityEngine;
 using Collider = Unity.Physics.Collider;
 using CapsuleCollider = Unity.Physics.CapsuleCollider;
 
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
@@ -39,6 +41,9 @@ namespace VVardenfell.Runtime.Player
         public PlayerCharacterComponent PlayerSettings;
         public ActorRuntimeStatSeed PlayerActorStats;
         public ActorIdentitySet PlayerIdentity;
+        public PlayerRaceAppearance PlayerAppearance;
+        public PlayerCustomClass PlayerCustomClass;
+        public CharacterGenerationState PlayerCharacterGeneration;
         public PlayerCrimeState PlayerCrime;
         public float3 PlayerPosition;
         public quaternion PlayerRotation;
@@ -112,7 +117,7 @@ namespace VVardenfell.Runtime.Player
                 _playerQuery);
             if (init.SpawnLocalPlayer == 0)
             {
-                ConfigureStreamingAfterInitialization(ref systemState, em, init);
+                ConfigureStreamingAfterInitialization(ref systemState, em, init, scriptDrivenVanillaStart: false);
                 MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
                 ClearInitializationRequests(ref systemState, hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
                 return;
@@ -133,6 +138,9 @@ namespace VVardenfell.Runtime.Player
                 init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
                 init.PlayerActorStats = payload.ActorStats;
                 init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+                init.PlayerAppearance = payload.PlayerAppearance;
+                init.PlayerCustomClass = payload.PlayerCustomClass;
+                init.PlayerCharacterGeneration = payload.CharacterGeneration;
                 init.PlayerCrime = payload.PlayerCrime;
                 if (payload.PlayerFactions != null)
                     PopulateInitializationFactions(em, initEntity, payload.PlayerFactions);
@@ -156,7 +164,6 @@ namespace VVardenfell.Runtime.Player
                 if (!WorldSaveReplayUtility.TryRestoreContinueSave(systemState.World, em, ref init, out string loadError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] continue load failed. {loadError}");
             }
-
             var standingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.StandingHeight);
             var crouchingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.CrouchingHeight);
             var attributes = init.PlayerActorStats.Attributes;
@@ -201,7 +208,25 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, ActorCrimeState.Default);
             em.AddComponentData(player, new ActorFriendlyHitState());
             em.AddComponentData(player, new ActorBlockState());
-            em.AddComponentData(player, init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            var playerIdentity = init.PlayerIdentity.Level > 0 ? init.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+            em.AddComponentData(player, playerIdentity);
+            em.AddComponentData(player, CreateInitialPlayerAppearance(ref content, init.PlayerAppearance, playerIdentity));
+            em.AddComponentData(player, init.PlayerCustomClass.Active != 0 ? init.PlayerCustomClass : new PlayerCustomClass
+            {
+                Active = 0,
+                FavoredAttribute0 = 0,
+                FavoredAttribute1 = 3,
+                MajorSkill0 = 0,
+                MajorSkill1 = 1,
+                MajorSkill2 = 2,
+                MajorSkill3 = 3,
+                MajorSkill4 = 4,
+                MinorSkill0 = 5,
+                MinorSkill1 = 6,
+                MinorSkill2 = 7,
+                MinorSkill3 = 8,
+                MinorSkill4 = 9,
+            });
             em.AddComponentData(player, init.PlayerCrime);
             PopulatePlayerFactions(ref content, em, initEntity, player);
             var playerSpells = em.AddBuffer<ActorKnownSpell>(player);
@@ -280,10 +305,60 @@ namespace VVardenfell.Runtime.Player
             Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
             cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
 
-            ConfigureStreamingAfterInitialization(ref systemState, em, init);
+            bool vanillaScriptDrivenNewGame = hasNewGameRequest && init.RuntimeMode == (byte)BootstrapRuntimeMode.Vanilla;
+            ConfigureStreamingAfterInitialization(ref systemState, em, init, vanillaScriptDrivenNewGame);
+            RestoreCharacterGenerationState(em, init);
+            if (vanillaScriptDrivenNewGame)
+                PublishVanillaNewGameStartupRequest(em);
 
             MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
             ClearInitializationRequests(ref systemState, hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+        }
+
+        static PlayerRaceAppearance CreateInitialPlayerAppearance(
+            ref RuntimeContentBlob content,
+            in PlayerRaceAppearance savedAppearance,
+            in ActorIdentitySet playerIdentity)
+        {
+            var appearance = new PlayerRaceAppearance
+            {
+                RaceId = savedAppearance.RaceId.IsEmpty ? playerIdentity.RaceName : savedAppearance.RaceId,
+                HeadId = savedAppearance.HeadId,
+                HairId = savedAppearance.HairId,
+                Male = savedAppearance.Male == 0 ? (byte)1 : savedAppearance.Male,
+                Dirty = 0,
+            };
+
+            if (appearance.RaceId.IsEmpty)
+                return appearance;
+
+            bool male = appearance.Male != 0;
+            if (appearance.HeadId.IsEmpty)
+                appearance.HeadId = CharacterGenerationUtility.RequireFirstPlayableBodyPartId(ref content, appearance.RaceId, male, ActorBodyPartMeshPart.Head);
+            if (appearance.HairId.IsEmpty)
+                appearance.HairId = CharacterGenerationUtility.RequireFirstPlayableBodyPartId(ref content, appearance.RaceId, male, ActorBodyPartMeshPart.Hair);
+            return appearance;
+        }
+
+        static void RestoreCharacterGenerationState(EntityManager em, in GameInitializationSingleton init)
+        {
+            Entity charGenEntity = WorldStateEntityQueryUtility.GetSingletonEntity<CharacterGenerationState>(em);
+            if (charGenEntity == Entity.Null)
+                return;
+
+            if (init.PlayerCharacterGeneration.Initialized != 0)
+            {
+                var restored = init.PlayerCharacterGeneration;
+                restored.CurrentMenu = (byte)CharacterGenerationMenu.None;
+                em.SetComponentData(charGenEntity, restored);
+            }
+            else
+            {
+                var state = em.GetComponentData<CharacterGenerationState>(charGenEntity);
+                state.Finalized = 0;
+                state.CurrentMenu = (byte)CharacterGenerationMenu.None;
+                em.SetComponentData(charGenEntity, state);
+            }
         }
 
         static void PopulatePlayerFactions(ref RuntimeContentBlob content, EntityManager em, Entity initEntity, Entity player)
@@ -404,12 +479,31 @@ namespace VVardenfell.Runtime.Player
                 equipment.Add(selectedEquipment[i]);
         }
 
-        void ConfigureStreamingAfterInitialization(ref SystemState systemState, EntityManager em, in GameInitializationSingleton init)
+        static void PublishVanillaNewGameStartupRequest(EntityManager em)
+        {
+            Entity existing = WorldStateEntityQueryUtility.GetSingletonEntity<VanillaNewGameStartupPending>(em);
+            if (existing != Entity.Null)
+                return;
+
+            Entity entity = em.CreateEntity();
+            em.SetName(entity, "VVardenfell.VanillaNewGameStartup");
+            em.AddComponentData(entity, new VanillaNewGameStartupPending());
+        }
+
+        void ConfigureStreamingAfterInitialization(
+            ref SystemState systemState,
+            EntityManager em,
+            in GameInitializationSingleton init,
+            bool scriptDrivenVanillaStart)
         {
             Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
             var streamingConfig = em.GetComponentData<StreamingConfig>(streamingEntity);
             streamingConfig.CameraCell = WorldBootstrap.WorldPositionToCell(init.PlayerPosition);
-            if (SystemAPI.HasSingleton<InteriorTransitionState>())
+            if (scriptDrivenVanillaStart)
+            {
+                streamingConfig.ExteriorStreamingPaused = true;
+            }
+            else if (SystemAPI.HasSingleton<InteriorTransitionState>())
             {
                 var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
                 streamingConfig.ExteriorStreamingPaused = transition.InteriorActive != 0;

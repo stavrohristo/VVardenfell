@@ -234,6 +234,7 @@ namespace VVardenfell.Runtime.Combat
                 Weight = 1f,
                 Priority = priority,
                 Mask = ActorAnimationBlendMask.All,
+                AllowMovingLowerBodyOverride = 1,
             });
             aftermath.ValueRW.AnimatedSequence = aftermath.ValueRO.Sequence;
         }

@@ -39,6 +39,10 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
     }
 
+    public struct VanillaNewGameStartupPending : IComponentData
+    {
+    }
+
     public struct MorrowindScriptStartRequest : IBufferElementData
     {
         public MorrowindScriptProgramDefHandle Program;
@@ -151,6 +155,7 @@ namespace VVardenfell.Runtime.Components
     {
         public Entity SourceEntity;
         public uint SourcePlacedRefId;
+        public float Loudness;
     }
 
     public struct MorrowindScriptRefStateRequest : IBufferElementData
@@ -391,6 +396,7 @@ namespace VVardenfell.Runtime.Components
     {
         public Entity SourceEntity;
         public uint SourcePlacedRefId;
+        public float Loudness;
     }
 
     public struct MorrowindScriptActorKnownSpellSnapshot
@@ -440,6 +446,7 @@ namespace VVardenfell.Runtime.Components
         VanityMode = 11,
         ShowRestMenu = 12,
         PlayBink = 13,
+        PlayerLooking = 14,
     }
 
     public struct MorrowindScriptShellRequest : IBufferElementData

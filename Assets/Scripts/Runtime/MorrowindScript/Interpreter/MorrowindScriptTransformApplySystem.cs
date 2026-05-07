@@ -1,5 +1,4 @@
 using System;
-using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -11,21 +10,23 @@ using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Physics;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptRefStateApplySystem))]
-    [BurstCompile]
     public partial struct MorrowindScriptTransformApplySystem : ISystem
     {
         EntityQuery _runtimeQuery;
         EntityQuery _standingActorQuery;
         EntityQuery _mutationQueueQuery;
         EntityQuery _activeExplicitRefLookupQuery;
+        EntityQuery _playerViewQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -41,6 +42,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
             _activeExplicitRefLookupQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActiveExplicitRefLookup>());
+            _playerViewQuery = systemState.GetEntityQuery(
+                ComponentType.ReadWrite<PlayerViewComponent>(),
+                ComponentType.ReadWrite<LocalTransform>(),
+                ComponentType.ReadWrite<LocalToWorld>());
 
             systemState.RequireForUpdate(_runtimeQuery);
             systemState.RequireForUpdate(_mutationQueueQuery);
@@ -49,13 +54,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = _runtimeQuery.GetSingletonEntity();
             var requests = systemState.EntityManager.GetBuffer<MorrowindScriptTransformRequest>(runtimeEntity);
             if (requests.Length == 0)
                 return;
+
+            using var requestSnapshot = requests.ToNativeArray(Allocator.Temp);
+            requests.Clear();
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             var loadedCells = SystemAPI.GetSingleton<LoadedCellsMap>();
@@ -71,9 +78,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 activeInteriorCellHash = interiorTransition.ActiveInteriorCellHash;
             }
 
-            for (int i = 0; i < requests.Length; i++)
+            for (int i = 0; i < requestSnapshot.Length; i++)
             {
-                var request = requests[i];
+                var request = requestSnapshot[i];
                 Entity target = ResolveLiveTarget(ref systemState, request, logicalRefLookup);
                 if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 {
@@ -86,7 +93,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 CombinedCellRenderDecombineUtility.DecombineIfLinked(systemState.EntityManager, target);
                 if (request.Operation == 2)
                 {
-                    ApplyPositionCell(ref systemState, target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
+                    if (systemState.EntityManager.HasComponent<PlayerTag>(target))
+                        ApplyPlayerPositionCell(ref systemState, target, request, ref worldCells);
+                    else
+                        ApplyPositionCell(ref systemState, target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
                     continue;
                 }
 
@@ -134,8 +144,57 @@ namespace VVardenfell.Runtime.MorrowindScript
                     request.Radians);
                 LogicalRefRotationUtility.ApplyDelta(systemState.EntityManager, target, delta);
             }
+        }
 
-            requests.Clear();
+        void ApplyPlayerPositionCell(
+            ref SystemState systemState,
+            Entity playerEntity,
+            in MorrowindScriptTransformRequest request,
+            ref RuntimeWorldCellBlob worldCells)
+        {
+            if (!RuntimeWorldCellBlobUtility.TryGetInteriorCellIndex(ref worldCells, request.InteriorCellHash, out int cellIndex))
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Player PositionCell target interior cell hash 0x{request.InteriorCellHash:X16} is missing from the world cell blob.");
+
+            ref RuntimeWorldCellDefBlob cell = ref RuntimeWorldCellBlobUtility.RequireCell(ref worldCells, cellIndex);
+            FixedString128Bytes cellId = !cell.InteriorCellId.IsEmpty ? cell.InteriorCellId : cell.CellId;
+            if (cellId.IsEmpty)
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Player PositionCell target interior cell 0x{request.InteriorCellHash:X16} has no cell id.");
+
+            Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
+            Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
+            var config = systemState.EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
+            var logicalRefLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
+            var loaded = systemState.EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var transition = systemState.EntityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
+
+            transition.TransitionInProgress = 1;
+            DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
+            WorldSpawner.HideExteriorVisibility(systemState.World, ref loaded);
+            if (!WorldSpawner.TrySpawnInteriorCellByHash(
+                    systemState.World,
+                    request.InteriorCellHash,
+                    float3.zero,
+                    transitionEntity,
+                    ref logicalRefLookup,
+                    out FixedString128Bytes spawnedInteriorCellId))
+            {
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Player PositionCell destination '{cellId}' was not preloaded.");
+            }
+
+            config.ExteriorStreamingPaused = true;
+            transition.InteriorActive = 1;
+            transition.ActiveInteriorCellId = spawnedInteriorCellId.IsEmpty ? cellId : spawnedInteriorCellId;
+            transition.ActiveInteriorCellHash = request.InteriorCellHash;
+            transition.TransitionInProgress = 0;
+
+            quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), math.radians(request.Radians));
+            MovePlayerToDestination(ref systemState, playerEntity, request.Position, rotation);
+
+            systemState.EntityManager.SetComponentData(streamingEntity, config);
+            systemState.EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
+            systemState.EntityManager.SetComponentData(streamingEntity, loaded);
+            systemState.EntityManager.SetComponentData(transitionEntity, transition);
+            RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(systemState.EntityManager);
         }
 
         void ApplyPositionCell(ref SystemState systemState, 
@@ -157,8 +216,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             float3 previousPosition = systemState.EntityManager.HasComponent<LocalTransform>(target)
                 ? systemState.EntityManager.GetComponentData<LocalTransform>(target).Position
                 : request.Position;
-            quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
+            quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), math.radians(request.Radians / 60f));
             MoveEntity(ref systemState, target, request.Position, rotation);
+            ResetAnimationMotion(ref systemState, target, request.Position);
             UpdateInteriorMembership(ref systemState, target, cellId, request.InteriorCellHash);
 
             if (systemState.EntityManager.HasBuffer<LogicalRefChild>(target))
@@ -176,6 +236,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                         var childTransform = systemState.EntityManager.GetComponentData<LocalTransform>(child);
                         childTransform.Position += delta;
                         systemState.EntityManager.SetComponentData(child, childTransform);
+                        ResetAnimationMotion(ref systemState, child, childTransform.Position);
                         if (systemState.EntityManager.HasComponent<LocalToWorld>(child))
                         {
                             systemState.EntityManager.SetComponentData(child, new LocalToWorld
@@ -209,6 +270,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 : request.Position;
             quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), request.Radians);
             MoveEntity(ref systemState, target, request.Position, rotation);
+            ResetAnimationMotion(ref systemState, target, request.Position);
             MoveUnparentedChildrenByDelta(ref systemState, target, request.Position - previousPosition);
 
             bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
@@ -234,6 +296,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             MoveEntity(ref systemState, target, request.Position, transform.Rotation);
+            ResetAnimationMotion(ref systemState, target, request.Position);
             MoveUnparentedChildrenByDelta(ref systemState, target, request.Position - previousPosition);
 
             bool active = IsPositionCellTargetActive(ref systemState, target, loadedCells, interiorActive, activeInteriorCellHash);
@@ -283,6 +346,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             var current = systemState.EntityManager.GetComponentData<LocalTransform>(target);
             float3 delta = initial.Position - current.Position;
             MoveEntity(ref systemState, target, initial.Position, initial.Rotation, initial.Scale);
+            ResetAnimationMotion(ref systemState, target, initial.Position);
             MoveUnparentedChildrenByDelta(ref systemState, target, delta);
             MoveStandingActorsByDelta(ref systemState, target, delta);
 
@@ -308,6 +372,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 var childTransform = systemState.EntityManager.GetComponentData<LocalTransform>(child);
                 childTransform.Position += delta;
                 systemState.EntityManager.SetComponentData(child, childTransform);
+                ResetAnimationMotion(ref systemState, child, childTransform.Position);
                 if (systemState.EntityManager.HasComponent<LocalToWorld>(child))
                 {
                     systemState.EntityManager.SetComponentData(child, new LocalToWorld
@@ -335,11 +400,145 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 var transform = systemState.EntityManager.GetComponentData<LocalTransform>(entities[i]);
                 MoveEntity(ref systemState, entities[i], transform.Position + delta, transform.Rotation);
+                ResetAnimationMotion(ref systemState, entities[i], transform.Position + delta);
             }
+        }
+
+        void MovePlayerToDestination(
+            ref SystemState systemState,
+            Entity playerEntity,
+            float3 destinationPosition,
+            quaternion bodyYawRotation)
+        {
+            if (_playerViewQuery.CalculateEntityCount() != 1)
+                throw new InvalidOperationException("[VVardenfell][MWScript] Player PositionCell requires exactly one player view.");
+
+            Entity viewEntity = _playerViewQuery.GetSingletonEntity();
+            var character = systemState.EntityManager.GetComponentData<PlayerCharacterComponent>(playerEntity);
+            var control = systemState.EntityManager.GetComponentData<PlayerCharacterControl>(playerEntity);
+            var state = systemState.EntityManager.GetComponentData<PlayerCharacterState>(playerEntity);
+            var movementState = systemState.EntityManager.GetComponentData<MorrowindMovementState>(playerEntity);
+            var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(playerEntity);
+
+            playerTransform.Position = destinationPosition;
+            playerTransform.Rotation = bodyYawRotation;
+            systemState.EntityManager.SetComponentData(playerEntity, playerTransform);
+            systemState.EntityManager.SetComponentData(playerEntity, new LocalToWorld
+            {
+                Value = float4x4.TRS(destinationPosition, bodyYawRotation, new float3(playerTransform.Scale)),
+            });
+
+            control.LookDeltaDegrees = float2.zero;
+            control.MoveVectorWorld = float3.zero;
+            control.InteractPressed = false;
+            control.JumpThisFixedTick = false;
+            control.ReadyWeaponTogglePressed = false;
+            control.AttackHeld = false;
+            control.AttackPressed = false;
+            control.AttackReleased = false;
+            control.JumpPressedEvent.Clear();
+            systemState.EntityManager.SetComponentData(playerEntity, control);
+
+            systemState.EntityManager.SetComponentData(playerEntity, default(MorrowindMovementInput));
+
+            movementState.Inertia = float3.zero;
+            movementState.LastVelocity = float3.zero;
+            movementState.LocalMove = float2.zero;
+            movementState.SpeedFactor = 0f;
+            movementState.Flags = 0;
+            movementState.Grounded = true;
+            movementState.SupportKind = (byte)MorrowindSupportKind.FlatGround;
+            movementState.StandingOn = Entity.Null;
+            movementState.GroundNormal = math.up();
+            systemState.EntityManager.SetComponentData(playerEntity, movementState);
+
+            state.WorldVelocity = float3.zero;
+            state.Grounded = true;
+            state.WasGrounded = true;
+            state.GroundedTime = 0.001f;
+            state.AirborneTime = 0f;
+            systemState.EntityManager.SetComponentData(playerEntity, state);
+
+            var view = systemState.EntityManager.GetComponentData<PlayerViewComponent>(viewEntity);
+            float eyeHeight = state.Crouched ? character.CrouchingEyeHeight : character.StandingEyeHeight;
+            view.LocalPitchDegrees = 0f;
+            view.LocalViewRotation = quaternion.identity;
+            view.LocalEyeOffset = new float3(0f, eyeHeight, 0f);
+            systemState.EntityManager.SetComponentData(viewEntity, view);
+            systemState.EntityManager.SetComponentData(viewEntity, LocalTransform.FromPositionRotationScale(
+                view.LocalEyeOffset,
+                quaternion.identity,
+                1f));
+            systemState.EntityManager.SetComponentData(viewEntity, new LocalToWorld
+            {
+                Value = float4x4.TRS(destinationPosition + math.rotate(bodyYawRotation, view.LocalEyeOffset), bodyYawRotation, new float3(1f)),
+            });
+        }
+
+        void DestroyInteriorEntities(ref SystemState systemState, Entity transitionEntity, ref LogicalRefLookup logicalRefLookup)
+        {
+            var spawnedBuffer = systemState.EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
+            if (spawnedBuffer.Length == 0)
+                return;
+
+            var entitiesToDestroy = new NativeArray<Entity>(spawnedBuffer.Length, Allocator.Temp);
+            try
+            {
+                for (int i = 0; i < spawnedBuffer.Length; i++)
+                    entitiesToDestroy[i] = spawnedBuffer[i].Value;
+
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                try
+                {
+                    for (int i = 0; i < entitiesToDestroy.Length; i++)
+                    {
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i])
+                            && systemState.EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
+                        {
+                            LogicalRefDestroyUtility.QueueDestroyLogicalRef(
+                                systemState.EntityManager,
+                                ref ecb,
+                                entitiesToDestroy[i],
+                                ref logicalRefLookup,
+                                preserveRuntimeSpawnRegistration: true);
+                            continue;
+                        }
+
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i]))
+                            ecb.DestroyEntity(entitiesToDestroy[i]);
+                    }
+
+                    ecb.Playback(systemState.EntityManager);
+                }
+                finally
+                {
+                    ecb.Dispose();
+                }
+            }
+            finally
+            {
+                entitiesToDestroy.Dispose();
+            }
+
+            systemState.EntityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity).Clear();
         }
 
         void MoveEntity(ref SystemState systemState, Entity entity, float3 position, quaternion rotation)
             => MoveEntity(ref systemState, entity, position, rotation, float.NaN);
+
+        void ResetAnimationMotion(ref SystemState systemState, Entity entity, float3 position)
+        {
+            if (!systemState.EntityManager.HasComponent<ActorAnimationMotionState>(entity))
+                return;
+
+            var motion = systemState.EntityManager.GetComponentData<ActorAnimationMotionState>(entity);
+            motion.PreviousPosition = position;
+            motion.LocalMove = float2.zero;
+            motion.LastVelocity = float3.zero;
+            motion.Initialized = 1;
+            motion.Moving = 0;
+            systemState.EntityManager.SetComponentData(entity, motion);
+        }
 
         void MoveEntity(ref SystemState systemState, Entity entity, float3 position, quaternion rotation, float scale)
         {

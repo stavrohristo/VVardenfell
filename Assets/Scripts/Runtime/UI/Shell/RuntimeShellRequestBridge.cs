@@ -158,6 +158,91 @@ namespace VVardenfell.Runtime.UI.Shell
                 out error);
         }
 
+        public static bool TryCharacterGenerationAction(
+            CharacterGenerationAction action,
+            CharacterGenerationMenu menu,
+            string id,
+            string text,
+            int int0,
+            int int1,
+            byte byte0,
+            out string error)
+        {
+            return TryMutateRequest<CharacterGenerationRequest>(
+                "Character generation request state",
+                (ref CharacterGenerationRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)action;
+                    request.Menu = (byte)menu;
+                    request.Id = RuntimeFixedStringUtility.ToFixed64OrDefault(id);
+                    request.Text = RuntimeFixedStringUtility.ToFixed512OrDefault(text);
+                    request.Int0 = int0;
+                    request.Int1 = int1;
+                    request.Byte0 = byte0;
+                },
+                out error);
+        }
+
+        public static bool TryCharacterGenerationAction(CharacterGenerationAction action, out string error)
+            => TryCharacterGenerationAction(action, CharacterGenerationMenu.None, null, null, 0, 0, 0, out error);
+
+        public static bool TryBookReaderClose(out string error)
+        {
+            return TryMutateRequest<BookReaderRequest>(
+                "Book reader request state",
+                static (ref BookReaderRequest request) =>
+                {
+                    request.PendingClose = 1;
+                },
+                out error);
+        }
+
+        public static bool TryBookReaderNextPage(out string error)
+        {
+            return TryMutateRequest<BookReaderRequest>(
+                "Book reader request state",
+                static (ref BookReaderRequest request) =>
+                {
+                    request.PendingNextPage = 1;
+                },
+                out error);
+        }
+
+        public static bool TryBookReaderPreviousPage(out string error)
+        {
+            return TryMutateRequest<BookReaderRequest>(
+                "Book reader request state",
+                static (ref BookReaderRequest request) =>
+                {
+                    request.PendingPreviousPage = 1;
+                },
+                out error);
+        }
+
+        public static bool TryBookReaderTake(out string error)
+        {
+            return TryMutateRequest<BookReaderRequest>(
+                "Book reader request state",
+                static (ref BookReaderRequest request) =>
+                {
+                    request.PendingTake = 1;
+                },
+                out error);
+        }
+
+        public static bool TrySetBookReaderScroll(float offset, out string error)
+        {
+            return TryMutateRequest<BookReaderRequest>(
+                "Book reader request state",
+                (ref BookReaderRequest request) =>
+                {
+                    request.PendingScroll = 1;
+                    request.ScrollOffset = offset;
+                },
+                out error);
+        }
+
         public static bool TrySelectDialogueTopic(int dialogueIndex, out string error)
         {
             return TryMutateRequest<MorrowindDialogueResponseRequest>(

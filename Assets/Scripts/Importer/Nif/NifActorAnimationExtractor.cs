@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Importer.Nif
@@ -145,17 +146,36 @@ namespace VVardenfell.Importer.Nif
             NifFile nif,
             ActorSkeletonDef skeleton,
             int skeletonIndex,
-            List<ActorSkinWeightDef> weights)
+            List<ActorSkinWeightDef> weights,
+            List<ActorAnimationKeyDef> keys,
+            List<ActorHeadMorphTargetDef> headMorphTargets,
+            List<ActorHeadMorphVertexDef> headMorphVertices)
         {
             var skinMeshes = new List<ActorSkinMeshDef>();
             var boneLookup = BuildBoneLookup(skeleton);
             var boneRecordLookup = BuildBoneRecordLookup(skeleton);
+            ExtractHeadAnimationWindows(
+                nif,
+                out float talkStart,
+                out float talkStop,
+                out float blinkStart,
+                out float blinkStop);
 
             for (int i = 0; i < nif.Records.Length; i++)
             {
                 if (nif.Records[i] is not NiGeometry geometry
                     || !TryResolveRenderableGeometry(nif, geometry, out var geometryData))
                     continue;
+
+                bool hasMorph = TryExtractHeadMorphPayload(
+                    nif,
+                    geometry,
+                    geometryData,
+                    keys,
+                    headMorphTargets,
+                    headMorphVertices,
+                    out int firstHeadMorphTarget,
+                    out int headMorphTargetCount);
 
                 if (Resolve<NiSkinInstance>(nif, geometry.Skin) is not NiSkinInstance skinInstance
                     || Resolve<NiSkinData>(nif, skinInstance.Data) is not NiSkinData skinData)
@@ -175,9 +195,18 @@ namespace VVardenfell.Importer.Nif
                         BoneSourceRecordIndices = new[] { -1 },
                         BindPoseMatrices = PackMatrix(Matrix4x4.identity),
                         GeometryToSkeletonMatrix = BuildGeometryToSkeletonMatrix(skeleton, geometry.Name),
+                        TalkStart = hasMorph ? talkStart : 0f,
+                        TalkStop = hasMorph ? talkStop : 0f,
+                        BlinkStart = hasMorph ? blinkStart : 0f,
+                        BlinkStop = hasMorph ? blinkStop : 0f,
+                        FirstHeadMorphTargetIndex = hasMorph ? firstHeadMorphTarget : -1,
+                        HeadMorphTargetCount = hasMorph ? headMorphTargetCount : 0,
                     });
                     continue;
                 }
+
+                if (hasMorph)
+                    throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' is skinned; skinned morph targets are not supported.");
 
                 int firstWeight = weights.Count;
                 var sourceBones = skinData.Bones ?? Array.Empty<NiSkinData.BoneInfo>();
@@ -225,6 +254,135 @@ namespace VVardenfell.Importer.Nif
             }
 
             return skinMeshes.ToArray();
+        }
+
+        static bool TryExtractHeadMorphPayload(
+            NifFile nif,
+            NiGeometry geometry,
+            NiGeometryData geometryData,
+            List<ActorAnimationKeyDef> keys,
+            List<ActorHeadMorphTargetDef> headMorphTargets,
+            List<ActorHeadMorphVertexDef> headMorphVertices,
+            out int firstHeadMorphTarget,
+            out int headMorphTargetCount)
+        {
+            firstHeadMorphTarget = -1;
+            headMorphTargetCount = 0;
+
+            if (!TryResolveMorphController(nif, geometry.Controller, out var controller))
+                return false;
+            if (Resolve<NiMorphData>(nif, controller.Data) is not { } morphData)
+                throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' has no NiMorphData.");
+            if (morphData.NumVertices == 0)
+                throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' has zero morph vertices.");
+            int vertexCount = geometryData?.NumVertices ?? 0;
+            if (morphData.NumVertices != vertexCount)
+                throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' vertex count {morphData.NumVertices} does not match geometry vertex count {vertexCount}.");
+
+            var morphs = morphData.Morphs ?? Array.Empty<NiMorphData.Morph>();
+            if (morphs.Length < 2)
+                return false;
+
+            firstHeadMorphTarget = headMorphTargets.Count;
+            for (int i = 0; i < morphs.Length; i++)
+            {
+                var morph = morphs[i];
+                if (morph?.Vertices == null || morph.Vertices.Length != vertexCount)
+                    throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' target {i} has invalid vertex payload.");
+
+                int firstKey = keys.Count;
+                var sourceKeys = morph.Keys?.Keys ?? Array.Empty<NifAnimationKey>();
+                for (int k = 0; k < sourceKeys.Length; k++)
+                {
+                    keys.Add(new ActorAnimationKeyDef
+                    {
+                        Time = sourceKeys[k].Time,
+                        X = sourceKeys[k].Value.x,
+                    });
+                }
+
+                int firstVertex = headMorphVertices.Count;
+                for (int v = 0; v < morph.Vertices.Length; v++)
+                {
+                    Vector3 value = ConvertMorphVertexToUnityLocal(morph.Vertices[v]);
+                    if (!IsFinite(value.x) || !IsFinite(value.y) || !IsFinite(value.z))
+                        throw new InvalidOperationException($"Actor head morph '{nif.Path}#{geometry.Name}' target {i} vertex {v} has non-finite data.");
+                    headMorphVertices.Add(new ActorHeadMorphVertexDef
+                    {
+                        X = value.x,
+                        Y = value.y,
+                        Z = value.z,
+                    });
+                }
+
+                headMorphTargets.Add(new ActorHeadMorphTargetDef
+                {
+                    FirstKeyIndex = firstKey,
+                    KeyCount = keys.Count - firstKey,
+                    FirstVertexIndex = firstVertex,
+                    VertexCount = morph.Vertices.Length,
+                    Interpolation = morph.Keys != null ? (int)morph.Keys.InterpolationType : 0,
+                });
+            }
+
+            headMorphTargetCount = headMorphTargets.Count - firstHeadMorphTarget;
+            return headMorphTargetCount > 1;
+        }
+
+        static Vector3 ConvertMorphVertexToUnityLocal(Vector3 source)
+            => new(source.x * WorldScale.MwUnitsToMeters, source.z * WorldScale.MwUnitsToMeters, source.y * WorldScale.MwUnitsToMeters);
+
+        static bool TryResolveMorphController(NifFile nif, int controllerIndex, out NiGeomMorpherController controller)
+        {
+            int guard = 0;
+            for (int link = controllerIndex; link >= 0 && guard++ < nif.Records.Length;)
+            {
+                if (Resolve<NiTimeController>(nif, link) is not NiTimeController timeController)
+                    break;
+                if (timeController is NiGeomMorpherController morphController)
+                {
+                    controller = morphController;
+                    return true;
+                }
+                link = timeController.NextController;
+            }
+
+            controller = null;
+            return false;
+        }
+
+        static void ExtractHeadAnimationWindows(
+            NifFile nif,
+            out float talkStart,
+            out float talkStop,
+            out float blinkStart,
+            out float blinkStop)
+        {
+            talkStart = 0f;
+            talkStop = 0f;
+            blinkStart = 0f;
+            blinkStop = 0f;
+
+            for (int i = 0; i < nif.Records.Length; i++)
+            {
+                if (nif.Records[i] is not NiTextKeyExtraData { Keys: { } textKeys })
+                    continue;
+
+                for (int k = 0; k < textKeys.Length; k++)
+                {
+                    string text = textKeys[k].Text?.Trim();
+                    if (string.IsNullOrEmpty(text))
+                        continue;
+                    if (string.Equals(text, "talk: start", StringComparison.OrdinalIgnoreCase))
+                        talkStart = textKeys[k].Time;
+                    else if (string.Equals(text, "talk: stop", StringComparison.OrdinalIgnoreCase))
+                        talkStop = textKeys[k].Time;
+                    else if (string.Equals(text, "blink: start", StringComparison.OrdinalIgnoreCase))
+                        blinkStart = textKeys[k].Time;
+                    else if (string.Equals(text, "blink: stop", StringComparison.OrdinalIgnoreCase))
+                        blinkStop = textKeys[k].Time;
+                }
+            }
         }
 
         static void CollectBones(

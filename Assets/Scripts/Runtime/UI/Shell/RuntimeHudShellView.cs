@@ -84,6 +84,8 @@ namespace VVardenfell.Runtime.UI.Shell
         SaveLoadBrowserView _saveLoadBrowserView;
         OptionsWindowView _optionsView;
         RestMenuWindowView _restMenuView;
+        CharacterGenerationWindowView _characterGenerationView;
+        BookReaderWindowView _bookReaderView;
         RuntimeUiPopupLayer _popupLayer;
         VVardenfell.Core.Config.MorrowindConfig _config;
 
@@ -276,6 +278,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 _config,
                 BuildOptionsCallbacks());
             _restMenuView = new RestMenuWindowView(_rootRect, _theme);
+            _characterGenerationView = new CharacterGenerationWindowView(_rootRect, _theme, _iconService);
+            _bookReaderView = new BookReaderWindowView(_rootRect, _theme, _iconService);
 
             BuildPauseMenu();
             BuildModal();
@@ -300,6 +304,8 @@ namespace VVardenfell.Runtime.UI.Shell
             JournalWindowViewModel journalModel,
             DialogueWindowViewModel dialogueModel,
             RestMenuViewModel restMenuModel,
+            CharacterGenerationViewModel characterGenerationModel,
+            BookReaderViewModel bookReaderModel,
             MoviePlaybackViewModel movieModel,
             RuntimeShellMenuActionId selectedAction,
             bool pauseMenuOpen,
@@ -332,6 +338,8 @@ namespace VVardenfell.Runtime.UI.Shell
                 _journalView?.SetVisible(false);
                 _dialogueView?.SetVisible(false);
                 _restMenuView?.Sync(null);
+                _characterGenerationView?.Sync(null);
+                _bookReaderView?.Sync(null);
                 return;
             }
 
@@ -351,6 +359,8 @@ namespace VVardenfell.Runtime.UI.Shell
             bool journalVisible = journalModel != null;
             bool dialogueVisible = dialogueModel != null;
             bool restMenuVisible = restMenuModel != null;
+            bool characterGenerationVisible = characterGenerationModel != null;
+            bool bookReaderVisible = bookReaderModel != null;
             bool inventoryOpened = !_inventoryVisible && inventoryVisible;
             bool containerOpened = !_containerVisible && containerVisible;
             bool pauseOpened = !_pauseMenuOpen && pauseMenuOpen;
@@ -380,6 +390,8 @@ namespace VVardenfell.Runtime.UI.Shell
             _journalView.Sync(journalModel);
             _dialogueView.Sync(dialogueModel);
             _restMenuView.Sync(restMenuModel);
+            _characterGenerationView.Sync(characterGenerationModel);
+            _bookReaderView.Sync(bookReaderModel);
             SyncMovie(movieModel);
 
             // Options sits on top of the pause menu while open; while it's visible
@@ -395,8 +407,8 @@ namespace VVardenfell.Runtime.UI.Shell
                     SaveConfig();
             }
 
-            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen && !restMenuVisible);
-            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen && !restMenuVisible);
+            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible);
+            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
             _popupLayer?.Sync();
             if (!inventoryVisible && !containerVisible)

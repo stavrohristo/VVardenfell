@@ -77,6 +77,12 @@ namespace VVardenfell.Runtime.Interactions
                     return ResolveExteriorDoorPromptName(ref contentBlob, ref worldCells, entityManager, entity, door);
             }
 
+            if (entityManager.HasComponent<DoorAuthoring>(entity)
+                && entityManager.HasComponent<DoorMotionState>(entity))
+            {
+                return ResolveAuthoredDisplayName(ref contentBlob, entityManager, entity);
+            }
+
             if (entityManager.HasComponent<DoorAuthoring>(entity))
                 throw new System.InvalidOperationException(BuildMissingDoorInteractableMessage(entityManager, entity, "focus prompt"));
 

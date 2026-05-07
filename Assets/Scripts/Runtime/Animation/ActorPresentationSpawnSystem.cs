@@ -9,6 +9,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.Streaming;
@@ -56,10 +57,33 @@ namespace VVardenfell.Runtime.Animation
                 ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, source.ValueRO.Definition);
                 bool isNpc = actor.Kind == ActorDefKind.Npc;
                 bool firstPerson = source.ValueRO.FirstPerson != 0;
+                bool hasRuntimeAppearance = systemState.EntityManager.HasComponent<ActorRuntimeAppearance>(entity);
+                ActorRuntimeAppearance runtimeAppearance = hasRuntimeAppearance
+                    ? systemState.EntityManager.GetComponentData<ActorRuntimeAppearance>(entity)
+                    : default;
+                bool runtimeFemale = hasRuntimeAppearance && runtimeAppearance.Male == 0;
+                ulong runtimeRaceHash = hasRuntimeAppearance
+                    ? RuntimeContentStableHash.HashId(runtimeAppearance.RaceId.ToString())
+                    : actor.RaceIdHash;
+                bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(ref contentBlob, runtimeRaceHash);
                 ActorVisualRecipeDef recipe = null;
-                bool hasRecipe = cache != null
-                                 && cache.TryGetActorVisualRecipe(actor.ContentId, firstPerson, out recipe);
-                ActorRigFamilyDef rigFamily = hasRecipe && (uint)recipe.RigFamilyIndex < (uint)(cache.ActorAnimationCatalog?.RigFamilies?.Length ?? 0)
+                bool hasRecipe = false;
+                if (hasRuntimeAppearance)
+                {
+                    recipe = new ActorVisualRecipeDef
+                    {
+                        BodyVariant = runtimeFemale ? ActorVisualBodyVariant.Female : ActorVisualBodyVariant.Male,
+                        RigFamilyIndex = ResolveRuntimeNpcRigFamilyIndex(ref catalog, firstPerson, runtimeFemale, isBeast),
+                        FirstEntryIndex = -1,
+                        EntryCount = 0,
+                    };
+                    hasRecipe = true;
+                }
+                else if (cache != null)
+                {
+                    hasRecipe = cache.TryGetActorVisualRecipe(actor.ContentId, firstPerson, out recipe);
+                }
+                ActorRigFamilyDef rigFamily = hasRecipe && (uint)recipe.RigFamilyIndex < (uint)(cache?.ActorAnimationCatalog?.RigFamilies?.Length ?? 0)
                     ? cache.ActorAnimationCatalog.RigFamilies[recipe.RigFamilyIndex]
                     : null;
                 int skeletonIndex = rigFamily?.SkeletonIndex ?? -1;
@@ -85,6 +109,7 @@ namespace VVardenfell.Runtime.Animation
                     },
                 });
                 ecb.AddComponent(entity, new ActorJumpAnimationState());
+                ecb.AddComponent(entity, new ActorAnimationMotionState());
                 if (!systemState.EntityManager.HasComponent<ActorWeaponAnimationState>(entity))
                 {
                     ecb.AddComponent(entity, new ActorWeaponAnimationState
@@ -115,7 +140,6 @@ namespace VVardenfell.Runtime.Animation
                 DynamicBuffer<ActorEquipmentSlot> equipmentBuffer = hasEquipment
                     ? systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(entity)
                     : default;
-                bool isBeast = isNpc && ActorEquipmentRuntimeUtility.IsBeastRace(ref contentBlob, actor.RaceIdHash);
                 uint hiddenPartMask = systemState.EntityManager.HasComponent<ActorHiddenVisualPartMask>(entity)
                     ? systemState.EntityManager.GetComponentData<ActorHiddenVisualPartMask>(entity).Mask
                     : 0u;
@@ -129,9 +153,12 @@ namespace VVardenfell.Runtime.Animation
                     isBeast,
                     firstPerson,
                     recipe,
+                    hasRuntimeAppearance,
+                    runtimeAppearance,
                     hiddenPartMask,
                     hasEquipment,
                     equipmentBuffer);
+                ecb.AddComponent(entity, BuildHeadAnimationState(skinMeshBuffer, ref catalog, entity.Index));
 
                 int boneMatrixCount = CountOutputBoneMatrices(skinMeshBuffer, ref catalog);
                 int deformedVertexCount = CountOutputVertices(skinMeshBuffer, ref catalog);
@@ -207,6 +234,24 @@ namespace VVardenfell.Runtime.Animation
         static int ResolveBoneCount(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
             => ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
 
+        static int ResolveRuntimeNpcRigFamilyIndex(ref ActorAnimationCatalogBlob catalog, bool firstPerson, bool female, bool beast)
+        {
+            ActorRigFamilyKind kind = firstPerson
+                ? beast
+                    ? ActorRigFamilyKind.NpcBeastFirstPerson
+                    : female ? ActorRigFamilyKind.NpcFemaleFirstPerson : ActorRigFamilyKind.NpcMaleFirstPerson
+                : beast
+                    ? ActorRigFamilyKind.NpcBeast
+                    : female ? ActorRigFamilyKind.NpcFemale : ActorRigFamilyKind.NpcMale;
+            for (int i = 0; i < catalog.RigFamilies.Length; i++)
+            {
+                if (catalog.RigFamilies[i].FamilyKind == kind)
+                    return i;
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][CharGen] Missing actor rig family '{kind}' for runtime player appearance.");
+        }
+
         static int CountOutputBoneMatrices(DynamicBuffer<ActorSkinMesh> skinMeshes, ref ActorAnimationCatalogBlob catalog)
         {
             int count = 0;
@@ -220,6 +265,55 @@ namespace VVardenfell.Runtime.Animation
             }
 
             return count;
+        }
+
+        static ActorHeadAnimationState BuildHeadAnimationState(
+            DynamicBuffer<ActorSkinMesh> skinMeshes,
+            ref ActorAnimationCatalogBlob catalog,
+            int seed)
+        {
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
+                if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
+                    continue;
+
+                var skinMesh = catalog.SkinMeshes[skinMeshIndex];
+                if (skinMesh.FirstHeadMorphTargetIndex < 0
+                    || skinMesh.HeadMorphTargetCount <= 1
+                    || skinMesh.TalkStop <= skinMesh.TalkStart
+                    || skinMesh.BlinkStop < skinMesh.BlinkStart)
+                {
+                    continue;
+                }
+
+                uint randomState = (uint)math.max(1, seed + 1);
+                return new ActorHeadAnimationState
+                {
+                    TalkStart = skinMesh.TalkStart,
+                    TalkStop = skinMesh.TalkStop,
+                    BlinkStart = skinMesh.BlinkStart,
+                    BlinkStop = skinMesh.BlinkStop,
+                    CurrentTime = skinMesh.BlinkStop,
+                    BlinkTimer = ResolveInitialBlinkTimer(ref randomState),
+                    RandomState = randomState,
+                    HasHeadMorph = 1,
+                };
+            }
+
+            return default;
+        }
+
+        static float ResolveInitialBlinkTimer(ref uint randomState)
+            => -(2f + RollDice(ref randomState, 6u));
+
+        static uint RollDice(ref uint state, uint max)
+        {
+            if (max == 0u)
+                return 0u;
+            state = state == 0u ? 1u : state;
+            state = 1664525u * state + 1013904223u;
+            return state % max;
         }
 
         static int CountOutputVertices(DynamicBuffer<ActorSkinMesh> skinMeshes, ref ActorAnimationCatalogBlob catalog)
@@ -290,7 +384,10 @@ namespace VVardenfell.Runtime.Animation
                 ecb.SetComponent(child, LocalTransform.Identity);
                 ecb.SetComponent(child, initialLocalToWorld);
                 ecb.AddComponent(child, new Parent { Value = actorEntity });
-                ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(info.MaterialIndex, info.MeshIndex));
+                int renderMeshIndex = skinMeshes[i].RigidMirrorX != 0 && info.MirroredMeshIndex >= 0
+                    ? info.MirroredMeshIndex
+                    : info.MeshIndex;
+                ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(info.MaterialIndex, renderMeshIndex));
                 ecb.SetComponent(child, new TextureSlice { Value = info.TextureSlice });
                 ecb.SetComponent(child, new ActorDeformedMeshIndex { Value = vertexCursor });
                 ecb.SetComponent(child, new RenderBounds
@@ -455,6 +552,8 @@ namespace VVardenfell.Runtime.Animation
             bool isBeast,
             bool firstPerson,
             ActorVisualRecipeDef recipe,
+            bool hasRuntimeAppearance,
+            ActorRuntimeAppearance runtimeAppearance,
             uint hiddenPartMask,
             bool hasEquipment,
             DynamicBuffer<ActorEquipmentSlot> equipment)
@@ -480,7 +579,9 @@ namespace VVardenfell.Runtime.Animation
                     ref coveredParts);
             }
 
-            added += AddBakedActorVisualRecipe(buffer, ref catalog, cache, recipe, coveredParts, hiddenPartMask);
+            added += hasRuntimeAppearance
+                ? AddRuntimeActorVisualRecipe(buffer, ref catalog, ref contentBlob, runtimeAppearance, firstPerson, recipe.RigFamilyIndex, coveredParts, hiddenPartMask)
+                : AddBakedActorVisualRecipe(buffer, ref catalog, cache, recipe, coveredParts, hiddenPartMask);
             return added;
         }
 
@@ -552,6 +653,374 @@ namespace VVardenfell.Runtime.Animation
             }
 
             return added;
+        }
+
+        static int AddRuntimeActorVisualRecipe(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            ref ActorAnimationCatalogBlob catalog,
+            ref RuntimeContentBlob contentBlob,
+            in ActorRuntimeAppearance appearance,
+            bool firstPerson,
+            int rigFamilyIndex,
+            uint coveredParts,
+            uint hiddenPartMask)
+        {
+            int added = 0;
+            uint usedParts = coveredParts;
+            if (!firstPerson)
+            {
+                added += AddRuntimeExplicitBodyPart(
+                    buffer,
+                    ref catalog,
+                    ref contentBlob,
+                    appearance.HeadId,
+                    ActorVisualPartReference.Head,
+                    rigFamilyIndex,
+                    hiddenPartMask,
+                    ref usedParts,
+                    acceptDeclaredMeshes: false);
+                added += AddRuntimeExplicitBodyPart(
+                    buffer,
+                    ref catalog,
+                    ref contentBlob,
+                    appearance.HairId,
+                    ActorVisualPartReference.Hair,
+                    rigFamilyIndex,
+                    hiddenPartMask,
+                    ref usedParts,
+                    acceptDeclaredMeshes: true);
+            }
+
+            bool female = appearance.Male == 0;
+            for (int part = (int)ActorVisualPartReference.Neck; part < (int)ActorVisualPartReference.Count; part++)
+            {
+                var reference = (ActorVisualPartReference)part;
+                if (!ActorVisualContentRules.IsBaseSkinPartReference(reference))
+                    continue;
+                if (firstPerson && !ActorVisualContentRules.IsFirstPersonPartReference(reference))
+                    continue;
+                if (reference == ActorVisualPartReference.Tail
+                    && !ActorEquipmentRuntimeUtility.IsBeastRace(ref contentBlob, RuntimeContentStableHash.HashId(appearance.RaceId.ToString())))
+                {
+                    continue;
+                }
+
+                ref RuntimeActorBodyPartDefBlob bodyPart = ref ResolveRuntimeRaceBodyPart(ref contentBlob, appearance.RaceId, female, firstPerson, reference);
+                added += AddRuntimeBodyPart(
+                    buffer,
+                    ref catalog,
+                    ref bodyPart,
+                    reference,
+                    rigFamilyIndex,
+                    hiddenPartMask,
+                    ref usedParts,
+                    acceptDeclaredMeshes: false);
+            }
+
+            return added;
+        }
+
+        static int AddRuntimeExplicitBodyPart(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            ref ActorAnimationCatalogBlob catalog,
+            ref RuntimeContentBlob contentBlob,
+            FixedString64Bytes bodyPartId,
+            ActorVisualPartReference reference,
+            int rigFamilyIndex,
+            uint hiddenPartMask,
+            ref uint usedParts,
+            bool acceptDeclaredMeshes)
+        {
+            if (bodyPartId.IsEmpty)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] Selected player appearance has no {reference} body part.");
+            if (!RuntimeContentBlobUtility.TryGetActorBodyPartHandleByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(bodyPartId.ToString()), out var handle)
+                || !handle.IsValid
+                || (uint)handle.Index >= (uint)contentBlob.ActorBodyParts.Length)
+            {
+                throw new InvalidOperationException($"[VVardenfell][CharGen] Missing selected player body part '{bodyPartId}'.");
+            }
+
+            ref RuntimeActorBodyPartDefBlob bodyPart = ref contentBlob.ActorBodyParts[handle.Index];
+            return AddRuntimeBodyPart(
+                buffer,
+                ref catalog,
+                ref bodyPart,
+                reference,
+                rigFamilyIndex,
+                hiddenPartMask,
+                ref usedParts,
+                acceptDeclaredMeshes);
+        }
+
+        static ref RuntimeActorBodyPartDefBlob ResolveRuntimeRaceBodyPart(
+            ref RuntimeContentBlob contentBlob,
+            FixedString64Bytes raceId,
+            bool female,
+            bool firstPerson,
+            ActorVisualPartReference reference)
+        {
+            ActorBodyPartMeshPart meshPart = ActorVisualMappingPolicy.GetMeshPart(reference);
+            int bestIndex = -1;
+            int bestScore = int.MaxValue;
+            for (int i = 0; i < contentBlob.ActorBodyParts.Length; i++)
+            {
+                ref RuntimeActorBodyPartDefBlob bodyPart = ref contentBlob.ActorBodyParts[i];
+                if (bodyPart.Type != ActorBodyPartMeshType.Skin
+                    || bodyPart.Vampire != 0
+                    || bodyPart.NotPlayable != 0
+                    || bodyPart.Part != meshPart
+                    || !string.Equals(bodyPart.RaceId.ToString(), raceId.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool partFirstPerson = bodyPart.FirstPerson != 0;
+                bool partFemale = bodyPart.Female != 0;
+                bool isFirstPersonArmPart = ActorVisualContentRules.IsFirstPersonMeshPart(meshPart);
+                int score = ActorVisualContentRules.ResolveNpcRaceBodyPartScore(firstPerson, female, isFirstPersonArmPart, partFirstPerson, partFemale);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIndex = i;
+                }
+            }
+
+            if (bestIndex < 0)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] Race '{raceId}' is missing runtime body part '{reference}' for firstPerson={firstPerson}, female={female}.");
+            return ref contentBlob.ActorBodyParts[bestIndex];
+        }
+
+        static int AddRuntimeBodyPart(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            ref ActorAnimationCatalogBlob catalog,
+            ref RuntimeActorBodyPartDefBlob bodyPart,
+            ActorVisualPartReference reference,
+            int rigFamilyIndex,
+            uint hiddenPartMask,
+            ref uint usedParts,
+            bool acceptDeclaredMeshes)
+        {
+            ActorBodyPartMeshPart expectedPart = ActorVisualMappingPolicy.GetMeshPart(reference);
+            if (bodyPart.Type != ActorBodyPartMeshType.Skin || bodyPart.Part != expectedPart)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] Body part '{bodyPart.Id}' is {bodyPart.Type}/{bodyPart.Part}, expected Skin/{expectedPart} for {reference}.");
+
+            uint mask = ActorVisualContentRules.PartMask(reference);
+            if ((hiddenPartMask & mask) != 0)
+            {
+                usedParts |= mask;
+                return 0;
+            }
+            if ((usedParts & mask) != 0)
+                return 0;
+
+            int skinBindingIndex = RequireRuntimeSkinBinding(ref catalog, bodyPart.Model.ToString(), rigFamilyIndex, $"player body part '{bodyPart.Id}'");
+            int added = AddRuntimeSkinBindingMeshes(buffer, ref catalog, skinBindingIndex, reference, acceptDeclaredMeshes, $"player body part '{bodyPart.Id}'");
+            if (added == 0)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] Body part '{bodyPart.Id}' produced no renderable skin meshes.");
+            usedParts |= mask;
+            return added;
+        }
+
+        static int RequireRuntimeSkinBinding(ref ActorAnimationCatalogBlob catalog, string modelPath, int rigFamilyIndex, string context)
+        {
+            string normalized = ActorVisualContentRules.NormalizeModelPath(modelPath, lowerInvariant: true);
+            if (string.IsNullOrEmpty(normalized))
+                throw new InvalidOperationException($"[VVardenfell][CharGen] {context} has no model path.");
+            for (int i = 0; i < catalog.SkinBindings.Length; i++)
+            {
+                ref ActorSkinBindingBlob binding = ref catalog.SkinBindings[i];
+                if (binding.RigFamilyIndex == rigFamilyIndex
+                    && string.Equals(binding.SkinModelPath.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][CharGen] {context} requires missing skin binding '{normalized}' for rig family {rigFamilyIndex}.");
+        }
+
+        static int AddRuntimeSkinBindingMeshes(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            ref ActorAnimationCatalogBlob catalog,
+            int skinBindingIndex,
+            ActorVisualPartReference reference,
+            bool acceptDeclaredMeshes,
+            string context)
+        {
+            ref ActorSkinBindingBlob binding = ref catalog.SkinBindings[skinBindingIndex];
+            int attachBoneIndex = ResolveRuntimePartAttachBoneIndex(ref catalog, binding.RigFamilyIndex, reference, context);
+            byte rigidMirrorX = ResolveRuntimeRigidMirrorX(ref catalog, binding.RigFamilyIndex, attachBoneIndex);
+            if (acceptDeclaredMeshes || !SkinBindingHasSkinnedRenderableMeshes(ref catalog, ref binding))
+                return AddRuntimeDeclaredMeshes(buffer, ref catalog, ref binding, reference, attachBoneIndex, rigidMirrorX, context);
+
+            string[] meshFilters = ActorVisualMappingPolicy.GetMeshFilters(reference);
+            int added = 0;
+            for (int filterIndex = 0; filterIndex < meshFilters.Length && added == 0; filterIndex++)
+            {
+                string meshFilter = meshFilters[filterIndex];
+                int end = math.min(catalog.SkinMeshes.Length, binding.FirstSkinMeshIndex + binding.SkinMeshCount);
+                for (int i = binding.FirstSkinMeshIndex; i >= 0 && i < end; i++)
+                {
+                    ref ActorSkinMeshBlob mesh = ref catalog.SkinMeshes[i];
+                    if (!IsRenderableSkinMesh(mesh) || mesh.IsRigid != 0 || !MatchesMeshFilter(ref catalog, mesh, meshFilter))
+                        continue;
+                    AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX);
+                    added++;
+                }
+            }
+
+            if (added == 0)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] {context} produced no renderable meshes matching '{string.Join("' or '", meshFilters)}'.");
+            return added;
+        }
+
+        static int AddRuntimeDeclaredMeshes(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            ref ActorAnimationCatalogBlob catalog,
+            ref ActorSkinBindingBlob binding,
+            ActorVisualPartReference reference,
+            int attachBoneIndex,
+            byte rigidMirrorX,
+            string context)
+        {
+            int added = 0;
+            int end = math.min(catalog.SkinMeshes.Length, binding.FirstSkinMeshIndex + binding.SkinMeshCount);
+            for (int i = binding.FirstSkinMeshIndex; i >= 0 && i < end; i++)
+            {
+                ref ActorSkinMeshBlob mesh = ref catalog.SkinMeshes[i];
+                if (!IsRenderableSkinMesh(mesh))
+                    continue;
+                if (mesh.IsRigid != 0 && attachBoneIndex < 0)
+                    throw new InvalidOperationException($"[VVardenfell][CharGen] {context} declared rigid {reference} mesh '{mesh.NodeName}' but rig has no attach bone.");
+                AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX);
+                added++;
+            }
+
+            return added;
+        }
+
+        static void AddRuntimeSkinMesh(
+            DynamicBuffer<ActorSkinMesh> buffer,
+            int skinMeshIndex,
+            in ActorSkinMeshBlob mesh,
+            int attachBoneIndex,
+            byte rigidMirrorX)
+        {
+            buffer.Add(new ActorSkinMesh
+            {
+                SkinMeshIndex = skinMeshIndex,
+                AttachBoneIndex = mesh.IsRigid != 0 ? attachBoneIndex : -1,
+                RigidMirrorX = mesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
+            });
+        }
+
+        static bool SkinBindingHasSkinnedRenderableMeshes(ref ActorAnimationCatalogBlob catalog, ref ActorSkinBindingBlob binding)
+        {
+            int end = math.min(catalog.SkinMeshes.Length, binding.FirstSkinMeshIndex + binding.SkinMeshCount);
+            for (int i = binding.FirstSkinMeshIndex; i >= 0 && i < end; i++)
+            {
+                ref ActorSkinMeshBlob mesh = ref catalog.SkinMeshes[i];
+                if (IsRenderableSkinMesh(mesh) && mesh.IsRigid == 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool IsRenderableSkinMesh(in ActorSkinMeshBlob mesh)
+            => mesh.MeshIndex >= 0 && mesh.VertexCount > 0 && mesh.IndexCount > 0;
+
+        static bool MatchesMeshFilter(ref ActorAnimationCatalogBlob catalog, in ActorSkinMeshBlob mesh, string meshFilter)
+        {
+            if (MatchesMeshFilter(mesh.NodeName.ToString(), meshFilter))
+                return true;
+
+            int graphNodeIndex = mesh.SourceGraphNodeIndex;
+            int guard = 0;
+            while ((uint)graphNodeIndex < (uint)catalog.GraphNodes.Length && guard++ < catalog.GraphNodes.Length)
+            {
+                ref ActorModelGraphNodeBlob graphNode = ref catalog.GraphNodes[graphNodeIndex];
+                if (MatchesMeshFilter(graphNode.Name.ToString(), meshFilter))
+                    return true;
+                graphNodeIndex = graphNode.ParentIndex;
+            }
+
+            return false;
+        }
+
+        static bool MatchesMeshFilter(string nodeName, string meshFilter)
+        {
+            if (string.IsNullOrWhiteSpace(nodeName) || string.IsNullOrWhiteSpace(meshFilter))
+                return true;
+            if (nodeName.StartsWith(meshFilter, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return nodeName.StartsWith("tri ", StringComparison.OrdinalIgnoreCase)
+                   && nodeName.Substring(4).StartsWith(meshFilter, StringComparison.OrdinalIgnoreCase);
+        }
+
+        static int ResolveRuntimePartAttachBoneIndex(
+            ref ActorAnimationCatalogBlob catalog,
+            int rigFamilyIndex,
+            ActorVisualPartReference reference,
+            string context)
+        {
+            if ((uint)rigFamilyIndex >= (uint)catalog.RigFamilies.Length)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] {context} references invalid rig family {rigFamilyIndex}.");
+            int skeletonIndex = catalog.RigFamilies[rigFamilyIndex].SkeletonIndex;
+            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
+                throw new InvalidOperationException($"[VVardenfell][CharGen] {context} references invalid skeleton {skeletonIndex}.");
+
+            string openMwName = ActorVisualMappingPolicy.GetBoneName(reference);
+            string[] aliases = ActorVisualMappingPolicy.GetBoneAliases(reference);
+            int result = ResolveRuntimeBoneIndex(ref catalog, skeletonIndex, openMwName);
+            if (result >= 0)
+                return result;
+            for (int i = 0; i < aliases.Length; i++)
+            {
+                result = ResolveRuntimeBoneIndex(ref catalog, skeletonIndex, aliases[i]);
+                if (result >= 0)
+                    return result;
+            }
+
+            return -1;
+        }
+
+        static int ResolveRuntimeBoneIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return -1;
+            ref ActorSkeletonBlob skeleton = ref catalog.Skeletons[skeletonIndex];
+            int end = math.min(catalog.Bones.Length, skeleton.FirstBoneIndex + skeleton.BoneCount);
+            for (int i = skeleton.FirstBoneIndex; i >= 0 && i < end; i++)
+            {
+                if (string.Equals(catalog.Bones[i].Name.ToString(), name, StringComparison.OrdinalIgnoreCase))
+                    return i - skeleton.FirstBoneIndex;
+            }
+
+            string canonical = ActorVisualMappingPolicy.CanonicalizeBoneName(name);
+            if (string.IsNullOrEmpty(canonical))
+                return -1;
+            for (int i = skeleton.FirstBoneIndex; i >= 0 && i < end; i++)
+            {
+                if (string.Equals(ActorVisualMappingPolicy.CanonicalizeBoneName(catalog.Bones[i].Name.ToString()), canonical, StringComparison.Ordinal))
+                    return i - skeleton.FirstBoneIndex;
+            }
+
+            return -1;
+        }
+
+        static byte ResolveRuntimeRigidMirrorX(ref ActorAnimationCatalogBlob catalog, int rigFamilyIndex, int attachBoneIndex)
+        {
+            if ((uint)rigFamilyIndex >= (uint)catalog.RigFamilies.Length || attachBoneIndex < 0)
+                return 0;
+            int skeletonIndex = catalog.RigFamilies[rigFamilyIndex].SkeletonIndex;
+            if ((uint)skeletonIndex >= (uint)catalog.Skeletons.Length)
+                return 0;
+            ref ActorSkeletonBlob skeleton = ref catalog.Skeletons[skeletonIndex];
+            int boneIndex = skeleton.FirstBoneIndex + attachBoneIndex;
+            if ((uint)boneIndex >= (uint)catalog.Bones.Length)
+                return 0;
+            return ActorVisualMappingPolicy.IsLeftSideBoneName(catalog.Bones[boneIndex].Name.ToString()) ? (byte)1 : (byte)0;
         }
 
         static int AddBakedActorVisualRecipe(

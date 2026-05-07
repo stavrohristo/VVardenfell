@@ -1,11 +1,13 @@
 using Unity.Entities;
 using Unity.Burst;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Books
@@ -88,7 +90,6 @@ namespace VVardenfell.Runtime.Books
 
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateBefore(typeof(BookReadRequestSystem))]
-    [BurstCompile]
     public partial struct InventoryBookReadRequestSystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
@@ -101,11 +102,11 @@ namespace VVardenfell.Runtime.Books
 
             systemState.RequireForUpdate<BookInventoryReadRequest>();
             systemState.RequireForUpdate<BookReadRequest>();
+            systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var inventoryRequest = ref SystemAPI.GetSingletonRW<BookInventoryReadRequest>().ValueRW;
@@ -124,6 +125,15 @@ namespace VVardenfell.Runtime.Books
 
             ContentReference content = inventory[inventoryIndex].Content;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            if (systemState.EntityManager.HasComponent<ActorCombatTargetState>(inventoryEntity)
+                && systemState.EntityManager.GetComponentData<ActorCombatTargetState>(inventoryEntity).Active != 0)
+            {
+                string message = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref contentBlob, RuntimeContentStableHash.HashId("sInventoryMessage4"));
+                ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
+                RuntimeShellStateUtility.ShowDialog(ref shell, string.Empty, message);
+                return;
+            }
+
             if (!RuntimeContentMetadataResolver.TryResolveBookFixed(ref contentBlob, content, out _))
                 return;
 

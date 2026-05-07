@@ -74,6 +74,8 @@ namespace VVardenfell.Importer.Bake
         readonly List<ActorSkeletonDef> _skeletons = new();
         readonly List<ActorSkinMeshDef> _skinMeshes = new();
         readonly List<ActorSkinWeightDef> _skinWeights = new();
+        readonly List<ActorHeadMorphTargetDef> _headMorphTargets = new();
+        readonly List<ActorHeadMorphVertexDef> _headMorphVertices = new();
         readonly List<ActorAnimationClipDef> _clips = new();
         readonly List<ActorAnimationTrackDef> _tracks = new();
         readonly List<ActorAnimationKeyDef> _keys = new();
@@ -157,12 +159,17 @@ namespace VVardenfell.Importer.Bake
             var skeleton = isCreatureFullModel
                 ? NifActorAnimationExtractor.ExtractSkeleton(prefabSource)
                 : NifActorAnimationExtractor.ExtractSkeleton(modelNif);
-            if (IsNpcSkeletonModel(modelPath))
-                ApplyNpcLeftHelperMirroring(skeleton);
             _skeletons.Add(skeleton);
 
             int firstSkinMesh = _skinMeshes.Count;
-            var skinMeshes = NifActorAnimationExtractor.ExtractSkinMeshes(modelNif, skeleton, skeletonIndex, _skinWeights);
+            var skinMeshes = NifActorAnimationExtractor.ExtractSkinMeshes(
+                modelNif,
+                skeleton,
+                skeletonIndex,
+                _skinWeights,
+                _keys,
+                _headMorphTargets,
+                _headMorphVertices);
             bool remapSkinBonesToReferenceSkeleton = skinBindReferenceSkeleton != null
                 && !ReferenceEquals(skinBindReferenceSkeleton, skeleton);
             AttachRenderData(
@@ -249,6 +256,8 @@ namespace VVardenfell.Importer.Bake
                 Skeletons = _skeletons.ToArray(),
                 SkinMeshes = _skinMeshes.ToArray(),
                 SkinWeights = _skinWeights.ToArray(),
+                HeadMorphTargets = _headMorphTargets.ToArray(),
+                HeadMorphVertices = _headMorphVertices.ToArray(),
                 Clips = _clips.ToArray(),
                 Tracks = _tracks.ToArray(),
                 Keys = _keys.ToArray(),
@@ -429,8 +438,6 @@ namespace VVardenfell.Importer.Bake
                 bool female = (actor.Flags & 0x1u) != 0;
                 bool beast = IsBeastRace(actor.RaceId, races);
                 BuildNpcVisualRecipe(actor, false, female, beast, bodyParts, bodyPartsById);
-                if (IsPlayerActor(actor))
-                    BuildNpcVisualRecipe(actor, true, female, beast, bodyParts, bodyPartsById);
             }
         }
 

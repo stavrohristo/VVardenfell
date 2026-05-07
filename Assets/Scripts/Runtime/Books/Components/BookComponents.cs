@@ -45,6 +45,7 @@ namespace VVardenfell.Runtime.Components
         public ContentReference Content;
         public int InventoryIndex;
         public int CurrentPage;
+        public float ScrollOffset;
         public FixedString128Bytes Title;
         public FixedString128Bytes StatusText;
     }
@@ -55,6 +56,8 @@ namespace VVardenfell.Runtime.Components
         public byte PendingNextPage;
         public byte PendingPreviousPage;
         public byte PendingTake;
+        public byte PendingScroll;
+        public float ScrollOffset;
     }
 
     public struct BookInventoryReadRequest : IComponentData
@@ -70,6 +73,14 @@ namespace VVardenfell.Runtime.Components
         public ContentReference Content;
         public int SkillId;
         public uint Sequence;
+    }
+
+    public struct BookTakeRequest : IComponentData
+    {
+        public byte Pending;
+        public Entity SourceEntity;
+        public uint SourcePlacedRefId;
+        public ContentReference Content;
     }
 
     public struct BookReadHistoryEntry : IBufferElementData

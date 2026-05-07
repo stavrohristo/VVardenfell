@@ -31,8 +31,8 @@ namespace VVardenfell.Runtime.Interactions
             bool hasDoorActivated = exists && systemState.EntityManager.HasComponent<DoorActivated>(target);
             bool hasDoorAuthoring = exists && systemState.EntityManager.HasComponent<DoorAuthoring>(target);
             bool hasDoorInteractable = exists && systemState.EntityManager.HasComponent<DoorInteractable>(target);
-            if (hasDoorAuthoring && !hasDoorInteractable)
-                throw new System.InvalidOperationException("[VVardenfell][Interaction] authored door motion activation requires DoorInteractable metadata.");
+            if (hasDoorAuthoring && !hasDoorInteractable && !hasDoorMotion)
+                throw new System.InvalidOperationException("[VVardenfell][Interaction] authored door motion activation requires DoorInteractable metadata or DoorMotionState.");
 
             byte doorIsTeleport = hasDoorInteractable
                 ? systemState.EntityManager.GetComponentData<DoorInteractable>(target).IsTeleport
@@ -51,7 +51,7 @@ namespace VVardenfell.Runtime.Interactions
             systemState.EntityManager.SetComponentData(target, state);
             systemState.EntityManager.SetComponentEnabled<DoorActivated>(target, true);
 
-            bool consumesRequest = request.Kind != (byte)InteractableKind.Door;
+            bool consumesRequest = request.Kind != (byte)InteractableKind.Door || !hasDoorInteractable;
 
             if (!consumesRequest)
                 return;

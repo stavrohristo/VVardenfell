@@ -47,6 +47,7 @@ namespace VVardenfell.Importer.Nif
             if (HasRootNoCollisionMarker(nif))
                 return new CollisionExtractionResult(default, CollisionExtractionSource.ExplicitNoCollision);
 
+            bool hasEditorMarkers = HasRootEditorMarker(nif);
             bool hasRootCollisionNode = HasRootCollisionNode(nif);
             var verts = new List<Vector3>();
             var indices = new List<int>();
@@ -55,7 +56,7 @@ namespace VVardenfell.Importer.Nif
             {
                 if (rootIndex < 0 || rootIndex >= nif.Records.Length) continue;
                 if (nif.Records[rootIndex] is NiAVObject av)
-                    WalkAuthoredCollision(nif, av, Matrix4x4.identity, inCollision: false, verts, indices);
+                    WalkAuthoredCollision(nif, av, Matrix4x4.identity, inCollision: false, hasEditorMarkers, verts, indices);
             }
 
             if (verts.Count > 0 && indices.Count > 0)
@@ -72,7 +73,7 @@ namespace VVardenfell.Importer.Nif
             {
                 if (rootIndex < 0 || rootIndex >= nif.Records.Length) continue;
                 if (nif.Records[rootIndex] is NiAVObject av)
-                    WalkVisibleGeometry(nif, av, Matrix4x4.identity, verts, indices);
+                    WalkVisibleGeometry(nif, av, Matrix4x4.identity, hasEditorMarkers, verts, indices);
             }
 
             if (verts.Count > 0 && indices.Count > 0)
@@ -84,8 +85,11 @@ namespace VVardenfell.Importer.Nif
         }
 
         private static void WalkAuthoredCollision(NifFile nif, NiAVObject obj, Matrix4x4 parent, bool inCollision,
-                                                  List<Vector3> verts, List<int> indices)
+                                                  bool hasEditorMarkers, List<Vector3> verts, List<int> indices)
         {
+            if (obj is NiCollisionSwitch && (obj.Flags & 0x0020) == 0)
+                return;
+
             // Mirror NifMeshBuilder.Walk: build local matrix preserving non-uniform
             // or reflected scale instead of decomposing to (quat + uniform scale).
             var r = obj.Rotation;
@@ -105,7 +109,8 @@ namespace VVardenfell.Importer.Nif
 
             if (childInCollision && obj is NiGeometry geometry)
             {
-                AppendGeometry(nif, geometry, world, verts, indices);
+                if (!ShouldSkipMorrowindMarkerCollision(geometry.Name, hasEditorMarkers))
+                    AppendGeometry(nif, geometry, world, verts, indices);
                 return;
             }
 
@@ -115,15 +120,17 @@ namespace VVardenfell.Importer.Nif
                 {
                     if (childIdx < 0 || childIdx >= nif.Records.Length) continue;
                     if (nif.Records[childIdx] is NiAVObject child)
-                        WalkAuthoredCollision(nif, child, world, childInCollision, verts, indices);
+                        WalkAuthoredCollision(nif, child, world, childInCollision, hasEditorMarkers, verts, indices);
                 }
             }
         }
 
         private static void WalkVisibleGeometry(NifFile nif, NiAVObject obj, Matrix4x4 parent,
-                                                List<Vector3> verts, List<int> indices)
+                                                bool hasEditorMarkers, List<Vector3> verts, List<int> indices)
         {
             if ((obj.Flags & 0x0001) != 0)
+                return;
+            if (obj is NiCollisionSwitch && (obj.Flags & 0x0020) == 0)
                 return;
 
             var r = obj.Rotation;
@@ -140,7 +147,8 @@ namespace VVardenfell.Importer.Nif
 
             if (obj is NiGeometry geometry)
             {
-                AppendGeometry(nif, geometry, world, verts, indices);
+                if (!ShouldSkipMorrowindMarkerCollision(geometry.Name, hasEditorMarkers))
+                    AppendGeometry(nif, geometry, world, verts, indices);
                 return;
             }
 
@@ -150,7 +158,7 @@ namespace VVardenfell.Importer.Nif
                 {
                     if (childIdx < 0 || childIdx >= nif.Records.Length) continue;
                     if (nif.Records[childIdx] is NiAVObject child)
-                        WalkVisibleGeometry(nif, child, world, verts, indices);
+                        WalkVisibleGeometry(nif, child, world, hasEditorMarkers, verts, indices);
                 }
             }
         }
@@ -189,6 +197,27 @@ namespace VVardenfell.Importer.Nif
             return false;
         }
 
+        private static bool HasRootEditorMarker(NifFile nif)
+        {
+            foreach (int rootIndex in nif.Roots)
+            {
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
+                if (nif.Records[rootIndex] is NiObjectNET root && HasExactStringMarker(nif, root, "MRK"))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool ShouldSkipMorrowindMarkerCollision(string name, bool hasEditorMarkers)
+        {
+            if (!hasEditorMarkers || string.IsNullOrWhiteSpace(name))
+                return false;
+
+            return name.TrimStart().StartsWith("tri editormarker", System.StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool HasNoCollisionMarker(NifFile nif, NiObjectNET obj)
         {
             int extraIndex = obj.ExtraData;
@@ -198,6 +227,24 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[extraIndex] is NiStringExtraData stringExtra &&
                     !string.IsNullOrEmpty(stringExtra.Data) &&
                     stringExtra.Data.StartsWith("NC", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                extraIndex = nif.Records[extraIndex] is Extra extra ? extra.NextExtra : -1;
+            }
+
+            return false;
+        }
+
+        private static bool HasExactStringMarker(NifFile nif, NiObjectNET obj, string marker)
+        {
+            int extraIndex = obj.ExtraData;
+            var guard = 0;
+            while (extraIndex >= 0 && extraIndex < nif.Records.Length && guard++ < nif.Records.Length)
+            {
+                if (nif.Records[extraIndex] is NiStringExtraData stringExtra
+                    && string.Equals(stringExtra.Data, marker, System.StringComparison.Ordinal))
                 {
                     return true;
                 }

@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Books
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookReaderRequest());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookInventoryReadRequest { InventoryIndex = -1 });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookSkillGrantRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new BookTakeRequest());
 
             RuntimeBootstrapUtility.EnsureBuffer<BookReadHistoryEntry>(systemState.EntityManager, runtimeEntity);
 

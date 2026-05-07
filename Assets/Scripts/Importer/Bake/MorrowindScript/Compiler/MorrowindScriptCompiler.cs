@@ -1997,7 +1997,7 @@ namespace VVardenfell.Importer.Bake
             if (count >= 2
                 && tokens[start].Equals("getitemcount", StringComparison.OrdinalIgnoreCase))
             {
-                string itemId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+                string itemId = NormalizeGoldId(string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"'));
                 if (string.IsNullOrWhiteSpace(itemId))
                 {
                     failure = "GetItemCount requires one item id.";
@@ -2060,7 +2060,7 @@ namespace VVardenfell.Importer.Bake
                 if (count >= 2
                     && tokens[start].Equals("getitemcount", StringComparison.OrdinalIgnoreCase))
                 {
-                    string itemId = string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"');
+                    string itemId = NormalizeGoldId(string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"'));
                     if (string.IsNullOrWhiteSpace(itemId))
                     {
                         failure = "GetItemCount requires one item id.";
@@ -5081,7 +5081,7 @@ namespace VVardenfell.Importer.Bake
                 Float0 = x * WorldScale.MwUnitsToMeters,
                 Float1 = z * WorldScale.MwUnitsToMeters,
                 Float2 = y * WorldScale.MwUnitsToMeters,
-                Float3 = math.radians(zRotMinutes / 60f),
+                Float3 = zRotMinutes,
             });
             return true;
         }
@@ -7372,6 +7372,20 @@ namespace VVardenfell.Importer.Bake
             if (string.Equals(command, "enableplayerjumping", StringComparison.OrdinalIgnoreCase))
             {
                 operation = 7;
+                enabled = 1;
+                return true;
+            }
+
+            if (string.Equals(command, "disableplayerlooking", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 14;
+                enabled = 0;
+                return true;
+            }
+
+            if (string.Equals(command, "enableplayerlooking", StringComparison.OrdinalIgnoreCase))
+            {
+                operation = 14;
                 enabled = 1;
                 return true;
             }

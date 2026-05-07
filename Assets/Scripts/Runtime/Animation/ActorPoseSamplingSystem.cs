@@ -5,6 +5,7 @@ using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -39,6 +40,8 @@ namespace VVardenfell.Runtime.Animation
 
             state.Dependency = new SampleActorPoseWithOverlaysJob { Catalog = catalog }
                 .ScheduleParallel(state.Dependency);
+            state.Dependency = new SampleActorPoseWithOverlaysWithoutMovementJob { Catalog = catalog }
+                .ScheduleParallel(state.Dependency);
             state.Dependency = new SampleActorPoseWithoutOverlaysJob { Catalog = catalog }
                 .ScheduleParallel(state.Dependency);
         }
@@ -52,27 +55,32 @@ namespace VVardenfell.Runtime.Animation
             void Execute(
                 in ActorAnimationState animation,
                 in ActorSkeleton skeleton,
+                in MorrowindMovementState movementState,
+                in ActorAnimationMotionState motionState,
                 DynamicBuffer<ActorBone> bones,
                 DynamicBuffer<ActorSampledBonePose> sampled,
                 DynamicBuffer<ActorAnimationOverlayState> overlays)
             {
-                if (!Catalog.IsCreated || bones.Length == 0)
-                    return;
+                SampleWithOverlays(Catalog, animation, skeleton, bones, sampled, overlays, IsMoving(movementState, motionState));
+            }
+        }
 
-                ref var catalog = ref Catalog.Value;
-                EnsureSampledLength(sampled, bones.Length);
-                ResetToBindPose(ref catalog, skeleton, bones);
+        [BurstCompile]
+        [WithAll(typeof(ActorPresentation))]
+        [WithNone(typeof(MorrowindMovementState))]
+        partial struct SampleActorPoseWithOverlaysWithoutMovementJob : IJobEntity
+        {
+            [ReadOnly] public BlobAssetReference<ActorAnimationCatalogBlob> Catalog;
 
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LowerBody);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.Torso);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LeftArm);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.RightArm);
-                SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LowerBody);
-                SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.Torso);
-                SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LeftArm);
-                SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.RightArm);
-
-                ComposeHierarchy(ref catalog, skeleton, bones);
+            void Execute(
+                in ActorAnimationState animation,
+                in ActorSkeleton skeleton,
+                in ActorAnimationMotionState motionState,
+                DynamicBuffer<ActorBone> bones,
+                DynamicBuffer<ActorSampledBonePose> sampled,
+                DynamicBuffer<ActorAnimationOverlayState> overlays)
+            {
+                SampleWithOverlays(Catalog, animation, skeleton, bones, sampled, overlays, motionState.Moving != 0);
             }
         }
 
@@ -109,6 +117,34 @@ namespace VVardenfell.Runtime.Animation
         {
             if (sampled.Length != boneCount)
                 sampled.ResizeUninitialized(boneCount);
+        }
+
+        static void SampleWithOverlays(
+            BlobAssetReference<ActorAnimationCatalogBlob> catalogRef,
+            in ActorAnimationState animation,
+            in ActorSkeleton skeleton,
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            DynamicBuffer<ActorAnimationOverlayState> overlays,
+            bool moving)
+        {
+            if (!catalogRef.IsCreated || bones.Length == 0)
+                return;
+
+            ref var catalog = ref catalogRef.Value;
+            EnsureSampledLength(sampled, bones.Length);
+            ResetToBindPose(ref catalog, skeleton, bones);
+
+            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LowerBody);
+            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.Torso);
+            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LeftArm);
+            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.RightArm);
+            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LowerBody, moving);
+            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.Torso, moving);
+            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LeftArm, moving);
+            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.RightArm, moving);
+
+            ComposeHierarchy(ref catalog, skeleton, bones);
         }
 
         static void SampleMainForMask(
@@ -168,9 +204,10 @@ namespace VVardenfell.Runtime.Animation
             DynamicBuffer<ActorBone> bones,
             DynamicBuffer<ActorSampledBonePose> sampled,
             DynamicBuffer<ActorAnimationOverlayState> overlays,
-            ActorAnimationBlendMask mask)
+            ActorAnimationBlendMask mask,
+            bool moving)
         {
-            int selectedOverlayIndex = SelectBestOverlay(overlays, mask);
+            int selectedOverlayIndex = SelectBestOverlay(overlays, mask, moving);
             if (selectedOverlayIndex < 0)
                 return;
 
@@ -206,7 +243,10 @@ namespace VVardenfell.Runtime.Animation
             BlendLayerIntoBones(ref catalog, skeleton, bones, sampled, weight, hasPreviousLayer);
         }
 
-        static int SelectBestOverlay(DynamicBuffer<ActorAnimationOverlayState> overlays, ActorAnimationBlendMask mask)
+        static int SelectBestOverlay(
+            DynamicBuffer<ActorAnimationOverlayState> overlays,
+            ActorAnimationBlendMask mask,
+            bool moving)
         {
             int bestIndex = -1;
             int bestPriority = int.MinValue;
@@ -214,6 +254,10 @@ namespace VVardenfell.Runtime.Animation
             {
                 var overlay = overlays[i];
                 if (!ActorAnimationPlaybackUtility.IsActive(overlay.Playback) || overlay.Weight <= 0f || (overlay.Mask & mask) == 0)
+                    continue;
+                if (moving && overlay.SuppressWhenMoving != 0)
+                    continue;
+                if (moving && mask == ActorAnimationBlendMask.LowerBody && overlay.AllowMovingLowerBodyOverride == 0)
                     continue;
                 if (overlay.Priority < bestPriority)
                     continue;
@@ -224,6 +268,9 @@ namespace VVardenfell.Runtime.Animation
 
             return bestIndex;
         }
+
+        static bool IsMoving(in MorrowindMovementState movementState, in ActorAnimationMotionState motionState)
+            => motionState.Moving != 0 || math.lengthsq(movementState.LocalMove) > 0.0001f;
 
         static void ResetToBindPose(
             ref ActorAnimationCatalogBlob catalog,

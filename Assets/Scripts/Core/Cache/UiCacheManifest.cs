@@ -84,11 +84,15 @@ namespace VVardenfell.Core.Cache
         public const string JournalBookCancelNormal = "bootstrap.journal.book.cancel.normal";
         public const string JournalBookCancelHighlight = "bootstrap.journal.book.cancel.highlight";
         public const string JournalBookCancelPressed = "bootstrap.journal.book.cancel.pressed";
+        public const string JournalBookTakeNormal = "bootstrap.journal.book.take.normal";
+        public const string JournalBookTakeHighlight = "bootstrap.journal.book.take.highlight";
+        public const string JournalBookTakePressed = "bootstrap.journal.book.take.pressed";
         public const string JournalBookOptionsNormal = "bootstrap.journal.book.options.normal";
         public const string JournalBookOptionsHighlight = "bootstrap.journal.book.options.highlight";
         public const string JournalBookQuests = "bootstrap.journal.book.quests";
         public const string JournalBookQuestsAll = "bootstrap.journal.book.quests.all";
         public const string JournalBookQuestsActive = "bootstrap.journal.book.quests.active";
+        public const string ScrollBackground = "bootstrap.scroll.background";
 
         public static readonly string[] RequiredImageKeys =
         {
@@ -159,6 +163,10 @@ namespace VVardenfell.Core.Cache
             JournalBookCancelNormal,
             JournalBookCancelHighlight,
             JournalBookCancelPressed,
+            JournalBookTakeNormal,
+            JournalBookTakeHighlight,
+            JournalBookTakePressed,
+            ScrollBackground,
         };
     }
 
@@ -245,7 +253,7 @@ namespace VVardenfell.Core.Cache
     public sealed class UiCacheManifest
     {
         const uint Magic = 0x49555656u; // 'VVUI'
-        const uint Version = 7;
+        const uint Version = 8;
 
         public const int MovieTranscodeProfileVersion = 4;
 

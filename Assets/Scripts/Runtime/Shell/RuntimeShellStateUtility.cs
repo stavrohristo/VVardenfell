@@ -1,8 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine;
-using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.Shell
@@ -20,6 +18,7 @@ namespace VVardenfell.Runtime.Shell
             state.ContainerOpen = 0;
             state.JournalOpen = 0;
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             state.PauseMenuOpen = 1;
             state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
             ClearModal(ref state);
@@ -34,6 +33,7 @@ namespace VVardenfell.Runtime.Shell
             state.PauseMenuOpen = 0;
             state.JournalOpen = 0;
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             state.SelectedAction = (byte)RuntimeShellMenuActionId.Inventory;
             ClearModal(ref state);
         }
@@ -46,6 +46,7 @@ namespace VVardenfell.Runtime.Shell
             state.SaveLoadBrowserOpen = 0;
             state.OptionsOpen = 0;
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             state.JournalOpen = 1;
             ClearModal(ref state);
         }
@@ -77,12 +78,14 @@ namespace VVardenfell.Runtime.Shell
             state.OptionsOpen = 0;
             state.JournalOpen = 0;
             state.DialogueOpen = 1;
+            state.CharacterGenerationOpen = 0;
             ClearModal(ref state);
         }
 
         public static void CloseDialogue(ref RuntimeShellState state)
         {
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             ClearModal(ref state);
         }
 
@@ -101,6 +104,7 @@ namespace VVardenfell.Runtime.Shell
             state.OptionsOpen = 0;
             state.JournalOpen = 0;
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             ClearModal(ref state);
 
             state.RestMenuOpen = 1;
@@ -140,6 +144,7 @@ namespace VVardenfell.Runtime.Shell
             state.OptionsOpen = 0;
             state.JournalOpen = 0;
             state.DialogueOpen = 0;
+            state.CharacterGenerationOpen = 0;
             CloseRestMenu(ref state);
             ClearModal(ref state);
 
@@ -153,6 +158,25 @@ namespace VVardenfell.Runtime.Shell
             state.MovieOpen = 0;
             state.MovieAllowSkipping = 0;
             state.MovieName = default;
+        }
+
+        public static void OpenCharacterGeneration(ref RuntimeShellState state)
+        {
+            state.InventoryOpen = 0;
+            state.ContainerOpen = 0;
+            state.PauseMenuOpen = 0;
+            state.ModalOpen = 0;
+            state.SaveLoadBrowserOpen = 0;
+            state.OptionsOpen = 0;
+            state.JournalOpen = 0;
+            state.DialogueOpen = 0;
+            CloseRestMenu(ref state);
+            state.CharacterGenerationOpen = 1;
+        }
+
+        public static void CloseCharacterGeneration(ref RuntimeShellState state)
+        {
+            state.CharacterGenerationOpen = 0;
         }
 
         public static void CloseSaveLoadBrowser(ref RuntimeShellState shell, ref SaveLoadBrowserState browser)
@@ -324,43 +348,6 @@ namespace VVardenfell.Runtime.Shell
             browser.ConfirmationText = default;
             if (!string.IsNullOrWhiteSpace(saveName))
                 browser.DraftSaveName = ToFixedName(saveName);
-        }
-
-        public static void SyncGameplayGateAndCursor(ref RuntimeShellState state)
-        {
-            bool shellBlocksGameplay = state.InventoryOpen != 0
-                || state.ContainerOpen != 0
-                || state.PauseMenuOpen != 0
-                || state.ModalOpen != 0
-                || state.SaveLoadBrowserOpen != 0
-                || state.OptionsOpen != 0
-                || state.JournalOpen != 0
-                || state.DialogueOpen != 0
-                || state.RestMenuOpen != 0
-                || state.RestMenuAdvancing != 0
-                || state.MovieOpen != 0
-                || state.PlayerControlsDisabled != 0;
-
-            RuntimeShellPresentationGate.BlocksGameplayInput = !BootstrapPresentationGate.BlocksGameplayInput && shellBlocksGameplay;
-            ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);
-        }
-
-        static void ApplyCursorState(bool gameplayInputAllowed)
-        {
-            if (gameplayInputAllowed)
-            {
-                if (Cursor.lockState != CursorLockMode.Locked)
-                    Cursor.lockState = CursorLockMode.Locked;
-                if (Cursor.visible)
-                    Cursor.visible = false;
-            }
-            else
-            {
-                if (Cursor.lockState != CursorLockMode.None)
-                    Cursor.lockState = CursorLockMode.None;
-                if (!Cursor.visible)
-                    Cursor.visible = true;
-            }
         }
 
         public static FixedString64Bytes ToFixedName(string value)

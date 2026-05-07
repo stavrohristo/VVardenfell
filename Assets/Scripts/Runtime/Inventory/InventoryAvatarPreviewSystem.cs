@@ -18,12 +18,15 @@ namespace VVardenfell.Runtime.Inventory
         Entity _previewEntity;
         ulong _lastSignature;
         ActorDefHandle _lastActor;
+        EntityQuery _previewQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
+            _previewQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<InventoryAvatarPreviewTag>());
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<InventoryWindowState>();
             systemState.RequireForUpdate<PlayerTag>();
+            systemState.RequireForUpdate<PlayerRaceAppearance>();
             systemState.RequireForUpdate<ActorEquipmentSlot>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
@@ -59,12 +62,22 @@ namespace VVardenfell.Runtime.Inventory
             }
 
             var equipment = systemState.EntityManager.GetBuffer<ActorEquipmentSlot>(player, true);
-            ulong signature = BuildSignature(equipment);
+            PlayerRaceAppearance appearance = systemState.EntityManager.HasComponent<PlayerRaceAppearance>(player)
+                ? systemState.EntityManager.GetComponentData<PlayerRaceAppearance>(player)
+                : default;
+            if (appearance.RaceId.IsEmpty)
+            {
+                DestroyPreview(ref systemState);
+                return;
+            }
+
+            ulong signature = BuildSignature(equipment, appearance);
             if (_previewEntity != Entity.Null
                 && systemState.EntityManager.Exists(_previewEntity)
                 && signature == _lastSignature
                 && actorHandle.Value == _lastActor.Value)
             {
+                DestroyPreviewOrphans(ref systemState);
                 return;
             }
 
@@ -73,10 +86,16 @@ namespace VVardenfell.Runtime.Inventory
                 equipmentSnapshot.Add(equipment[i]);
 
             DestroyPreview(ref systemState);
-            CreatePreview(ref systemState, ref contentBlob, actorHandle, equipmentSnapshot.AsArray(), signature);
+            CreatePreview(ref systemState, ref contentBlob, actorHandle, equipmentSnapshot.AsArray(), appearance, signature);
         }
 
-        void CreatePreview(ref SystemState systemState, ref RuntimeContentBlob contentBlob, ActorDefHandle actorHandle, NativeArray<ActorEquipmentSlot> equipment, ulong signature)
+        void CreatePreview(
+            ref SystemState systemState,
+            ref RuntimeContentBlob contentBlob,
+            ActorDefHandle actorHandle,
+            NativeArray<ActorEquipmentSlot> equipment,
+            in PlayerRaceAppearance appearance,
+            ulong signature)
         {
             Entity preview = systemState.EntityManager.CreateEntity();
             systemState.EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
@@ -85,6 +104,13 @@ namespace VVardenfell.Runtime.Inventory
             {
                 Definition = actorHandle,
                 FirstPerson = 0,
+            });
+            systemState.EntityManager.AddComponentData(preview, new ActorRuntimeAppearance
+            {
+                RaceId = appearance.RaceId,
+                HeadId = appearance.HeadId,
+                HairId = appearance.HairId,
+                Male = appearance.Male,
             });
             systemState.EntityManager.AddComponentData(preview, LocalTransform.FromPositionRotationScale(
                 InventoryAvatarPreviewRuntimeUtility.Position,
@@ -127,18 +153,19 @@ namespace VVardenfell.Runtime.Inventory
 
         void DestroyPreview(ref SystemState systemState)
         {
-            if (_previewEntity == Entity.Null)
-                return;
-
             var ecb = new EntityCommandBuffer(Allocator.Temp);
-            if (systemState.EntityManager.Exists(_previewEntity))
-                ecb.DestroyEntity(_previewEntity);
+            using var previewEntities = _previewQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < previewEntities.Length; i++)
+            {
+                if (systemState.EntityManager.Exists(previewEntities[i]))
+                    ecb.DestroyEntity(previewEntities[i]);
+            }
 
             foreach (var (attachment, entity) in
                      SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
                          .WithEntityAccess())
             {
-                if (attachment.ValueRO.Actor == _previewEntity)
+                if (Contains(previewEntities, attachment.ValueRO.Actor))
                     ecb.DestroyEntity(entity);
             }
 
@@ -149,6 +176,46 @@ namespace VVardenfell.Runtime.Inventory
             _lastSignature = 0ul;
         }
 
+        void DestroyPreviewOrphans(ref SystemState systemState)
+        {
+            if (_previewEntity == Entity.Null)
+                return;
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            using var previewEntities = _previewQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < previewEntities.Length; i++)
+            {
+                Entity entity = previewEntities[i];
+                if (entity == _previewEntity)
+                    continue;
+
+                if (systemState.EntityManager.Exists(entity))
+                    ecb.DestroyEntity(entity);
+
+                foreach (var (attachment, attachmentEntity) in
+                         SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
+                             .WithEntityAccess())
+                {
+                    if (attachment.ValueRO.Actor == entity)
+                        ecb.DestroyEntity(attachmentEntity);
+                }
+            }
+
+            ecb.Playback(systemState.EntityManager);
+            ecb.Dispose();
+        }
+
+        static bool Contains(NativeArray<Entity> entities, Entity value)
+        {
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (entities[i] == value)
+                    return true;
+            }
+
+            return false;
+        }
+
         static bool ShouldShowPreview(in RuntimeShellState shell, in InventoryWindowState inventoryState)
         {
             if (shell.ContainerOpen != 0 || shell.InventoryMenuDisabled != 0)
@@ -157,11 +224,15 @@ namespace VVardenfell.Runtime.Inventory
             return shell.InventoryOpen != 0 || inventoryState.Pinned != 0;
         }
 
-        static ulong BuildSignature(DynamicBuffer<ActorEquipmentSlot> equipment)
+        static ulong BuildSignature(DynamicBuffer<ActorEquipmentSlot> equipment, in PlayerRaceAppearance appearance)
         {
             unchecked
             {
                 ulong hash = 1469598103934665603ul;
+                hash = (hash ^ RuntimeContentStableHash.HashId(appearance.RaceId.ToString())) * 1099511628211ul;
+                hash = (hash ^ RuntimeContentStableHash.HashId(appearance.HeadId.ToString())) * 1099511628211ul;
+                hash = (hash ^ RuntimeContentStableHash.HashId(appearance.HairId.ToString())) * 1099511628211ul;
+                hash = (hash ^ appearance.Male) * 1099511628211ul;
                 for (int i = 0; i < equipment.Length; i++)
                 {
                     var slot = equipment[i];

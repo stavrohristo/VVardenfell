@@ -46,10 +46,14 @@ namespace VVardenfell.Core.Cache
             => ref Require(ref blob.Factions, handle.Index, "faction");
         public static ref RuntimeRaceDefBlob GetRace(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
             => ref Require(ref blob.Races, handle.Index, "race");
+        public static ref RuntimeGenericRecordDefBlob GetBirthsign(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
+            => ref Require(ref blob.Birthsigns, handle.Index, "birthsign");
         public static ref RuntimeGenericRecordDefBlob GetStatic(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
             => ref Require(ref blob.Statics, handle.Index, "static");
         public static ref RuntimeGenericRecordDefBlob GetScript(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
             => ref Require(ref blob.Scripts, handle.Index, "script");
+        public static ref RuntimeGenericRecordDefBlob GetStartScript(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
+            => ref Require(ref blob.StartScripts, handle.Index, "start script");
         public static ref RuntimeMorrowindScriptProgramDefBlob Get(ref RuntimeContentBlob blob, MorrowindScriptProgramDefHandle handle)
             => ref Require(ref blob.MorrowindScriptPrograms, handle.Index, nameof(MorrowindScriptProgramDefHandle));
         public static ref RuntimePathGridDefBlob GetPathGrid(ref RuntimeContentBlob blob, GenericRecordDefHandle handle)
@@ -217,6 +221,24 @@ namespace VVardenfell.Core.Cache
             return true;
         }
 
+        public static bool TryGetBirthsignHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.BirthsignIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
+        public static bool TryGetActorBodyPartHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.ActorBodyPartIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
         public static bool TryGetStaticHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
         {
             handle = default;
@@ -230,6 +252,15 @@ namespace VVardenfell.Core.Cache
         {
             handle = default;
             if (!TryGetHandleIndex(ref blob.ScriptIdLookup, hash, out int index))
+                return false;
+            handle = GenericRecordDefHandle.FromIndex(index);
+            return true;
+        }
+
+        public static bool TryGetStartScriptHandleByIdHash(ref RuntimeContentBlob blob, ulong hash, out GenericRecordDefHandle handle)
+        {
+            handle = default;
+            if (!TryGetHandleIndex(ref blob.StartScriptIdLookup, hash, out int index))
                 return false;
             handle = GenericRecordDefHandle.FromIndex(index);
             return true;

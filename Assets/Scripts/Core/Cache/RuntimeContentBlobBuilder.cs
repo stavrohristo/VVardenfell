@@ -15,6 +15,7 @@ namespace VVardenfell.Core.Cache
             try
             {
                 ref RuntimeContentBlob root = ref builder.ConstructRoot<RuntimeContentBlob>();
+                var genericRecordPowerSpellIds = new List<string>();
 
                 CopyActorArray(ref builder, ref root.Actors, source.Actors);
             CopyActorSpellArray(ref builder, ref root.ActorSpells, source.ActorSpells);
@@ -49,24 +50,24 @@ namespace VVardenfell.Core.Cache
             root.WeatherSettings = source.WeatherSettings;
             CopyWeatherDefinitionArray(ref builder, ref root.WeatherDefinitions, source.WeatherDefinitions);
             CopySkyWeatherVisualSettings(ref builder, ref root, source.SkyWeatherVisualSettings);
-            CopyGenericRecordArray(ref builder, ref root.GameSettings, source.GameSettings);
-            CopyGenericRecordArray(ref builder, ref root.Globals, source.Globals);
+            CopyGenericRecordArray(ref builder, ref root.GameSettings, source.GameSettings, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.Globals, source.Globals, genericRecordPowerSpellIds);
             CopyClassArray(ref builder, ref root, source.Classes);
             CopyFactionArray(ref builder, ref root, source.Factions);
             CopyRaceArray(ref builder, ref root, source.Races);
-            CopyGenericRecordArray(ref builder, ref root.Birthsigns, source.Birthsigns);
-            CopyGenericRecordArray(ref builder, ref root.Skills, source.Skills);
-            CopyGenericRecordArray(ref builder, ref root.Scripts, source.Scripts);
-            CopyGenericRecordArray(ref builder, ref root.StartScripts, source.StartScripts);
+            CopyGenericRecordArray(ref builder, ref root.Birthsigns, source.Birthsigns, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.Skills, source.Skills, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.Scripts, source.Scripts, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.StartScripts, source.StartScripts, genericRecordPowerSpellIds);
             CopyMorrowindScriptProgramArray(ref builder, ref root.MorrowindScriptPrograms, source.MorrowindScriptPrograms);
             CopyUnmanagedArray(ref builder, ref root.MorrowindScriptInstructions, source.MorrowindScriptInstructions);
             CopyMorrowindScriptLocalArray(ref builder, ref root.MorrowindScriptLocals, source.MorrowindScriptLocals);
             CopyMorrowindScriptMessageArray(ref builder, ref root.MorrowindScriptMessages, source.MorrowindScriptMessages);
             CopyExplicitRefTargetArray(ref builder, ref root.ExplicitRefTargets, source.ExplicitRefTargets);
-            CopyGenericRecordArray(ref builder, ref root.SoundGenerators, source.SoundGenerators);
-            CopyGenericRecordArray(ref builder, ref root.LandTextures, source.LandTextures);
-            CopyGenericRecordArray(ref builder, ref root.Statics, source.Statics);
-            CopyGenericRecordArray(ref builder, ref root.BodyParts, source.BodyParts);
+            CopyGenericRecordArray(ref builder, ref root.SoundGenerators, source.SoundGenerators, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.LandTextures, source.LandTextures, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.Statics, source.Statics, genericRecordPowerSpellIds);
+            CopyGenericRecordArray(ref builder, ref root.BodyParts, source.BodyParts, genericRecordPowerSpellIds);
             CopyActorBodyPartArray(ref builder, ref root.ActorBodyParts, source.ActorBodyParts);
             CopyPathGridArray(ref builder, ref root.PathGrids, source.PathGrids);
             CopyUnmanagedArray(ref builder, ref root.PathGridPoints, source.PathGridPoints);
@@ -76,6 +77,7 @@ namespace VVardenfell.Core.Cache
             CopyUnmanagedArray(ref builder, ref root.PathGridNavigationPortals, source.PathGridNavigationPortals);
             CopyUnmanagedArray(ref builder, ref root.PathGridNavigationAbstractEdges, source.PathGridNavigationAbstractEdges);
             CopyUnmanagedArray(ref builder, ref root.PathGridNavigationNeighbors, source.PathGridNavigationNeighbors);
+            CopyStringArray(ref builder, ref root.GenericRecordPowerSpellIds, genericRecordPowerSpellIds.ToArray());
 
                 BuildLookups(ref builder, ref root, source);
                 ValidateChildRanges(source);
@@ -134,12 +136,15 @@ namespace VVardenfell.Core.Cache
                 d.Float0 = s.Float0;
                 d.Int0 = s.Int0;
                 d.Int1 = s.Int1;
+                d.Int2 = s.Int2;
+                d.Int3 = s.Int3;
                 d.IdHash = HashId(s.Id);
                 d.ModelPathHash = HashPath(s.Model);
                 d.ScriptIdHash = HashId(s.ScriptId);
                 d.SoundIdHash = HashId(s.SoundId);
                 d.AuxSoundIdHash = HashId(s.AuxSoundId);
                 d.EnchantIdHash = HashId(s.EnchantId);
+                d.TextHash = HashId(s.Text);
                 SetString(ref builder, ref d.Id, s.Id);
                 SetString(ref builder, ref d.Name, s.Name);
                 SetString(ref builder, ref d.Model, s.Model);
@@ -148,6 +153,7 @@ namespace VVardenfell.Core.Cache
                 SetString(ref builder, ref d.SoundId, s.SoundId);
                 SetString(ref builder, ref d.AuxSoundId, s.AuxSoundId);
                 SetString(ref builder, ref d.EnchantId, s.EnchantId);
+                SetString(ref builder, ref d.Text, s.Text);
             }
         }
 
@@ -166,9 +172,14 @@ namespace VVardenfell.Core.Cache
             }
         }
 
-        static void CopyGenericRecordArray(ref BlobBuilder builder, ref BlobArray<RuntimeGenericRecordDefBlob> target, GenericRecordDef[] source)
+        static void CopyGenericRecordArray(
+            ref BlobBuilder builder,
+            ref BlobArray<RuntimeGenericRecordDefBlob> target,
+            GenericRecordDef[] source,
+            List<string> powerSpellIds)
         {
             source ??= Array.Empty<GenericRecordDef>();
+            powerSpellIds ??= new List<string>();
             BlobBuilderArray<RuntimeGenericRecordDefBlob> dst = builder.Allocate(ref target, source.Length);
             for (int i = 0; i < source.Length; i++)
             {
@@ -181,6 +192,9 @@ namespace VVardenfell.Core.Cache
                 d.Int0 = s.Int0;
                 d.Int1 = s.Int1;
                 d.Int2 = s.Int2;
+                d.FirstPowerSpellIdIndex = powerSpellIds.Count;
+                AddRange(powerSpellIds, s.PowerSpellIds);
+                d.PowerSpellIdCount = powerSpellIds.Count - d.FirstPowerSpellIdIndex;
                 d.Float0 = s.Float0;
                 d.Float1 = s.Float1;
                 d.IdHash = HashId(s.Id);

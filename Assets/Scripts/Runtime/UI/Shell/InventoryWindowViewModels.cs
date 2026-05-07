@@ -114,12 +114,16 @@ namespace VVardenfell.Runtime.UI.Shell
     {
         public string Name;
         public string Value;
+        public int AttributeIndex;
+        public string TooltipText;
     }
 
     public sealed class StatsWindowSkillRow
     {
         public string Name;
         public string Value;
+        public int SkillIndex;
+        public string TooltipText;
     }
 
     public sealed class StatsWindowFactionRow

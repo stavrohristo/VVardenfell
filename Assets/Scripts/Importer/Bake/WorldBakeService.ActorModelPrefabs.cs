@@ -279,42 +279,30 @@ namespace VVardenfell.Importer.Bake
 
                 bool female = (actor.Flags & 0x1u) != 0;
                 bool beast = IsBeastRace(actor.RaceId, races);
-                for (int pass = 0; pass < 2; pass++)
+                string targetSkeleton = ResolveNpcSkeletonModel(firstPerson: false, female, beast, bsaByName);
+                if (string.IsNullOrEmpty(targetSkeleton))
+                    continue;
+
+                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HeadId, targetSkeleton);
+                AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HairId, targetSkeleton);
+
+                for (int partReference = (int)ActorSkinPartReferenceType.Neck;
+                     partReference < (int)ActorSkinPartReferenceType.Count;
+                     partReference++)
                 {
-                    bool firstPerson = pass != 0;
-                    if (firstPerson && !IsPlayerActor(actor))
+                    var reference = (ActorSkinPartReferenceType)partReference;
+                    if (!IsBaseSkinPartReference(reference))
                         continue;
 
-                    string targetSkeleton = ResolveNpcSkeletonModel(firstPerson, female, beast, bsaByName);
-                    if (string.IsNullOrEmpty(targetSkeleton))
-                        continue;
-
-                    if (!firstPerson)
+                    if (TryResolveNpcRaceBodyPart(
+                            bodyParts,
+                            actor.RaceId,
+                            reference,
+                            female,
+                            firstPerson: false,
+                            out var part))
                     {
-                        AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HeadId, targetSkeleton);
-                        AddExplicitActorBodyPartTarget(result, bodyPartsById, actor.HairId, targetSkeleton);
-                    }
-
-                    for (int partReference = (int)ActorSkinPartReferenceType.Neck;
-                         partReference < (int)ActorSkinPartReferenceType.Count;
-                         partReference++)
-                    {
-                        var reference = (ActorSkinPartReferenceType)partReference;
-                        if (!IsBaseSkinPartReference(reference))
-                            continue;
-                        if (firstPerson && !IsFirstPersonPartReference(reference))
-                            continue;
-
-                        if (TryResolveNpcRaceBodyPart(
-                                bodyParts,
-                                actor.RaceId,
-                                reference,
-                                female,
-                                firstPerson,
-                                out var part))
-                        {
-                            AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
-                        }
+                        AddSkinReferenceTarget(result, part.Model, targetSkeleton, part.Id);
                     }
                 }
             }

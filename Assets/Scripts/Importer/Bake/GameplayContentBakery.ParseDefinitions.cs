@@ -19,6 +19,7 @@ namespace VVardenfell.Importer.Bake
         static void ParseGenericRecord(EsmReader esm, uint recordTag, Dictionary<string, GenericRecordDef> target)
         {
             var def = new GenericRecordDef { RecordTag = recordTag };
+            var powerSpellIds = new List<string>();
             bool deleted = false;
 
             while (esm.ReadSubrecordHeader(out var sub))
@@ -49,6 +50,9 @@ namespace VVardenfell.Importer.Bake
                         def.Model = esm.ReadSubrecordString();
                         break;
                     case var tag when tag == ItexTag:
+                        def.Icon = esm.ReadSubrecordString();
+                        break;
+                    case var tag when tag == EsmFourCC.TNAM && recordTag == BsgnTag:
                         def.Icon = esm.ReadSubrecordString();
                         break;
                     case var tag when tag == ScriTag:
@@ -118,6 +122,13 @@ namespace VVardenfell.Importer.Bake
                             def.Flags = ReadUInt32(bytes, 0);
                         break;
                     }
+                    case var tag when tag == NpcsTag && recordTag == BsgnTag:
+                    {
+                        string spellId = esm.ReadSubrecordString();
+                        if (!string.IsNullOrWhiteSpace(spellId))
+                            powerSpellIds.Add(spellId);
+                        break;
+                    }
                     case var tag when (tag == EsmFourCC.DATA || tag == MedtTag || tag == RdatTag || tag == WdatTag):
                     {
                         byte[] bytes = esm.ReadSubrecordBytes();
@@ -153,6 +164,7 @@ namespace VVardenfell.Importer.Bake
             }
 
             def.ContentId = ContentId.FromTagAndId(recordTag, def.Id);
+            def.PowerSpellIds = powerSpellIds.ToArray();
             target[def.Id] = def;
         }
 

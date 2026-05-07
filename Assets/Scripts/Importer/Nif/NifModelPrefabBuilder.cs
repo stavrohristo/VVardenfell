@@ -49,6 +49,7 @@ namespace VVardenfell.Importer.Nif
         public static ModelPrefabSource Build(NifFile nif)
         {
             var state = new BuildState();
+            bool hasEditorMarkers = HasRootEditorMarker(nif);
             int syntheticRoot = AddNode(state, new ModelPrefabSourceNode
             {
                 Kind = ModelPrefabNodeKind.SyntheticRoot,
@@ -64,7 +65,7 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[rootIndex] is not NiAVObject av)
                     continue;
 
-                int child = BuildNode(nif, rootIndex, av, syntheticRoot, state);
+                int child = BuildNode(nif, rootIndex, av, syntheticRoot, hasEditorMarkers, state);
                 if (child >= 0)
                     state.PendingChildren[syntheticRoot].Add(child);
             }
@@ -79,7 +80,7 @@ namespace VVardenfell.Importer.Nif
             };
         }
 
-        static int BuildNode(NifFile nif, int recordIndex, NiAVObject obj, int parentIndex, BuildState state)
+        static int BuildNode(NifFile nif, int recordIndex, NiAVObject obj, int parentIndex, bool hasEditorMarkers, BuildState state)
         {
             var kind = ResolveKind(obj);
             if (kind == ModelPrefabNodeKind.RootCollision || kind == ModelPrefabNodeKind.Avoid)
@@ -94,8 +95,12 @@ namespace VVardenfell.Importer.Nif
                 return switchNode;
             }
 
-            if (obj is NiGeometry geometry && TryResolveRenderableGeometry(nif, geometry, out _))
+            if (obj is NiGeometry geometry
+                && TryResolveRenderableGeometry(nif, geometry, out _)
+                && !ShouldSkipMorrowindRenderGeometry(geometry.Name, hasEditorMarkers))
+            {
                 return AddRenderLeaf(nif, recordIndex, geometry, parentIndex, state);
+            }
 
             if (obj is not NiNode node)
                 return AddTransformNode(state, recordIndex, obj, parentIndex, kind);
@@ -117,7 +122,7 @@ namespace VVardenfell.Importer.Nif
                 if (nif.Records[childIndex] is not NiAVObject child)
                     continue;
 
-                int builtChild = BuildNode(nif, childIndex, child, nodeIndex, state);
+                int builtChild = BuildNode(nif, childIndex, child, nodeIndex, hasEditorMarkers, state);
                 if (builtChild >= 0)
                     pendingChildren.Add(builtChild);
             }
@@ -630,6 +635,49 @@ namespace VVardenfell.Importer.Nif
         static bool IsOpenMwCreatureHelperGeometry(string name)
             => !string.IsNullOrWhiteSpace(name)
                && name.TrimStart().StartsWith("tri bip", System.StringComparison.OrdinalIgnoreCase);
+
+        static bool ShouldSkipMorrowindRenderGeometry(string name, bool hasEditorMarkers)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            string trimmed = name.TrimStart();
+            return (hasEditorMarkers && trimmed.StartsWith("tri editormarker", System.StringComparison.OrdinalIgnoreCase))
+                || trimmed.StartsWith("shadow", System.StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("tri shadow", System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        static bool HasRootEditorMarker(NifFile nif)
+        {
+            for (int i = 0; i < nif.Roots.Length; i++)
+            {
+                int rootIndex = nif.Roots[i];
+                if (rootIndex < 0 || rootIndex >= nif.Records.Length)
+                    continue;
+                if (nif.Records[rootIndex] is NiObjectNET root && HasStringExtra(nif, root, "MRK"))
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool HasStringExtra(NifFile nif, NiObjectNET obj, string value)
+        {
+            int extraIndex = obj.ExtraData;
+            int guard = 0;
+            while (extraIndex >= 0 && extraIndex < nif.Records.Length && guard++ < nif.Records.Length)
+            {
+                if (nif.Records[extraIndex] is NiStringExtraData stringExtra
+                    && string.Equals(stringExtra.Data, value, System.StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                extraIndex = nif.Records[extraIndex] is Extra extra ? extra.NextExtra : -1;
+            }
+
+            return false;
+        }
 
         static Vector2[] ResolveUvSet(NiGeometryData data, int uvSet, int vertexCount)
         {

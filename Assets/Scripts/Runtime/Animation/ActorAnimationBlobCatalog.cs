@@ -26,6 +26,8 @@ namespace VVardenfell.Runtime.Animation
         public BlobArray<ActorSkinVertexBlob> SkinVertices;
         public BlobArray<int> SkinIndices;
         public BlobArray<ActorSkinBoneBlob> SkinBones;
+        public BlobArray<ActorHeadMorphTargetBlob> HeadMorphTargets;
+        public BlobArray<ActorHeadMorphVertexBlob> HeadMorphVertices;
         public BlobArray<ActorAnimationClipBlob> Clips;
         public BlobArray<ActorAnimationTextMarkerBlob> TextMarkers;
         public BlobArray<ActorAnimationTrackBlob> Tracks;
@@ -146,6 +148,26 @@ namespace VVardenfell.Runtime.Animation
         public float3 BoundsExtents;
         public float4x4 GeometryToSkeleton;
         public float3 RigidOffset;
+        public float TalkStart;
+        public float TalkStop;
+        public float BlinkStart;
+        public float BlinkStop;
+        public int FirstHeadMorphTargetIndex;
+        public int HeadMorphTargetCount;
+    }
+
+    public struct ActorHeadMorphTargetBlob
+    {
+        public int FirstKeyIndex;
+        public int KeyCount;
+        public int FirstVertexIndex;
+        public int VertexCount;
+        public int Interpolation;
+    }
+
+    public struct ActorHeadMorphVertexBlob
+    {
+        public float3 Value;
     }
 
     public struct ActorSkinBoneBlob

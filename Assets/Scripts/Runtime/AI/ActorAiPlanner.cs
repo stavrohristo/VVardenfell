@@ -807,8 +807,13 @@ namespace VVardenfell.Runtime.AI
                 return false;
             }
 
-            waiting = true;
-            return false;
+            int pathGridIndex = package.TargetPathGridIndex >= 0 ? package.TargetPathGridIndex : Navigation.Nodes[startNode].PathGridIndex;
+            if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
+                return false;
+
+            WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, run: false, targetPosition, useFinalTargetPosition: true);
+            aiState.GoalNodeIndex = goalNode;
+            return true;
         }
 
         bool TryScheduleWander(

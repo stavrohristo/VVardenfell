@@ -37,11 +37,13 @@ namespace VVardenfell.Runtime.Components
         public byte OptionsOpen;
         public byte JournalOpen;
         public byte DialogueOpen;
+        public byte CharacterGenerationOpen;
         public byte PlayerSleeping;
         public byte SelectedAction;
         public byte PlayerControlsDisabled;
         public byte PlayerFightingDisabled;
         public byte PlayerJumpingDisabled;
+        public byte PlayerLookingDisabled;
         public byte PlayerMagicDisabled;
         public byte PlayerViewSwitchDisabled;
         public byte VanityModeDisabled;
@@ -106,6 +108,10 @@ namespace VVardenfell.Runtime.Components
         public byte PinWindow;
         public byte RestMenuAction;
         public int RestMenuHours;
+    }
+
+    public struct RuntimeShellUiInputBlocker : IComponentData
+    {
     }
 
     public struct ShellMessageBoxRequest : IBufferElementData

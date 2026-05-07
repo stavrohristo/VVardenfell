@@ -26,6 +26,16 @@ namespace VVardenfell.Runtime.MorrowindScript
     {
         static readonly HashSet<string> s_UnsupportedResultWarnings = new(StringComparer.OrdinalIgnoreCase);
 
+        public static void PrepareQueries(EntityManager entityManager)
+        {
+            PlayerQueryCache.Get(entityManager);
+            ScriptGlobalQueryCache.Get(entityManager);
+            PlayerCrimeWriteQueryCache.Get(entityManager);
+            PlayerCrimeReadQueryCache.Get(entityManager);
+            LocalPlayerVisualWeaponQueryCache.Get(entityManager);
+            PlacedRefIdentityQueryCache.Get(entityManager);
+        }
+
         public static bool ExecuteSupported(
             ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
@@ -559,7 +569,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetEntity = targetEntity,
                 TargetPlacedRefId = targetPlacedRefId,
                 Position = new float3(x, z, y) * WorldScale.MwUnitsToMeters,
-                Radians = math.radians(zRotMinutes / 60f),
+                Radians = zRotMinutes,
                 InteriorCellHash = cellHash,
                 Operation = 2,
             });

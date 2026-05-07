@@ -39,6 +39,7 @@ namespace VVardenfell.Runtime.Content
     {
         public readonly ContentReference Content;
         public readonly string Title;
+        public readonly string Text;
         public readonly bool IsScroll;
         public readonly int SkillId;
         public readonly int EnchantPoints;
@@ -46,12 +47,14 @@ namespace VVardenfell.Runtime.Content
         public BookContentMetadata(
             ContentReference content,
             string title,
+            string text,
             bool isScroll,
             int skillId,
             int enchantPoints)
         {
             Content = content;
             Title = title;
+            Text = text;
             IsScroll = isScroll;
             SkillId = skillId;
             EnchantPoints = enchantPoints;
@@ -190,9 +193,10 @@ namespace VVardenfell.Runtime.Content
             metadata = new BookContentMetadata(
                 content,
                 ResolveDisplayName(ref item, "Unknown book"),
-                false,
-                -1,
-                0);
+                RequireBookText(ref item),
+                item.Int1 != 0,
+                item.Int2,
+                item.Int3);
             return true;
         }
 
@@ -264,13 +268,38 @@ namespace VVardenfell.Runtime.Content
             metadata = new FixedBookContentMetadata(
                 content,
                 ResolveDisplayNameFixed(ref item, FixedDisplayFallback.UnknownBook),
-                false,
-                -1,
-                0);
+                item.Int1 != 0,
+                item.Int2,
+                item.Int3);
             return true;
         }
 
         public static bool IsBook(ref RuntimeBaseDefBlob item) => item.RecordTag == BookRecordTag;
+
+        public static string RequireBookText(ref RuntimeContentBlob blob, ContentReference content)
+        {
+            if (content.Kind != ContentReferenceKind.Item || content.HandleValue <= 0)
+                throw new InvalidOperationException("[VVardenfell][Books] Book text requested for a non-item content reference.");
+
+            var handle = new ItemDefHandle { Value = content.HandleValue };
+            if (!handle.IsValid)
+                throw new InvalidOperationException("[VVardenfell][Books] Book text requested for an invalid item handle.");
+
+            ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref blob, handle);
+            if (!IsBook(ref item))
+                throw new InvalidOperationException($"[VVardenfell][Books] Item '{item.Id}' is not a BOOK record.");
+
+            return RequireBookText(ref item);
+        }
+
+        static string RequireBookText(ref RuntimeBaseDefBlob item)
+        {
+            string text = item.Text.ToString();
+            if (string.IsNullOrEmpty(text))
+                throw new InvalidOperationException($"[VVardenfell][Books] BOOK '{item.Id}' is missing required TEXT content.");
+
+            return text;
+        }
 
         public static bool MatchesCategory(in CarryableMetadata metadata, InventoryWindowCategory category)
         {

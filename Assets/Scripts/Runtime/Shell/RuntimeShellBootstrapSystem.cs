@@ -30,6 +30,8 @@ namespace VVardenfell.Runtime.Shell
                 SelectedAction = (byte)RuntimeShellMenuActionId.Resume,
             });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellActionRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new CharacterGenerationState());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new CharacterGenerationRequest());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeSubtitleState());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, LoadHudPreferences());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeEnemyHealthBarState());

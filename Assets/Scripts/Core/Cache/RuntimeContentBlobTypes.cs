@@ -72,6 +72,7 @@ namespace VVardenfell.Core.Cache
         public BlobArray<int> RaceMaleAttributes;
         public BlobArray<int> RaceFemaleAttributes;
         public BlobArray<RuntimeContentStringBlob> RacePowerSpellIds;
+        public BlobArray<RuntimeContentStringBlob> GenericRecordPowerSpellIds;
         public BlobArray<FactionRankRequirementDef> FactionRankRequirements;
         public BlobArray<int> FactionSkills;
         public BlobArray<RuntimeContentStringBlob> FactionRankNames;
@@ -167,16 +168,20 @@ namespace VVardenfell.Core.Cache
         public BlobString SoundId;
         public BlobString AuxSoundId;
         public BlobString EnchantId;
+        public BlobString Text;
         public ulong IdHash;
         public ulong ModelPathHash;
         public ulong ScriptIdHash;
         public ulong SoundIdHash;
         public ulong AuxSoundIdHash;
         public ulong EnchantIdHash;
+        public ulong TextHash;
         public uint Flags;
         public float Float0;
         public int Int0;
         public int Int1;
+        public int Int2;
+        public int Int3;
     }
 
     public struct RuntimeItemEquipmentBodyPartDefBlob
@@ -206,6 +211,8 @@ namespace VVardenfell.Core.Cache
         public int Int0;
         public int Int1;
         public int Int2;
+        public int FirstPowerSpellIdIndex;
+        public int PowerSpellIdCount;
         public float Float0;
         public float Float1;
     }

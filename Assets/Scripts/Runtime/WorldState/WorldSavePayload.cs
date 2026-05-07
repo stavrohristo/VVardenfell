@@ -10,6 +10,9 @@ namespace VVardenfell.Runtime.WorldState
         public float PlayerPitchDegrees;
         public ActorRuntimeStatSeed ActorStats;
         public ActorIdentitySet PlayerIdentity;
+        public PlayerRaceAppearance PlayerAppearance;
+        public PlayerCustomClass PlayerCustomClass;
+        public CharacterGenerationState CharacterGeneration;
         public PlayerCrimeState PlayerCrime;
         public PlayerFactionMembership[] PlayerFactions;
         public bool InteriorActive;
@@ -25,6 +28,7 @@ namespace VVardenfell.Runtime.WorldState
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
         public GlobalMapOverlayPayload GlobalMapOverlay;
         public WorldJournalEntry[] JournalEntries;
+        public BookReadHistoryEntry[] BookReadHistory;
         public MorrowindQuestJournalSavePayload QuestJournal;
         public MorrowindDialogueSavePayload Dialogue;
         public int[] ActorDeathCounts;

@@ -122,7 +122,7 @@ namespace VVardenfell.Runtime.Streaming
 
                 var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);
-                if (WorldSpawner.TrySpawnExteriorCellByCoord(
+                if (options.SpawnInitialExteriorCell && WorldSpawner.TrySpawnExteriorCellByCoord(
                         world,
                         defaultCameraCell,
                         ref loadedMap,
@@ -135,7 +135,7 @@ namespace VVardenfell.Runtime.Streaming
                     progress?.CompleteStage();
                     yield return null;
                 }
-                else
+                else if (options.SpawnInitialExteriorCell)
                 {
                     UnityEngine.Debug.LogWarning($"[VVardenfell] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player may spawn before terrain is available.");
                 }

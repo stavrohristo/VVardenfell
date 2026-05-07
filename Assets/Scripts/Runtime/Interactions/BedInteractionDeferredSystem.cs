@@ -13,7 +13,6 @@ namespace VVardenfell.Runtime.Interactions
     public partial struct BedInteractionDeferredSystem : ISystem
     {
         const string BedStandardScriptId = "bed_standard";
-        const string CharGenBedScriptId = "chargenbed";
 
         EntityQuery _requestQuery;
         EntityQuery _focusQuery;
@@ -48,7 +47,6 @@ namespace VVardenfell.Runtime.Interactions
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             RuntimeShellStateUtility.OpenRestMenu(ref shell, target, placedRefId, canSleep: true);
-            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
 
             ClearFocus();
 
@@ -73,7 +71,7 @@ namespace VVardenfell.Runtime.Interactions
 
             ref RuntimeBaseDefBlob activator = ref RuntimeContentBlobUtility.Get(ref contentBlob, handle);
             string scriptId = ContentId.NormalizeId(activator.ScriptId.ToString());
-            return scriptId == BedStandardScriptId || scriptId == CharGenBedScriptId;
+            return scriptId == BedStandardScriptId;
         }
 
         void ClearFocus()

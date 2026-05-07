@@ -4,6 +4,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Profiling;
+using Unity.Transforms;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -35,9 +36,11 @@ namespace VVardenfell.Runtime.Animation
                 All = new[]
                 {
                     ComponentType.ReadOnly<ActorPresentation>(),
+                    ComponentType.ReadOnly<LocalTransform>(),
                     ComponentType.ReadOnly<MorrowindMovementState>(),
                     ComponentType.ReadWrite<ActorAnimationState>(),
                     ComponentType.ReadWrite<ActorJumpAnimationState>(),
+                    ComponentType.ReadWrite<ActorAnimationMotionState>(),
                 }
             });
             _idlePlaybackQuery = state.GetEntityQuery(new EntityQueryDesc
@@ -45,7 +48,9 @@ namespace VVardenfell.Runtime.Animation
                 All = new[]
                 {
                     ComponentType.ReadOnly<ActorPresentation>(),
+                    ComponentType.ReadOnly<LocalTransform>(),
                     ComponentType.ReadWrite<ActorAnimationState>(),
+                    ComponentType.ReadWrite<ActorAnimationMotionState>(),
                 },
                 None = new[]
                 {
@@ -98,12 +103,15 @@ namespace VVardenfell.Runtime.Animation
 
             void Execute(
                 in ActorPresentation presentation,
+                in LocalTransform transform,
                 in MorrowindMovementState movementState,
                 ref ActorAnimationState animation,
-                ref ActorJumpAnimationState jumpState)
+                ref ActorJumpAnimationState jumpState,
+                ref ActorAnimationMotionState motionState)
             {
                 ref var catalog = ref Catalog.Value;
-                ResolveMain(ref catalog, presentation, movementState, DeltaTime, ref animation, ref jumpState);
+                var animationMovement = ResolveAnimationMovement(transform, movementState, DeltaTime, ref motionState);
+                ResolveMain(ref catalog, presentation, animationMovement, DeltaTime, ref animation, ref jumpState);
                 Advance(ref animation, DeltaTime);
             }
         }
@@ -116,9 +124,12 @@ namespace VVardenfell.Runtime.Animation
 
             void Execute(
                 in ActorPresentation presentation,
+                in LocalTransform transform,
+                ref ActorAnimationMotionState motionState,
                 ref ActorAnimationState animation)
             {
                 ref var catalog = ref Catalog.Value;
+                UpdateIdleMotion(transform, DeltaTime, ref motionState);
                 ResolveIdle(ref catalog, presentation, sneak: false, ref animation);
                 Advance(ref animation, DeltaTime);
             }
@@ -176,6 +187,73 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ResolveIdle(ref catalog, presentation, movementState.SneakHeld, ref animation);
+        }
+
+        static MorrowindMovementState ResolveAnimationMovement(
+            in LocalTransform transform,
+            in MorrowindMovementState movementState,
+            float deltaTime,
+            ref ActorAnimationMotionState motionState)
+        {
+            var resolved = movementState;
+            float3 previousPosition = motionState.PreviousPosition;
+            byte wasInitialized = motionState.Initialized;
+            motionState.PreviousPosition = transform.Position;
+            motionState.Initialized = 1;
+
+            bool movementInputActive = math.lengthsq(movementState.LocalMove) > 0.0001f;
+            if (movementInputActive || wasInitialized == 0)
+            {
+                motionState.LocalMove = movementState.LocalMove;
+                motionState.LastVelocity = movementState.LastVelocity;
+                motionState.Moving = movementInputActive ? (byte)1 : (byte)0;
+                return resolved;
+            }
+
+            float3 delta = transform.Position - previousPosition;
+            delta.y = 0f;
+            if (math.lengthsq(delta) <= 0.000001f)
+            {
+                motionState.LocalMove = float2.zero;
+                motionState.LastVelocity = movementState.LastVelocity;
+                motionState.Moving = 0;
+                return resolved;
+            }
+
+            float3 worldDirection = math.normalizesafe(delta);
+            float3 localDirection = math.mul(math.inverse(transform.Rotation), worldDirection);
+            resolved.LocalMove = math.normalizesafe(new float2(localDirection.x, localDirection.z));
+            resolved.SpeedFactor = 1f;
+            resolved.LastVelocity = delta / math.max(0.0001f, deltaTime);
+            motionState.LocalMove = resolved.LocalMove;
+            motionState.LastVelocity = resolved.LastVelocity;
+            motionState.Moving = 1;
+            return resolved;
+        }
+
+        static void UpdateIdleMotion(
+            in LocalTransform transform,
+            float deltaTime,
+            ref ActorAnimationMotionState motionState)
+        {
+            float3 previousPosition = motionState.PreviousPosition;
+            byte wasInitialized = motionState.Initialized;
+            motionState.PreviousPosition = transform.Position;
+            motionState.Initialized = 1;
+            if (wasInitialized == 0)
+            {
+                motionState.LocalMove = float2.zero;
+                motionState.LastVelocity = float3.zero;
+                motionState.Moving = 0;
+                return;
+            }
+
+            float3 delta = transform.Position - previousPosition;
+            delta.y = 0f;
+            bool moving = math.lengthsq(delta) > 0.000001f;
+            motionState.LastVelocity = moving ? delta / math.max(0.0001f, deltaTime) : float3.zero;
+            motionState.LocalMove = float2.zero;
+            motionState.Moving = moving ? (byte)1 : (byte)0;
         }
 
         static bool ResolveJump(

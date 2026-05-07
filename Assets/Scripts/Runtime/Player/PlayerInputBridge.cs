@@ -2,6 +2,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
@@ -9,7 +10,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.Player
 {
     [UpdateInGroup(typeof(MorrowindGameplayInputSystemGroup))]
-    public partial struct PlayerInputReceivingSystem : ISystem, ISystemStartStop
+    public partial struct PlayerInputReceivingSystem : ISystem
     {
         EntityQuery _playerQuery;
 
@@ -25,17 +26,6 @@ namespace VVardenfell.Runtime.Player
             systemState.RequireForUpdate(_playerQuery);
             systemState.RequireForUpdate<FixedTickSystem.Singleton>();
             systemState.RequireForUpdate<RuntimeShellState>();
-        }
-
-        public void OnStartRunning(ref SystemState systemState)
-        {
-            ApplyCursorState(!GameplayInputGate.BlocksGameplayInput);
-        }
-
-        public void OnStopRunning(ref SystemState systemState)
-        {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -55,13 +45,19 @@ namespace VVardenfell.Runtime.Player
             ref var magic = ref magicRef.ValueRW;
             var shell = SystemAPI.GetSingleton<RuntimeShellState>();
 
-            bool gameplayInputAllowed = !GameplayInputGate.BlocksGameplayInput;
-            ApplyCursorState(gameplayInputAllowed);
+            bool shellBlocksInput = BootstrapPresentationGate.BlocksGameplayInput
+                || SystemAPI.HasSingleton<RuntimeShellUiInputBlocker>();
+            bool movementInputAllowed = !shellBlocksInput && shell.PlayerControlsDisabled == 0;
+            bool lookInputAllowed = !shellBlocksInput && shell.PlayerLookingDisabled == 0;
 
-            if (!gameplayInputAllowed || kb == null)
+            float2 frameLookDelta = lookInputAllowed && mouse != null
+                ? (float2)(Vector2)mouse.delta.ReadValue() * character.LookSensitivity
+                : float2.zero;
+
+            if (!movementInputAllowed || kb == null)
             {
                 control.MoveInput = float2.zero;
-                control.LookDeltaDegrees = float2.zero;
+                control.LookDeltaDegrees = lookInputAllowed ? control.LookDeltaDegrees + frameLookDelta : float2.zero;
                 control.JumpHeld = false;
                 control.SprintHeld = false;
                 control.CrouchHeld = false;
@@ -86,9 +82,6 @@ namespace VVardenfell.Runtime.Player
             if (moveLengthSq > 1f)
                 move *= math.rsqrt(moveLengthSq);
 
-            float2 frameLookDelta = mouse != null
-                ? (float2)(Vector2)mouse.delta.ReadValue() * character.LookSensitivity
-                : float2.zero;
             bool jumpPressedThisFrame = kb.spaceKey.wasPressedThisFrame;
             bool interactPressedThisFrame = kb.eKey.wasPressedThisFrame;
             bool toggleViewPressedThisFrame = kb.vKey.wasPressedThisFrame;
@@ -145,24 +138,6 @@ namespace VVardenfell.Runtime.Player
             {
                 control.JumpPressedEvent.Set(fixedTick);
                 state.LastJumpPressedTick = fixedTick;
-            }
-        }
-
-        private static void ApplyCursorState(bool gameplayInputAllowed)
-        {
-            if (gameplayInputAllowed)
-            {
-                if (Cursor.lockState != CursorLockMode.Locked)
-                    Cursor.lockState = CursorLockMode.Locked;
-                if (Cursor.visible)
-                    Cursor.visible = false;
-            }
-            else
-            {
-                if (Cursor.lockState != CursorLockMode.None)
-                    Cursor.lockState = CursorLockMode.None;
-                if (!Cursor.visible)
-                    Cursor.visible = true;
             }
         }
     }

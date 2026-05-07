@@ -45,6 +45,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 PlayerAttribute = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorAttributeSet>()),
                 PlayerSkill = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>(), ComponentType.ReadOnly<ActorSkillSet>()),
             };
+            MorrowindDialogueResultScriptUtility.PrepareQueries(systemState.EntityManager);
         }
 
         public void OnUpdate(ref SystemState systemState)

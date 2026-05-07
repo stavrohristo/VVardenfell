@@ -267,6 +267,8 @@ namespace VVardenfell.Runtime.Streaming
 
             var em = world.EntityManager;
 
+            DestroyLogicalRefs(em);
+
             using (var entities = PlayerStanceCollidersQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
                 for (int i = 0; i < entities.Length; i++)
@@ -390,6 +392,50 @@ namespace VVardenfell.Runtime.Streaming
             WorldResources.Reset();
         }
 
+        static void DestroyLogicalRefs(EntityManager em)
+        {
+            using (var logicalRefs = LogicalRefTagQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                for (int i = 0; i < logicalRefs.Length; i++)
+                {
+                    Entity logicalRef = logicalRefs[i];
+                    if (!em.Exists(logicalRef))
+                        continue;
+
+                    if (em.HasBuffer<LogicalRefChild>(logicalRef))
+                    {
+                        var children = em.GetBuffer<LogicalRefChild>(logicalRef);
+                        for (int childIndex = 0; childIndex < children.Length; childIndex++)
+                        {
+                            Entity child = children[childIndex].Value;
+                            if (child != Entity.Null && em.Exists(child))
+                                ecb.DestroyEntity(child);
+                        }
+                    }
+
+                    ecb.DestroyEntity(logicalRef);
+                }
+
+                ecb.Playback(em);
+                ecb.Dispose();
+            }
+
+            using (var orphanChildren = LogicalRefParentQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                for (int i = 0; i < orphanChildren.Length; i++)
+                {
+                    Entity child = orphanChildren[i];
+                    if (child != Entity.Null && em.Exists(child))
+                        ecb.DestroyEntity(child);
+                }
+
+                ecb.Playback(em);
+                ecb.Dispose();
+            }
+        }
+
         static PlayerCharacterComponent ResolvePlayerMovementSettings()
             => BootstrapController.ResolvePlayerMovementSettings();
 
@@ -461,6 +507,26 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<MorrowindScriptRuntimeCatalog>());
+        }
+
+        static class LogicalRefTagQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LogicalRefTag>());
+        }
+
+        static class LogicalRefParentQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LogicalRefParent>());
         }
 
         static class RuntimeWorldCellBlobReferenceQueryCache

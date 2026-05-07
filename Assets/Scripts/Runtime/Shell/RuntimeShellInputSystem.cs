@@ -9,7 +9,7 @@ namespace VVardenfell.Runtime.Shell
 {
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(RuntimeShellStateSystem))]
-    public partial struct RuntimeShellInputSystem : ISystem, ISystemStartStop
+    public partial struct RuntimeShellInputSystem : ISystem
     {
         EntityQuery _dialogueSessionQuery;
 
@@ -18,31 +18,24 @@ namespace VVardenfell.Runtime.Shell
             _dialogueSessionQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindDialogueSession>());
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<ContainerWindowState>();
-        }
-
-        public void OnStartRunning(ref SystemState systemState)
-        {
-            RuntimeShellPresentationGate.BlocksGameplayInput = false;
-        }
-
-        public void OnStopRunning(ref SystemState systemState)
-        {
-            RuntimeShellPresentationGate.BlocksGameplayInput = false;
+            systemState.RequireForUpdate<BookReaderState>();
+            systemState.RequireForUpdate<BookReaderRequest>();
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
             if (BootstrapPresentationGate.BlocksGameplayInput)
-            {
-                RuntimeShellPresentationGate.BlocksGameplayInput = false;
                 return;
-            }
 
             ref var state = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
             ref var containerState = ref SystemAPI.GetSingletonRW<ContainerWindowState>().ValueRW;
             ref var browserState = ref SystemAPI.GetSingletonRW<SaveLoadBrowserState>().ValueRW;
+            ref var bookRequest = ref SystemAPI.GetSingletonRW<BookReaderRequest>().ValueRW;
             var keyboard = Keyboard.current;
             var gamepad = Gamepad.current;
+
+            if (SystemAPI.HasSingleton<CharGenStage>())
+                return;
 
             bool togglePausePressed = (keyboard?.escapeKey.wasPressedThisFrame ?? false)
                 || (gamepad?.startButton.wasPressedThisFrame ?? false);
@@ -53,7 +46,28 @@ namespace VVardenfell.Runtime.Shell
             bool toggleJournalPressed = keyboard?.jKey.wasPressedThisFrame ?? false;
             bool openWaitPressed = keyboard?.tKey.wasPressedThisFrame ?? false;
 
-            if (state.ModalOpen != 0)
+            if (SystemAPI.TryGetSingleton<BookReaderState>(out var bookReader) && bookReader.Visible != 0)
+            {
+                if (togglePausePressed || backPressed)
+                    bookRequest.PendingClose = 1;
+                else if ((keyboard?.leftArrowKey.wasPressedThisFrame ?? false) || (keyboard?.pageUpKey.wasPressedThisFrame ?? false))
+                    bookRequest.PendingPreviousPage = 1;
+                else if ((keyboard?.rightArrowKey.wasPressedThisFrame ?? false) || (keyboard?.pageDownKey.wasPressedThisFrame ?? false))
+                    bookRequest.PendingNextPage = 1;
+                else if ((BookReaderKind)bookReader.Kind == BookReaderKind.Scroll && (keyboard?.upArrowKey.wasPressedThisFrame ?? false))
+                {
+                    bookRequest.PendingScroll = 1;
+                    bookRequest.ScrollOffset = bookReader.ScrollOffset - 40f;
+                }
+                else if ((BookReaderKind)bookReader.Kind == BookReaderKind.Scroll && (keyboard?.downArrowKey.wasPressedThisFrame ?? false))
+                {
+                    bookRequest.PendingScroll = 1;
+                    bookRequest.ScrollOffset = bookReader.ScrollOffset + 40f;
+                }
+
+                return;
+            }
+            else if (state.ModalOpen != 0)
             {
                 if (togglePausePressed || backPressed)
                 {
@@ -131,7 +145,6 @@ namespace VVardenfell.Runtime.Shell
                 RuntimeShellStateUtility.OpenPause(ref state);
             }
 
-            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref state);
         }
 
         static bool CanCloseDialogue(ref SystemState systemState, EntityQuery dialogueSessionQuery)

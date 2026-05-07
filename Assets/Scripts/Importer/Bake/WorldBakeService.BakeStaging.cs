@@ -748,6 +748,29 @@ namespace VVardenfell.Importer.Bake
                 bool isDoorRecord = hasBaseRecord && rec.Tag == DoorTag;
                 bool isStat = hasBaseRecord && rec.Tag == StatTag;
                 var contentReference = ResolveGameplayContentReference(gameplayContentLookup, reference.BaseId);
+                if (IsOpenMwHiddenMarker(reference.BaseId))
+                {
+                    int hiddenMarkerDoorMetaIndex = -1;
+                    if (isDoorRecord)
+                    {
+                        hiddenMarkerDoorMetaIndex = staged.DoorEntries.Count;
+                        BuildDoorEntry(reference, out var doorEntry);
+                        staged.DoorEntries.Add(doorEntry);
+                    }
+
+                    staged.CollisionNoColliderCount++;
+                    staged.PlacedRefs.Add(new StagedPlacedRefData(
+                        string.Empty,
+                        null,
+                        reference.FormId,
+                        hiddenMarkerDoorMetaIndex,
+                        contentReference,
+                        pos,
+                        rot,
+                        reference.Scale));
+                    continue;
+                }
+
                 if (contentReference.Kind == ContentReferenceKind.Actor)
                 {
                     staged.CollisionNoColliderCount++;
@@ -765,7 +788,7 @@ namespace VVardenfell.Importer.Bake
 
                 var model = hasBaseRecord ? EnsureModelSource(rec, sharedBsa, bsaByName, modelCache) : null;
 
-                if (model == null || model.Meshes.Length == 0)
+                if (model == null)
                 {
                     if (IsLogicalOnlyWorldRef(contentReference.Kind))
                     {
@@ -788,10 +811,12 @@ namespace VVardenfell.Importer.Bake
                         reference.BaseId,
                         hasBaseRecord ? rec.Model : string.Empty,
                         contentReference,
-                        hasBaseRecord ? "model produced no renderable meshes" : "missing base record");
+                        hasBaseRecord ? "model could not be loaded" : "missing base record");
                     staged.CollisionNoColliderCount++;
                     continue;
                 }
+
+                bool hasRenderableMeshes = model.Meshes.Length > 0;
 
                 int doorMetaIndex = -1;
                 if (isDoorRecord)
@@ -807,6 +832,34 @@ namespace VVardenfell.Importer.Bake
                 {
                     collisionPayload = model.AutoVisualStaticCollision;
                     usedAutoVisualStaticCollision = true;
+                }
+
+                if (!hasRenderableMeshes && collisionPayload.IsEmpty)
+                {
+                    if (IsLogicalOnlyWorldRef(contentReference.Kind))
+                    {
+                        staged.CollisionNoColliderCount++;
+                        staged.PlacedRefs.Add(new StagedPlacedRefData(
+                            string.Empty,
+                            null,
+                            reference.FormId,
+                            -1,
+                            contentReference,
+                            pos,
+                            rot,
+                            reference.Scale));
+                        continue;
+                    }
+
+                    RecordDroppedBakeRef(
+                        workItem,
+                        reference.FormId,
+                        reference.BaseId,
+                        rec.Model,
+                        contentReference,
+                        "model produced no renderable meshes or collision");
+                    staged.CollisionNoColliderCount++;
+                    continue;
                 }
 
                 PlacedRefCollisionAssignment collisionAssignment = ClassifyPlacedRefCollision(isStat, collisionPayload);
@@ -840,6 +893,9 @@ namespace VVardenfell.Importer.Bake
                         staged.CollisionNoColliderCount++;
                         break;
                 }
+
+                if (!hasRenderableMeshes && collisionAssignment == PlacedRefCollisionAssignment.CellStaticAggregate)
+                    continue;
 
                 if (isStat && model.HasObjectAnimation)
                     RecordAnimatedStaticRef(model.ModelPath);
@@ -1045,6 +1101,19 @@ namespace VVardenfell.Importer.Bake
                 or ContentReferenceKind.Light
                 or ContentReferenceKind.LeveledItem
                 or ContentReferenceKind.LeveledCreature;
+        }
+
+
+        private static bool IsOpenMwHiddenMarker(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return false;
+
+            string marker = id.Trim();
+            return string.Equals(marker, "prisonmarker", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(marker, "divinemarker", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(marker, "templemarker", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(marker, "northmarker", StringComparison.OrdinalIgnoreCase);
         }
 
 

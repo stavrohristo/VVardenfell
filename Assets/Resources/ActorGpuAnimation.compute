@@ -87,10 +87,32 @@ struct GpuSkinMesh
     int FirstVertexIndex;
     float3 RigidOffset;
     int VertexCount;
+    int FirstHeadMorphTargetIndex;
+    int HeadMorphTargetCount;
+    float TalkStart;
+    float TalkStop;
     float4 GeometryRow0;
     float4 GeometryRow1;
     float4 GeometryRow2;
     float4 GeometryRow3;
+};
+
+struct GpuHeadMorphTarget
+{
+    int FirstKeyIndex;
+    int KeyCount;
+    int FirstVertexIndex;
+    int VertexCount;
+    int Interpolation;
+    int Padding0;
+    int Padding1;
+    int Padding2;
+};
+
+struct GpuHeadMorphVertex
+{
+    float3 Value;
+    float Padding;
 };
 
 struct GpuSkinBone
@@ -116,7 +138,7 @@ struct GpuActor
     int SkinMeshWorkCount;
     int DeformedVertexOffset;
     int DeformedVertexCount;
-    int Padding;
+    float HeadAnimationTime;
 };
 
 struct GpuLayer
@@ -171,6 +193,8 @@ StructuredBuffer<GpuKey> _GpuAnimationKeys;
 StructuredBuffer<GpuSkinMesh> _GpuAnimationSkinMeshes;
 StructuredBuffer<GpuSkinBone> _GpuAnimationSkinBones;
 StructuredBuffer<ActorVertex> _GpuAnimationSkinVertices;
+StructuredBuffer<GpuHeadMorphTarget> _GpuAnimationHeadMorphTargets;
+StructuredBuffer<GpuHeadMorphVertex> _GpuAnimationHeadMorphVertices;
 StructuredBuffer<GpuActor> _GpuAnimationActors;
 StructuredBuffer<GpuLayer> _GpuAnimationLayers;
 RWStructuredBuffer<ActorMatrix3x4> _GpuAnimationLocalBoneMatrices;
@@ -191,6 +215,8 @@ int _GpuKeyCount;
 int _GpuSkinMeshCount;
 int _GpuSkinBoneCount;
 int _GpuSkinVertexCount;
+int _GpuHeadMorphTargetCount;
+int _GpuHeadMorphVertexCount;
 int _GpuLayerCount;
 int _GpuLocalBoneMatrixCount;
 int _GpuActorBoneMatrixCount;
@@ -912,6 +938,75 @@ void AccumulateVertexInfluence(
     skinnedNormal += TransformDirection(matrixValue, sourceNormal) * weight;
 }
 
+float SampleHeadMorphWeight(GpuHeadMorphTarget target, float time)
+{
+    int first = target.FirstKeyIndex;
+    int count = target.KeyCount;
+    if (count <= 0 || first < 0 || !IsInRange((uint)first, (uint)_GpuKeyCount))
+        return 0.0;
+
+    int last = min(_GpuKeyCount - 1, first + count - 1);
+    if (first >= last || time <= _GpuAnimationKeys[first].Time)
+        return _GpuAnimationKeys[first].Value.x;
+    if (time >= _GpuAnimationKeys[last].Time)
+        return _GpuAnimationKeys[last].Value.x;
+
+    int right = first + 1;
+    while (right <= last && _GpuAnimationKeys[right].Time < time)
+        right++;
+
+    int left = max(first, right - 1);
+    GpuKey a = _GpuAnimationKeys[left];
+    GpuKey b = _GpuAnimationKeys[right];
+    if (target.Interpolation == 5)
+        return a.Value.x;
+
+    float span = max(1e-5, b.Time - a.Time);
+    float t = saturate((time - a.Time) / span);
+    if (target.Interpolation == 2)
+        return Hermite(a, b, t, span).x;
+
+    return lerp(a.Value.x, b.Value.x, t);
+}
+
+float3 SampleHeadMorphPosition(GpuSkinMesh skinMesh, int localVertexIndex, float time, float3 sourcePosition)
+{
+    if (skinMesh.FirstHeadMorphTargetIndex < 0
+        || skinMesh.HeadMorphTargetCount <= 1
+        || !IsInRange((uint)skinMesh.FirstHeadMorphTargetIndex, (uint)_GpuHeadMorphTargetCount))
+    {
+        return sourcePosition;
+    }
+
+    int targetEnd = min(_GpuHeadMorphTargetCount, skinMesh.FirstHeadMorphTargetIndex + skinMesh.HeadMorphTargetCount);
+    GpuHeadMorphTarget baseTarget = _GpuAnimationHeadMorphTargets[skinMesh.FirstHeadMorphTargetIndex];
+    if (localVertexIndex < 0
+        || localVertexIndex >= baseTarget.VertexCount
+        || baseTarget.FirstVertexIndex < 0
+        || !IsInRange((uint)(baseTarget.FirstVertexIndex + localVertexIndex), (uint)_GpuHeadMorphVertexCount))
+    {
+        return sourcePosition;
+    }
+
+    float3 position = _GpuAnimationHeadMorphVertices[baseTarget.FirstVertexIndex + localVertexIndex].Value;
+    [loop]
+    for (int targetIndex = skinMesh.FirstHeadMorphTargetIndex + 1; targetIndex < targetEnd; targetIndex++)
+    {
+        GpuHeadMorphTarget target = _GpuAnimationHeadMorphTargets[targetIndex];
+        if (localVertexIndex >= target.VertexCount
+            || target.FirstVertexIndex < 0
+            || !IsInRange((uint)(target.FirstVertexIndex + localVertexIndex), (uint)_GpuHeadMorphVertexCount))
+        {
+            continue;
+        }
+
+        float weight = SampleHeadMorphWeight(target, time);
+        position += _GpuAnimationHeadMorphVertices[target.FirstVertexIndex + localVertexIndex].Value * weight;
+    }
+
+    return position;
+}
+
 [numthreads(128, 1, 1)]
 void BuildDeformedVertices(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID)
 {
@@ -952,11 +1047,12 @@ void BuildDeformedVertices(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_
                 continue;
 
             ActorVertex source = _GpuAnimationSkinVertices[sourceVertexIndex];
+            float3 sourcePosition = SampleHeadMorphPosition(skinMesh, localVertexIndex, actor.HeadAnimationTime, source.Position);
             if (skinMesh.IsRigid != 0)
             {
                 ActorMatrix3x4 rigidMatrix = ReadActorSkinMatrix(work.BoneMatrixOffset);
                 ActorDeformedVertex rigidOutputVertex;
-                rigidOutputVertex.Position = TransformPoint(rigidMatrix, source.Position);
+                rigidOutputVertex.Position = TransformPoint(rigidMatrix, sourcePosition);
                 rigidOutputVertex.Padding0 = 0.0;
                 rigidOutputVertex.Normal = SafeNormalize3(TransformDirection(rigidMatrix, source.Normal), source.Normal);
                 rigidOutputVertex.Padding1 = 0.0;
@@ -966,20 +1062,20 @@ void BuildDeformedVertices(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_
 
             float3 skinnedPosition = 0.0;
             float3 skinnedNormal = 0.0;
-            AccumulateVertexInfluence(source.BoneIndices0.x, source.Weights0.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices0.y, source.Weights0.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices0.z, source.Weights0.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices0.w, source.Weights0.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices1.x, source.Weights1.x, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices1.y, source.Weights1.y, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices1.z, source.Weights1.z, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
-            AccumulateVertexInfluence(source.BoneIndices1.w, source.Weights1.w, work.BoneMatrixOffset, source.Position, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.x, source.Weights0.x, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.y, source.Weights0.y, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.z, source.Weights0.z, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices0.w, source.Weights0.w, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.x, source.Weights1.x, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.y, source.Weights1.y, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.z, source.Weights1.z, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
+            AccumulateVertexInfluence(source.BoneIndices1.w, source.Weights1.w, work.BoneMatrixOffset, sourcePosition, source.Normal, skinnedPosition, skinnedNormal);
 
             float weightSum = dot(source.Weights0, float4(1.0, 1.0, 1.0, 1.0))
                 + dot(source.Weights1, float4(1.0, 1.0, 1.0, 1.0));
             if (weightSum <= 0.0)
             {
-                skinnedPosition = source.Position;
+                skinnedPosition = sourcePosition;
                 skinnedNormal = source.Normal;
             }
 

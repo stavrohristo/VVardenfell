@@ -209,9 +209,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return MorrowindScriptRequirementMask.None;
                 case MorrowindScriptOpcode.GetLocked:
                     return MorrowindScriptRequirementMask.LockStates;
-                case MorrowindScriptOpcode.GetItemCount:
                 case MorrowindScriptOpcode.GetOnDeath:
                     return MorrowindScriptRequirementMask.None;
+                case MorrowindScriptOpcode.GetItemCount:
+                    return MorrowindScriptRequirementMask.PlayerInventory;
                 case MorrowindScriptOpcode.GetAttacked:
                 case MorrowindScriptOpcode.OnMurder:
                 case MorrowindScriptOpcode.OnKnockout:

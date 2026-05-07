@@ -52,7 +52,7 @@ namespace VVardenfell.Runtime.Animation
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<ActorAnimationRuntimeSettings>();
             _gpuActorQuery = SystemAPI.QueryBuilder()
-                .WithAll<ActorGpuAnimationState, ActorSkeleton, ActorGpuAnimationRequest, ActorSkinMesh, ActorRenderVisible>()
+                .WithAll<ActorGpuAnimationState, ActorSkeleton, ActorGpuAnimationRequest, ActorSkinMesh, ActorHeadAnimationState, ActorRenderVisible>()
                 .Build();
             _counts = new NativeList<ActorGpuAnimationCount>(Allocator.Persistent);
             _offsets = new NativeList<ActorGpuAnimationOffset>(Allocator.Persistent);
@@ -191,6 +191,7 @@ namespace VVardenfell.Runtime.Animation
                 [EntityIndexInQuery] int entityIndex,
                 in ActorGpuAnimationState gpuState,
                 in ActorSkeleton skeleton,
+                in ActorHeadAnimationState headAnimation,
                 [ReadOnly] DynamicBuffer<ActorGpuAnimationRequest> requests,
                 [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
             {
@@ -273,6 +274,7 @@ namespace VVardenfell.Runtime.Animation
                 [EntityIndexInQuery] int entityIndex,
                 RefRW<ActorGpuAnimationState> gpuState,
                 in ActorSkeleton skeleton,
+                in ActorHeadAnimationState headAnimation,
                 [ReadOnly] DynamicBuffer<ActorGpuAnimationRequest> requests,
                 [ReadOnly] DynamicBuffer<ActorSkinMesh> skinMeshes)
             {
@@ -352,6 +354,7 @@ namespace VVardenfell.Runtime.Animation
                     SkinMeshWorkCount = skinMeshWorkCount,
                     DeformedVertexOffset = actorDeformedVertexOffset,
                     DeformedVertexCount = deformedVertexOffset - actorDeformedVertexOffset,
+                    HeadAnimationTime = headAnimation.HasHeadMorph != 0 ? headAnimation.CurrentTime : 0f,
                 };
             }
         }

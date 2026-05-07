@@ -206,5 +206,17 @@ namespace VVardenfell.Core.Cache
 
             return normalized.ToLowerInvariant();
         }
+
+        public static bool IsLeftSideBoneName(string value)
+        {
+            string canonical = CanonicalizeBoneName(value);
+            if (string.IsNullOrEmpty(canonical))
+                return false;
+
+            return string.Equals(canonical, "left", StringComparison.Ordinal)
+                   || canonical.StartsWith("left ", StringComparison.Ordinal)
+                   || canonical.EndsWith(" left", StringComparison.Ordinal)
+                   || canonical.Contains(" left ", StringComparison.Ordinal);
+        }
     }
 }

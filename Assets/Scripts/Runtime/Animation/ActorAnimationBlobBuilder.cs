@@ -38,6 +38,8 @@ namespace VVardenfell.Runtime.Animation
             BuildGraphNodes(source, ref builder, ref root);
             BuildSkeletons(source, ref builder, ref root);
             BuildSkinMeshes(source, ref builder, ref root, vertexCount, indexCount, skinBoneCount);
+            BuildHeadMorphTargets(source, ref builder, ref root);
+            BuildHeadMorphVertices(source, ref builder, ref root);
             BuildClips(source, clipRigFamilyIndices, clipTextMarkerStarts, clipTextMarkerCounts, ref builder, ref root);
             BuildTextMarkers(runtimeTextMarkers, ref builder, ref root);
             BuildTracks(source, trackTargetBoneIndices, trackBlendMasks, ref builder, ref root);
@@ -311,6 +313,12 @@ namespace VVardenfell.Runtime.Animation
                     BoundsExtents = new float3(mesh?.BoundsExtentsX ?? 0f, mesh?.BoundsExtentsY ?? 0f, mesh?.BoundsExtentsZ ?? 0f),
                     GeometryToSkeleton = ReadMatrix(mesh?.GeometryToSkeletonMatrix, 0),
                     RigidOffset = new float3(mesh?.RigidOffsetX ?? 0f, mesh?.RigidOffsetY ?? 0f, mesh?.RigidOffsetZ ?? 0f),
+                    TalkStart = mesh?.TalkStart ?? 0f,
+                    TalkStop = mesh?.TalkStop ?? 0f,
+                    BlinkStart = mesh?.BlinkStart ?? 0f,
+                    BlinkStop = mesh?.BlinkStop ?? 0f,
+                    FirstHeadMorphTargetIndex = mesh?.FirstHeadMorphTargetIndex ?? -1,
+                    HeadMorphTargetCount = mesh?.HeadMorphTargetCount ?? 0,
                 };
 
                 for (int i = 0; i < meshSkinBoneCount; i++)
@@ -330,6 +338,37 @@ namespace VVardenfell.Runtime.Animation
                 for (int i = 0; i < meshIndexCount; i++)
                     dstIndices[indexCursor++] = mesh.Indices[i];
             }
+        }
+
+        static void BuildHeadMorphTargets(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.HeadMorphTargets ?? Array.Empty<ActorHeadMorphTargetDef>();
+            BlobBuilderArray<ActorHeadMorphTargetBlob> dst = builder.Allocate(ref root.HeadMorphTargets, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                dst[i] = new ActorHeadMorphTargetBlob
+                {
+                    FirstKeyIndex = values[i].FirstKeyIndex,
+                    KeyCount = values[i].KeyCount,
+                    FirstVertexIndex = values[i].FirstVertexIndex,
+                    VertexCount = values[i].VertexCount,
+                    Interpolation = values[i].Interpolation,
+                };
+            }
+        }
+
+        static void BuildHeadMorphVertices(
+            ActorAnimationCatalogData source,
+            ref BlobBuilder builder,
+            ref ActorAnimationCatalogBlob root)
+        {
+            var values = source.HeadMorphVertices ?? Array.Empty<ActorHeadMorphVertexDef>();
+            BlobBuilderArray<ActorHeadMorphVertexBlob> dst = builder.Allocate(ref root.HeadMorphVertices, values.Length);
+            for (int i = 0; i < values.Length; i++)
+                dst[i] = new ActorHeadMorphVertexBlob { Value = new float3(values[i].X, values[i].Y, values[i].Z) };
         }
 
         static void CountSkinPayload(

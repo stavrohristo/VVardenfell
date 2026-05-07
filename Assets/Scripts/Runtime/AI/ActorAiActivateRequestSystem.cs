@@ -11,7 +11,7 @@ using VVardenfell.Runtime.Systems;
 namespace VVardenfell.Runtime.AI
 {
     [UpdateInGroup(typeof(MorrowindPreTransformSimulationSystemGroup))]
-    [UpdateAfter(typeof(ActorAiActivateDirectSteeringSystem))]
+    [UpdateAfter(typeof(ActorAiPlannerSystem))]
     public partial struct ActorAiActivateRequestSystem : ISystem
     {
         EntityQuery _runtimeQuery;

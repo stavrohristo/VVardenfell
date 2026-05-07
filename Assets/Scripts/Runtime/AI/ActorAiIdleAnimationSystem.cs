@@ -1,7 +1,9 @@
 using System;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.AI
@@ -25,6 +27,19 @@ namespace VVardenfell.Runtime.AI
                 if (aiState.PendingIdleGroup != 0)
                 {
                     StartIdle(ref systemState, entity, ref aiState);
+                    continue;
+                }
+
+                if (aiState.ActiveIdleGroupHash != 0UL && ShouldClearActiveIdle(ref systemState, entity, aiState))
+                {
+                    RemoveAiIdleOverlays(ref systemState, entity);
+                    aiState.ActiveIdleGroupHash = 0UL;
+                    aiState.PendingIdleGroup = 0;
+                    if (aiState.Status == (byte)ActorAiPlannerStatus.Waiting && float.IsPositiveInfinity(aiState.WaitUntilTime))
+                    {
+                        aiState.WaitUntilTime = 0f;
+                        aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+                    }
                     continue;
                 }
 
@@ -74,6 +89,7 @@ namespace VVardenfell.Runtime.AI
                 Weight = 1f,
                 Priority = AiIdleOverlayPriority,
                 Mask = ActorAnimationBlendMask.All,
+                SuppressWhenMoving = 1,
             });
 
             aiState.ActiveIdleGroupHash = groupHash;
@@ -98,6 +114,26 @@ namespace VVardenfell.Runtime.AI
             }
 
             return false;
+        }
+
+        bool ShouldClearActiveIdle(ref SystemState systemState, Entity entity, in ActorAiState aiState)
+        {
+            if (aiState.Status != (byte)ActorAiPlannerStatus.Waiting || !float.IsPositiveInfinity(aiState.WaitUntilTime))
+                return true;
+
+            if (!systemState.EntityManager.HasComponent<MorrowindMovementState>(entity))
+                return false;
+
+            var movementState = systemState.EntityManager.GetComponentData<MorrowindMovementState>(entity);
+            return math.lengthsq(movementState.LocalMove) > 0.0001f;
+        }
+
+        void RemoveAiIdleOverlays(ref SystemState systemState, Entity entity)
+        {
+            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
+                throw new InvalidOperationException("[VVardenfell][AI] AiWander idle target lost ActorAnimationOverlayState buffer.");
+
+            RemoveAiIdleOverlays(systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity));
         }
 
         static void RemoveAiIdleOverlays(DynamicBuffer<ActorAnimationOverlayState> overlays)

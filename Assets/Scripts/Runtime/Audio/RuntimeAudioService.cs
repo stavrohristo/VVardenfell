@@ -2,12 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Unity.Entities;
+using Unity.Mathematics;
 using Unity.Profiling;
+using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.Networking;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
 
@@ -104,6 +107,7 @@ namespace VVardenfell.Runtime.Audio
             public AudioSource Source;
             public uint EventSequence;
             public bool Loading;
+            public float Loudness;
         }
 
         readonly Dictionary<string, AudioClip> _clipCache = new(StringComparer.OrdinalIgnoreCase);
@@ -114,6 +118,7 @@ namespace VVardenfell.Runtime.Audio
         readonly HashSet<ulong> _scriptLoopTouched = new();
         readonly List<ulong> _scriptLoopRemovalKeys = new();
         readonly List<ActiveSayPlayback> _activeSayPlaybacks = new();
+        readonly float[] _sayLoudnessSamples = new float[256];
         readonly RuntimeSoundResourceResolver _soundResourceResolver = new();
 
         readonly GameObject _root;
@@ -642,12 +647,37 @@ namespace VVardenfell.Runtime.Audio
                 for (int i = 0; i < _activeSayPlaybacks.Count; i++)
                 {
                     var say = _activeSayPlaybacks[i];
+                    say.Loudness = ComputeSayLoudness(say.Source, say.Loading);
                     activeSays.Add(new MorrowindScriptActiveSay
                     {
                         SourceEntity = say.SourceEntity,
                         SourcePlacedRefId = say.SourcePlacedRefId,
+                        Loudness = say.Loudness,
                     });
                 }
+            }
+        }
+
+        public void SyncActiveSaySpatialPositions(
+            EntityManager entityManager,
+            BlobAssetReference<ActorAnimationCatalogBlob> actorAnimationCatalog)
+        {
+            for (int i = 0; i < _activeSayPlaybacks.Count; i++)
+            {
+                var active = _activeSayPlaybacks[i];
+                if (active.Source == null || active.Source.spatialBlend <= 0f)
+                    continue;
+                if (active.SourceEntity == Entity.Null || !entityManager.Exists(active.SourceEntity))
+                    continue;
+                if (!entityManager.HasComponent<LocalTransform>(active.SourceEntity))
+                    continue;
+
+                var transform = entityManager.GetComponentData<LocalTransform>(active.SourceEntity);
+                active.Source.transform.position = ResolveActorHeadPosition(
+                    entityManager,
+                    actorAnimationCatalog,
+                    active.SourceEntity,
+                    transform);
             }
         }
 
@@ -1447,6 +1477,59 @@ namespace VVardenfell.Runtime.Audio
                 if (active.Source == null || !active.Source.isPlaying)
                     _activeSayPlaybacks.RemoveAt(i);
             }
+        }
+
+        float ComputeSayLoudness(AudioSource source, bool loading)
+        {
+            if (loading || source == null || !source.isPlaying)
+                return 0f;
+
+            source.GetOutputData(_sayLoudnessSamples, 0);
+            float sum = 0f;
+            for (int i = 0; i < _sayLoudnessSamples.Length; i++)
+                sum += _sayLoudnessSamples[i] * _sayLoudnessSamples[i];
+
+            return Mathf.Clamp01(Mathf.Sqrt(sum / _sayLoudnessSamples.Length));
+        }
+
+        static Vector3 ResolveActorHeadPosition(
+            EntityManager entityManager,
+            BlobAssetReference<ActorAnimationCatalogBlob> actorAnimationCatalog,
+            Entity entity,
+            LocalTransform transform)
+        {
+            if (actorAnimationCatalog.IsCreated
+                && entityManager.HasComponent<ActorSkeleton>(entity)
+                && entityManager.HasBuffer<ActorBone>(entity))
+            {
+                var skeleton = entityManager.GetComponentData<ActorSkeleton>(entity);
+                int headBone = ResolveHeadBoneIndex(ref actorAnimationCatalog.Value, skeleton);
+                var bones = entityManager.GetBuffer<ActorBone>(entity, true);
+                if ((uint)headBone < (uint)bones.Length)
+                {
+                    float3 localHead = bones[headBone].LocalToRoot.c3.xyz;
+                    float3 worldHead = transform.Position + math.rotate(transform.Rotation, localHead * transform.Scale);
+                    return new Vector3(worldHead.x, worldHead.y, worldHead.z);
+                }
+            }
+
+            return new Vector3(transform.Position.x, transform.Position.y, transform.Position.z);
+        }
+
+        static int ResolveHeadBoneIndex(ref ActorAnimationCatalogBlob catalog, in ActorSkeleton skeleton)
+        {
+            if ((uint)skeleton.SkeletonIndex >= (uint)catalog.Skeletons.Length)
+                return -1;
+
+            var skeletonBlob = catalog.Skeletons[skeleton.SkeletonIndex];
+            int end = math.min(catalog.Bones.Length, skeletonBlob.FirstBoneIndex + skeletonBlob.BoneCount);
+            for (int i = skeletonBlob.FirstBoneIndex; i >= 0 && i < end; i++)
+            {
+                if (catalog.Bones[i].NameHash == ActorSkeletonNameHash.Bip01Head)
+                    return i - skeletonBlob.FirstBoneIndex;
+            }
+
+            return -1;
         }
 
         void CancelLoad(ChannelState channel, bool disposeClip = false)

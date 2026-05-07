@@ -20,17 +20,7 @@ namespace VVardenfell.Runtime.Shell
         [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
-            var shell = SystemAPI.GetSingleton<RuntimeShellState>();
-            bool paused = shell.InventoryOpen != 0
-                || shell.ContainerOpen != 0
-                || shell.PauseMenuOpen != 0
-                || shell.ModalOpen != 0
-                || shell.SaveLoadBrowserOpen != 0
-                || shell.OptionsOpen != 0
-                || shell.JournalOpen != 0
-                || shell.DialogueOpen != 0
-                || shell.RestMenuOpen != 0
-                || shell.RestMenuAdvancing != 0;
+            bool paused = SystemAPI.HasSingleton<RuntimeShellUiInputBlocker>();
 
             if (paused)
                 MorrowindRuntimeLifecycleUtility.EnsurePaused(systemState.EntityManager, _pausedQuery);

@@ -52,6 +52,16 @@ namespace VVardenfell.Runtime.WorldState
             var playerCrime = entityManager.HasComponent<PlayerCrimeState>(playerEntity)
                 ? entityManager.GetComponentData<PlayerCrimeState>(playerEntity)
                 : PlayerCrimeState.Default;
+            var playerAppearance = entityManager.HasComponent<PlayerRaceAppearance>(playerEntity)
+                ? entityManager.GetComponentData<PlayerRaceAppearance>(playerEntity)
+                : new PlayerRaceAppearance { RaceId = identity.RaceName, Male = 1 };
+            var playerCustomClass = entityManager.HasComponent<PlayerCustomClass>(playerEntity)
+                ? entityManager.GetComponentData<PlayerCustomClass>(playerEntity)
+                : default;
+            Entity charGenEntity = WorldStateEntityQueryUtility.GetSingletonEntity<CharacterGenerationState>(entityManager);
+            var characterGeneration = charGenEntity != Entity.Null
+                ? entityManager.GetComponentData<CharacterGenerationState>(charGenEntity)
+                : new CharacterGenerationState { Initialized = 1, Finalized = 1 };
             var playerFactions = CapturePlayerFactions(entityManager, playerEntity);
             var journalState = entityManager.GetComponentData<WorldJournalState>(journalEntity);
             var questJournalPayload = CaptureQuestJournalPayload(entityManager, questJournalEntity);
@@ -116,6 +126,7 @@ namespace VVardenfell.Runtime.WorldState
             }
             var exteriorMapDiscovery = CaptureExteriorMapDiscovery(entityManager);
             var globalMapOverlay = GlobalMapPresentationCache.CaptureOverlayPayload();
+            var bookReadHistory = CaptureBookReadHistory(entityManager);
 
             payload = new WorldSavePayload
             {
@@ -124,6 +135,9 @@ namespace VVardenfell.Runtime.WorldState
                 PlayerPitchDegrees = view.LocalPitchDegrees,
                 ActorStats = actorStats,
                 PlayerIdentity = identity,
+                PlayerAppearance = playerAppearance,
+                PlayerCustomClass = playerCustomClass,
+                CharacterGeneration = characterGeneration,
                 PlayerCrime = playerCrime,
                 PlayerFactions = playerFactions,
                 InteriorActive = transition.InteriorActive != 0 && transition.ActiveInteriorCellId.Length > 0,
@@ -131,6 +145,7 @@ namespace VVardenfell.Runtime.WorldState
                 NextJournalSequence = journalState.NextSequence,
                 NextRuntimeRefId = spawnState.NextRuntimeRefId,
                 JournalEntries = journalEntries,
+                BookReadHistory = bookReadHistory,
                 QuestJournal = questJournalPayload,
                 Dialogue = dialoguePayload,
                 ActorDeathCounts = actorDeathCounts,
@@ -147,6 +162,19 @@ namespace VVardenfell.Runtime.WorldState
                 Combat = combatPayload,
             };
             return true;
+        }
+
+        static BookReadHistoryEntry[] CaptureBookReadHistory(EntityManager entityManager)
+        {
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<BookReadHistoryEntry>(entityManager);
+            if (entity == Entity.Null || !entityManager.HasBuffer<BookReadHistoryEntry>(entity))
+                return Array.Empty<BookReadHistoryEntry>();
+
+            var buffer = entityManager.GetBuffer<BookReadHistoryEntry>(entity);
+            var result = new BookReadHistoryEntry[buffer.Length];
+            for (int i = 0; i < buffer.Length; i++)
+                result[i] = buffer[i];
+            return result;
         }
 
         static MorrowindCombatSavePayload CaptureCombatPayload(EntityManager entityManager)

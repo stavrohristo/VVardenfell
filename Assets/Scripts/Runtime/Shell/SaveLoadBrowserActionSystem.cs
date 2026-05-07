@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.Shell
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<SaveLoadBrowserState>();
             systemState.RequireForUpdate<SaveLoadBrowserRequest>();
+            systemState.RequireForUpdate<CharacterGenerationState>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -53,7 +54,11 @@ namespace VVardenfell.Runtime.Shell
                     break;
 
                 case SaveLoadBrowserPendingAction.NewSave:
-                    if (WorldSaveStorage.TryWriteNewSlot(systemState.EntityManager, request.SaveName.ToString(), out var newSummary, out string newError))
+                    if (!CanSaveDuringCharacterGeneration())
+                    {
+                        browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Cannot save until character generation is complete.");
+                    }
+                    else if (WorldSaveStorage.TryWriteNewSlot(systemState.EntityManager, request.SaveName.ToString(), out var newSummary, out string newError))
                     {
                         browser.SelectedSlotId = RuntimeShellStateUtility.ToFixedSlotId(newSummary.SlotId);
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Game saved.");
@@ -65,7 +70,11 @@ namespace VVardenfell.Runtime.Shell
                     break;
 
                 case SaveLoadBrowserPendingAction.Overwrite:
-                    if (string.IsNullOrWhiteSpace(request.SlotId.ToString()))
+                    if (!CanSaveDuringCharacterGeneration())
+                    {
+                        browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Cannot save until character generation is complete.");
+                    }
+                    else if (string.IsNullOrWhiteSpace(request.SlotId.ToString()))
                     {
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Select a save slot to overwrite.");
                     }
@@ -132,7 +141,9 @@ namespace VVardenfell.Runtime.Shell
             switch (action)
             {
                 case SaveLoadBrowserPendingAction.Overwrite:
-                    if (WorldSaveStorage.TryOverwriteSlot(systemState.EntityManager, slotId, browser.DraftSaveName.ToString(), out _, out string overwriteError))
+                    if (!CanSaveDuringCharacterGeneration())
+                        browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Cannot save until character generation is complete.");
+                    else if (WorldSaveStorage.TryOverwriteSlot(systemState.EntityManager, slotId, browser.DraftSaveName.ToString(), out _, out string overwriteError))
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus("Save overwritten.");
                     else
                         browser.StatusText = RuntimeShellStateUtility.ToFixedStatus(overwriteError);
@@ -180,6 +191,13 @@ namespace VVardenfell.Runtime.Shell
                     }
                     break;
             }
+        }
+
+        bool CanSaveDuringCharacterGeneration()
+        {
+            if (!SystemAPI.TryGetSingleton<CharacterGenerationState>(out var charGen))
+                return true;
+            return charGen.Initialized == 0 || charGen.Finalized != 0;
         }
 
         static bool IsSlotLoadable(string slotId, out string error)

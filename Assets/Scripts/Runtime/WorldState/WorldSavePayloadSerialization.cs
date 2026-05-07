@@ -16,7 +16,9 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 27;
+        const int PayloadVersion = 29;
+        const int BookReadHistoryPayloadVersion = 29;
+        const int CharacterGenerationPayloadVersion = 28;
         const int ActiveSpellSourcePayloadVersion = 27;
         const int EquipmentConditionPayloadVersion = 26;
         const int InventoryConditionPayloadVersion = 25;
@@ -53,6 +55,7 @@ namespace VVardenfell.Runtime.WorldState
                 && version != PlayerEquipmentPayloadVersion
                 && version != CapturedSoulInventoryPayloadVersion
                 && version != PlayerCrimePayloadVersion
+                && version != BookReadHistoryPayloadVersion
                 && version != PreviousPayloadVersion
                 && version != PreviousPlayerFactionPayloadVersion
                 && version != DialoguePayloadVersion
@@ -98,6 +101,9 @@ namespace VVardenfell.Runtime.WorldState
 
             WriteActorStats(w, payload.ActorStats);
             WriteActorIdentity(w, payload.PlayerIdentity);
+            WritePlayerAppearance(w, payload.PlayerAppearance);
+            WritePlayerCustomClass(w, payload.PlayerCustomClass);
+            WriteCharacterGeneration(w, payload.CharacterGeneration);
             WritePlayerCrime(w, payload.PlayerCrime);
             w.Write(payload.PlayerFactions?.Length ?? 0);
             if (payload.PlayerFactions != null)
@@ -163,6 +169,8 @@ namespace VVardenfell.Runtime.WorldState
                     WriteJournalEntry(w, payload.JournalEntries[i]);
             }
 
+            WriteBookReadHistory(w, payload.BookReadHistory);
+
             WriteQuestJournalPayload(w, payload.QuestJournal);
             WriteDialoguePayload(w, payload.Dialogue);
             WriteActorDeathCounts(w, payload.ActorDeathCounts);
@@ -204,6 +212,31 @@ namespace VVardenfell.Runtime.WorldState
             };
 
             payload.PlayerIdentity = ReadActorIdentity(r);
+            if (version >= CharacterGenerationPayloadVersion)
+            {
+                payload.PlayerAppearance = ReadPlayerAppearance(r);
+                payload.PlayerCustomClass = ReadPlayerCustomClass(r);
+                payload.CharacterGeneration = ReadCharacterGeneration(r);
+            }
+            else
+            {
+                payload.PlayerAppearance = new PlayerRaceAppearance
+                {
+                    RaceId = payload.PlayerIdentity.RaceName,
+                    Male = 1,
+                };
+                payload.PlayerCustomClass = default;
+                payload.CharacterGeneration = new CharacterGenerationState
+                {
+                    Initialized = 1,
+                    Finalized = 1,
+                    CharacterName = payload.PlayerIdentity.CharacterName,
+                    RaceId = payload.PlayerIdentity.RaceName,
+                    ClassId = payload.PlayerIdentity.ClassName,
+                    BirthsignId = payload.PlayerIdentity.BirthSignName,
+                    Male = 1,
+                };
+            }
             payload.PlayerCrime = version >= PlayerCrimePayloadVersion ? ReadPlayerCrime(r, version) : PlayerCrimeState.Default;
 
             if (version >= PlayerFactionPayloadVersion)
@@ -280,6 +313,10 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < journalCount; i++)
                 payload.JournalEntries[i] = ReadJournalEntry(r);
 
+            payload.BookReadHistory = version >= BookReadHistoryPayloadVersion
+                ? ReadBookReadHistory(r)
+                : Array.Empty<BookReadHistoryEntry>();
+
             payload.QuestJournal = version >= QuestJournalPayloadVersion
                 ? ReadQuestJournalPayload(r, version)
                 : new MorrowindQuestJournalSavePayload
@@ -334,6 +371,35 @@ namespace VVardenfell.Runtime.WorldState
                 RandomState = r.ReadUInt32(),
                 Initialized = r.ReadByte(),
             };
+        }
+
+        static void WriteBookReadHistory(BinaryWriter w, BookReadHistoryEntry[] history)
+        {
+            w.Write(history?.Length ?? 0);
+            if (history == null)
+                return;
+
+            for (int i = 0; i < history.Length; i++)
+            {
+                WriteContentReference(w, history[i].Content);
+                w.Write(history[i].PlacedRefId);
+            }
+        }
+
+        static BookReadHistoryEntry[] ReadBookReadHistory(BinaryReader r)
+        {
+            int count = ReadCount(r, "book read history");
+            var result = new BookReadHistoryEntry[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new BookReadHistoryEntry
+                {
+                    Content = ReadContentReference(r),
+                    PlacedRefId = r.ReadUInt32(),
+                };
+            }
+
+            return result;
         }
 
         static void WriteActorDeathCounts(BinaryWriter w, int[] counts)
@@ -1011,6 +1077,116 @@ namespace VVardenfell.Runtime.WorldState
                 ClassName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 BirthSignName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 Reputation = r.ReadInt32(),
+            };
+        }
+
+        static void WritePlayerAppearance(BinaryWriter w, in PlayerRaceAppearance value)
+        {
+            w.Write(value.RaceId.ToString());
+            w.Write(value.HeadId.ToString());
+            w.Write(value.HairId.ToString());
+            w.Write(value.Male);
+        }
+
+        static PlayerRaceAppearance ReadPlayerAppearance(BinaryReader r)
+        {
+            return new PlayerRaceAppearance
+            {
+                RaceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                HeadId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                HairId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                Male = r.ReadByte(),
+            };
+        }
+
+        static void WritePlayerCustomClass(BinaryWriter w, in PlayerCustomClass value)
+        {
+            w.Write(value.Active);
+            w.Write(value.Id.ToString());
+            w.Write(value.Name.ToString());
+            w.Write(value.Description.ToString());
+            w.Write(value.Specialization);
+            w.Write(value.FavoredAttribute0);
+            w.Write(value.FavoredAttribute1);
+            w.Write(value.MajorSkill0);
+            w.Write(value.MajorSkill1);
+            w.Write(value.MajorSkill2);
+            w.Write(value.MajorSkill3);
+            w.Write(value.MajorSkill4);
+            w.Write(value.MinorSkill0);
+            w.Write(value.MinorSkill1);
+            w.Write(value.MinorSkill2);
+            w.Write(value.MinorSkill3);
+            w.Write(value.MinorSkill4);
+        }
+
+        static PlayerCustomClass ReadPlayerCustomClass(BinaryReader r)
+        {
+            return new PlayerCustomClass
+            {
+                Active = r.ReadByte(),
+                Id = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                Name = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                Description = RuntimeFixedStringUtility.ToFixed512OrDefaultWhiteSpace(r.ReadString()),
+                Specialization = r.ReadInt32(),
+                FavoredAttribute0 = r.ReadInt32(),
+                FavoredAttribute1 = r.ReadInt32(),
+                MajorSkill0 = r.ReadInt32(),
+                MajorSkill1 = r.ReadInt32(),
+                MajorSkill2 = r.ReadInt32(),
+                MajorSkill3 = r.ReadInt32(),
+                MajorSkill4 = r.ReadInt32(),
+                MinorSkill0 = r.ReadInt32(),
+                MinorSkill1 = r.ReadInt32(),
+                MinorSkill2 = r.ReadInt32(),
+                MinorSkill3 = r.ReadInt32(),
+                MinorSkill4 = r.ReadInt32(),
+            };
+        }
+
+        static void WriteCharacterGeneration(BinaryWriter w, in CharacterGenerationState value)
+        {
+            w.Write(value.Initialized);
+            w.Write(value.Finalized);
+            w.Write(value.Stage);
+            w.Write(value.Male);
+            w.Write(value.CustomClassActive);
+            w.Write(value.GenerateStep);
+            w.Write(value.GenerateCombat);
+            w.Write(value.GenerateMagic);
+            w.Write(value.GenerateStealth);
+            w.Write(value.GenerateRandomState);
+            w.Write(value.CharacterName.ToString());
+            w.Write(value.RaceId.ToString());
+            w.Write(value.HeadId.ToString());
+            w.Write(value.HairId.ToString());
+            w.Write(value.ClassId.ToString());
+            w.Write(value.BirthsignId.ToString());
+            w.Write(value.GeneratedClassId.ToString());
+        }
+
+        static CharacterGenerationState ReadCharacterGeneration(BinaryReader r)
+        {
+            return new CharacterGenerationState
+            {
+                Initialized = r.ReadByte(),
+                Finalized = r.ReadByte(),
+                CurrentMenu = (byte)CharacterGenerationMenu.None,
+                Stage = r.ReadByte(),
+                Male = r.ReadByte(),
+                CustomClassActive = r.ReadByte(),
+                GenerateStep = r.ReadByte(),
+                GenerateCombat = r.ReadByte(),
+                GenerateMagic = r.ReadByte(),
+                GenerateStealth = r.ReadByte(),
+                GenerateRandomState = r.ReadUInt32(),
+                CharacterName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                RaceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                HeadId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                HairId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                ClassId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                BirthsignId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                GeneratedClassId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
             };
         }
 

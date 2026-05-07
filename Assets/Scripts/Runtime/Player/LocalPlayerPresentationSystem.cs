@@ -70,12 +70,18 @@ namespace VVardenfell.Runtime.Player
                 return;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
+            PlayerRaceAppearance appearance = systemState.EntityManager.HasComponent<PlayerRaceAppearance>(player)
+                ? systemState.EntityManager.GetComponentData<PlayerRaceAppearance>(player)
+                : default;
+            bool hasAppearance = !appearance.RaceId.IsEmpty;
 
             Entity firstPersonVisual = CreatePlayerVisual(ref systemState, 
                 ref ecb,
                 player,
                 view,
                 actorHandle,
+                appearance,
+                hasAppearance,
                 firstPerson: true,
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
@@ -85,6 +91,8 @@ namespace VVardenfell.Runtime.Player
                 player,
                 view,
                 actorHandle,
+                appearance,
+                hasAppearance,
                 firstPerson: false,
                 actorRecipeFirstPerson: false,
                 hiddenPartMask: 0u,
@@ -108,6 +116,8 @@ namespace VVardenfell.Runtime.Player
             Entity player,
             Entity view,
             ActorDefHandle actorHandle,
+            PlayerRaceAppearance appearance,
+            bool hasAppearance,
             bool firstPerson,
             bool actorRecipeFirstPerson,
             uint hiddenPartMask,
@@ -124,6 +134,16 @@ namespace VVardenfell.Runtime.Player
             });
             if (hiddenPartMask != 0u)
                 ecb.AddComponent(visual, new ActorHiddenVisualPartMask { Mask = hiddenPartMask });
+            if (hasAppearance)
+            {
+                ecb.AddComponent(visual, new ActorRuntimeAppearance
+                {
+                    RaceId = appearance.RaceId,
+                    HeadId = appearance.HeadId,
+                    HairId = appearance.HairId,
+                    Male = appearance.Male,
+                });
+            }
             ecb.AddComponent(visual, new LocalPlayerVisual
             {
                 Player = player,

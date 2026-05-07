@@ -6,6 +6,7 @@ using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -69,20 +70,38 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            if (systemState.EntityManager.HasComponent<ObjectAnimationState>(target))
+            if (systemState.EntityManager.HasComponent<LocalPlayerPresentationState>(target))
             {
-                ApplyObjectAnimation(ref systemState, target, group, request);
+                var presentation = systemState.EntityManager.GetComponentData<LocalPlayerPresentationState>(target);
+                TryApplyAnimationTarget(ref systemState, presentation.FirstPersonVisual, group, request);
+                TryApplyAnimationTarget(ref systemState, presentation.ThirdPersonVisual, group, request);
                 return;
             }
+
+            TryApplyAnimationTarget(ref systemState, target, group, request);
+        }
+
+        bool TryApplyAnimationTarget(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
+        {
+            if (target == Entity.Null || !systemState.EntityManager.Exists(target))
+                return false;
+
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(target)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(target).Disabled != 0)
+            {
+                return false;
+            }
+
+            if (systemState.EntityManager.HasComponent<ObjectAnimationState>(target))
+                return TryApplyObjectAnimation(ref systemState, target, group, request);
 
             if (systemState.EntityManager.HasComponent<ActorPresentation>(target)
                 && systemState.EntityManager.HasComponent<ActorAnimationState>(target))
             {
-                ApplyActorAnimation(ref systemState, target, group, request);
-                return;
+                return TryApplyActorAnimation(ref systemState, target, group, request);
             }
 
-            throw new InvalidOperationException("[VVardenfell][MWScript] Animation group target has no supported animation state.");
+            return false;
         }
 
         Entity ResolveTarget(ref SystemState systemState, in MorrowindScriptAnimationGroupRequest request, in LogicalRefLookup lookup)
@@ -96,12 +115,20 @@ namespace VVardenfell.Runtime.MorrowindScript
             return Entity.Null;
         }
 
-        void ApplyActorAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
+        bool TryApplyActorAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
             if (IsIdleGroup(group))
             {
                 ClearScriptedActorOverlays(ref systemState, target);
-                return;
+                return true;
+            }
+
+            // Script animation groups are pose requests, not actor locomotion commands.
+            // Live movement remains owned by MorrowindMovementInput -> MorrowindMovementState.
+            if (IsLocomotionGroup(group))
+            {
+                ClearScriptedActorOverlays(ref systemState, target);
+                return true;
             }
 
             if (!SystemAPI.HasSingleton<ActorAnimationBlobCatalog>())
@@ -115,7 +142,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             ref var catalog = ref catalogRef.Value;
             ulong groupHash = ActorAnimationGroupHash.Hash(group);
             if (!ActorAnimationGroupLookupUtility.TryResolveGroup(ref catalog, presentation, groupHash, out var resolvedGroup))
-                throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation group is not present on target.");
+                return false;
 
             if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(target))
                 throw new InvalidOperationException("[VVardenfell][MWScript] Actor animation target has no overlay buffer.");
@@ -138,7 +165,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Weight = 1f,
                 Priority = ScriptedActorAnimationPriority,
                 Mask = ActorAnimationBlendMask.All,
+                SuppressWhenMoving = IsIdleVariantGroup(group) ? (byte)1 : (byte)0,
             });
+            return true;
         }
 
         void ClearScriptedActorOverlays(ref SystemState systemState, Entity target)
@@ -166,7 +195,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return request.LoopCount > 0u ? request.LoopCount - 1u : 0u;
         }
 
-        void ApplyObjectAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
+        bool TryApplyObjectAnimation(ref SystemState systemState, Entity target, FixedString64Bytes group, in MorrowindScriptAnimationGroupRequest request)
         {
             var state = systemState.EntityManager.GetComponentData<ObjectAnimationState>(target);
             if (IsIdleGroup(group))
@@ -174,7 +203,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 state.Scripted = 0;
                 state.LoopCount = 0u;
                 systemState.EntityManager.SetComponentData(target, state);
-                return;
+                return true;
             }
 
             if (!SystemAPI.HasSingleton<ObjectAnimationBlobCatalog>())
@@ -186,7 +215,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ref var catalog = ref catalogRef.Value;
             if (!TryResolveObjectGroup(ref catalog, state.ModelPrefabIndex, group, out var resolved))
-                throw new InvalidOperationException("[VVardenfell][MWScript] Object animation group is not present on target.");
+                return false;
 
             float start = request.Mode == 2 && resolved.LoopStartTime > resolved.StartTime
                 ? resolved.LoopStartTime
@@ -201,6 +230,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             state.LoopCount = ResolveObjectLoopCount(request);
             state.Scripted = 1;
             systemState.EntityManager.SetComponentData(target, state);
+            return true;
         }
 
         static uint ResolveObjectLoopCount(in MorrowindScriptAnimationGroupRequest request)
@@ -296,6 +326,37 @@ namespace VVardenfell.Runtime.MorrowindScript
                && ToLowerAscii(value[1]) == (byte)'d'
                && ToLowerAscii(value[2]) == (byte)'l'
                && ToLowerAscii(value[3]) == (byte)'e';
+
+        static bool IsIdleVariantGroup(FixedString64Bytes value)
+            => value.Length > 4
+               && ToLowerAscii(value[0]) == (byte)'i'
+               && ToLowerAscii(value[1]) == (byte)'d'
+               && ToLowerAscii(value[2]) == (byte)'l'
+               && ToLowerAscii(value[3]) == (byte)'e';
+
+        static bool IsLocomotionGroup(FixedString64Bytes value)
+            => StartsWith(value, (byte)'w', (byte)'a', (byte)'l', (byte)'k')
+               || StartsWith(value, (byte)'r', (byte)'u', (byte)'n')
+               || StartsWith(value, (byte)'s', (byte)'n', (byte)'e', (byte)'a', (byte)'k')
+               || StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'w', (byte)'a', (byte)'l', (byte)'k')
+               || StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'r', (byte)'u', (byte)'n')
+               || StartsWith(value, (byte)'t', (byte)'u', (byte)'r', (byte)'n')
+               || StartsWith(value, (byte)'s', (byte)'w', (byte)'i', (byte)'m', (byte)'t', (byte)'u', (byte)'r', (byte)'n');
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c)
+            => value.Length >= 3 && ToLowerAscii(value[0]) == a && ToLowerAscii(value[1]) == b && ToLowerAscii(value[2]) == c;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d)
+            => value.Length >= 4 && StartsWith(value, a, b, c) && ToLowerAscii(value[3]) == d;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e)
+            => value.Length >= 5 && StartsWith(value, a, b, c, d) && ToLowerAscii(value[4]) == e;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f, byte g)
+            => value.Length >= 7 && StartsWith(value, a, b, c, d, e) && ToLowerAscii(value[5]) == f && ToLowerAscii(value[6]) == g;
+
+        static bool StartsWith(FixedString64Bytes value, byte a, byte b, byte c, byte d, byte e, byte f, byte g, byte h)
+            => value.Length >= 8 && StartsWith(value, a, b, c, d, e, f, g) && ToLowerAscii(value[7]) == h;
 
         static bool EqualsIgnoreCase(FixedString64Bytes left, FixedString64Bytes right)
         {

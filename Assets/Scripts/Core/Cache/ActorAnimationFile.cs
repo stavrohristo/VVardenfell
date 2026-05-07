@@ -153,10 +153,31 @@ namespace VVardenfell.Core.Cache
         public float RigidOffsetX;
         public float RigidOffsetY;
         public float RigidOffsetZ;
+        public float TalkStart;
+        public float TalkStop;
+        public float BlinkStart;
+        public float BlinkStop;
+        public int FirstHeadMorphTargetIndex = -1;
+        public int HeadMorphTargetCount;
         public float[] VertexPositions = Array.Empty<float>();
         public float[] VertexNormals = Array.Empty<float>();
         public float[] VertexUvs = Array.Empty<float>();
         public int[] Indices = Array.Empty<int>();
+    }
+
+    public struct ActorHeadMorphTargetDef
+    {
+        public int FirstKeyIndex;
+        public int KeyCount;
+        public int FirstVertexIndex;
+        public int VertexCount;
+        public int Interpolation;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct ActorHeadMorphVertexDef
+    {
+        public float X, Y, Z;
     }
 
     public struct ActorAnimationTextKeyDef
@@ -233,6 +254,8 @@ namespace VVardenfell.Core.Cache
         public ActorSkeletonDef[] Skeletons = Array.Empty<ActorSkeletonDef>();
         public ActorSkinMeshDef[] SkinMeshes = Array.Empty<ActorSkinMeshDef>();
         public ActorSkinWeightDef[] SkinWeights = Array.Empty<ActorSkinWeightDef>();
+        public ActorHeadMorphTargetDef[] HeadMorphTargets = Array.Empty<ActorHeadMorphTargetDef>();
+        public ActorHeadMorphVertexDef[] HeadMorphVertices = Array.Empty<ActorHeadMorphVertexDef>();
         public ActorAnimationClipDef[] Clips = Array.Empty<ActorAnimationClipDef>();
         public ActorAnimationTrackDef[] Tracks = Array.Empty<ActorAnimationTrackDef>();
         public ActorAnimationKeyDef[] Keys = Array.Empty<ActorAnimationKeyDef>();
@@ -352,7 +375,7 @@ namespace VVardenfell.Core.Cache
     public static class ActorAnimationFile
     {
         const uint Magic = 0x4D494E41u; // 'ANIM'
-        const uint Version = 64u;
+        const uint Version = 66u;
 
         public static bool TryRead(string path, out ActorAnimationCatalogData data)
         {
@@ -414,6 +437,8 @@ namespace VVardenfell.Core.Cache
                 Skeletons = ReadArray(r, ReadSkeleton),
                 SkinMeshes = ReadArray(r, ReadSkinMesh),
                 SkinWeights = ReadBlittableArray<ActorSkinWeightDef>(r, "SkinWeights"),
+                HeadMorphTargets = ReadBlittableArray<ActorHeadMorphTargetDef>(r, "HeadMorphTargets"),
+                HeadMorphVertices = ReadBlittableArray<ActorHeadMorphVertexDef>(r, "HeadMorphVertices"),
                 Clips = ReadArray(r, ReadClip),
                 Tracks = ReadArray(r, ReadTrack),
                 Keys = ReadBlittableArray<ActorAnimationKeyDef>(r, "Keys"),
@@ -440,6 +465,8 @@ namespace VVardenfell.Core.Cache
             WriteArray(w, data?.Skeletons, WriteSkeleton);
             WriteArray(w, data?.SkinMeshes, WriteSkinMesh);
             WriteArray(w, data?.SkinWeights, WriteSkinWeight);
+            WriteArray(w, data?.HeadMorphTargets, WriteHeadMorphTarget);
+            WriteArray(w, data?.HeadMorphVertices, WriteHeadMorphVertex);
             WriteArray(w, data?.Clips, WriteClip);
             WriteArray(w, data?.Tracks, WriteTrack);
             WriteArray(w, data?.Keys, WriteKey);
@@ -678,6 +705,12 @@ namespace VVardenfell.Core.Cache
             w.Write(value?.RigidOffsetX ?? 0f);
             w.Write(value?.RigidOffsetY ?? 0f);
             w.Write(value?.RigidOffsetZ ?? 0f);
+            w.Write(value?.TalkStart ?? 0f);
+            w.Write(value?.TalkStop ?? 0f);
+            w.Write(value?.BlinkStart ?? 0f);
+            w.Write(value?.BlinkStop ?? 0f);
+            w.Write(value?.FirstHeadMorphTargetIndex ?? -1);
+            w.Write(value?.HeadMorphTargetCount ?? 0);
             WriteFloatArray(w, value?.VertexPositions);
             WriteFloatArray(w, value?.VertexNormals);
             WriteFloatArray(w, value?.VertexUvs);
@@ -722,6 +755,12 @@ namespace VVardenfell.Core.Cache
                 RigidOffsetX = r.ReadSingle(),
                 RigidOffsetY = r.ReadSingle(),
                 RigidOffsetZ = r.ReadSingle(),
+                TalkStart = r.ReadSingle(),
+                TalkStop = r.ReadSingle(),
+                BlinkStart = r.ReadSingle(),
+                BlinkStop = r.ReadSingle(),
+                FirstHeadMorphTargetIndex = r.ReadInt32(),
+                HeadMorphTargetCount = r.ReadInt32(),
                 VertexPositions = ReadFloatArray(r),
                 VertexNormals = ReadFloatArray(r),
                 VertexUvs = ReadFloatArray(r),
@@ -741,6 +780,40 @@ namespace VVardenfell.Core.Cache
                 VertexIndex = r.ReadUInt16(),
                 BoneIndex = r.ReadUInt16(),
                 Weight = r.ReadSingle(),
+            };
+
+        static void WriteHeadMorphTarget(BinaryWriter w, ActorHeadMorphTargetDef value)
+        {
+            w.Write(value.FirstKeyIndex);
+            w.Write(value.KeyCount);
+            w.Write(value.FirstVertexIndex);
+            w.Write(value.VertexCount);
+            w.Write(value.Interpolation);
+        }
+
+        static ActorHeadMorphTargetDef ReadHeadMorphTarget(BinaryReader r)
+            => new()
+            {
+                FirstKeyIndex = r.ReadInt32(),
+                KeyCount = r.ReadInt32(),
+                FirstVertexIndex = r.ReadInt32(),
+                VertexCount = r.ReadInt32(),
+                Interpolation = r.ReadInt32(),
+            };
+
+        static void WriteHeadMorphVertex(BinaryWriter w, ActorHeadMorphVertexDef value)
+        {
+            w.Write(value.X);
+            w.Write(value.Y);
+            w.Write(value.Z);
+        }
+
+        static ActorHeadMorphVertexDef ReadHeadMorphVertex(BinaryReader r)
+            => new()
+            {
+                X = r.ReadSingle(),
+                Y = r.ReadSingle(),
+                Z = r.ReadSingle(),
             };
 
         static void WriteClip(BinaryWriter w, ActorAnimationClipDef value)

@@ -23,10 +23,13 @@ namespace VVardenfell.Core.Cache
                 SoundId = ReadString(r),
                 AuxSoundId = ReadString(r),
                 EnchantId = ReadString(r),
+                Text = ReadString(r),
                 Flags = r.ReadUInt32(),
                 Float0 = r.ReadSingle(),
                 Int0 = r.ReadInt32(),
                 Int1 = r.ReadInt32(),
+                Int2 = r.ReadInt32(),
+                Int3 = r.ReadInt32(),
             };
         }
 
@@ -126,6 +129,7 @@ namespace VVardenfell.Core.Cache
             w.Write(value.Int2);
             w.Write(value.Float0);
             w.Write(value.Float1);
+            WriteStringArray(w, value.PowerSpellIds);
         }
 
 
@@ -148,6 +152,7 @@ namespace VVardenfell.Core.Cache
                 Int2 = r.ReadInt32(),
                 Float0 = r.ReadSingle(),
                 Float1 = r.ReadSingle(),
+                PowerSpellIds = ReadStringArray(r),
             };
         }
 

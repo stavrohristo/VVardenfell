@@ -102,6 +102,13 @@ namespace VVardenfell.Runtime.Interactions
                 return true;
             }
 
+            if (entityManager.HasComponent<DoorAuthoring>(logicalEntity)
+                && entityManager.HasComponent<DoorMotionState>(logicalEntity))
+            {
+                kind = InteractableKind.Door;
+                return true;
+            }
+
             if (LooseCarryableResolver.TryResolveContent(ref contentBlob, entityManager, logicalEntity, out _))
             {
                 kind = InteractableKind.LooseItem;

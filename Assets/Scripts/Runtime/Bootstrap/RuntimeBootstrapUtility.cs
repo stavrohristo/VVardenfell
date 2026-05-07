@@ -86,11 +86,30 @@ namespace VVardenfell.Runtime.Bootstrap
                 entityManager.AddComponentData(entity, value);
         }
 
+        public static void SetOrAddComponent<T>(EntityManager entityManager, Entity entity, T value)
+            where T : unmanaged, IComponentData
+        {
+            if (entityManager.HasComponent<T>(entity))
+                entityManager.SetComponentData(entity, value);
+            else
+                entityManager.AddComponentData(entity, value);
+        }
+
         public static void EnsureBuffer<T>(EntityManager entityManager, Entity entity)
             where T : unmanaged, IBufferElementData
         {
             if (!entityManager.HasBuffer<T>(entity))
                 entityManager.AddBuffer<T>(entity);
+        }
+
+        public static DynamicBuffer<T> EnsureClearedBuffer<T>(EntityManager entityManager, Entity entity)
+            where T : unmanaged, IBufferElementData
+        {
+            DynamicBuffer<T> buffer = entityManager.HasBuffer<T>(entity)
+                ? entityManager.GetBuffer<T>(entity)
+                : entityManager.AddBuffer<T>(entity);
+            buffer.Clear();
+            return buffer;
         }
 
         public static void EnsureComponent<T>(

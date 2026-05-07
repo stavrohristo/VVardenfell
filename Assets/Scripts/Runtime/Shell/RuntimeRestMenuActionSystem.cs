@@ -33,6 +33,8 @@ namespace VVardenfell.Runtime.Shell
                     ComponentType.ReadOnly<ActorEffectStatModifiers>(),
                     ComponentType.ReadOnly<ActorDerivedMovementStats>(),
                     ComponentType.ReadOnly<MorrowindMovementSpeed>(),
+                    ComponentType.ReadWrite<MorrowindMovementInput>(),
+                    ComponentType.ReadWrite<PlayerCharacterControl>(),
                     ComponentType.ReadWrite<ActorActiveMagicEffect>(),
                     ComponentType.ReadOnly<ActorActiveMagicEffectDirty>(),
                 },
@@ -128,10 +130,13 @@ namespace VVardenfell.Runtime.Shell
             shell.RestMenuTargetHours = RuntimeRestUtility.ClampHours(hours);
             shell.RestMenuProgressHourFraction = 0f;
             shell.PlayerSleeping = sleeping ? (byte)1 : (byte)0;
+            ClearPlayerInput();
         }
 
         void AdvanceTimelapse(ref SystemState systemState, ref RuntimeShellState shell)
         {
+            ClearPlayerInput();
+
             bool sleeping = shell.RestMenuSleeping != 0;
             float remainingHours = math.max(0f, shell.RestMenuTargetHours - shell.RestMenuProgressHourFraction);
             if (remainingHours <= 0f)
@@ -210,6 +215,12 @@ namespace VVardenfell.Runtime.Shell
             vitals.CurrentHealth = math.clamp(vitals.CurrentHealth, 0f, math.max(0f, vitals.ModifiedHealthBase));
             vitals.CurrentMagicka = math.clamp(vitals.CurrentMagicka, 0f, math.max(0f, vitals.ModifiedMagickaBase));
             vitals.CurrentFatigue = math.clamp(vitals.CurrentFatigue, 0f, math.max(0f, vitals.ModifiedFatigueBase));
+        }
+
+        void ClearPlayerInput()
+        {
+            _playerQuery.GetSingletonRW<MorrowindMovementInput>().ValueRW = default;
+            _playerQuery.GetSingletonRW<PlayerCharacterControl>().ValueRW = default;
         }
 
         static void EnsureRestMenuOpen(in RuntimeShellState shell)

@@ -99,11 +99,15 @@ namespace VVardenfell.Importer.Bake
             (UiBootstrapAssetKeys.JournalBookCancelNormal, @"Textures\tx_menubook_cancel_idle.dds", true),
             (UiBootstrapAssetKeys.JournalBookCancelHighlight, @"Textures\tx_menubook_cancel_over.dds", true),
             (UiBootstrapAssetKeys.JournalBookCancelPressed, @"Textures\tx_menubook_cancel_pressed.dds", true),
+            (UiBootstrapAssetKeys.JournalBookTakeNormal, @"Textures\tx_menubook_take_idle.dds", true),
+            (UiBootstrapAssetKeys.JournalBookTakeHighlight, @"Textures\tx_menubook_take_over.dds", true),
+            (UiBootstrapAssetKeys.JournalBookTakePressed, @"Textures\tx_menubook_take_pressed.dds", true),
             (UiBootstrapAssetKeys.JournalBookOptionsNormal, @"Textures\tx_menubook_options.dds", false),
             (UiBootstrapAssetKeys.JournalBookOptionsHighlight, @"Textures\tx_menubook_options_over.dds", false),
             (UiBootstrapAssetKeys.JournalBookQuests, @"Textures\tx_menubook_quests.dds", false),
             (UiBootstrapAssetKeys.JournalBookQuestsAll, @"Textures\tx_menubook_quests_all.dds", false),
             (UiBootstrapAssetKeys.JournalBookQuestsActive, @"Textures\tx_menubook_quests_active.dds", false),
+            (UiBootstrapAssetKeys.ScrollBackground, @"Textures\scroll.dds", true),
         };
 
         public static void Bake(MorrowindConfig config, BsaArchive bsa, BakeProgress progress = null)

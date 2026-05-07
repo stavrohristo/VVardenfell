@@ -67,6 +67,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint AodtTag = EsmFourCC.Make('A', 'O', 'D', 'T');
         static readonly uint AvfxTag = EsmFourCC.Make('A', 'V', 'F', 'X');
         static readonly uint BnamTag = EsmFourCC.Make('B', 'N', 'A', 'M');
+        static readonly uint BkdtTag = EsmFourCC.Make('B', 'K', 'D', 'T');
         static readonly uint BsndTag = EsmFourCC.Make('B', 'S', 'N', 'D');
         static readonly uint BvfxTag = EsmFourCC.Make('B', 'V', 'F', 'X');
         static readonly uint BydtTag = EsmFourCC.Make('B', 'Y', 'D', 'T');
@@ -114,6 +115,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint SnamTag = EsmFourCC.Make('S', 'N', 'A', 'M');
         static readonly uint SpdtTag = EsmFourCC.Make('S', 'P', 'D', 'T');
         static readonly uint StrvTag = EsmFourCC.Make('S', 'T', 'R', 'V');
+        static readonly uint TextTag = EsmFourCC.Make('T', 'E', 'X', 'T');
         static readonly uint WdatTag = EsmFourCC.Make('W', 'E', 'A', 'T');
         static readonly uint WpdtTag = EsmFourCC.Make('W', 'P', 'D', 'T');
         static readonly uint XsclTag = EsmFourCC.Make('X', 'S', 'C', 'L');
@@ -368,6 +370,61 @@ namespace VVardenfell.Importer.Bake
             AddFallbackStringGameSetting(gameSettings, "Blood_Texture_0", "Tx_Blood.dds");
             AddFallbackStringGameSetting(gameSettings, "Blood_Texture_1", "Tx_Blood_White.dds");
             AddFallbackStringGameSetting(gameSettings, "Blood_Texture_2", "Tx_Blood_Gold.dds");
+            AddOpenMwClassGenerationFallbackGameSettings(gameSettings);
+        }
+
+        static void AddOpenMwClassGenerationFallbackGameSettings(Dictionary<string, GenericRecordDef> gameSettings)
+        {
+            AddFallbackStringGameSetting(gameSettings, "Question_1_Question", "Before you lies a creature you have never seen before. Its hind leg is caught in a hunter's trap, and you can tell that the leg is broken. What will you do?");
+            AddFallbackStringGameSetting(gameSettings, "Question_1_AnswerOne", "Pull out you knife for a short and merciful kill.");
+            AddFallbackStringGameSetting(gameSettings, "Question_1_AnswerTwo", "Reach into your herbal pouch to find something to ease its suffering before putting it to sleep.");
+            AddFallbackStringGameSetting(gameSettings, "Question_1_AnswerThree", "Leave the leg alone, but take the time to observe and learn from this odd creature.");
+            AddFallbackStringGameSetting(gameSettings, "Question_1_Sound", "Voice\\CharGen\\QA1.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_2_Question", "Your mother suggests you to help with work around your family household. Do you decide to...");
+            AddFallbackStringGameSetting(gameSettings, "Question_2_AnswerOne", "Help your father with fence post replacement?");
+            AddFallbackStringGameSetting(gameSettings, "Question_2_AnswerTwo", "Collect a few herbs in the forest for tonight's supper?");
+            AddFallbackStringGameSetting(gameSettings, "Question_2_AnswerThree", "Help the fish to find their way into the kitchen?");
+            AddFallbackStringGameSetting(gameSettings, "Question_2_Sound", "Voice\\CharGen\\QA2.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_3_Question", "Your brother teases you mercilessly in front of everyone with embarrassing details you would rather have forgotten.");
+            AddFallbackStringGameSetting(gameSettings, "Question_3_AnswerOne", "Give him a black-eye and dare him to keep it up.");
+            AddFallbackStringGameSetting(gameSettings, "Question_3_AnswerTwo", "Beat him to the punch and play it up -- if you can control the negative, then he can't embarrass you.");
+            AddFallbackStringGameSetting(gameSettings, "Question_3_AnswerThree", "Wait until he sleeps, put his hand in a bowl of water and call everyone around the next day to see the results.");
+            AddFallbackStringGameSetting(gameSettings, "Question_3_Sound", "Voice\\CharGen\\QA3.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_4_Question", "Rumor has it that the King's security console has a new tool at their disposal for sniffing out the truth, which could be used for reading minds.");
+            AddFallbackStringGameSetting(gameSettings, "Question_4_AnswerOne", "You recoil at the thought of someone being able to read your thoughts. It's not that you think something that you'll ever act on it.");
+            AddFallbackStringGameSetting(gameSettings, "Question_4_AnswerTwo", "For those who have done nothing, there is nothing to fear. This is just yet another utility for catching thieves, murderers and plots against the crown.");
+            AddFallbackStringGameSetting(gameSettings, "Question_4_AnswerThree", "While you loath the idea of someone reading your mind, you accept that it does have its uses if tempered by law and common sense. You wouldn't believe the mind of a madman.");
+            AddFallbackStringGameSetting(gameSettings, "Question_4_Sound", "Voice\\CharGen\\QA4.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_5_Question", "You are returning home from the market after acquiring supplies, and notice that one of the merchants had given you too much back in change.");
+            AddFallbackStringGameSetting(gameSettings, "Question_5_AnswerOne", "How dreadful, what if it was you? You head back to the merchant.");
+            AddFallbackStringGameSetting(gameSettings, "Question_5_AnswerTwo", "Happy days indeed. Put that extra money towards the needs of your family?");
+            AddFallbackStringGameSetting(gameSettings, "Question_5_AnswerThree", "You win some and you lose some. In this case you have won and they have lost, and the oversight is the merchant's problem, not yours, right?");
+            AddFallbackStringGameSetting(gameSettings, "Question_5_Sound", "Voice\\CharGen\\QA5.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_6_Question", "While at market, a noble yells out to the city watch about a theft. As you turn around a man bumps into you and drops a sack, startled he darts into the crowd.");
+            AddFallbackStringGameSetting(gameSettings, "Question_6_AnswerOne", "You pick up the sack and head over to the noble to return his property?");
+            AddFallbackStringGameSetting(gameSettings, "Question_6_AnswerTwo", "Just walk away, the last thing you need is someone thinking you had anything to do with it?");
+            AddFallbackStringGameSetting(gameSettings, "Question_6_AnswerThree", "Finders, keepers... you whistle as you walk away with the bag hidden?");
+            AddFallbackStringGameSetting(gameSettings, "Question_6_Sound", "Voice\\CharGen\\QA6.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_7_Question", "If it's one thing you hate, it's cleaning out the stalls. It has to be done before sunset before the critters return. On your way there an old friend greets you and offers to help if you promise to help them in the future.");
+            AddFallbackStringGameSetting(gameSettings, "Question_7_AnswerOne", "You thank him for the offer but would rather get it over with and not make promises you can't keep?");
+            AddFallbackStringGameSetting(gameSettings, "Question_7_AnswerTwo", "You reason that two pairs of hands are better than one regardless of the task?");
+            AddFallbackStringGameSetting(gameSettings, "Question_7_AnswerThree", "You say that it sounds great and anything is better than cleaning the stalls?");
+            AddFallbackStringGameSetting(gameSettings, "Question_7_Sound", "Voice\\CharGen\\QA7.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_8_Question", "You just climbed down the ladder after working on the roof. Your mother thanks you for the hard work but just at the moment you notice that a hammer is about to fall down on her head.");
+            AddFallbackStringGameSetting(gameSettings, "Question_8_AnswerOne", "You lunge at your mother, pushing her out the way while the hammer falls on top of you?");
+            AddFallbackStringGameSetting(gameSettings, "Question_8_AnswerTwo", "Try to use the ladder to intercept the hammer before it lands on her?");
+            AddFallbackStringGameSetting(gameSettings, "Question_8_AnswerThree", "Warn her to take a step back?");
+            AddFallbackStringGameSetting(gameSettings, "Question_8_Sound", "Voice\\CharGen\\QA8.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_9_Question", "It's the end of the week, and you have just got your wages for your hard work. You decide to take the quick way back home, darting into a alley only to be confronted by ruffians who demand that you empty your pockets.");
+            AddFallbackStringGameSetting(gameSettings, "Question_9_AnswerOne", "You tell them to go pack sand, planting your feet and raising your fists?");
+            AddFallbackStringGameSetting(gameSettings, "Question_9_AnswerTwo", "Acting dejected, you turn your wages over. You know that you can count on your friends to help you track these brigands down and recover what's yours?");
+            AddFallbackStringGameSetting(gameSettings, "Question_9_AnswerThree", "Tossing the sack into the air, you charge the leader who's attention is squarely focused on the coins in flight?");
+            AddFallbackStringGameSetting(gameSettings, "Question_9_Sound", "Voice\\CharGen\\QA9.mp3");
+            AddFallbackStringGameSetting(gameSettings, "Question_10_Question", "Upon coming to town, you see a clown running at you with an angry mob following after him.");
+            AddFallbackStringGameSetting(gameSettings, "Question_10_AnswerOne", "Stand your ground, you hate clowns?");
+            AddFallbackStringGameSetting(gameSettings, "Question_10_AnswerTwo", "Move out of the way, letting fate decide the clown's fate?");
+            AddFallbackStringGameSetting(gameSettings, "Question_10_AnswerThree", "Come to the clown's aid, clowns are people too?");
+            AddFallbackStringGameSetting(gameSettings, "Question_10_Sound", "Voice\\CharGen\\QA10.mp3");
         }
 
 
@@ -557,6 +614,28 @@ namespace VVardenfell.Importer.Bake
                             def.Float0 = ReadSingle(esm.ReadSubrecordBytes(), 0);
                         else if (equipment != null)
                             ParseEquipmentData(recordTag, esm.ReadSubrecordBytes(), equipment);
+                        else
+                            esm.SkipSubrecord();
+                        break;
+                    case var tag when tag == BkdtTag:
+                    {
+                        if (recordTag != BookTag || sub.Size < 20)
+                        {
+                            esm.SkipSubrecord();
+                            break;
+                        }
+
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        def.Float0 = ReadSingle(bytes, 0);
+                        def.Int0 = ReadInt32(bytes, 4);
+                        def.Int1 = ReadInt32(bytes, 8);
+                        def.Int2 = ReadInt32(bytes, 12);
+                        def.Int3 = ReadInt32(bytes, 16);
+                        break;
+                    }
+                    case var tag when tag == TextTag:
+                        if (recordTag == BookTag)
+                            def.Text = esm.ReadSubrecordString();
                         else
                             esm.SkipSubrecord();
                         break;

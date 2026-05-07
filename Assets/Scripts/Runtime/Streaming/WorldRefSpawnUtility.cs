@@ -209,7 +209,7 @@ namespace VVardenfell.Runtime.Streaming
 
             Entity[][] childSnapshots = LogicalRefChildUtility.SnapshotLogicalChildGroups(em, childEntities);
             var logicalByPlacedRef = new Dictionary<uint, Entity>();
-            var placedRefsToResolve = new List<uint>();
+            var placedRefsToResolve = new List<PendingLogicalRefResolution>();
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             int logicalRefCount = 0;
             int refCount = source.Length;
@@ -257,7 +257,12 @@ namespace VVardenfell.Runtime.Streaming
                         k_LogicalRefCreate.End();
                     }
                     logicalByPlacedRef.Add(placedRefId, logicalEntity);
-                    placedRefsToResolve.Add(placedRefId);
+                    placedRefsToResolve.Add(new PendingLogicalRefResolution(
+                        placedRefId,
+                        contentReference,
+                        source.GetExteriorCell(i),
+                        isInterior,
+                        interiorCellId));
                     logicalRefCount++;
                 }
 
@@ -411,7 +416,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static void ResolveQueuedLogicalRefs(
             EntityManager em,
-            List<uint> placedRefsToResolve,
+            List<PendingLogicalRefResolution> placedRefsToResolve,
             bool isInterior,
             ref LogicalRefLookup logicalRefs,
             List<Entity> spawnedEntities)
@@ -421,12 +426,12 @@ namespace VVardenfell.Runtime.Streaming
             {
                 for (int i = 0; i < placedRefsToResolve.Count; i++)
                 {
-                    uint placedRefId = placedRefsToResolve[i];
-                    Entity logicalEntity = FindLogicalRefByPlacedRef(em, placedRefId);
+                    PendingLogicalRefResolution pending = placedRefsToResolve[i];
+                    Entity logicalEntity = FindLogicalRef(em, pending);
                     if (logicalEntity == Entity.Null)
-                        continue;
+                        throw new InvalidOperationException($"[VVardenfell][WorldRefs] could not resolve created logical ref {pending.PlacedRefId:X8} in {(pending.IsInterior ? $"interior '{pending.InteriorCellId}'" : $"exterior ({pending.ExteriorCell.x},{pending.ExteriorCell.y})")} after command-buffer playback.");
 
-                    LogicalRefLookupUtility.AddWithDuplicateWarning(ref logicalRefs, placedRefId, logicalEntity, isInterior);
+                    LogicalRefLookupUtility.AddOrThrow(ref logicalRefs, pending.PlacedRefId, logicalEntity, isInterior);
                     spawnedEntities?.Add(logicalEntity);
                 }
             }
@@ -436,18 +441,67 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        static Entity FindLogicalRefByPlacedRef(EntityManager em, uint placedRefId)
+        static Entity FindLogicalRef(EntityManager em, in PendingLogicalRefResolution pending)
         {
             EntityQuery query = LogicalRefIdentityQueryCache.Get(em);
             using var entities = query.ToEntityArray(Allocator.Temp);
             using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Allocator.Temp);
+            Entity match = Entity.Null;
             for (int i = 0; i < entities.Length; i++)
             {
-                if (identities[i].Value == placedRefId)
-                    return entities[i];
+                Entity candidate = entities[i];
+                if (identities[i].Value != pending.PlacedRefId)
+                    continue;
+                if (!MatchesLogicalRefResolution(em, candidate, pending))
+                    continue;
+                if (match != Entity.Null)
+                    throw new InvalidOperationException($"[VVardenfell][WorldRefs] placed ref {pending.PlacedRefId:X8} resolved to multiple logical entities in {(pending.IsInterior ? $"interior '{pending.InteriorCellId}'" : $"exterior ({pending.ExteriorCell.x},{pending.ExteriorCell.y})")}.");
+
+                match = candidate;
             }
 
-            return Entity.Null;
+            return match;
+        }
+
+        static bool MatchesLogicalRefResolution(EntityManager em, Entity candidate, in PendingLogicalRefResolution pending)
+        {
+            if (!em.HasComponent<LogicalRefContent>(candidate) || !em.HasComponent<LogicalRefLocation>(candidate))
+                return false;
+
+            var content = em.GetComponentData<LogicalRefContent>(candidate).Value;
+            if (content.Kind != pending.ContentReference.Kind || content.HandleValue != pending.ContentReference.HandleValue)
+                return false;
+
+            var location = em.GetComponentData<LogicalRefLocation>(candidate);
+            if ((location.IsInterior != 0) != pending.IsInterior)
+                return false;
+            if (pending.IsInterior)
+                return location.InteriorCellHash == InteriorCellIdHash.Hash(pending.InteriorCellId);
+
+            return location.ExteriorCell.x == pending.ExteriorCell.x && location.ExteriorCell.y == pending.ExteriorCell.y;
+        }
+
+        readonly struct PendingLogicalRefResolution
+        {
+            public readonly uint PlacedRefId;
+            public readonly ContentReference ContentReference;
+            public readonly int2 ExteriorCell;
+            public readonly bool IsInterior;
+            public readonly FixedString128Bytes InteriorCellId;
+
+            public PendingLogicalRefResolution(
+                uint placedRefId,
+                ContentReference contentReference,
+                int2 exteriorCell,
+                bool isInterior,
+                FixedString128Bytes interiorCellId)
+            {
+                PlacedRefId = placedRefId;
+                ContentReference = contentReference;
+                ExteriorCell = exteriorCell;
+                IsInterior = isInterior;
+                InteriorCellId = interiorCellId;
+            }
         }
 
         static Entity SpawnRef(

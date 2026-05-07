@@ -1,6 +1,7 @@
 using System;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
 using VVardenfell.Runtime.WorldRefs;
@@ -16,6 +17,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
             systemState.RequireForUpdate<MorrowindScriptShellRequest>();
             systemState.RequireForUpdate<RuntimeShellState>();
+            systemState.RequireForUpdate<CharacterGenerationState>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -26,19 +28,22 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
+            ref var charGen = ref SystemAPI.GetSingletonRW<CharacterGenerationState>().ValueRW;
+            Entity charGenEntity = SystemAPI.GetSingletonEntity<CharacterGenerationState>();
             bool hasLogicalRefLookup = SystemAPI.TryGetSingleton(out LogicalRefLookup logicalRefLookup);
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(systemState.EntityManager, hasLogicalRefLookup, logicalRefLookup, ref shell, requests[i]);
+                ApplyRequest(systemState.EntityManager, charGenEntity, hasLogicalRefLookup, logicalRefLookup, ref shell, ref charGen, requests[i]);
 
-            RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell);
             requests.Clear();
         }
 
         static void ApplyRequest(
             EntityManager entityManager,
+            Entity charGenEntity,
             bool hasLogicalRefLookup,
             in LogicalRefLookup logicalRefLookup,
             ref RuntimeShellState shell,
+            ref CharacterGenerationState charGen,
             in MorrowindScriptShellRequest request)
         {
             if (request.Operation == (byte)MorrowindScriptShellRequestOperation.WakeUpPlayer)
@@ -118,6 +123,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
+            if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerLooking)
+            {
+                shell.PlayerLookingDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
+                return;
+            }
+
             if (request.Operation == (byte)MorrowindScriptShellRequestOperation.PlayerMagic)
             {
                 shell.PlayerMagicDisabled = request.Enabled != 0 ? (byte)0 : (byte)1;
@@ -169,18 +180,23 @@ namespace VVardenfell.Runtime.MorrowindScript
                         return;
                     case 5:
                         shell.NameMenuDisabled = disabled;
+                        ApplyCharacterGenerationMenu(entityManager, charGenEntity, ref shell, ref charGen, CharacterGenerationMenu.Name, request.Enabled != 0, disabled);
                         return;
                     case 6:
                         shell.RaceMenuDisabled = disabled;
+                        ApplyCharacterGenerationMenu(entityManager, charGenEntity, ref shell, ref charGen, CharacterGenerationMenu.Race, request.Enabled != 0, disabled);
                         return;
                     case 7:
                         shell.ClassMenuDisabled = disabled;
+                        ApplyCharacterGenerationMenu(entityManager, charGenEntity, ref shell, ref charGen, CharacterGenerationMenu.ClassChoice, request.Enabled != 0, disabled);
                         return;
                     case 8:
                         shell.BirthMenuDisabled = disabled;
+                        ApplyCharacterGenerationMenu(entityManager, charGenEntity, ref shell, ref charGen, CharacterGenerationMenu.Birth, request.Enabled != 0, disabled);
                         return;
                     case 9:
                         shell.StatReviewMenuDisabled = disabled;
+                        ApplyCharacterGenerationMenu(entityManager, charGenEntity, ref shell, ref charGen, CharacterGenerationMenu.Review, request.Enabled != 0, disabled);
                         return;
                     default:
                         throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell menu kind {request.MenuKind}.");
@@ -188,6 +204,49 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             throw new InvalidOperationException($"[VVardenfell][MWScript] Unsupported shell request operation {request.Operation}.");
+        }
+
+        static void ApplyCharacterGenerationMenu(
+            EntityManager entityManager,
+            Entity charGenEntity,
+            ref RuntimeShellState shell,
+            ref CharacterGenerationState charGen,
+            CharacterGenerationMenu menu,
+            bool enabled,
+            byte disabled)
+        {
+            if (!enabled)
+            {
+                if ((CharacterGenerationMenu)charGen.CurrentMenu == menu)
+                {
+                    CharacterGenerationUtility.Close(ref charGen);
+                    RuntimeShellStateUtility.CloseCharacterGeneration(ref shell);
+                    EnsureCharGenStage(entityManager, charGenEntity, in charGen);
+                }
+                return;
+            }
+
+            if (disabled != 0)
+                throw new InvalidOperationException($"[VVardenfell][MWScript] Cannot open disabled character generation menu {menu}.");
+
+            CharacterGenerationUtility.OpenMenu(ref charGen, menu);
+            EnsureCharGenStage(entityManager, charGenEntity, in charGen);
+            RuntimeShellStateUtility.OpenCharacterGeneration(ref shell);
+        }
+
+        static void EnsureCharGenStage(EntityManager entityManager, Entity charGenEntity, in CharacterGenerationState charGen)
+        {
+            var stage = new CharGenStage
+            {
+                Stage = charGen.Stage,
+                Menu = charGen.CurrentMenu,
+                Finalized = charGen.Finalized,
+            };
+
+            if (entityManager.HasComponent<CharGenStage>(charGenEntity))
+                entityManager.SetComponentData(charGenEntity, stage);
+            else
+                entityManager.AddComponentData(charGenEntity, stage);
         }
     }
 }

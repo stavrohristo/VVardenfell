@@ -64,6 +64,41 @@ namespace VVardenfell.Runtime.UI.Assets
 
         public Sprite GetMagicEffectSprite(string rawIconPath) => GetSprite(rawIconPath);
 
+        public bool TryGetTextureSprite(string rawTexturePath, out Sprite sprite)
+        {
+            EnsureInstallContext();
+
+            sprite = null;
+            string normalized = NormalizeTexturePath(rawTexturePath);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            if (_spriteCache.TryGetValue(normalized, out sprite))
+                return sprite != null;
+
+            if (!TryLoadAssetTexture(normalized, out var texture))
+                return false;
+
+            texture.name = Path.GetFileNameWithoutExtension(normalized);
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Bilinear;
+            sprite = Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f), 100f);
+            sprite.name = texture.name + "_sprite";
+
+            _textures.Add(texture);
+            _sprites.Add(sprite);
+            _spriteCache[normalized] = sprite;
+            return true;
+        }
+
+        public Sprite RequireTextureSprite(string rawTexturePath, string label)
+        {
+            if (TryGetTextureSprite(rawTexturePath, out var sprite))
+                return sprite;
+
+            throw new InvalidOperationException($"[VVardenfell][UI] Missing {label} texture '{rawTexturePath}'.");
+        }
+
         public void Dispose()
         {
             if (_fallbackSprite != null)
@@ -148,6 +183,63 @@ namespace VVardenfell.Runtime.UI.Assets
                     texture = DecodeImage(bytes, Path.GetExtension(candidate), candidate);
                     if (texture != null)
                         return true;
+                }
+                catch (Exception ex)
+                {
+                    WarnDecodeFailureOnce(candidate, ex.Message);
+                }
+            }
+
+            return false;
+        }
+
+        bool TryLoadAssetTexture(string normalizedPath, out Texture2D texture)
+        {
+            texture = null;
+            if (string.IsNullOrWhiteSpace(_installPath))
+                return false;
+
+            if (TryLoadLooseAsset(normalizedPath, out texture))
+                return true;
+
+            if (_bsaEntriesByPath == null || _bsaArchive == null)
+                return false;
+
+            foreach (string candidate in EnumerateIconCandidates(normalizedPath))
+            {
+                if (!_bsaEntriesByPath.TryGetValue(candidate, out var entry))
+                    continue;
+
+                try
+                {
+                    var bytes = _bsaArchive.Read(entry);
+                    texture = DecodeImage(bytes, Path.GetExtension(candidate), candidate);
+                    if (texture != null)
+                        return true;
+                }
+                catch (Exception ex)
+                {
+                    WarnDecodeFailureOnce(candidate, ex.Message);
+                }
+            }
+
+            return false;
+        }
+
+        bool TryLoadLooseAsset(string normalizedPath, out Texture2D texture)
+        {
+            texture = null;
+            string dataFiles = Path.Combine(_installPath, "Data Files");
+            foreach (string candidate in EnumerateIconCandidates(normalizedPath))
+            {
+                string fullPath = Path.Combine(dataFiles, candidate.Replace('\\', Path.DirectorySeparatorChar));
+                if (!File.Exists(fullPath))
+                    continue;
+
+                try
+                {
+                    texture = DecodeImage(File.ReadAllBytes(fullPath), Path.GetExtension(fullPath), candidate);
+                    return texture != null;
                 }
                 catch (Exception ex)
                 {
@@ -292,6 +384,28 @@ namespace VVardenfell.Runtime.UI.Assets
                 return @"icons\" + path.Substring(@"textures\".Length);
 
             return @"icons\" + path;
+        }
+
+        static string NormalizeTexturePath(string rawPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                return string.Empty;
+
+            string path = rawPath.Trim().Replace('/', '\\').ToLowerInvariant();
+            while (path.Contains("\\\\", StringComparison.Ordinal))
+                path = path.Replace("\\\\", "\\", StringComparison.Ordinal);
+
+            if (path.StartsWith("\\", StringComparison.Ordinal))
+                path = path.Substring(1);
+
+            if (path.StartsWith(@"textures\", StringComparison.OrdinalIgnoreCase))
+                return path;
+
+            int textureIndex = path.IndexOf(@"\textures\", StringComparison.OrdinalIgnoreCase);
+            if (textureIndex >= 0)
+                return path.Substring(textureIndex + 1);
+
+            return @"textures\" + path;
         }
 
         static string ChangeExtension(string path, string newExtension)

@@ -1,6 +1,7 @@
 using System;
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
@@ -10,6 +11,7 @@ using VVardenfell.Runtime.WorldRefs;
 namespace VVardenfell.Runtime.MorrowindScript
 {
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
+    [UpdateBefore(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptActiveExplicitRefLookupSystem : ISystem
     {
         EntityQuery _logicalRefQuery;
@@ -56,6 +58,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             var lookup = SystemAPI.GetSingleton<ActiveExplicitRefLookup>();
             if (!SystemAPI.TryGetSingleton<LoadedCellsMap>(out var loadedCells))
                 throw new InvalidOperationException("[VVardenfell][MWScript] Active explicit-ref lookup rebuild requires LoadedCellsMap.");
+            if (!SystemAPI.TryGetSingleton<RuntimeWorldCellBlobReference>(out var worldCellReference) || !worldCellReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][MWScript] Active explicit-ref lookup rebuild requires RuntimeWorldCellBlobReference.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
 
             byte interiorActive = 0;
             ulong activeInteriorCellHash = 0UL;
@@ -67,7 +72,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             int entityCount = _logicalRefQuery.CalculateEntityCount();
             int orderVersion = _logicalRefQuery.GetCombinedComponentOrderVersion(includeEntityType: true);
-            int count = Math.Max(entityCount, 1024);
+            int count = Math.Max(entityCount + worldCells.Refs.Length, 1024);
             if (lookup.ByContentKey.Capacity < count)
                 lookup.ByContentKey.Capacity = count;
             if (lookup.AllByContentKey.Capacity < count)
@@ -75,6 +80,24 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             lookup.ByContentKey.Clear();
             lookup.AllByContentKey.Clear();
+
+            for (int i = 0; i < worldCells.Refs.Length; i++)
+            {
+                RefEntry entry = worldCells.Refs[i];
+                if (entry.PlacedRefId == 0u || entry.ContentHandleValue <= 0 || entry.ContentKind <= 0)
+                    continue;
+
+                var content = new ContentReference
+                {
+                    Kind = (ContentReferenceKind)(byte)entry.ContentKind,
+                    HandleValue = entry.ContentHandleValue,
+                };
+                if (!content.IsValid)
+                    continue;
+
+                int key = ActiveExplicitRefLookupUtility.Pack(content);
+                AddExplicitRefTarget(lookup.AllByContentKey, key, Entity.Null, entry.PlacedRefId);
+            }
 
             foreach (var (content, identity, location, entity) in
                      SystemAPI.Query<RefRO<LogicalRefContent>, RefRO<PlacedRefIdentity>, RefRO<LogicalRefLocation>>()
@@ -124,7 +147,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             if (existing.PlacedRefId == placedRefId)
+            {
+                if (existing.Entity == Entity.Null && entity != Entity.Null)
+                {
+                    existing.Entity = entity;
+                    targets[key] = existing;
+                }
+
                 return;
+            }
 
             existing.Ambiguous = 1;
             existing.Entity = Entity.Null;

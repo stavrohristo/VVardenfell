@@ -43,6 +43,9 @@ namespace VVardenfell.Runtime.WorldState
             init.PlayerPitchDegrees = payload.PlayerPitchDegrees;
             init.PlayerActorStats = payload.ActorStats;
             init.PlayerIdentity = payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer();
+            init.PlayerAppearance = payload.PlayerAppearance;
+            init.PlayerCustomClass = payload.PlayerCustomClass;
+            init.PlayerCharacterGeneration = payload.CharacterGeneration;
             init.PlayerCrime = payload.PlayerCrime;
             if (payload.PlayerFactions != null)
                 PopulateInitializationFactions(entityManager, payload.PlayerFactions);
@@ -141,6 +144,7 @@ namespace VVardenfell.Runtime.WorldState
                 shell.SaveLoadBrowserOpen = 0;
                 shell.JournalOpen = 0;
                 shell.DialogueOpen = 0;
+                shell.CharacterGenerationOpen = 0;
                 shell.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;
                 shell.ModalTitle = default;
                 shell.ModalBody = default;
@@ -194,6 +198,17 @@ namespace VVardenfell.Runtime.WorldState
                     payload.ActorStats.EffectModifiers,
                     derived));
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
+            if (entityManager.HasComponent<PlayerRaceAppearance>(playerEntity))
+                entityManager.SetComponentData(playerEntity, payload.PlayerAppearance);
+            if (entityManager.HasComponent<PlayerCustomClass>(playerEntity))
+                entityManager.SetComponentData(playerEntity, payload.PlayerCustomClass);
+            Entity charGenEntity = WorldStateEntityQueryUtility.GetSingletonEntity<CharacterGenerationState>(entityManager);
+            if (charGenEntity != Entity.Null && payload.CharacterGeneration.Initialized != 0)
+            {
+                var charGen = payload.CharacterGeneration;
+                charGen.CurrentMenu = (byte)CharacterGenerationMenu.None;
+                entityManager.SetComponentData(charGenEntity, charGen);
+            }
             if (entityManager.HasComponent<PlayerCrimeState>(playerEntity))
                 entityManager.SetComponentData(playerEntity, payload.PlayerCrime);
             ApplyPlayerFactionPayload(entityManager, playerEntity, payload.PlayerFactions);
@@ -768,6 +783,8 @@ namespace VVardenfell.Runtime.WorldState
             ClearDialogue(entityManager, questJournalEntity);
             ClearActorDeathCounts(entityManager, questJournalEntity);
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
+            if (entityManager.HasBuffer<BookReadHistoryEntry>(runtimeEntity))
+                entityManager.GetBuffer<BookReadHistoryEntry>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity).Clear();
             entityManager.GetBuffer<ContainerSessionItem>(runtimeEntity).Clear();
             entityManager.GetBuffer<RuntimeSpawnRequest>(spawnEntity).Clear();
@@ -834,6 +851,16 @@ namespace VVardenfell.Runtime.WorldState
             journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var pickedItems = entityManager.GetBuffer<PickedItemRecord>(runtimeEntity);
             WorldJournalUtility.RebuildPickedItemProjection(journal, pickedItems);
+            if (entityManager.HasBuffer<BookReadHistoryEntry>(runtimeEntity))
+            {
+                var bookHistory = entityManager.GetBuffer<BookReadHistoryEntry>(runtimeEntity);
+                bookHistory.Clear();
+                if (payload.BookReadHistory != null)
+                {
+                    for (int i = 0; i < payload.BookReadHistory.Length; i++)
+                        bookHistory.Add(payload.BookReadHistory[i]);
+                }
+            }
 
             RuntimeSpawnProjectionUtility.RebuildRegistryFromJournal(entityManager);
             journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);

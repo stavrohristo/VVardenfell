@@ -67,6 +67,8 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<PlayerInventoryItem>());
 
             RequireForUpdate<RuntimeShellState>();
+            RequireForUpdate<CharacterGenerationState>();
+            RequireForUpdate<BookReaderState>();
             RequireForUpdate<RuntimeHudPreferences>();
             RequireForUpdate<InteractionPresentationState>();
             RequireForUpdate<InventoryWindowState>();
@@ -89,7 +91,6 @@ namespace VVardenfell.Runtime.Shell
             if (_view != null)
                 UnityEngine.Object.Destroy(_view.gameObject);
             _view = null;
-            RuntimeShellPresentationGate.BlocksGameplayInput = false;
         }
 
         protected override void OnUpdate()
@@ -125,6 +126,8 @@ namespace VVardenfell.Runtime.Shell
             var mapState = SystemAPI.GetSingleton<MapWindowState>();
             var journalState = SystemAPI.GetSingleton<JournalWindowState>();
             var saveLoadState = SystemAPI.GetSingleton<SaveLoadBrowserState>();
+            var characterGenerationState = SystemAPI.GetSingleton<CharacterGenerationState>();
+            var bookReaderState = SystemAPI.GetSingleton<BookReaderState>();
             Entity inventoryEntity = _playerInventoryQuery.GetSingletonEntity();
             var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(inventoryEntity, true);
             var containerItems = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
@@ -209,6 +212,17 @@ namespace VVardenfell.Runtime.Shell
             RestMenuViewModel restMenuModel = shell.RestMenuOpen != 0 || shell.RestMenuAdvancing != 0
                 ? BuildRestMenuModel(ref contentBlob, shell, SystemAPI.GetSingleton<MorrowindTimeState>(), playerStats)
                 : null;
+            CharacterGenerationViewModel characterGenerationModel = shell.CharacterGenerationOpen != 0
+                ? RuntimeShellCharacterGenerationModelBuilder.Build(
+                    ref contentBlob,
+                    characterGenerationState,
+                    ResolvePlayerCustomClass(playerStats),
+                    ResolvePlayerKnownSpells(playerStats),
+                    BuildStatsModel(ref contentBlob, EntityManager, statsState, playerStats))
+                : null;
+            BookReaderViewModel bookReaderModel = bookReaderState.Visible != 0
+                ? BuildBookReaderModel(ref contentBlob, bookReaderState)
+                : null;
             MoviePlaybackViewModel movieModel = shell.MovieOpen != 0
                 ? new MoviePlaybackViewModel
                 {
@@ -229,6 +243,8 @@ namespace VVardenfell.Runtime.Shell
                 journalModel,
                 dialogueModel,
                 restMenuModel,
+                characterGenerationModel,
+                bookReaderModel,
                 movieModel,
                 (RuntimeShellMenuActionId)shell.SelectedAction,
                 shell.PauseMenuOpen != 0,
@@ -239,6 +255,30 @@ namespace VVardenfell.Runtime.Shell
                 ResolveModalTitle(shell.ModalOpen != 0, shell.ModalTitle),
                 ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody),
                 ResolveModalButtons(shell.ModalOpen != 0, shell));
+        }
+
+        PlayerCustomClass ResolvePlayerCustomClass(in PlayerPresentationStats playerStats)
+        {
+            if (!playerStats.HasPlayer
+                || !EntityManager.Exists(playerStats.PlayerEntity)
+                || !EntityManager.HasComponent<PlayerCustomClass>(playerStats.PlayerEntity))
+            {
+                return default;
+            }
+
+            return EntityManager.GetComponentData<PlayerCustomClass>(playerStats.PlayerEntity);
+        }
+
+        DynamicBuffer<ActorKnownSpell> ResolvePlayerKnownSpells(in PlayerPresentationStats playerStats)
+        {
+            if (!playerStats.HasPlayer
+                || !EntityManager.Exists(playerStats.PlayerEntity)
+                || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
+            {
+                return default;
+            }
+
+            return EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity, true);
         }
 
         PlayerPresentationStats BuildPlayerPresentationStats()

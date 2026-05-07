@@ -17,6 +17,7 @@ namespace VVardenfell.Runtime.Rendering
         public int BucketIndex;
         public int MaterialIndex;
         public int MeshIndex;
+        public int MirroredMeshIndex;
         public int TextureSlice;
         public int VertexCount;
     }
@@ -112,15 +113,17 @@ namespace VVardenfell.Runtime.Rendering
 
         void BuildMeshes(ref ActorAnimationCatalogBlob catalog)
         {
-            _meshes = new Mesh[catalog.SkinMeshes.Length];
+            _meshes = new Mesh[catalog.SkinMeshes.Length * 2];
             Mesh placeholder = null;
             for (int i = 0; i < catalog.SkinMeshes.Length; i++)
             {
+                int meshIndex = i * 2;
                 var skinMesh = catalog.SkinMeshes[i];
                 if (skinMesh.VertexCount <= 0 || skinMesh.IndexCount <= 0)
                 {
                     placeholder ??= CreatePlaceholderMesh();
-                    _meshes[i] = placeholder;
+                    _meshes[meshIndex] = placeholder;
+                    _meshes[meshIndex + 1] = placeholder;
                     continue;
                 }
 
@@ -139,21 +142,62 @@ namespace VVardenfell.Runtime.Rendering
                 for (int index = 0; index < skinMesh.IndexCount; index++)
                     indices[index] = catalog.SkinIndices[skinMesh.FirstIndexIndex + index];
 
-                var mesh = new Mesh
-                {
-                    name = $"VV:ActorSkinMesh[{i}]",
-                    indexFormat = skinMesh.VertexCount > ushort.MaxValue ? IndexFormat.UInt32 : IndexFormat.UInt16,
-                    vertices = vertices,
-                    normals = normals,
-                    uv = uvs,
-                    triangles = indices,
-                    bounds = new Bounds(
-                        new Vector3(skinMesh.BoundsCenter.x, skinMesh.BoundsCenter.y, skinMesh.BoundsCenter.z),
-                        ToVector3(math.max(skinMesh.BoundsExtents, new float3(0.05f)) * 2f)),
-                };
-                mesh.UploadMeshData(true);
-                _meshes[i] = mesh;
+                var bounds = new Bounds(
+                    new Vector3(skinMesh.BoundsCenter.x, skinMesh.BoundsCenter.y, skinMesh.BoundsCenter.z),
+                    ToVector3(math.max(skinMesh.BoundsExtents, new float3(0.05f)) * 2f));
+                _meshes[meshIndex] = CreateActorMesh(
+                    $"VV:ActorSkinMesh[{i}]",
+                    vertices,
+                    normals,
+                    uvs,
+                    indices,
+                    bounds,
+                    skinMesh.VertexCount);
+                _meshes[meshIndex + 1] = CreateActorMesh(
+                    $"VV:ActorSkinMesh[{i}].MirrorWinding",
+                    vertices,
+                    normals,
+                    uvs,
+                    BuildMirroredWindingIndices(indices),
+                    bounds,
+                    skinMesh.VertexCount);
             }
+        }
+
+        static Mesh CreateActorMesh(
+            string name,
+            Vector3[] vertices,
+            Vector3[] normals,
+            Vector2[] uvs,
+            int[] indices,
+            Bounds bounds,
+            int vertexCount)
+        {
+            var mesh = new Mesh
+            {
+                name = name,
+                indexFormat = vertexCount > ushort.MaxValue ? IndexFormat.UInt32 : IndexFormat.UInt16,
+                vertices = vertices,
+                normals = normals,
+                uv = uvs,
+                triangles = indices,
+                bounds = bounds,
+            };
+            mesh.UploadMeshData(true);
+            return mesh;
+        }
+
+        static int[] BuildMirroredWindingIndices(int[] indices)
+        {
+            var result = new int[indices?.Length ?? 0];
+            for (int i = 0; i + 2 < result.Length; i += 3)
+            {
+                result[i] = indices[i];
+                result[i + 1] = indices[i + 2];
+                result[i + 2] = indices[i + 1];
+            }
+
+            return result;
         }
 
         static Mesh CreatePlaceholderMesh()
@@ -182,7 +226,8 @@ namespace VVardenfell.Runtime.Rendering
                 {
                     BucketIndex = bucketIndex,
                     MaterialIndex = math.clamp(skinMesh.MaterialIndex, 0, math.max(0, WorldResources.BlendVariantCount - 1)),
-                    MeshIndex = skinMesh.VertexCount > 0 && skinMesh.IndexCount > 0 ? i : -1,
+                    MeshIndex = skinMesh.VertexCount > 0 && skinMesh.IndexCount > 0 ? i * 2 : -1,
+                    MirroredMeshIndex = skinMesh.VertexCount > 0 && skinMesh.IndexCount > 0 ? i * 2 + 1 : -1,
                     TextureSlice = textureSlice,
                     VertexCount = math.max(0, skinMesh.VertexCount),
                 };

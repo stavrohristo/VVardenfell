@@ -24,7 +24,8 @@ namespace VVardenfell.Runtime.Streaming
 
         public bool IsSandbox => BootstrapRuntimeModeUtility.IsSandboxMode(Mode);
         public bool RequiresFullCellPreload => !IsSandbox;
-        public bool QueueInitialExteriorCells => !IsSandbox || (SandboxProfile?.QueueInitialExteriorCells ?? false);
+        public bool SpawnInitialExteriorCell => IsSandbox;
+        public bool QueueInitialExteriorCells => IsSandbox && (SandboxProfile?.QueueInitialExteriorCells ?? false);
         public bool SpawnLocalPlayer => !IsSandbox || (SandboxProfile?.SpawnLocalPlayer ?? true);
 
         public static WorldBootstrapOptions Vanilla => new(

@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Interactions
         EntityQuery _playerQuery;
         EntityQuery _viewQuery;
         EntityQuery _groundingColliderQuery;
+        EntityQuery _groundingSourceQuery;
 
         protected override void OnCreate()
         {
@@ -77,6 +78,7 @@ namespace VVardenfell.Runtime.Interactions
                 ComponentType.ReadWrite<LocalTransform>(),
                 ComponentType.ReadWrite<LocalToWorld>());
             _groundingColliderQuery = GetEntityQuery(ComponentType.ReadOnly<PhysicsCollider>());
+            _groundingSourceQuery = GetEntityQuery(ComponentType.ReadOnly<RuntimeColliderSource>());
 
             RequireForUpdate(_requestQuery);
             RequireForUpdate(_transitionQuery);
@@ -126,7 +128,17 @@ namespace VVardenfell.Runtime.Interactions
             }
 
             if (!EntityManager.HasComponent<DoorInteractable>(target))
-                throw new System.InvalidOperationException("[VVardenfell][Interaction] authored door activation requires DoorInteractable metadata.");
+            {
+                if (EntityManager.HasComponent<DoorMotionState>(target))
+                {
+                    TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
+                    ClearFocus();
+                    transition.TransitionInProgress = 0;
+                    return;
+                }
+
+                throw new System.InvalidOperationException("[VVardenfell][Interaction] authored door activation requires DoorInteractable metadata or DoorMotionState.");
+            }
 
             var door = EntityManager.GetComponentData<DoorInteractable>(target);
             if (door.IsTeleport == 0)
@@ -309,6 +321,12 @@ namespace VVardenfell.Runtime.Interactions
             float3 start = destinationPosition + new float3(0f, probeLift, 0f);
             float3 end = start - new float3(0f, probeDistance, 0f);
             var input = new ColliderCastInput(playerCollider.Value, start, end, bodyYawRotation);
+            float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            int2 destinationExteriorCell = destinationIsInterior
+                ? default
+                : new int2(
+                    (int)math.floor(destinationPosition.x / cellM),
+                    (int)math.floor(destinationPosition.z / cellM));
 
             bool foundWalkable = false;
             ColliderCastHit bestWalkableHit = default;
@@ -331,12 +349,8 @@ namespace VVardenfell.Runtime.Interactions
                 }
                 else
                 {
-                    float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                    var coord = new int2(
-                        (int)math.floor(destinationPosition.x / cellM),
-                        (int)math.floor(destinationPosition.z / cellM));
-                    float3 cellOrigin = new float3(coord.x * cellM, 0f, coord.y * cellM);
-                    if (WorldResources.TryGetTerrainCollider(coord, out var terrainCollider))
+                    float3 cellOrigin = new float3(destinationExteriorCell.x * cellM, 0f, destinationExteriorCell.y * cellM);
+                    if (WorldResources.TryGetTerrainCollider(destinationExteriorCell, out var terrainCollider))
                     {
                         var body = BuildGroundingBody(terrainCollider, Entity.Null, cellOrigin);
                         TryFindGroundingColliderHit(
@@ -347,7 +361,7 @@ namespace VVardenfell.Runtime.Interactions
                             ref foundWalkable,
                             ref bestWalkableHit);
                     }
-                    if (WorldResources.TryGetStaticCellCollider(coord, out var staticCollider))
+                    if (WorldResources.TryGetStaticCellCollider(destinationExteriorCell, out var staticCollider))
                     {
                         var body = BuildGroundingBody(staticCollider, Entity.Null, cellOrigin);
                         TryFindGroundingColliderHit(
@@ -358,6 +372,35 @@ namespace VVardenfell.Runtime.Interactions
                             ref foundWalkable,
                             ref bestWalkableHit);
                     }
+                }
+            }
+            finally
+            {
+                if (colliderHits.IsCreated)
+                    colliderHits.Dispose();
+            }
+
+            using var sourceEntities = _groundingSourceQuery.ToEntityArray(Allocator.Temp);
+            using var sources = _groundingSourceQuery.ToComponentDataArray<RuntimeColliderSource>(Allocator.Temp);
+            colliderHits = new NativeList<ColliderCastHit>(Allocator.Temp);
+            try
+            {
+                for (int i = 0; i < sourceEntities.Length; i++)
+                {
+                    Entity entity = sourceEntities[i];
+                    if (entity == playerEntity || !sources[i].Value.IsCreated)
+                        continue;
+                    if (!IsTeleportGroundingSource(entity, sources[i], destinationIsInterior, destinationExteriorCell))
+                        continue;
+                    if (!TryBuildRigidBody(entity, sources[i].Value, out RigidBody body))
+                        continue;
+                    TryFindGroundingColliderHit(
+                        body,
+                        input,
+                        movementSettings.MaxSlopeCosine,
+                        ref colliderHits,
+                        ref foundWalkable,
+                        ref bestWalkableHit);
                 }
             }
             finally
@@ -401,6 +444,8 @@ namespace VVardenfell.Runtime.Interactions
                 destinationIsInterior,
                 destinationInteriorStaticCollider,
                 destinationPosition,
+                sourceEntities,
+                sources,
                 entities,
                 colliders,
                 out Unity.Physics.RaycastHit bestRayHit);
@@ -492,6 +537,8 @@ namespace VVardenfell.Runtime.Interactions
             bool destinationIsInterior,
             BlobAssetReference<Collider> destinationInteriorStaticCollider,
             float3 destinationPosition,
+            NativeArray<Entity> sourceEntities,
+            NativeArray<RuntimeColliderSource> sources,
             NativeArray<Entity> entities,
             NativeArray<PhysicsCollider> colliders,
             out Unity.Physics.RaycastHit bestHit)
@@ -530,6 +577,28 @@ namespace VVardenfell.Runtime.Interactions
                     var body = BuildGroundingBody(staticCollider, Entity.Null, cellOrigin);
                     TryFindTeleportGroundingRayHit(body, input, ref found, ref bestHit);
                 }
+            }
+
+            int2 destinationExteriorCell = default;
+            if (!destinationIsInterior)
+            {
+                float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+                destinationExteriorCell = new int2(
+                    (int)math.floor(destinationPosition.x / cellM),
+                    (int)math.floor(destinationPosition.z / cellM));
+            }
+
+            for (int i = 0; i < sourceEntities.Length; i++)
+            {
+                Entity entity = sourceEntities[i];
+                RuntimeColliderSource source = sources[i];
+                if (!source.Value.IsCreated)
+                    continue;
+                if (!IsTeleportGroundingSource(entity, source, destinationIsInterior, destinationExteriorCell))
+                    continue;
+                if (!TryBuildRigidBody(entity, source.Value, out RigidBody body))
+                    continue;
+                TryFindTeleportGroundingRayHit(body, input, ref found, ref bestHit);
             }
 
             for (int i = 0; i < entities.Length; i++)
@@ -793,9 +862,28 @@ namespace VVardenfell.Runtime.Interactions
                    || kind == RuntimeColliderKind.StaticCell;
         }
 
+        bool IsTeleportGroundingSource(Entity entity, in RuntimeColliderSource source, bool destinationIsInterior, int2 destinationExteriorCell)
+        {
+            if (source.Kind != RuntimeColliderKind.PlacedRef)
+                return false;
+
+            if (destinationIsInterior)
+                return EntityManager.HasComponent<InteriorCellMember>(entity);
+
+            if (!EntityManager.HasComponent<CellLink>(entity))
+                return false;
+
+            return math.all(EntityManager.GetComponentData<CellLink>(entity).Value == destinationExteriorCell);
+        }
+
         bool TryBuildRigidBody(Entity entity, in PhysicsCollider collider, out RigidBody body)
+            => TryBuildRigidBody(entity, collider.Value, out body);
+
+        bool TryBuildRigidBody(Entity entity, BlobAssetReference<Collider> collider, out RigidBody body)
         {
             body = default;
+            if (!collider.IsCreated)
+                return false;
 
             if (EntityManager.HasComponent<LocalToWorld>(entity))
             {
@@ -810,7 +898,7 @@ namespace VVardenfell.Runtime.Interactions
                 var rotation = new quaternion(new float3x3(c0 / scale, c1 / scale, c2 / scale));
                 body = new RigidBody
                 {
-                    Collider = collider.Value,
+                    Collider = collider,
                     Entity = entity,
                     WorldFromBody = new RigidTransform(rotation, matrix.c3.xyz),
                     Scale = scale,
@@ -824,7 +912,7 @@ namespace VVardenfell.Runtime.Interactions
             var transform = EntityManager.GetComponentData<LocalTransform>(entity);
             body = new RigidBody
             {
-                Collider = collider.Value,
+                Collider = collider,
                 Entity = entity,
                 WorldFromBody = new RigidTransform(transform.Rotation, transform.Position),
                 Scale = transform.Scale,

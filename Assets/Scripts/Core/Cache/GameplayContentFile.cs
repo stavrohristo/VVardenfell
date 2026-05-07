@@ -207,10 +207,13 @@ namespace VVardenfell.Core.Cache
         public string SoundId;
         public string AuxSoundId;
         public string EnchantId;
+        public string Text;
         public uint Flags;
         public float Float0;
         public int Int0;
         public int Int1;
+        public int Int2;
+        public int Int3;
     }
 
     public enum ItemEquipmentKind : byte
@@ -326,6 +329,7 @@ namespace VVardenfell.Core.Cache
         public int Int2;
         public float Float0;
         public float Float1;
+        public string[] PowerSpellIds;
     }
 
     public enum GenericRecordValueKind : byte
@@ -1469,10 +1473,13 @@ namespace VVardenfell.Core.Cache
             WriteString(w, value.SoundId);
             WriteString(w, value.AuxSoundId);
             WriteString(w, value.EnchantId);
+            WriteString(w, value.Text);
             w.Write(value.Flags);
             w.Write(value.Float0);
             w.Write(value.Int0);
             w.Write(value.Int1);
+            w.Write(value.Int2);
+            w.Write(value.Int3);
         }
 
         static void WriteExplicitRefTarget(BinaryWriter w, ExplicitRefTargetDef value)

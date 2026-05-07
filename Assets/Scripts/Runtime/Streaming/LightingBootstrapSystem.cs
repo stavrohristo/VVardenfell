@@ -70,8 +70,8 @@ namespace VVardenfell.Runtime.Streaming
                     SunPercent = 1f,
                     FogColorRgb = new float3(0.05f, 0.05f, 0.06f),
                     FogDensity = 0.22f,
-                    FogNearMeters = 22f,
-                    FogFarMeters = 68f,
+                    FogNearMeters = 124.8f,
+                    FogFarMeters = 160f,
                     RegionHandleValue = 0,
                     IsInterior = 1,
                 };

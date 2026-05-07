@@ -259,6 +259,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     {
                         SourceEntity = activeSayBuffer[i].SourceEntity,
                         SourcePlacedRefId = activeSayBuffer[i].SourcePlacedRefId,
+                        Loudness = activeSayBuffer[i].Loudness,
                     };
                 }
             }

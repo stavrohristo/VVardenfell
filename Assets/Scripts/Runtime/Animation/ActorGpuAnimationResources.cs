@@ -82,10 +82,32 @@ namespace VVardenfell.Runtime.Animation
         public int FirstVertexIndex;
         public float3 RigidOffset;
         public int VertexCount;
+        public int FirstHeadMorphTargetIndex;
+        public int HeadMorphTargetCount;
+        public float TalkStart;
+        public float TalkStop;
         public float4 GeometryRow0;
         public float4 GeometryRow1;
         public float4 GeometryRow2;
         public float4 GeometryRow3;
+    }
+
+    struct ActorGpuAnimationHeadMorphTargetGpu
+    {
+        public int FirstKeyIndex;
+        public int KeyCount;
+        public int FirstVertexIndex;
+        public int VertexCount;
+        public int Interpolation;
+        public int Padding0;
+        public int Padding1;
+        public int Padding2;
+    }
+
+    struct ActorGpuAnimationHeadMorphVertexGpu
+    {
+        public float3 Value;
+        public float Padding;
     }
 
     struct ActorGpuAnimationSkinBoneGpu
@@ -111,7 +133,7 @@ namespace VVardenfell.Runtime.Animation
         public int SkinMeshWorkCount;
         public int DeformedVertexOffset;
         public int DeformedVertexCount;
-        public int Padding;
+        public float HeadAnimationTime;
     }
 
     struct ActorGpuAnimationLayerGpu
@@ -210,7 +232,7 @@ namespace VVardenfell.Runtime.Animation
         const int SkinMatrixThreadsPerGroup = 128;
         const int MaxComputeGroupsPerDimension = 65535;
         const int FrameResourceCount = 3;
-        const ulong StaticUploadVersion = 6UL;
+        const ulong StaticUploadVersion = 7UL;
         const GraphicsBuffer.UsageFlags DynamicBufferUsage = GraphicsBuffer.UsageFlags.LockBufferForWrite;
 
         static readonly int k_ActorCountId = Shader.PropertyToID("_GpuActorCount");
@@ -226,6 +248,8 @@ namespace VVardenfell.Runtime.Animation
         static readonly int k_SkinMeshesId = Shader.PropertyToID("_GpuAnimationSkinMeshes");
         static readonly int k_SkinBonesId = Shader.PropertyToID("_GpuAnimationSkinBones");
         static readonly int k_SkinVerticesId = Shader.PropertyToID("_GpuAnimationSkinVertices");
+        static readonly int k_HeadMorphTargetsId = Shader.PropertyToID("_GpuAnimationHeadMorphTargets");
+        static readonly int k_HeadMorphVerticesId = Shader.PropertyToID("_GpuAnimationHeadMorphVertices");
         static readonly int k_ActorsId = Shader.PropertyToID("_GpuAnimationActors");
         static readonly int k_LayersId = Shader.PropertyToID("_GpuAnimationLayers");
         static readonly int k_LocalMatricesId = Shader.PropertyToID("_GpuAnimationLocalBoneMatrices");
@@ -241,6 +265,8 @@ namespace VVardenfell.Runtime.Animation
         static readonly int k_SkinMeshCountId = Shader.PropertyToID("_GpuSkinMeshCount");
         static readonly int k_SkinBoneCountId = Shader.PropertyToID("_GpuSkinBoneCount");
         static readonly int k_SkinVertexCountId = Shader.PropertyToID("_GpuSkinVertexCount");
+        static readonly int k_HeadMorphTargetCountId = Shader.PropertyToID("_GpuHeadMorphTargetCount");
+        static readonly int k_HeadMorphVertexCountId = Shader.PropertyToID("_GpuHeadMorphVertexCount");
         static readonly int k_LayerCountId = Shader.PropertyToID("_GpuLayerCount");
         static readonly int k_LocalBoneMatrixCountId = Shader.PropertyToID("_GpuLocalBoneMatrixCount");
         static readonly int k_ActorBoneMatrixCountId = Shader.PropertyToID("_GpuActorBoneMatrixCount");
@@ -262,6 +288,8 @@ namespace VVardenfell.Runtime.Animation
         GraphicsBuffer _skinMeshBuffer;
         GraphicsBuffer _skinBoneBuffer;
         GraphicsBuffer _skinVertexBuffer;
+        GraphicsBuffer _headMorphTargetBuffer;
+        GraphicsBuffer _headMorphVertexBuffer;
         readonly ActorGpuAnimationFrameResources[] _frames = new ActorGpuAnimationFrameResources[FrameResourceCount];
         int _frameIndex = -1;
         ActorGpuAnimationPreparedFrame _preparedFrame;
@@ -277,6 +305,8 @@ namespace VVardenfell.Runtime.Animation
         int _skinMeshCount;
         int _skinBoneCount;
         int _skinVertexCount;
+        int _headMorphTargetCount;
+        int _headMorphVertexCount;
 
         public ActorGpuAnimationResources()
         {
@@ -325,7 +355,9 @@ namespace VVardenfell.Runtime.Animation
                 && _keyBuffer != null
                 && _skinMeshBuffer != null
                 && _skinBoneBuffer != null
-                && _skinVertexBuffer != null)
+                && _skinVertexBuffer != null
+                && _headMorphTargetBuffer != null
+                && _headMorphVertexBuffer != null)
             {
                 return;
             }
@@ -454,6 +486,8 @@ namespace VVardenfell.Runtime.Animation
             cmd.SetComputeIntParam(_computeShader, k_SkinMeshCountId, _skinMeshCount);
             cmd.SetComputeIntParam(_computeShader, k_SkinBoneCountId, _skinBoneCount);
             cmd.SetComputeIntParam(_computeShader, k_SkinVertexCountId, _skinVertexCount);
+            cmd.SetComputeIntParam(_computeShader, k_HeadMorphTargetCountId, _headMorphTargetCount);
+            cmd.SetComputeIntParam(_computeShader, k_HeadMorphVertexCountId, _headMorphVertexCount);
             BindStaticBuffers(cmd, _sampleLocalBonesKernelIndex);
             BindStaticBuffers(cmd, _composeLocalToRootKernelIndex);
             BindStaticBuffers(cmd, _buildSkinMatricesKernelIndex);
@@ -503,6 +537,8 @@ namespace VVardenfell.Runtime.Animation
             cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinMeshesId, _skinMeshBuffer);
             cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinBonesId, _skinBoneBuffer);
             cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_SkinVerticesId, _skinVertexBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_HeadMorphTargetsId, _headMorphTargetBuffer);
+            cmd.SetComputeBufferParam(_computeShader, kernelIndex, k_HeadMorphVerticesId, _headMorphVertexBuffer);
         }
 
         void BindFrameBuffers(CommandBuffer cmd, int kernelIndex, in ActorGpuAnimationPreparedFrame frame)
@@ -527,6 +563,8 @@ namespace VVardenfell.Runtime.Animation
             ReleaseBuffer(ref _skinMeshBuffer);
             ReleaseBuffer(ref _skinBoneBuffer);
             ReleaseBuffer(ref _skinVertexBuffer);
+            ReleaseBuffer(ref _headMorphTargetBuffer);
+            ReleaseBuffer(ref _headMorphVertexBuffer);
             for (int i = 0; i < _frames.Length; i++)
                 ReleaseFrameResources(ref _frames[i]);
             _frameIndex = -1;
@@ -543,6 +581,8 @@ namespace VVardenfell.Runtime.Animation
             _skinMeshCount = 0;
             _skinBoneCount = 0;
             _skinVertexCount = 0;
+            _headMorphTargetCount = 0;
+            _headMorphVertexCount = 0;
         }
 
         ref ActorGpuAnimationFrameResources CurrentFrame
@@ -635,6 +675,10 @@ namespace VVardenfell.Runtime.Animation
                     FirstVertexIndex = source.FirstVertexIndex,
                     RigidOffset = source.RigidOffset,
                     VertexCount = source.VertexCount,
+                    FirstHeadMorphTargetIndex = source.FirstHeadMorphTargetIndex,
+                    HeadMorphTargetCount = source.HeadMorphTargetCount,
+                    TalkStart = source.TalkStart,
+                    TalkStop = source.TalkStop,
                     GeometryRow0 = new float4(source.GeometryToSkeleton.c0.x, source.GeometryToSkeleton.c1.x, source.GeometryToSkeleton.c2.x, source.GeometryToSkeleton.c3.x),
                     GeometryRow1 = new float4(source.GeometryToSkeleton.c0.y, source.GeometryToSkeleton.c1.y, source.GeometryToSkeleton.c2.y, source.GeometryToSkeleton.c3.y),
                     GeometryRow2 = new float4(source.GeometryToSkeleton.c0.z, source.GeometryToSkeleton.c1.z, source.GeometryToSkeleton.c2.z, source.GeometryToSkeleton.c3.z),
@@ -672,6 +716,29 @@ namespace VVardenfell.Runtime.Animation
                 };
             }
 
+            var headMorphTargets = new ActorGpuAnimationHeadMorphTargetGpu[catalog.HeadMorphTargets.Length];
+            for (int i = 0; i < headMorphTargets.Length; i++)
+            {
+                var source = catalog.HeadMorphTargets[i];
+                headMorphTargets[i] = new ActorGpuAnimationHeadMorphTargetGpu
+                {
+                    FirstKeyIndex = source.FirstKeyIndex,
+                    KeyCount = source.KeyCount,
+                    FirstVertexIndex = source.FirstVertexIndex,
+                    VertexCount = source.VertexCount,
+                    Interpolation = source.Interpolation,
+                };
+            }
+
+            var headMorphVertices = new ActorGpuAnimationHeadMorphVertexGpu[catalog.HeadMorphVertices.Length];
+            for (int i = 0; i < headMorphVertices.Length; i++)
+            {
+                headMorphVertices[i] = new ActorGpuAnimationHeadMorphVertexGpu
+                {
+                    Value = catalog.HeadMorphVertices[i].Value,
+                };
+            }
+
             EnsureBuffer(ref _skeletonBuffer, skeletons.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkeletonGpu>(), "VV:GpuAnimSkeletons");
             EnsureBuffer(ref _boneBuffer, bones.Length, UnsafeUtility.SizeOf<ActorGpuAnimationBoneGpu>(), "VV:GpuAnimBones");
             EnsureBuffer(ref _clipBuffer, clips.Length, UnsafeUtility.SizeOf<ActorGpuAnimationClipGpu>(), "VV:GpuAnimClips");
@@ -681,6 +748,8 @@ namespace VVardenfell.Runtime.Animation
             EnsureBuffer(ref _skinMeshBuffer, skinMeshes.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinMeshGpu>(), "VV:GpuAnimSkinMeshes");
             EnsureBuffer(ref _skinBoneBuffer, skinBones.Length, UnsafeUtility.SizeOf<ActorGpuAnimationSkinBoneGpu>(), "VV:GpuAnimSkinBones");
             EnsureBuffer(ref _skinVertexBuffer, skinVertices.Length, UnsafeUtility.SizeOf<Rendering.ActorGpuAnimationVertexGpu>(), "VV:GpuAnimSkinVertices");
+            EnsureBuffer(ref _headMorphTargetBuffer, headMorphTargets.Length, UnsafeUtility.SizeOf<ActorGpuAnimationHeadMorphTargetGpu>(), "VV:GpuAnimHeadMorphTargets");
+            EnsureBuffer(ref _headMorphVertexBuffer, headMorphVertices.Length, UnsafeUtility.SizeOf<ActorGpuAnimationHeadMorphVertexGpu>(), "VV:GpuAnimHeadMorphVertices");
 
             if (skeletons.Length > 0)
                 _skeletonBuffer.SetData(skeletons);
@@ -700,6 +769,10 @@ namespace VVardenfell.Runtime.Animation
                 _skinBoneBuffer.SetData(skinBones);
             if (skinVertices.Length > 0)
                 _skinVertexBuffer.SetData(skinVertices);
+            if (headMorphTargets.Length > 0)
+                _headMorphTargetBuffer.SetData(headMorphTargets);
+            if (headMorphVertices.Length > 0)
+                _headMorphVertexBuffer.SetData(headMorphVertices);
 
             _skeletonCount = skeletons.Length;
             _boneCount = bones.Length;
@@ -709,6 +782,8 @@ namespace VVardenfell.Runtime.Animation
             _skinMeshCount = skinMeshes.Length;
             _skinBoneCount = skinBones.Length;
             _skinVertexCount = skinVertices.Length;
+            _headMorphTargetCount = headMorphTargets.Length;
+            _headMorphVertexCount = headMorphVertices.Length;
         }
 
         static int[] BuildBoneDepths(ref ActorAnimationCatalogBlob catalog, out int[] skeletonMaxDepths)
@@ -895,6 +970,8 @@ namespace VVardenfell.Runtime.Animation
             Mix(ref signature, (ulong)catalog.Keys.Length);
             Mix(ref signature, (ulong)catalog.SkinMeshes.Length);
             Mix(ref signature, (ulong)catalog.SkinBones.Length);
+            Mix(ref signature, (ulong)catalog.HeadMorphTargets.Length);
+            Mix(ref signature, (ulong)catalog.HeadMorphVertices.Length);
             return signature;
         }
 

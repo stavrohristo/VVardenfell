@@ -243,8 +243,7 @@ namespace VVardenfell.Importer.Bake
             if ((uint)attachBoneIndex >= (uint)bones.Length)
                 return 0;
 
-            return !string.IsNullOrEmpty(bones[attachBoneIndex].Name)
-                   && bones[attachBoneIndex].Name.Contains("Left", StringComparison.Ordinal)
+            return ActorVisualMappingPolicy.IsLeftSideBoneName(bones[attachBoneIndex].Name)
                 ? (byte)1
                 : (byte)0;
         }
@@ -438,43 +437,6 @@ namespace VVardenfell.Importer.Bake
                 || normalized.Equals("meshes\\base_anim_female.1st.nif", StringComparison.OrdinalIgnoreCase)
                 || normalized.Equals("meshes\\base_animkna.1st.nif", StringComparison.OrdinalIgnoreCase);
         }
-
-
-        static void ApplyNpcLeftHelperMirroring(ActorSkeletonDef skeleton)
-        {
-            var bones = skeleton?.Bones ?? Array.Empty<ActorSkeletonBoneDef>();
-            if (bones.Length == 0)
-                return;
-
-            var rootMatrices = new Matrix4x4[bones.Length];
-            Matrix4x4 mirrorX = Matrix4x4.Scale(new Vector3(-1f, 1f, 1f));
-            for (int i = 0; i < bones.Length; i++)
-            {
-                var bone = bones[i];
-                Matrix4x4 local = UnpackMatrix(bone.BindLocalMatrix, 0);
-                if (IsMirroredNpcLeftHelper(bone.Name))
-                    local *= mirrorX;
-
-                Matrix4x4 root = bone.ParentIndex >= 0 && bone.ParentIndex < i
-                    ? rootMatrices[bone.ParentIndex] * local
-                    : local;
-
-                bone.BindLocalMatrix = PackMatrix(local);
-                bone.BindLocalToRootMatrix = PackMatrix(root);
-                bones[i] = bone;
-                rootMatrices[i] = root;
-            }
-        }
-
-
-        static bool IsMirroredNpcLeftHelper(string name)
-            => name.Equals("Left Upper Arm", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Forearm", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Wrist", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Upper Leg", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Knee", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Ankle", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Left Foot", StringComparison.OrdinalIgnoreCase);
 
 
         static string ResolveNpcSkeletonModel(bool firstPerson, bool female, bool beast)

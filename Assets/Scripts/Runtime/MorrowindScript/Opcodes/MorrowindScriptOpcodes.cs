@@ -2427,12 +2427,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+            if (!TryResolveGetItemCountTarget(context, instruction->Operand0, instruction->Int0, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
 
             if (targetPlacedRefId == 0u || !IsLoadedPlacedRef(context, targetPlacedRefId))
             {
-                context->Faulted = 1;
+                PushItemCount(context, 0);
                 return;
             }
 
@@ -2440,6 +2440,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (targetEntity == Entity.Null
                 && !TryResolvePlacedRefEntity(context, targetPlacedRefId, out targetEntity))
             {
+                PushItemCount(context, 0);
                 return;
             }
 
@@ -2478,6 +2479,50 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             PushItemCount(context, count);
+        }
+
+        static bool TryResolveGetItemCountTarget(
+            MorrowindScriptExecutionContext* context,
+            byte targetMode,
+            int targetRefKey,
+            out uint targetPlacedRefId,
+            out Entity targetEntity)
+        {
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Self)
+            {
+                targetPlacedRefId = context->PlacedRefId;
+                targetEntity = context->Entity;
+                return true;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.PlacedRef)
+            {
+                targetPlacedRefId = unchecked((uint)targetRefKey);
+                targetEntity = Entity.Null;
+                return true;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.ActiveContentRef)
+            {
+                targetPlacedRefId = 0u;
+                targetEntity = Entity.Null;
+                if (context->ActiveExplicitRefs.IsCreated
+                    && context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var activeTarget)
+                    && activeTarget.Ambiguous == 0)
+                {
+                    targetPlacedRefId = activeTarget.PlacedRefId;
+                    targetEntity = activeTarget.Entity;
+                    return true;
+                }
+
+                PushItemCount(context, 0);
+                return false;
+            }
+
+            context->Faulted = 1;
+            targetPlacedRefId = 0u;
+            targetEntity = Entity.Null;
+            return false;
         }
 
         static int CountPlayerItems(MorrowindScriptExecutionContext* context, ContentReferenceKind kind, int handleValue)
@@ -3291,7 +3336,12 @@ namespace VVardenfell.Runtime.MorrowindScript
         static void RequestSetDisabled(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
         {
             if (!TryResolveRefStateTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
+            {
+                if (instruction->Operand1 != 0 && IsMissingExplicitContentRef(context, instruction))
+                    context->Faulted = 0;
+
                 return;
+            }
 
             if (targetPlacedRefId == 0u || context->RefStateRuntimeEntity == Entity.Null)
             {
@@ -3305,6 +3355,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 TargetPlacedRefId = targetPlacedRefId,
                 Disabled = (byte)(instruction->Operand1 != 0 ? 1 : 0),
             });
+        }
+
+        static bool IsMissingExplicitContentRef(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
+        {
+            if (instruction->Operand0 != (byte)MorrowindScriptRefTargetMode.ActiveContentRef)
+                return false;
+
+            int targetRefKey = instruction->Int0;
+            if (context->ActiveExplicitRefs.IsCreated
+                && context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var activeTarget)
+                && activeTarget.Ambiguous == 0
+                && activeTarget.PlacedRefId != 0u)
+            {
+                return false;
+            }
+
+            return !context->AllExplicitRefs.IsCreated
+                || !context->AllExplicitRefs.TryGetValue(targetRefKey, out var target)
+                || target.Ambiguous != 0
+                || target.PlacedRefId == 0u;
         }
 
         [BurstCompile]

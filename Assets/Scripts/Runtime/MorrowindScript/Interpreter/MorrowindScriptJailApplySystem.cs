@@ -115,10 +115,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             });
 
             if (SystemAPI.TryGetSingletonRW<RuntimeShellState>(out var shell))
-            {
                 RuntimeShellStateUtility.CloseDialogue(ref shell.ValueRW);
-                RuntimeShellStateUtility.SyncGameplayGateAndCursor(ref shell.ValueRW);
-            }
 
             systemState.EntityManager.SetComponentData(transitionEntity, transition);
             if (destination.IsInterior)

@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Profiling;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
@@ -114,6 +115,10 @@ namespace VVardenfell.Runtime.Audio
 
             ecb.Playback(EntityManager);
             ecb.Dispose();
+            BlobAssetReference<ActorAnimationCatalogBlob> actorAnimationCatalog = default;
+            if (SystemAPI.TryGetSingleton<ActorAnimationBlobCatalog>(out var animationCatalog))
+                actorAnimationCatalog = animationCatalog.Blob;
+            _service.SyncActiveSaySpatialPositions(EntityManager, actorAnimationCatalog);
             if (SystemAPI.TryGetSingletonEntity<MorrowindScriptRuntimeState>(out var runtimeEntity)
                 && EntityManager.HasBuffer<MorrowindScriptActiveSource>(runtimeEntity)
                 && EntityManager.HasBuffer<MorrowindScriptPlayingSound>(runtimeEntity)
