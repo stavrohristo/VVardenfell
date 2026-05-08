@@ -230,67 +230,353 @@ namespace VVardenfell.Runtime.Interactions
     [UpdateBefore(typeof(InteractionTargetResolutionSystem))]
     public partial struct PlayerInteractionRaycastSystem : ISystem
     {
+        const float AssistCastRadius = 0.10f;
+        const float MinUsableHitFraction = 0.0001f;
+
         EntityQuery _viewPoseQuery;
         EntityQuery _raycastHitQuery;
         EntityQuery _playerQuery;
+        BlobAssetReference<Collider> _assistCastCollider;
 
         public void OnCreate(ref SystemState systemState)
         {
             _viewPoseQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerPhysicsViewPose>());
             _raycastHitQuery = systemState.GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionRaycastHit>());
             _playerQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<PlayerTag>());
+            _assistCastCollider = SphereCollider.Create(
+                new SphereGeometry
+                {
+                    Center = float3.zero,
+                    Radius = AssistCastRadius,
+                },
+                InteractionCollisionLayers.InteractionExactPickQueryFilter);
+
             systemState.RequireForUpdate(_viewPoseQuery);
             systemState.RequireForUpdate(_raycastHitQuery);
             systemState.RequireForUpdate(_playerQuery);
-            systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
-            systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+            systemState.RequireForUpdate<PhysicsWorldSingleton>();
+            systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
+        }
+
+        public void OnDestroy(ref SystemState systemState)
+        {
+            if (_assistCastCollider.IsCreated)
+                _assistCastCollider.Dispose();
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
+            systemState.Dependency.Complete();
+
             var viewPose = _viewPoseQuery.GetSingleton<PlayerPhysicsViewPose>();
             var hitRef = _raycastHitQuery.GetSingletonRW<PlayerInteractionRaycastHit>();
-            Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
-            uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
-            uint fallbackSequence = hitRef.ValueRO.Sequence + 1u;
-
-            if (DeferredPhysicsQueryUtility.TryGetLatestResult(
-                    systemState.EntityManager,
-                    deferredPhysicsQueueEntity,
-                    fixedTick,
-                    DeferredPhysicsQueryKind.InteractionPick,
-                    DeferredPhysicsQueryUtility.DefaultMaxResultAgeTicks,
-                    out var result))
-            {
-                hitRef.ValueRW = InteractionTargetResolver.FromDeferredResult(
-                    result,
-                    InteractionTargetResolver.MaxInteractDistance,
-                    0f);
-            }
-            else
-            {
-                hitRef.ValueRW = new PlayerInteractionRaycastHit
-                {
-                    Sequence = fallbackSequence,
-                    HitEntity = Entity.Null,
-                    ProxyHitEntity = Entity.Null,
-                    SolidHitEntity = Entity.Null,
-                };
-            }
-
+            uint sequence = hitRef.ValueRO.Sequence + 1u;
             float3 forward = math.normalizesafe(math.rotate(viewPose.Rotation, new float3(0f, 0f, 1f)), new float3(0f, 0f, 1f));
+            float3 start = viewPose.Position;
+            float3 end = start + forward * InteractionTargetResolver.MaxInteractDistance;
             Entity player = _playerQuery.GetSingletonEntity();
-            DeferredPhysicsQueryUtility.EnqueueRay(
-                systemState.EntityManager,
-                deferredPhysicsQueueEntity,
-                fixedTick,
-                DeferredPhysicsQueryKind.InteractionPick,
-                player,
-                Entity.Null,
-                player,
-                viewPose.Position,
-                viewPose.Position + forward * InteractionTargetResolver.MaxInteractDistance,
-                InteractionCollisionLayers.InteractionPickQueryFilter);
+            var physicsWorld = SystemAPI.GetSingleton<PhysicsWorldSingleton>();
+            var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+            ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var worldCellReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellReference.Blob.IsCreated)
+                throw new System.InvalidOperationException("[VVardenfell][WorldCellBlob] interaction raycast requires runtime world cell blob.");
+            ref RuntimeWorldCellBlob worldCells = ref worldCellReference.Blob.Value;
+
+            var rayHits = new NativeList<Unity.Physics.RaycastHit>(Allocator.Temp);
+            var castHits = new NativeList<ColliderCastHit>(Allocator.Temp);
+            try
+            {
+                if (TryFindBestRayHit(
+                        physicsWorld,
+                        systemState.EntityManager,
+                        ref contentBlob,
+                        ref worldCells,
+                        logicalRefLookup,
+                        player,
+                        start,
+                        end,
+                        InteractionCollisionLayers.InteractionExactPickQueryFilter,
+                        allowProxyFallback: false,
+                        ref rayHits,
+                        out var selected)
+                    || TryFindBestColliderHit(
+                        physicsWorld,
+                        systemState.EntityManager,
+                        ref contentBlob,
+                        ref worldCells,
+                        logicalRefLookup,
+                        player,
+                        start,
+                        end,
+                        _assistCastCollider,
+                        ref castHits,
+                        out selected)
+                    || TryFindBestRayHit(
+                        physicsWorld,
+                        systemState.EntityManager,
+                        ref contentBlob,
+                        ref worldCells,
+                        logicalRefLookup,
+                        player,
+                        start,
+                        end,
+                        InteractionCollisionLayers.InteractionActivationProxyQueryFilter,
+                        allowProxyFallback: true,
+                        ref rayHits,
+                        out selected))
+                {
+                    hitRef.ValueRW = BuildHit(sequence, selected);
+                }
+                else
+                {
+                    hitRef.ValueRW = new PlayerInteractionRaycastHit
+                    {
+                        Sequence = sequence,
+                        HitEntity = Entity.Null,
+                        ProxyHitEntity = Entity.Null,
+                        SolidHitEntity = Entity.Null,
+                    };
+                }
+            }
+            finally
+            {
+                rayHits.Dispose();
+                castHits.Dispose();
+            }
+        }
+
+        static bool TryFindBestRayHit(
+            in PhysicsWorldSingleton physicsWorld,
+            EntityManager entityManager,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            in LogicalRefLookup logicalRefLookup,
+            Entity player,
+            float3 start,
+            float3 end,
+            CollisionFilter filter,
+            bool allowProxyFallback,
+            ref NativeList<Unity.Physics.RaycastHit> hits,
+            out InteractionCandidateHit selected)
+        {
+            selected = default;
+            hits.Clear();
+            var input = new RaycastInput
+            {
+                Start = start,
+                End = end,
+                Filter = filter,
+            };
+
+            if (!physicsWorld.CollisionWorld.CastRay(input, ref hits))
+                return false;
+
+            bool found = false;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var hit = hits[i];
+                if (!TryBuildCandidate(
+                        entityManager,
+                        ref contentBlob,
+                        ref worldCells,
+                        logicalRefLookup,
+                        player,
+                        start,
+                        hit.Entity,
+                        hit.Position,
+                        hit.SurfaceNormal,
+                        hit.Fraction,
+                        allowProxyFallback,
+                        out var candidate))
+                {
+                    continue;
+                }
+
+                if (found && candidate.Distance >= selected.Distance)
+                    continue;
+
+                selected = candidate;
+                found = true;
+            }
+
+            return found;
+        }
+
+        static bool TryFindBestColliderHit(
+            in PhysicsWorldSingleton physicsWorld,
+            EntityManager entityManager,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            in LogicalRefLookup logicalRefLookup,
+            Entity player,
+            float3 start,
+            float3 end,
+            BlobAssetReference<Collider> collider,
+            ref NativeList<ColliderCastHit> hits,
+            out InteractionCandidateHit selected)
+        {
+            selected = default;
+            hits.Clear();
+            var input = new ColliderCastInput(collider, start, end, quaternion.identity);
+            if (!physicsWorld.CollisionWorld.CastCollider(input, ref hits))
+                return false;
+
+            bool found = false;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var hit = hits[i];
+                if (!TryBuildCandidate(
+                        entityManager,
+                        ref contentBlob,
+                        ref worldCells,
+                        logicalRefLookup,
+                        player,
+                        start,
+                        hit.Entity,
+                        hit.Position,
+                        hit.SurfaceNormal,
+                        hit.Fraction,
+                        allowProxyFallback: false,
+                        out var candidate))
+                {
+                    continue;
+                }
+
+                if (found && candidate.Distance >= selected.Distance)
+                    continue;
+
+                selected = candidate;
+                found = true;
+            }
+
+            return found;
+        }
+
+        static bool TryBuildCandidate(
+            EntityManager entityManager,
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeWorldCellBlob worldCells,
+            in LogicalRefLookup logicalRefLookup,
+            Entity player,
+            float3 start,
+            Entity hitEntity,
+            float3 position,
+            float3 normal,
+            float fraction,
+            bool allowProxyFallback,
+            out InteractionCandidateHit candidate)
+        {
+            candidate = default;
+            if (fraction <= MinUsableHitFraction)
+                return false;
+            if (hitEntity == Entity.Null || hitEntity == player)
+                return false;
+            if (!math.all(math.isfinite(position)))
+                return false;
+
+            float distance = math.distance(start, position);
+            if (distance > InteractionTargetResolver.MaxInteractDistance)
+                return false;
+            if (!InteractionTargetResolver.TryResolveEntity(
+                    ref contentBlob,
+                    ref worldCells,
+                    entityManager,
+                    logicalRefLookup,
+                    hitEntity,
+                    out ResolvedInteractionTarget resolved))
+            {
+                return false;
+            }
+
+            bool isProxyHit = entityManager.HasComponent<InteractionActivationProxyTag>(hitEntity);
+            if (isProxyHit)
+            {
+                if (!allowProxyFallback)
+                    return false;
+                if (!CanUseActivationProxyFallback(entityManager, resolved.TargetEntity))
+                    return false;
+            }
+
+            candidate = new InteractionCandidateHit
+            {
+                Entity = hitEntity,
+                Position = position,
+                Normal = normal,
+                Fraction = fraction,
+                Distance = distance,
+                IsProxy = isProxyHit,
+            };
+            return true;
+        }
+
+        static bool CanUseActivationProxyFallback(EntityManager entityManager, Entity logicalEntity)
+        {
+            if (entityManager.HasComponent<PassiveActorPresence>(logicalEntity))
+                return true;
+            if (entityManager.HasComponent<InteractionPickSurfaceTag>(logicalEntity)
+                && entityManager.HasComponent<PhysicsCollider>(logicalEntity))
+            {
+                return false;
+            }
+            if (!entityManager.HasBuffer<LogicalRefChild>(logicalEntity))
+                return true;
+
+            var children = entityManager.GetBuffer<LogicalRefChild>(logicalEntity);
+            for (int i = 0; i < children.Length; i++)
+            {
+                Entity child = children[i].Value;
+                if (!entityManager.Exists(child))
+                    continue;
+                if (entityManager.HasComponent<InteractionActivationProxyTag>(child))
+                    continue;
+                if (!entityManager.HasComponent<InteractionPickSurfaceTag>(child))
+                    continue;
+                if (entityManager.HasComponent<PhysicsCollider>(child))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static PlayerInteractionRaycastHit BuildHit(uint sequence, in InteractionCandidateHit selected)
+        {
+            var hit = new PlayerInteractionRaycastHit
+            {
+                Sequence = sequence,
+                HitEntity = selected.Entity,
+                HitPosition = selected.Position,
+                HitNormal = selected.Normal,
+                HitDistance = selected.Distance,
+                HitFraction = selected.Fraction,
+                HasHit = 1,
+                ProxyHitEntity = Entity.Null,
+                SolidHitEntity = Entity.Null,
+            };
+
+            if (selected.IsProxy)
+            {
+                hit.ProxyHitEntity = selected.Entity;
+                hit.ProxyHitPosition = selected.Position;
+                hit.ProxyHitNormal = selected.Normal;
+                hit.ProxyHitDistance = selected.Distance;
+                hit.ProxyHitFraction = selected.Fraction;
+                hit.HasProxyHit = 1;
+            }
+
+            return hit;
+        }
+
+        struct InteractionCandidateHit
+        {
+            public Entity Entity;
+            public float3 Position;
+            public float3 Normal;
+            public float Distance;
+            public float Fraction;
+            public bool IsProxy;
         }
     }
 

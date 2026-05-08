@@ -77,6 +77,7 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<JournalWindowState>();
             RequireForUpdate<MorrowindQuestJournalState>();
             RequireForUpdate<MorrowindDialogueState>();
+            RequireForUpdate<MorrowindDialogueServiceWindowState>();
             RequireForUpdate<MorrowindTimeState>();
             RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate<RuntimeWorldCellBlobReference>();
@@ -209,6 +210,16 @@ namespace VVardenfell.Runtime.Shell
                     SystemAPI.GetSingletonBuffer<MorrowindTopicJournalEntry>(true),
                     SystemAPI.GetSingletonBuffer<MorrowindDialogueChoice>(true))
                 : null;
+            DialogueServiceWindowViewModel dialogueServiceModel = shell.DialogueOpen != 0
+                ? BuildDialogueServiceModel(
+                    ref contentBlob,
+                    EntityManager,
+                    SystemAPI.GetSingleton<MorrowindDialogueServiceWindowState>(),
+                    SystemAPI.GetSingleton<MorrowindDialogueSession>(),
+                    SystemAPI.GetSingletonBuffer<MorrowindDialogueBarterStagedItem>(true),
+                    inventory,
+                    playerStats)
+                : null;
             RestMenuViewModel restMenuModel = shell.RestMenuOpen != 0 || shell.RestMenuAdvancing != 0
                 ? BuildRestMenuModel(ref contentBlob, shell, SystemAPI.GetSingleton<MorrowindTimeState>(), playerStats)
                 : null;
@@ -242,6 +253,7 @@ namespace VVardenfell.Runtime.Shell
                 saveLoadModel,
                 journalModel,
                 dialogueModel,
+                dialogueServiceModel,
                 restMenuModel,
                 characterGenerationModel,
                 bookReaderModel,

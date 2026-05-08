@@ -119,8 +119,14 @@ namespace VVardenfell.Runtime.Shell
                 LastInfoIndex = -1,
             });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MorrowindDialogueResponseRequest());
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MorrowindDialogueServiceWindowState
+            {
+                BarterOffer = 0,
+            });
             RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueSessionLine>(systemState.EntityManager, runtimeEntity);
             RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueChoice>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureBuffer<MorrowindDialogueBarterStagedItem>(systemState.EntityManager, runtimeEntity);
+            RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new PlayerTravelingState());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,

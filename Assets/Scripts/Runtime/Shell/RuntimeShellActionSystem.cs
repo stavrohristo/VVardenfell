@@ -109,6 +109,10 @@ namespace VVardenfell.Runtime.Shell
                             ChoiceDialogueIndex = -1,
                             LastInfoIndex = -1,
                         };
+                    if (SystemAPI.TryGetSingletonRW<MorrowindDialogueServiceWindowState>(out var serviceRef))
+                        serviceRef.ValueRW = default;
+                    if (SystemAPI.TryGetSingletonBuffer<MorrowindDialogueBarterStagedItem>(out var staged))
+                        staged.Clear();
                 }
             }
 

@@ -284,6 +284,43 @@ namespace VVardenfell.Runtime.UI.Shell
                 out error);
         }
 
+        public static bool TryOpenDialogueService(byte serviceKind, out string error)
+        {
+            return TryMutateRequest<MorrowindDialogueResponseRequest>(
+                "Dialogue response request state",
+                (ref MorrowindDialogueResponseRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)MorrowindDialogueResponseAction.OpenService;
+                    request.DialogueIndex = -1;
+                    request.ServiceKind = serviceKind;
+                    request.ServiceAction = 0;
+                    request.Int0 = 0;
+                    request.Int1 = 0;
+                },
+                out error);
+        }
+
+        public static bool TryDialogueServiceAction(
+            MorrowindDialogueServiceAction action,
+            int int0,
+            int int1,
+            out string error)
+        {
+            return TryMutateRequest<MorrowindDialogueResponseRequest>(
+                "Dialogue response request state",
+                (ref MorrowindDialogueResponseRequest request) =>
+                {
+                    request.Pending = 1;
+                    request.Action = (byte)MorrowindDialogueResponseAction.ServiceAction;
+                    request.DialogueIndex = -1;
+                    request.ServiceAction = (byte)action;
+                    request.Int0 = int0;
+                    request.Int1 = int1;
+                },
+                out error);
+        }
+
         /// <summary>
         /// Flip the MW_Window_Pinnable state for one of the inventory-group
         /// subwindows. Pinned windows stay visible on the HUD layer after the

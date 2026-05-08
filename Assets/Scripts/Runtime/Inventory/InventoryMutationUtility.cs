@@ -15,7 +15,23 @@ namespace VVardenfell.Runtime.Inventory
             if (count == 0)
                 return true;
 
-            return TryAddResolvedPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel, 0u);
+            var addedItems = default(NativeList<MorrowindResolvedLeveledItem>);
+            return TryAddResolvedPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel, 0u, addedItems);
+        }
+
+        public static bool TryAddPlayerItem(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            string itemId,
+            int count,
+            int playerLevel,
+            NativeList<MorrowindResolvedLeveledItem> addedItems)
+        {
+            count = NormalizeScriptCount(count);
+            if (count == 0)
+                return true;
+
+            return TryAddResolvedPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel, 0u, addedItems);
         }
 
         public static bool TryRemovePlayerItem(ref RuntimeContentBlob contentBlob, DynamicBuffer<PlayerInventoryItem> inventory, string itemId, int count)
@@ -59,13 +75,22 @@ namespace VVardenfell.Runtime.Inventory
             string itemId,
             int count,
             int playerLevel,
-            uint resolutionSeed)
+            uint resolutionSeed,
+            NativeList<MorrowindResolvedLeveledItem> addedItems)
         {
             string normalizedId = NormalizeGoldId(itemId);
             ulong idHash = RuntimeContentStableHash.HashId(normalizedId);
             if (MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref contentBlob, idHash, out var content))
             {
                 ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, content, count);
+                if (addedItems.IsCreated)
+                {
+                    addedItems.Add(new MorrowindResolvedLeveledItem
+                    {
+                        Content = content,
+                        Count = count,
+                    });
+                }
                 return true;
             }
 
@@ -84,6 +109,8 @@ namespace VVardenfell.Runtime.Inventory
             {
                 var resolved = resolvedItems[i];
                 ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, resolved.Content, resolved.Count);
+                if (addedItems.IsCreated)
+                    addedItems.Add(resolved);
             }
 
             return resolvedItems.Length > 0;

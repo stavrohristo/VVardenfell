@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.UI.Framework;
 
 namespace VVardenfell.Runtime.UI.Shell
@@ -19,6 +20,7 @@ namespace VVardenfell.Runtime.UI.Shell
         const float ColumnGap = 9f;
         const float DispositionHeight = 18f;
         const float DispositionTopicGap = 5f;
+        const float PersuasionHeight = 23f;
         const float GoodbyeHeight = 23f;
         const float GoodbyeTopicGap = 7f;
         const float HistoryInset = 7f;
@@ -62,6 +64,7 @@ namespace VVardenfell.Runtime.UI.Shell
         sealed class TopicRowView
         {
             public int DialogueIndex;
+            public byte ServiceKind;
             public RectTransform Root;
             public BitmapTextGraphic Label;
             public Button Button;
@@ -70,6 +73,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly RuntimeUiTheme _theme;
         readonly RectTransform _viewport;
         readonly Action<int> _onTopicSelected;
+        readonly Action<byte> _onServiceSelected;
         readonly Action<int> _onChoiceSelected;
         readonly Action _onGoodbye;
         readonly MorrowindWindowView _window;
@@ -86,6 +90,7 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly ScrollRect _topicScroll;
         readonly RuntimeUiProgressBarView _dispositionBar;
         readonly BitmapTextGraphic _dispositionText;
+        readonly MorrowindButtonView _persuasionButton;
         readonly MorrowindButtonView _goodbyeButton;
 
         readonly List<ResponseBlockView> _responseBlocks = new();
@@ -99,12 +104,14 @@ namespace VVardenfell.Runtime.UI.Shell
             RectTransform parent,
             RuntimeUiTheme theme,
             Action<int> onTopicSelected,
+            Action<byte> onServiceSelected,
             Action<int> onChoiceSelected,
             Action onGoodbye)
         {
             _theme = theme;
             _viewport = parent;
             _onTopicSelected = onTopicSelected;
+            _onServiceSelected = onServiceSelected;
             _onChoiceSelected = onChoiceSelected;
             _onGoodbye = onGoodbye;
 
@@ -132,7 +139,7 @@ namespace VVardenfell.Runtime.UI.Shell
                 LayoutActiveModel);
 
             (_historyViewport, _historyScroll, _historyContent, _historyScrollbarRoot, _historyScrollbar) = BuildHistoryPane();
-            (_dispositionBar, _dispositionText, _topicPaneRoot, _topicScroll, _topicRowsRoot, _goodbyeButton) = BuildRightColumn();
+            (_dispositionBar, _dispositionText, _persuasionButton, _topicPaneRoot, _topicScroll, _topicRowsRoot, _goodbyeButton) = BuildRightColumn();
             _window.Root.gameObject.SetActive(false);
         }
 
@@ -162,10 +169,11 @@ namespace VVardenfell.Runtime.UI.Shell
             SetVisible(true);
             _window.Title.Text = string.IsNullOrWhiteSpace(model.SpeakerName) ? "Dialogue" : model.SpeakerName.Trim();
             SyncDisposition(model);
+            SyncPersuasionButton(model);
             SyncTopics(model.Topics ?? Array.Empty<DialogueTopicRowViewModel>(), model.TopicsEnabled);
             SyncGoodbyeButton(model);
             SyncHistory(model);
-            LayoutRightColumn(model.DispositionVisible);
+            LayoutRightColumn(model);
         }
 
         (RectTransform viewport, ScrollRect scroll, RectTransform content, RectTransform scrollbarRoot, Scrollbar scrollbar) BuildHistoryPane()
@@ -243,7 +251,7 @@ namespace VVardenfell.Runtime.UI.Shell
             return (viewport, scroll, content, scrollbarRoot, scrollbar);
         }
 
-        (RuntimeUiProgressBarView disposition, BitmapTextGraphic dispositionText, RectTransform topicPane, ScrollRect topicScroll, RectTransform topicRows, MorrowindButtonView goodbye) BuildRightColumn()
+        (RuntimeUiProgressBarView disposition, BitmapTextGraphic dispositionText, MorrowindButtonView persuasion, RectTransform topicPane, ScrollRect topicScroll, RectTransform topicRows, MorrowindButtonView goodbye) BuildRightColumn()
         {
             var column = RuntimeUiFactory.CreateAnchoredRect(
                 "RightColumn",
@@ -276,6 +284,16 @@ namespace VVardenfell.Runtime.UI.Shell
             dispositionText.PixelHeight = RuntimeClassicUiMetrics.Ui(RuntimeClassicUiFontSizes.BarOverlay);
             dispositionText.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             RuntimeUiFactory.Stretch(dispositionText.rectTransform);
+
+            var persuasion = RuntimeUiFactory.CreateMorrowindButton("PersuasionButton", column, _theme, "Persuasion", 1f, NormalTextColor, ButtonColor);
+            persuasion.Root.anchorMin = new Vector2(0f, 1f);
+            persuasion.Root.anchorMax = new Vector2(1f, 1f);
+            persuasion.Root.pivot = new Vector2(0f, 1f);
+            persuasion.Root.anchoredPosition = new Vector2(0f, -RuntimeClassicUiMetrics.Ui(DispositionHeight + DispositionTopicGap));
+            persuasion.Root.sizeDelta = new Vector2(0f, RuntimeClassicUiMetrics.Ui(PersuasionHeight));
+            RuntimeUiFactory.SetInsetText(persuasion.Label.rectTransform, persuasion.Label, 8f, 3f, -8f, -3f);
+            persuasion.Button.onClick.AddListener(() => _onServiceSelected?.Invoke((byte)MorrowindDialogueServiceKind.Persuasion));
+            persuasion.Root.gameObject.SetActive(false);
 
             var topicPane = RuntimeUiFactory.CreateAnchorRect(
                 "TopicsList",
@@ -326,7 +344,7 @@ namespace VVardenfell.Runtime.UI.Shell
             goodbye.Root.sizeDelta = new Vector2(0f, RuntimeClassicUiMetrics.Ui(GoodbyeHeight));
             RuntimeUiFactory.SetInsetText(goodbye.Label.rectTransform, goodbye.Label, 8f, 3f, -8f, -3f);
             goodbye.Button.onClick.AddListener(() => _onGoodbye?.Invoke());
-            return (disposition, dispositionText, topicPane, topicScroll, topicRows, goodbye);
+            return (disposition, dispositionText, persuasion, topicPane, topicScroll, topicRows, goodbye);
         }
 
         void SyncDisposition(DialogueWindowViewModel model)
@@ -337,6 +355,16 @@ namespace VVardenfell.Runtime.UI.Shell
 
             RuntimeUiFactory.SetProgressBarFill(_dispositionBar, model.DispositionFillNormalized);
             _dispositionText.Text = $"{Math.Clamp(model.DispositionValue, 0, 100)}/100";
+        }
+
+        void SyncPersuasionButton(DialogueWindowViewModel model)
+        {
+            _persuasionButton.Root.gameObject.SetActive(model.PersuasionVisible);
+            if (!model.PersuasionVisible)
+                return;
+
+            _persuasionButton.Label.Text = string.IsNullOrWhiteSpace(model.PersuasionText) ? "Persuasion" : model.PersuasionText.Trim();
+            SetButtonEnabled(_persuasionButton, model.TopicsEnabled);
         }
 
         void SyncGoodbyeButton(DialogueWindowViewModel model)
@@ -361,10 +389,13 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 var topic = topics[i];
                 row.DialogueIndex = topic.DialogueIndex;
+                row.ServiceKind = topic.ServiceKind;
                 row.Root.anchoredPosition = new Vector2(0f, -rowHeight * i);
                 row.Root.sizeDelta = new Vector2(0f, rowHeight);
                 row.Button.interactable = enabled;
-                row.Label.Text = string.IsNullOrWhiteSpace(topic.Title) ? string.Empty : topic.Title.Trim();
+                row.Label.Text = string.IsNullOrWhiteSpace(topic.Title)
+                    ? string.Empty
+                    : topic.SeparatorBefore ? $"  {topic.Title.Trim()}" : topic.Title.Trim();
                 ApplyTopicRowVisual(row, topic, enabled);
             }
 
@@ -388,6 +419,7 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 block.Title.Text = string.IsNullOrWhiteSpace(lines[i].Title) ? string.Empty : lines[i].Title.Trim();
                 block.Body.Text = string.IsNullOrWhiteSpace(lines[i].Body) ? string.Empty : lines[i].Body.Trim();
+                block.Body.color = lines[i].IsNotification ? HeaderTextColor : NormalTextColor;
             }
 
             int actionCount = (model.Choices?.Length ?? 0) + (model.ShowInlineGoodbye ? 1 : 0);
@@ -425,15 +457,22 @@ namespace VVardenfell.Runtime.UI.Shell
             if (_activeModel == null || !_window.Root.gameObject.activeSelf)
                 return;
 
-            LayoutRightColumn(_activeModel.DispositionVisible);
+            LayoutRightColumn(_activeModel);
             LayoutHistoryContent(_activeModel, allowScrollbarToggle: true);
         }
 
-        void LayoutRightColumn(bool dispositionVisible)
+        void LayoutRightColumn(DialogueWindowViewModel model)
         {
+            bool dispositionVisible = model.DispositionVisible;
             float top = dispositionVisible
                 ? RuntimeClassicUiMetrics.Ui(DispositionHeight + DispositionTopicGap)
                 : 0f;
+            if (model.PersuasionVisible)
+            {
+                _persuasionButton.Root.anchoredPosition = new Vector2(0f, -top);
+                top += RuntimeClassicUiMetrics.Ui(PersuasionHeight + DispositionTopicGap);
+            }
+
             float bottom = RuntimeClassicUiMetrics.Ui(GoodbyeHeight + GoodbyeTopicGap);
             _topicPaneRoot.offsetMin = new Vector2(0f, bottom);
             _topicPaneRoot.offsetMax = new Vector2(0f, -top);
@@ -603,7 +642,12 @@ namespace VVardenfell.Runtime.UI.Shell
             button.onClick.AddListener(() =>
             {
                 if (row.Button.interactable)
-                    _onTopicSelected?.Invoke(row.DialogueIndex);
+                {
+                    if (row.ServiceKind != 0)
+                        _onServiceSelected?.Invoke(row.ServiceKind);
+                    else
+                        _onTopicSelected?.Invoke(row.DialogueIndex);
+                }
             });
             return row;
         }

@@ -81,6 +81,7 @@ namespace VVardenfell.Runtime.UI.Shell
         MapWindowView _mapView;
         JournalWindowView _journalView;
         DialogueWindowView _dialogueView;
+        DialogueServiceWindowView _dialogueServiceView;
         SaveLoadBrowserView _saveLoadBrowserView;
         OptionsWindowView _optionsView;
         RestMenuWindowView _restMenuView;
@@ -253,8 +254,13 @@ namespace VVardenfell.Runtime.UI.Shell
                 _rootRect,
                 _theme,
                 RequestDialogueTopicSelection,
+                RequestDialogueServiceSelection,
                 RequestDialogueChoiceSelection,
                 RequestDialogueGoodbye);
+            _dialogueServiceView = new DialogueServiceWindowView(
+                _rootRect,
+                _theme,
+                RequestDialogueServiceAction);
             _saveLoadBrowserView = new SaveLoadBrowserView(
                 _rootRect,
                 _theme,
@@ -305,6 +311,7 @@ namespace VVardenfell.Runtime.UI.Shell
             SaveLoadBrowserViewModel saveLoadModel,
             JournalWindowViewModel journalModel,
             DialogueWindowViewModel dialogueModel,
+            DialogueServiceWindowViewModel dialogueServiceModel,
             RestMenuViewModel restMenuModel,
             CharacterGenerationViewModel characterGenerationModel,
             BookReaderViewModel bookReaderModel,
@@ -339,6 +346,7 @@ namespace VVardenfell.Runtime.UI.Shell
                     _optionsView?.SetVisible(false);
                 _journalView?.SetVisible(false);
                 _dialogueView?.SetVisible(false);
+                _dialogueServiceView?.Sync(null);
                 _restMenuView?.Sync(null);
                 _characterGenerationView?.Sync(null);
                 _bookReaderView?.Sync(null);
@@ -360,6 +368,7 @@ namespace VVardenfell.Runtime.UI.Shell
             bool saveLoadVisible = saveLoadModel != null;
             bool journalVisible = journalModel != null;
             bool dialogueVisible = dialogueModel != null;
+            bool dialogueServiceVisible = dialogueServiceModel != null;
             bool restMenuVisible = restMenuModel != null;
             bool characterGenerationVisible = characterGenerationModel != null;
             bool bookReaderVisible = bookReaderModel != null;
@@ -391,6 +400,7 @@ namespace VVardenfell.Runtime.UI.Shell
             _mapView.Sync(mapModel);
             _journalView.Sync(journalModel);
             _dialogueView.Sync(dialogueModel);
+            _dialogueServiceView.Sync(dialogueServiceModel);
             _restMenuView.Sync(restMenuModel);
             _characterGenerationView.Sync(characterGenerationModel);
             _bookReaderView.Sync(bookReaderModel);
@@ -446,7 +456,7 @@ namespace VVardenfell.Runtime.UI.Shell
             if (journalOpened || dialogueOpened)
                 ClearSelectionIfOwned();
 
-            if (!pauseMenuOpen && !inventoryVisible && !containerVisible && !saveLoadVisible && !journalVisible && !dialogueVisible)
+            if (!pauseMenuOpen && !inventoryVisible && !containerVisible && !saveLoadVisible && !journalVisible && !dialogueVisible && !dialogueServiceVisible)
                 ClearSelectionIfOwned();
 
             SyncScreenFade(screenFadeAlpha);
@@ -1256,6 +1266,18 @@ namespace VVardenfell.Runtime.UI.Shell
         {
             if (!RuntimeShellRequestBridge.TrySelectDialogueTopic(dialogueIndex, out string error))
                 Debug.LogWarning($"[VVardenfell][UI] failed selecting dialogue topic {dialogueIndex}: {error}");
+        }
+
+        void RequestDialogueServiceSelection(byte serviceKind)
+        {
+            if (!RuntimeShellRequestBridge.TryOpenDialogueService(serviceKind, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed opening dialogue service {serviceKind}: {error}");
+        }
+
+        void RequestDialogueServiceAction(MorrowindDialogueServiceAction action, int int0, int int1)
+        {
+            if (!RuntimeShellRequestBridge.TryDialogueServiceAction(action, int0, int1, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed requesting dialogue service action {action}: {error}");
         }
 
         void RequestDialogueChoiceSelection(int choiceValue)

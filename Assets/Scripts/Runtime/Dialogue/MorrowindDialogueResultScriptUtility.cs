@@ -10,6 +10,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.Movement;
@@ -64,6 +65,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             DynamicBuffer<ActorFactionRankMutationRequest> actorFactionRequests,
             DynamicBuffer<MorrowindQuestJournalIndex> questStates,
             DynamicBuffer<MorrowindQuestJournalEntry> questEntries,
+            DynamicBuffer<MorrowindDialogueSessionLine> dialogueLines,
             DynamicBuffer<MorrowindDialogueChoice> choices,
             string script,
             ref RuntimeShellState shell,
@@ -137,7 +139,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (TryApplyPositionCellResult(ref contentBlob, activeExplicitRefs, transformRequests, ref session, line))
                     continue;
 
-                if (TryApplyInventoryResult(ref contentBlob, entityManager, activeExplicitRefs, ref session, line))
+                if (TryApplyInventoryResult(ref contentBlob, entityManager, activeExplicitRefs, dialogueLines, ref session, line))
                     continue;
 
                 if (TryApplyActorSpellResult(ref contentBlob, entityManager, ref session, actorSpellRequests, line))
@@ -1824,6 +1826,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
             ActiveExplicitRefLookup activeExplicitRefs,
+            DynamicBuffer<MorrowindDialogueSessionLine> lines,
             ref MorrowindDialogueSession session,
             string line)
         {
@@ -1850,9 +1853,24 @@ namespace VVardenfell.Runtime.MorrowindScript
                     return false;
 
                 var inventory = entityManager.GetBuffer<PlayerInventoryItem>(playerInventoryEntity);
-                bool changed = add
-                    ? InventoryMutationUtility.TryAddPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel)
-                    : InventoryMutationUtility.TryRemovePlayerItem(ref contentBlob, inventory, itemId, count);
+                bool changed;
+                if (add)
+                {
+                    using var addedItems = new NativeList<MorrowindResolvedLeveledItem>(Allocator.Temp);
+                    changed = InventoryMutationUtility.TryAddPlayerItem(ref contentBlob, inventory, itemId, count, playerLevel, addedItems);
+                    if (changed)
+                        AppendPlayerAddItemNotifications(ref contentBlob, lines, addedItems);
+                }
+                else
+                {
+                    int beforeCount = CountPlayerItem(ref contentBlob, inventory, itemId, out ContentReference removedContent);
+                    changed = InventoryMutationUtility.TryRemovePlayerItem(ref contentBlob, inventory, itemId, count);
+                    if (changed && beforeCount > 0 && removedContent.IsValid)
+                    {
+                        int afterCount = CountPlayerItem(inventory, removedContent);
+                        AppendPlayerRemoveItemNotification(ref contentBlob, lines, removedContent, math.max(0, beforeCount - afterCount));
+                    }
+                }
                 if (changed)
                     PlayerEncumbranceDirtyUtility.MarkPlayerDirty(entityManager, playerInventoryEntity);
                 return changed;
@@ -1891,6 +1909,163 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return TryApplyContainerInventoryResult(ref contentBlob, entityManager, explicitEntity, placedRefId, itemId, count, playerLevel, add);
         }
+
+        static void AppendPlayerAddItemNotifications(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<MorrowindDialogueSessionLine> lines,
+            NativeList<MorrowindResolvedLeveledItem> addedItems)
+        {
+            for (int i = 0; i < addedItems.Length; i++)
+            {
+                var item = addedItems[i];
+                if (!item.Content.IsValid || item.Count <= 0 || HasEarlierInventoryNotificationItem(addedItems, i, item.Content))
+                    continue;
+
+                int count = item.Count;
+                for (int j = i + 1; j < addedItems.Length; j++)
+                {
+                    if (SameContent(addedItems[j].Content, item.Content))
+                        count += addedItems[j].Count;
+                }
+
+                if (count > 0)
+                    AppendPlayerInventoryNotification(ref contentBlob, lines, item.Content, count, added: true);
+            }
+        }
+
+        static void AppendPlayerRemoveItemNotification(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<MorrowindDialogueSessionLine> lines,
+            ContentReference content,
+            int count)
+        {
+            if (count <= 0)
+                return;
+
+            AppendPlayerInventoryNotification(ref contentBlob, lines, content, count, added: false);
+        }
+
+        static void AppendPlayerInventoryNotification(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<MorrowindDialogueSessionLine> lines,
+            ContentReference content,
+            int count,
+            bool added)
+        {
+            if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, content, out var metadata))
+                throw new InvalidOperationException($"[VVardenfell][Dialogue] Inventory notification cannot resolve carryable metadata for {content.Kind}:{content.HandleValue}.");
+
+            string gmstId = added
+                ? count == 1 ? "sNotifyMessage60" : "sNotifyMessage61"
+                : count > 1 ? "sNotifyMessage63" : "sNotifyMessage62";
+            string template = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref contentBlob, RuntimeContentStableHash.HashId(gmstId));
+            string body = FormatInventoryNotification(template, count, metadata.DisplayName);
+            lines.Add(new MorrowindDialogueSessionLine
+            {
+                DialogueIndex = -1,
+                InfoIndex = -1,
+                Style = (byte)MorrowindDialogueSessionLineStyle.Notification,
+                BodyOverride = RuntimeFixedStringUtility.ToFixed512OrDefault(body),
+            });
+        }
+
+        static string FormatInventoryNotification(string template, int count, string itemName)
+        {
+            if (string.IsNullOrWhiteSpace(template))
+                throw new InvalidOperationException("[VVardenfell][Dialogue] Inventory notification GMST is empty.");
+
+            string name = string.IsNullOrWhiteSpace(itemName)
+                ? throw new InvalidOperationException("[VVardenfell][Dialogue] Inventory notification item name is empty.")
+                : itemName.Trim();
+            var text = new System.Text.StringBuilder(template.Length + name.Length + 16);
+            for (int i = 0; i < template.Length; i++)
+            {
+                char c = template[i];
+                if (c != '%')
+                {
+                    text.Append(c);
+                    continue;
+                }
+
+                if (++i >= template.Length)
+                    throw new InvalidOperationException($"[VVardenfell][Dialogue] Inventory notification GMST has dangling '%' in '{template}'.");
+
+                if (template[i] == '%')
+                {
+                    text.Append('%');
+                    continue;
+                }
+
+                while (i < template.Length && IsPrintfFlag(template[i]))
+                    i++;
+                while (i < template.Length && char.IsDigit(template[i]))
+                    i++;
+                if (i < template.Length && template[i] == '.')
+                {
+                    i++;
+                    while (i < template.Length && char.IsDigit(template[i]))
+                        i++;
+                }
+
+                if (i >= template.Length)
+                    throw new InvalidOperationException($"[VVardenfell][Dialogue] Inventory notification GMST has incomplete placeholder in '{template}'.");
+
+                char specifier = template[i];
+                if (specifier == 's' || specifier == 'S')
+                    text.Append(name);
+                else if (specifier is 'd' or 'D' or 'i' or 'I' or 'u' or 'U')
+                    text.Append(count.ToString(CultureInfo.InvariantCulture));
+                else
+                    throw new InvalidOperationException($"[VVardenfell][Dialogue] Inventory notification GMST has unsupported placeholder '%{specifier}' in '{template}'.");
+            }
+
+            return text.ToString().Trim();
+        }
+
+        static bool IsPrintfFlag(char value)
+            => value is '-' or '+' or ' ' or '0' or '#';
+
+        static bool HasEarlierInventoryNotificationItem(NativeList<MorrowindResolvedLeveledItem> items, int index, ContentReference content)
+        {
+            for (int i = 0; i < index; i++)
+            {
+                if (SameContent(items[i].Content, content))
+                    return true;
+            }
+
+            return false;
+        }
+
+        static int CountPlayerItem(
+            ref RuntimeContentBlob contentBlob,
+            DynamicBuffer<PlayerInventoryItem> inventory,
+            string itemId,
+            out ContentReference content)
+        {
+            if (!ContainerLootUtility.TryResolveDirectCarryable(ref contentBlob, NormalizeGoldId(itemId), out content, out _))
+            {
+                content = default;
+                return 0;
+            }
+
+            return CountPlayerItem(inventory, content);
+        }
+
+        static int CountPlayerItem(DynamicBuffer<PlayerInventoryItem> inventory, ContentReference content)
+        {
+            int count = 0;
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                var item = inventory[i];
+                if (item.Count > 0 && SameContent(item.Content, content))
+                    count += item.Count;
+            }
+
+            return count;
+        }
+
+        static bool SameContent(ContentReference left, ContentReference right)
+            => left.Kind == right.Kind && left.HandleValue == right.HandleValue;
 
         static bool TryResolveDialogueInventoryCount(
             ref RuntimeContentBlob contentBlob,

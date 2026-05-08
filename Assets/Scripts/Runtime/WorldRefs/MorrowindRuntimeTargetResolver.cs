@@ -127,6 +127,27 @@ namespace VVardenfell.Runtime.WorldRefs
                        && entityManager.HasComponent<ActorSpawnSource>(targetEntity);
             }
 
+            ulong targetHash = RuntimeContentStableHash.HashId(target);
+            if (targetHash == 0UL)
+                return false;
+
+            if (defaultEntity != Entity.Null
+                && entityManager.Exists(defaultEntity)
+                && entityManager.HasComponent<ActorSpawnSource>(defaultEntity))
+            {
+                ActorDefHandle actorHandle = entityManager.GetComponentData<ActorSpawnSource>(defaultEntity).Definition;
+                if (actorHandle.IsValid)
+                {
+                    ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorHandle);
+                    if (ActorIdMatches(ref actor, targetHash))
+                    {
+                        targetEntity = defaultEntity;
+                        targetPlacedRefId = defaultPlacedRefId;
+                        return true;
+                    }
+                }
+            }
+
             return TryResolveUniqueActorById(ref content, entityManager, target, out targetEntity, out targetPlacedRefId);
         }
 

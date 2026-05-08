@@ -11,6 +11,8 @@ namespace VVardenfell.Runtime.UI.Shell
         public bool DispositionVisible;
         public int DispositionValue;
         public float DispositionFillNormalized;
+        public bool PersuasionVisible;
+        public string PersuasionText;
         public bool TopicsEnabled;
         public bool GoodbyeEnabled;
         public bool ShowInlineGoodbye;
@@ -21,11 +23,14 @@ namespace VVardenfell.Runtime.UI.Shell
     {
         public string Title;
         public string Body;
+        public bool IsNotification;
     }
 
     public sealed class DialogueTopicRowViewModel
     {
         public int DialogueIndex;
+        public byte ServiceKind;
+        public bool SeparatorBefore;
         public string Title;
         public bool Selected;
         public DialogueTopicVisualState VisualState;

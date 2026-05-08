@@ -47,12 +47,24 @@ namespace VVardenfell.Core
 
                 if (line[i] == '"')
                 {
+                    int quotedTokenStart = i;
                     int start = ++i;
                     while (i < line.Length && line[i] != '"')
                         i++;
-                    tokens.Add(line.Substring(start, i - start));
+                    string quoted = line.Substring(start, i - start);
                     if (i < line.Length)
                         i++;
+                    if (i + 1 < line.Length && line[i] == '-' && line[i + 1] == '>')
+                    {
+                        i += 2;
+                        while (i < line.Length && !char.IsWhiteSpace(line[i]) && line[i] != ',')
+                            i++;
+                        tokens.Add(NormalizeToken(line.Substring(quotedTokenStart, i - quotedTokenStart)));
+                    }
+                    else
+                    {
+                        tokens.Add(quoted);
+                    }
                     continue;
                 }
 

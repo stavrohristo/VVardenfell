@@ -50,6 +50,20 @@ namespace VVardenfell.Runtime.Interactions
             GroupIndex = 0,
         };
 
+        public static CollisionFilter InteractionExactPickQueryFilter => new()
+        {
+            BelongsTo = InteractionPickQuery,
+            CollidesWith = InteractionPick,
+            GroupIndex = 0,
+        };
+
+        public static CollisionFilter InteractionActivationProxyQueryFilter => new()
+        {
+            BelongsTo = ActivationQuery,
+            CollidesWith = ActivationProxy,
+            GroupIndex = 0,
+        };
+
         public static CollisionFilter PlayerBodyFilter => new()
         {
             BelongsTo = Player,

@@ -11,6 +11,19 @@ namespace VVardenfell.Runtime.Shell
 {
     public partial class RuntimeHudShellPresentationSystem
     {
+        const int ActorServiceAllItems = 0x00001
+                                        | 0x00002
+                                        | 0x00004
+                                        | 0x00008
+                                        | 0x00010
+                                        | 0x00020
+                                        | 0x00040
+                                        | 0x00080
+                                        | 0x00100
+                                        | 0x00200
+                                        | 0x00400
+                                        | 0x02000;
+
         static DialogueWindowViewModel BuildDialogueModel(
             ref RuntimeContentBlob contentBlob,
             EntityManager entityManager,
@@ -26,6 +39,7 @@ namespace VVardenfell.Runtime.Shell
             bool topicsEnabled = session.ChoiceActive == 0 && session.Goodbye == 0;
             bool goodbyeEnabled = session.ChoiceActive == 0;
             int disposition = ResolveDisposition(ref contentBlob, entityManager, session, out bool dispositionVisible);
+            bool persuasionVisible = ResolvePersuasionVisible(ref contentBlob, session);
             string goodbyeText = ResolveGameSettingString(ref contentBlob, "sGoodbye", "Goodbye");
 
             return new DialogueWindowViewModel
@@ -37,6 +51,8 @@ namespace VVardenfell.Runtime.Shell
                 DispositionVisible = dispositionVisible,
                 DispositionValue = disposition,
                 DispositionFillNormalized = Math.Clamp(disposition / 100f, 0f, 1f),
+                PersuasionVisible = persuasionVisible,
+                PersuasionText = persuasionVisible ? ResolveGameSettingString(ref contentBlob, "sPersuasion", "Persuasion") : string.Empty,
                 TopicsEnabled = topicsEnabled,
                 GoodbyeEnabled = goodbyeEnabled,
                 ShowInlineGoodbye = session.Goodbye != 0 && session.ChoiceActive == 0,
@@ -52,6 +68,17 @@ namespace VVardenfell.Runtime.Shell
             for (int i = 0; i < lines.Length; i++)
             {
                 var line = lines[i];
+                if (!line.BodyOverride.IsEmpty)
+                {
+                    rows.Add(new DialogueResponseLineViewModel
+                    {
+                        Title = string.Empty,
+                        Body = line.BodyOverride.ToString().Trim(),
+                        IsNotification = line.Style == (byte)MorrowindDialogueSessionLineStyle.Notification,
+                    });
+                    continue;
+                }
+
                 if ((uint)line.InfoIndex >= (uint)contentBlob.DialogueInfos.Length)
                     continue;
 
@@ -64,6 +91,7 @@ namespace VVardenfell.Runtime.Shell
                 {
                     Title = title,
                     Body = string.IsNullOrWhiteSpace(body) ? string.Empty : body.Trim(),
+                    IsNotification = line.Style == (byte)MorrowindDialogueSessionLineStyle.Notification,
                 });
             }
 
@@ -79,6 +107,7 @@ namespace VVardenfell.Runtime.Shell
         {
             int count = Math.Min(contentBlob.Dialogues.Length, knownTopics.Length);
             var rows = new List<DialogueTopicRowViewModel>();
+            AddDialogueServiceRows(ref contentBlob, session, rows);
             for (int dialogueIndex = 0; dialogueIndex < count; dialogueIndex++)
             {
                 if (knownTopics[dialogueIndex].Known == 0)
@@ -115,8 +144,54 @@ namespace VVardenfell.Runtime.Shell
                 });
             }
 
-            rows.Sort(static (left, right) => string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase));
+            rows.Sort(static (left, right) =>
+            {
+                int leftService = left.ServiceKind == 0 ? 1 : 0;
+                int rightService = right.ServiceKind == 0 ? 1 : 0;
+                if (leftService != rightService)
+                    return leftService.CompareTo(rightService);
+                if (left.ServiceKind != 0 || right.ServiceKind != 0)
+                    return left.ServiceKind.CompareTo(right.ServiceKind);
+                return string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase);
+            });
             return rows.ToArray();
+        }
+
+        static void AddDialogueServiceRows(
+            ref RuntimeContentBlob contentBlob,
+            in MorrowindDialogueSession session,
+            List<DialogueTopicRowViewModel> rows)
+        {
+            if (!TryResolveSpeakerActorIndex(ref contentBlob, session, out int actorIndex))
+                return;
+
+            ref var actor = ref contentBlob.Actors[actorIndex];
+            if (actor.Kind != ActorDefKind.Npc)
+                return;
+
+            if ((actor.AiData.Services & ActorServiceAllItems) != 0)
+            {
+                rows.Add(new DialogueTopicRowViewModel
+                {
+                    DialogueIndex = -1,
+                    ServiceKind = (byte)MorrowindDialogueServiceKind.Barter,
+                    Title = ResolveGameSettingString(ref contentBlob, "sBarter", "Barter"),
+                    SeparatorBefore = false,
+                    VisualState = DialogueTopicVisualState.Normal,
+                });
+            }
+
+            if (actor.TravelDestinationCount > 0)
+            {
+                rows.Add(new DialogueTopicRowViewModel
+                {
+                    DialogueIndex = -1,
+                    ServiceKind = (byte)MorrowindDialogueServiceKind.Travel,
+                    Title = ResolveGameSettingString(ref contentBlob, "sTravel", "Travel"),
+                    SeparatorBefore = false,
+                    VisualState = DialogueTopicVisualState.Normal,
+                });
+            }
         }
 
         static DialogueTopicVisualState ResolveTopicVisualState(
@@ -278,10 +353,10 @@ namespace VVardenfell.Runtime.Shell
                 && entityManager.Exists(session.SpeakerEntity)
                 && entityManager.HasComponent<ActorDispositionState>(session.SpeakerEntity))
             {
-                return Math.Clamp(entityManager.GetComponentData<ActorDispositionState>(session.SpeakerEntity).BaseDisposition + modifier, 0, 100);
+                return Math.Clamp(entityManager.GetComponentData<ActorDispositionState>(session.SpeakerEntity).BaseDisposition + modifier + session.TemporaryDispositionDelta, 0, 100);
             }
 
-            return Math.Clamp(actor.Disposition + modifier, 0, 100);
+            return Math.Clamp(actor.Disposition + modifier + session.TemporaryDispositionDelta, 0, 100);
         }
 
         static bool TryResolveSpeakerActorIndex(ref RuntimeContentBlob contentBlob, in MorrowindDialogueSession session, out int index)
@@ -295,6 +370,14 @@ namespace VVardenfell.Runtime.Shell
                 return false;
 
             return true;
+        }
+
+        static bool ResolvePersuasionVisible(ref RuntimeContentBlob contentBlob, in MorrowindDialogueSession session)
+        {
+            if (!TryResolveSpeakerActorIndex(ref contentBlob, session, out int actorIndex))
+                return false;
+
+            return contentBlob.Actors[actorIndex].Kind == ActorDefKind.Npc;
         }
 
         static string ResolveGameSettingString(ref RuntimeContentBlob contentBlob, string id, string fallback)
