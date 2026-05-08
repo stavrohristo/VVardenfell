@@ -158,8 +158,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             existing.Ambiguous = 1;
-            existing.Entity = Entity.Null;
-            existing.PlacedRefId = 0u;
             targets[key] = existing;
         }
 

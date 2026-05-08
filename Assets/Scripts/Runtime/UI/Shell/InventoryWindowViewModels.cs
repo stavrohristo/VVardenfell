@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.UI.Shell
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.UI.Shell
     public sealed class RuntimeHudViewModel
     {
         public bool Visible;
+        public bool ShowHudChrome;
         public bool ShowCrosshair;
         public string FocusText;
         public string NotificationText;
@@ -179,11 +181,22 @@ namespace VVardenfell.Runtime.UI.Shell
     public sealed class SpellWindowEntryViewModel
     {
         public int SpellIndex;
+        public RuntimeMagicSourceKind SourceKind;
+        public SpellDefHandle Spell;
+        public int InventoryIndex;
+        public ContentReference ItemContent;
+        public EnchantmentDefHandle Enchantment;
+        public bool IsGroupHeader;
+        public bool HasGroupSeparator;
+        public bool Active = true;
         public string Name;
         public string CostText;
         public string TypeText;
         public string EffectTooltipText;
         public RuntimeSpellTooltipViewModel SpellTooltip;
+        public int Count = 1;
+        public bool ShowChargeBar;
+        public float ChargeFillNormalized;
         public bool Selected;
     }
 

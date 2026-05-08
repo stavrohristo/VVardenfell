@@ -34,24 +34,33 @@ namespace VVardenfell.Runtime.Rendering
         Material[][] _materials;
         RenderMeshArray[] _renderMeshArrays;
         Entity[] _prototypes;
+        Entity[] _shadowOnlyPrototypes;
         ActorSkinMeshRenderInfo[] _skinMeshInfos;
         ulong _catalogSignature;
 
-        public bool IsReady => _prototypes != null && _prototypes.Length > 0;
+        public bool IsReady => HasManagedResources() && HasPrototypeArrays();
 
         public void Ensure(EntityManager entityManager, ref ActorAnimationCatalogBlob catalog)
         {
             ulong signature = BuildSignature(ref catalog);
-            if (signature == _catalogSignature && IsReady)
+            bool signatureMatches = signature == _catalogSignature;
+            if (signatureMatches && HasManagedResources() && HasValidPrototypeEntities(entityManager))
                 return;
-
-            DisposeEntityResources(entityManager);
-            DisposeManagedResources();
 
             int bucketCount = WorldResources.RefBaseArrays?.Length ?? 0;
             int variantCount = WorldResources.BlendVariantCount;
             if (bucketCount <= 0 || variantCount <= 0)
                 throw new InvalidOperationException("Actor Entities Graphics render resources require loaded texture buckets and blend variants.");
+
+            if (signatureMatches && HasManagedResources())
+            {
+                DisposeEntityResources(entityManager);
+                BuildPrototypes(entityManager, bucketCount);
+                return;
+            }
+
+            DisposeEntityResources(entityManager);
+            DisposeManagedResources();
 
             Shader shader = Shader.Find("VVardenfell/MwActorEntitiesGraphics");
             if (shader == null)
@@ -65,11 +74,51 @@ namespace VVardenfell.Runtime.Rendering
             _catalogSignature = signature;
         }
 
+        bool HasManagedResources()
+            => _meshes != null
+               && _materials != null
+               && _renderMeshArrays != null
+               && _skinMeshInfos != null;
+
+        bool HasPrototypeArrays()
+            => _prototypes != null
+               && _prototypes.Length > 0
+               && _shadowOnlyPrototypes != null
+               && _shadowOnlyPrototypes.Length == _prototypes.Length;
+
+        bool HasValidPrototypeEntities(EntityManager entityManager)
+        {
+            if (!HasPrototypeArrays())
+                return false;
+
+            for (int i = 0; i < _prototypes.Length; i++)
+            {
+                if (_prototypes[i] == Entity.Null || !entityManager.Exists(_prototypes[i]))
+                    return false;
+                if (_shadowOnlyPrototypes[i] == Entity.Null || !entityManager.Exists(_shadowOnlyPrototypes[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
         public bool TryGetPrototype(int bucketIndex, out Entity prototype)
         {
             if (_prototypes != null && (uint)bucketIndex < (uint)_prototypes.Length)
             {
                 prototype = _prototypes[bucketIndex];
+                return prototype != Entity.Null;
+            }
+
+            prototype = Entity.Null;
+            return false;
+        }
+
+        public bool TryGetShadowOnlyPrototype(int bucketIndex, out Entity prototype)
+        {
+            if (_shadowOnlyPrototypes != null && (uint)bucketIndex < (uint)_shadowOnlyPrototypes.Length)
+            {
+                prototype = _shadowOnlyPrototypes[bucketIndex];
                 return prototype != Entity.Null;
             }
 
@@ -93,22 +142,33 @@ namespace VVardenfell.Runtime.Rendering
         {
             DisposeManagedResources();
             _prototypes = null;
+            _shadowOnlyPrototypes = null;
             _catalogSignature = 0UL;
         }
 
         public void DisposeEntityResources(EntityManager entityManager)
         {
-            if (_prototypes == null)
+            if (_prototypes == null && _shadowOnlyPrototypes == null)
                 return;
 
-            for (int i = 0; i < _prototypes.Length; i++)
+            DestroyPrototypes(entityManager, _prototypes);
+            DestroyPrototypes(entityManager, _shadowOnlyPrototypes);
+
+            _prototypes = null;
+            _shadowOnlyPrototypes = null;
+        }
+
+        static void DestroyPrototypes(EntityManager entityManager, Entity[] prototypes)
+        {
+            if (prototypes == null)
+                return;
+
+            for (int i = 0; i < prototypes.Length; i++)
             {
-                Entity prototype = _prototypes[i];
+                Entity prototype = prototypes[i];
                 if (prototype != Entity.Null && entityManager.Exists(prototype))
                     entityManager.DestroyEntity(prototype);
             }
-
-            _prototypes = null;
         }
 
         void BuildMeshes(ref ActorAnimationCatalogBlob catalog)
@@ -267,28 +327,51 @@ namespace VVardenfell.Runtime.Rendering
         void BuildPrototypes(EntityManager entityManager, int bucketCount)
         {
             _prototypes = new Entity[bucketCount];
-            var desc = new RenderMeshDescription(
+            _shadowOnlyPrototypes = new Entity[bucketCount];
+            var renderDesc = new RenderMeshDescription(
                 shadowCastingMode: ShadowCastingMode.On,
+                receiveShadows: true,
+                staticShadowCaster: false);
+            var shadowOnlyDesc = new RenderMeshDescription(
+                shadowCastingMode: ShadowCastingMode.ShadowsOnly,
                 receiveShadows: true,
                 staticShadowCaster: false);
 
             for (int bucket = 0; bucket < bucketCount; bucket++)
             {
-                Entity prototype = entityManager.CreateEntity();
-                entityManager.SetName(prototype, $"VVardenfell.ActorRenderPrefab[b{bucket}]");
-                RenderMeshUtility.AddComponents(
-                    prototype,
+                _prototypes[bucket] = CreatePrototype(
                     entityManager,
-                    desc,
-                    _renderMeshArrays[bucket],
-                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-                entityManager.AddComponentData(prototype, LocalTransform.Identity);
-                entityManager.AddComponentData(prototype, default(TextureSlice));
-                entityManager.AddComponentData(prototype, default(ActorDeformedMeshIndex));
-                entityManager.AddComponentData(prototype, default(ActorRenderMeshInstance));
-                entityManager.AddComponent<Prefab>(prototype);
-                _prototypes[bucket] = prototype;
+                    $"VVardenfell.ActorRenderPrefab[b{bucket}]",
+                    renderDesc,
+                    bucket);
+                _shadowOnlyPrototypes[bucket] = CreatePrototype(
+                    entityManager,
+                    $"VVardenfell.ActorShadowOnlyRenderPrefab[b{bucket}]",
+                    shadowOnlyDesc,
+                    bucket);
             }
+        }
+
+        Entity CreatePrototype(
+            EntityManager entityManager,
+            string name,
+            in RenderMeshDescription desc,
+            int bucket)
+        {
+            Entity prototype = entityManager.CreateEntity();
+            entityManager.SetName(prototype, name);
+            RenderMeshUtility.AddComponents(
+                prototype,
+                entityManager,
+                desc,
+                _renderMeshArrays[bucket],
+                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+            entityManager.AddComponentData(prototype, LocalTransform.Identity);
+            entityManager.AddComponentData(prototype, default(TextureSlice));
+            entityManager.AddComponentData(prototype, default(ActorDeformedMeshIndex));
+            entityManager.AddComponentData(prototype, default(ActorRenderMeshInstance));
+            entityManager.AddComponent<Prefab>(prototype);
+            return prototype;
         }
 
         void DisposeManagedResources()

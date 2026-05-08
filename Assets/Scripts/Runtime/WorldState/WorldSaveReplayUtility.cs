@@ -8,6 +8,7 @@ using VVardenfell.Runtime;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Combat;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
@@ -57,6 +58,8 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager);
+            if (!ScriptVisibleSaveStateUtility.TryProjectSavedStateForLiveRefs(entityManager, out error))
+                return false;
             return true;
         }
 
@@ -101,6 +104,8 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             RuntimeSpawnProjectionUtility.TryRestoreAliveRefsForCurrentWorld(entityManager);
+            if (!ScriptVisibleSaveStateUtility.TryProjectSavedStateForLiveRefs(entityManager, out error))
+                return false;
             if (!WorldStateEntityQueryUtility.HasExactlyOne<PlayerTag>(entityManager)
                 || !WorldStateEntityQueryUtility.HasExactlyOne<PlayerViewComponent>(entityManager))
             {
@@ -174,28 +179,36 @@ namespace VVardenfell.Runtime.WorldState
             {
                 Value = float4x4.TRS(payload.PlayerPosition, payload.PlayerRotation, new float3(1f)),
             });
-            entityManager.SetComponentData(playerEntity, payload.ActorStats.Attributes);
-            entityManager.SetComponentData(playerEntity, payload.ActorStats.Skills);
-            var vitals = payload.ActorStats.Vitals;
-            MorrowindActorMovementStats.ApplyVitalBases(ref content, payload.ActorStats.Attributes, ref vitals, initializeMissingCurrents: true);
+            var stats = VVardenfell.Runtime.Magic.ActorMagicStatUtility.InitializeAuthoritativeState(payload.ActorStats);
+            entityManager.SetComponentData(playerEntity, stats.Attributes);
+            entityManager.SetComponentData(playerEntity, new ActorAttributeBaseSet { Value = stats.AttributeBase });
+            entityManager.SetComponentData(playerEntity, new ActorAttributeDamageSet { Value = stats.AttributeDamage });
+            entityManager.SetComponentData(playerEntity, new ActorAttributeModifierSet { Value = stats.AttributeModifiers });
+            entityManager.SetComponentData(playerEntity, stats.Skills);
+            entityManager.SetComponentData(playerEntity, new ActorSkillBaseSet { Value = stats.SkillBase });
+            entityManager.SetComponentData(playerEntity, new ActorSkillDamageSet { Value = stats.SkillDamage });
+            entityManager.SetComponentData(playerEntity, new ActorSkillModifierSet { Value = stats.SkillModifiers });
+            var vitals = stats.Vitals;
             entityManager.SetComponentData(playerEntity, vitals);
-            entityManager.SetComponentData(playerEntity, payload.ActorStats.EffectModifiers);
+            entityManager.SetComponentData(playerEntity, stats.VitalBase);
+            entityManager.SetComponentData(playerEntity, stats.VitalModifiers);
+            entityManager.SetComponentData(playerEntity, stats.EffectModifiers);
             var derived = MorrowindActorMovementStats.BuildDerived(
                 ref content,
-                payload.ActorStats.Attributes,
-                payload.ActorStats.Skills,
+                stats.Attributes,
+                stats.Skills,
                 vitals,
-                payload.ActorStats.EffectModifiers,
+                stats.EffectModifiers,
                 0f);
             entityManager.SetComponentData(playerEntity, derived);
             entityManager.SetComponentData(
                 playerEntity,
                 MorrowindActorMovementStats.BuildPlayerMovementSpeed(
                     ref content,
-                    payload.ActorStats.Attributes,
-                    payload.ActorStats.Skills,
+                    stats.Attributes,
+                    stats.Skills,
                     vitals,
-                    payload.ActorStats.EffectModifiers,
+                    stats.EffectModifiers,
                     derived));
             entityManager.SetComponentData(playerEntity, payload.PlayerIdentity.Level > 0 ? payload.PlayerIdentity : ActorIdentitySet.DefaultPlayer());
             if (entityManager.HasComponent<PlayerRaceAppearance>(playerEntity))
@@ -782,6 +795,8 @@ namespace VVardenfell.Runtime.WorldState
             ClearQuestJournal(entityManager, questJournalEntity);
             ClearDialogue(entityManager, questJournalEntity);
             ClearActorDeathCounts(entityManager, questJournalEntity);
+            ClearGlobalScriptInstances(entityManager);
+            ScriptVisibleSaveStateUtility.ClearRuntimeOverlay(entityManager, questJournalEntity);
             entityManager.GetBuffer<PickedItemRecord>(runtimeEntity).Clear();
             if (entityManager.HasBuffer<BookReadHistoryEntry>(runtimeEntity))
                 entityManager.GetBuffer<BookReadHistoryEntry>(runtimeEntity).Clear();
@@ -836,6 +851,10 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
             if (!ApplyActorDeathCounts(entityManager, questJournalEntity, payload.ActorDeathCounts, out error))
                 return false;
+            if (!ApplyScriptPayload(entityManager, questJournalEntity, payload.Script, out error))
+                return false;
+            if (!ApplyPlacedRefStatePayload(entityManager, questJournalEntity, payload.PlacedRefs, out error))
+                return false;
 
             if (!entityManager.HasBuffer<PlayerInventoryItem>(playerInventoryEntity))
                 entityManager.AddBuffer<PlayerInventoryItem>(playerInventoryEntity);
@@ -873,6 +892,7 @@ namespace VVardenfell.Runtime.WorldState
             ApplyTimePayload(entityManager, payload.Time);
             ApplyWeatherPayload(entityManager, payload.Weather);
             ApplyCombatPayload(entityManager, payload.Combat);
+            ApplyMagicPayload(entityManager, payload.Magic);
             return true;
         }
 
@@ -898,6 +918,320 @@ namespace VVardenfell.Runtime.WorldState
             ecb.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
             ecb.AddComponent(entity, state);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+        }
+
+        static void ApplyMagicPayload(EntityManager entityManager, MorrowindMagicSavePayload payload)
+        {
+            if (payload.Initialized == 0)
+                return;
+
+            var state = new MorrowindMagicRuntimeState
+            {
+                RandomState = payload.RandomState == 0u ? 0xA5C38F2Du : payload.RandomState,
+                NextActiveSpellId = math.max(1, payload.NextActiveSpellId),
+            };
+
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindMagicRuntimeState>(entityManager);
+            if (entity != Entity.Null)
+            {
+                entityManager.SetComponentData(entity, state);
+                ApplySelectedMagicSource(entityManager, payload);
+                return;
+            }
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            entity = ecb.CreateEntity();
+            ecb.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindMagicRuntime"));
+            ecb.AddComponent(entity, state);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+            ApplySelectedMagicSource(entityManager, payload);
+        }
+
+        static void ApplySelectedMagicSource(EntityManager entityManager, MorrowindMagicSavePayload payload)
+        {
+            Entity spellWindowEntity = WorldStateEntityQueryUtility.GetSingletonEntity<SpellWindowState>(entityManager);
+            if (spellWindowEntity == Entity.Null)
+                return;
+
+            var spellWindow = entityManager.GetComponentData<SpellWindowState>(spellWindowEntity);
+            spellWindow.SelectedSourceKind = payload.SelectedSourceKind;
+            spellWindow.SelectedSpell = payload.SelectedSpell;
+            spellWindow.SelectedInventoryIndex = payload.SelectedInventoryIndex;
+            spellWindow.SelectedItemContent = payload.SelectedItemContent;
+            spellWindow.SelectedEnchantment = payload.SelectedEnchantment;
+            spellWindow.SelectedSpellIndex = -1;
+            entityManager.SetComponentData(spellWindowEntity, spellWindow);
+        }
+
+        static void ClearGlobalScriptInstances(EntityManager entityManager)
+        {
+            EntityQuery query = GlobalScriptQueryCache.Get(entityManager);
+            if (query.IsEmptyIgnoreFilter)
+                return;
+
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+                ecb.DestroyEntity(entities[i]);
+            WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
+        }
+
+        static bool ApplyScriptPayload(
+            EntityManager entityManager,
+            Entity scriptRuntimeEntity,
+            in MorrowindScriptSavePayload payload,
+            out string error)
+        {
+            error = null;
+            var contentBlob = RequireRuntimeContentBlob(entityManager);
+            ref RuntimeContentBlob content = ref contentBlob.Value;
+            bool hasScriptPayload = payload.Globals != null
+                                    || payload.GlobalScripts != null
+                                    || payload.ObjectScripts != null;
+            if (!hasScriptPayload)
+            {
+                ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(entityManager, scriptRuntimeEntity);
+                return true;
+            }
+
+            if (entityManager.HasComponent<MorrowindScriptRuntimeState>(scriptRuntimeEntity))
+            {
+                var runtime = entityManager.GetComponentData<MorrowindScriptRuntimeState>(scriptRuntimeEntity);
+                runtime.NextAudioRequestSequence = math.max(1u, payload.NextAudioRequestSequence);
+                runtime.RandomState = payload.RandomState;
+                entityManager.SetComponentData(scriptRuntimeEntity, runtime);
+            }
+
+            if (payload.Globals == null)
+            {
+                error = "Script save payload is missing global values.";
+                return false;
+            }
+
+            if (payload.Globals != null)
+            {
+                if (!entityManager.HasBuffer<MorrowindScriptGlobalValue>(scriptRuntimeEntity))
+                {
+                    error = "Script global save exists but runtime has no global buffer.";
+                    return false;
+                }
+
+                var globals = entityManager.GetBuffer<MorrowindScriptGlobalValue>(scriptRuntimeEntity);
+                if (globals.Length != content.Globals.Length || payload.Globals.Length != content.Globals.Length)
+                {
+                    error = $"Script global replay count mismatch: save={payload.Globals.Length} runtime={globals.Length} content={content.Globals.Length}.";
+                    return false;
+                }
+
+                for (int i = 0; i < payload.Globals.Length; i++)
+                    globals[i] = payload.Globals[i];
+            }
+
+            ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(entityManager, scriptRuntimeEntity);
+            if (entityManager.HasBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity))
+            {
+                entityManager.GetBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity).Clear();
+                entityManager.GetBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity).Clear();
+            }
+
+            if (payload.ObjectScripts != null)
+            {
+                var savedInstances = entityManager.GetBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity);
+                var savedLocals = entityManager.GetBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity);
+                for (int i = 0; i < payload.ObjectScripts.Length; i++)
+                {
+                    var saved = payload.ObjectScripts[i];
+                    if (saved.PlacedRefId == 0u)
+                    {
+                        error = $"Object script save entry {i} has placed ref id 0.";
+                        return false;
+                    }
+
+                    if (!ValidateScriptProgram(ref content, saved.ProgramIndex, saved.Locals?.Length ?? 0, out error))
+                        return false;
+
+                    savedInstances.Add(new PlacedRefSavedScriptInstance
+                    {
+                        PlacedRefId = saved.PlacedRefId,
+                        ProgramIndex = saved.ProgramIndex,
+                        ProgramCounter = saved.ProgramCounter,
+                        Status = saved.Status,
+                        SuppressActivation = saved.SuppressActivation,
+                        DisabledReason = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(saved.DisabledReason),
+                    });
+                    if (saved.Locals != null)
+                    {
+                        for (int local = 0; local < saved.Locals.Length; local++)
+                        {
+                            savedLocals.Add(new PlacedRefSavedScriptLocalValue
+                            {
+                                PlacedRefId = saved.PlacedRefId,
+                                ProgramIndex = saved.ProgramIndex,
+                                LocalIndex = local,
+                                Value = saved.Locals[local],
+                            });
+                        }
+                    }
+                }
+            }
+
+            ClearGlobalScriptInstances(entityManager);
+            if (payload.GlobalScripts != null)
+            {
+                for (int i = 0; i < payload.GlobalScripts.Length; i++)
+                {
+                    if (!CreateGlobalScript(entityManager, ref content, payload.GlobalScripts[i], out error))
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool CreateGlobalScript(
+            EntityManager entityManager,
+            ref RuntimeContentBlob content,
+            in MorrowindGlobalScriptSavePayload saved,
+            out string error)
+        {
+            error = null;
+            if (!ValidateScriptProgram(ref content, saved.ProgramIndex, saved.Locals?.Length ?? 0, out error))
+                return false;
+
+            Entity entity = entityManager.CreateEntity();
+            entityManager.SetName(entity, $"VVardenfell.GlobalScript.{saved.ProgramIndex}");
+            entityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
+            {
+                TargetPlacedRefId = saved.TargetPlacedRefId,
+            });
+
+            var program = MorrowindScriptProgramDefHandle.FromIndex(saved.ProgramIndex);
+            entityManager.AddComponentData(entity, new MorrowindScriptInstance
+            {
+                Program = program,
+                ProgramIndex = saved.ProgramIndex,
+                ProgramCounter = saved.ProgramCounter,
+                Status = saved.Status,
+                SuppressActivation = saved.SuppressActivation,
+                DisabledReason = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(saved.DisabledReason),
+            });
+            var locals = entityManager.AddBuffer<MorrowindScriptLocalValue>(entity);
+            if (saved.Locals != null)
+            {
+                for (int i = 0; i < saved.Locals.Length; i++)
+                    locals.Add(saved.Locals[i]);
+            }
+            entityManager.AddBuffer<MorrowindScriptStackValue>(entity);
+            return true;
+        }
+
+        static bool ValidateScriptProgram(ref RuntimeContentBlob content, int programIndex, int localCount, out string error)
+        {
+            error = null;
+            if ((uint)programIndex >= (uint)content.MorrowindScriptPrograms.Length)
+            {
+                error = $"Save references invalid script program index {programIndex}.";
+                return false;
+            }
+
+            ref RuntimeMorrowindScriptProgramDefBlob program = ref content.MorrowindScriptPrograms[programIndex];
+            if (program.LocalCount != localCount)
+            {
+                error = $"Save script local count mismatch for program {programIndex}: save={localCount} content={program.LocalCount}.";
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool ApplyPlacedRefStatePayload(
+            EntityManager entityManager,
+            Entity scriptRuntimeEntity,
+            in PlacedRefStateSavePayload payload,
+            out string error)
+        {
+            error = null;
+            ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(entityManager, scriptRuntimeEntity);
+
+            var states = entityManager.GetBuffer<PlacedRefSavedState>(scriptRuntimeEntity);
+            states.Clear();
+            if (payload.Entries != null)
+            {
+                for (int i = 0; i < payload.Entries.Length; i++)
+                {
+                    var entry = payload.Entries[i];
+                    if (entry.PlacedRefId == 0u)
+                    {
+                        error = $"Placed ref state save entry {i} has placed ref id 0.";
+                        return false;
+                    }
+
+                    states.Add(new PlacedRefSavedState
+                    {
+                        PlacedRefId = entry.PlacedRefId,
+                        HasDisabled = entry.HasDisabled,
+                        Disabled = entry.Disabled,
+                        HasLock = entry.HasLock,
+                        LockLevel = entry.LockLevel,
+                        Locked = entry.Locked,
+                        KeyId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.KeyId),
+                        TrapId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(entry.TrapId),
+                        HasTransform = entry.HasTransform,
+                        Position = entry.Position,
+                        Rotation = entry.Rotation,
+                        Scale = entry.Scale,
+                        ExteriorCell = entry.ExteriorCell,
+                        InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(entry.InteriorCellId),
+                        InteriorCellHash = entry.InteriorCellHash,
+                        IsInterior = entry.IsInterior,
+                    });
+                }
+            }
+
+            var inventoryItems = entityManager.GetBuffer<PlacedRefSavedActorInventoryItem>(scriptRuntimeEntity);
+            inventoryItems.Clear();
+            if (payload.ActorInventories != null)
+            {
+                for (int i = 0; i < payload.ActorInventories.Length; i++)
+                {
+                    var inventory = payload.ActorInventories[i];
+                    if (inventory.PlacedRefId == 0u)
+                    {
+                        error = $"Placed ref actor inventory save entry {i} has placed ref id 0.";
+                        return false;
+                    }
+
+                    if (inventory.Items == null)
+                        continue;
+
+                    for (int item = 0; item < inventory.Items.Length; item++)
+                    {
+                        inventoryItems.Add(new PlacedRefSavedActorInventoryItem
+                        {
+                            PlacedRefId = inventory.PlacedRefId,
+                            Item = inventory.Items[item],
+                        });
+                    }
+                }
+            }
+
+            Entity stateLookupEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlacedRefRuntimeStateLookup>(entityManager);
+            if (stateLookupEntity != Entity.Null)
+            {
+                var lookup = entityManager.GetComponentData<PlacedRefRuntimeStateLookup>(stateLookupEntity);
+                if (lookup.DisabledByPlacedRef.IsCreated)
+                {
+                    lookup.DisabledByPlacedRef.Clear();
+                    for (int i = 0; i < states.Length; i++)
+                    {
+                        if (states[i].HasDisabled != 0)
+                            lookup.DisabledByPlacedRef[states[i].PlacedRefId] = states[i].Disabled;
+                    }
+                    entityManager.SetComponentData(stateLookupEntity, lookup);
+                }
+            }
+
+            return true;
         }
 
         static void ClearQuestJournal(EntityManager entityManager, Entity questJournalEntity)
@@ -1362,6 +1696,27 @@ namespace VVardenfell.Runtime.WorldState
 
                 s_World = world;
                 s_Query = entityManager.CreateEntityQuery(ComponentType.ReadOnly<ExteriorMapDiscoveryTile>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class GlobalScriptQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<MorrowindGlobalScriptInstance>(),
+                    ComponentType.ReadOnly<MorrowindScriptInstance>());
                 s_QueryCreated = true;
                 return s_Query;
             }

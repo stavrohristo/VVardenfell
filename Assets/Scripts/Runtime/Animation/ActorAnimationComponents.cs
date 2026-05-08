@@ -50,6 +50,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public int SkinMeshIndex;
         public int AttachBoneIndex;
+        public ActorVisualPartReference PartReference;
         public byte RigidMirrorX;
     }
 
@@ -153,6 +154,7 @@ namespace VVardenfell.Runtime.Animation
         AttackWindUp = 3,
         AttackRelease = 4,
         AttackFollow = 5,
+        SpellCasting = 6,
     }
 
     public enum ActorWeaponAttackType : byte
@@ -186,6 +188,19 @@ namespace VVardenfell.Runtime.Animation
         public byte MeleeSwingPending;
         public float MeleeSwingAttackStrength;
         public ContentReference MeleeSwingWeaponContent;
+        public byte SpellCastPressed;
+        public byte SpellCastRange;
+        public byte SpellCastSourceKind;
+        public SpellDefHandle SpellCastSpell;
+        public EnchantmentDefHandle SpellCastEnchantment;
+        public ContentReference SpellCastItemContent;
+        public int SpellCastInventoryIndex;
+        public byte SpellCastReleasePending;
+        public byte SpellCastReleaseSourceKind;
+        public SpellDefHandle SpellCastReleaseSpell;
+        public EnchantmentDefHandle SpellCastReleaseEnchantment;
+        public ContentReference SpellCastReleaseItemContent;
+        public int SpellCastReleaseInventoryIndex;
     }
 
     public struct ActorAnimationOverlayState : IBufferElementData

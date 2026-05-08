@@ -80,6 +80,7 @@ namespace VVardenfell.Runtime.Shell
                     Height = 0.51f,
                 },
                 SelectedSpellIndex = -1,
+                SelectedInventoryIndex = -1,
             });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new SpellWindowRequest());
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new MapWindowState

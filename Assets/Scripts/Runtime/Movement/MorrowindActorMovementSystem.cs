@@ -181,6 +181,8 @@ namespace VVardenfell.Runtime.Movement
             }.Run();
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
+            _playerTagLookup.Update(ref state);
+            _passiveActorLookup.Update(ref state);
 
             int nonPlayerCount = _nonPlayerQuery.CalculateEntityCount();
             if (nonPlayerCount == 0)

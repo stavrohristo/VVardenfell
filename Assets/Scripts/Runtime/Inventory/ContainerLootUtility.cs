@@ -173,6 +173,7 @@ namespace VVardenfell.Runtime.Inventory
                 if (inventory[i].Content.Kind != content.Kind
                     || inventory[i].Content.HandleValue != content.HandleValue
                     || !inventory[i].SoulId.Equals(soulId)
+                    || inventory[i].EnchantmentCharge != -1f
                     || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
                     continue;
@@ -191,6 +192,7 @@ namespace VVardenfell.Runtime.Inventory
                 SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
                 Condition = condition,
+                EnchantmentCharge = -1f,
             });
             return count;
         }

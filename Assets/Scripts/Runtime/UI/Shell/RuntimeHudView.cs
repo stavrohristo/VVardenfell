@@ -162,6 +162,9 @@ namespace VVardenfell.Runtime.UI.Shell
             }
 
             SetVisible(true);
+            SetActiveIfChanged(_bottomLeftCluster.gameObject, model.ShowHudChrome);
+            SetActiveIfChanged(_bottomRightCluster.gameObject, model.ShowHudChrome);
+            SetActiveIfChanged(_topCenterCluster.gameObject, model.ShowHudChrome);
             SetActiveIfChanged(_crosshairGo, model.ShowCrosshair);
             SetActiveIfChanged(_focusAnchorGo, !string.IsNullOrWhiteSpace(model.FocusText));
             SetActiveIfChanged(_notificationAnchorGo, !string.IsNullOrWhiteSpace(model.NotificationText));

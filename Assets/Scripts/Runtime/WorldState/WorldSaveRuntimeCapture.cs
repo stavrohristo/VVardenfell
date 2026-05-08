@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Transforms;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Combat;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
@@ -42,8 +43,16 @@ namespace VVardenfell.Runtime.WorldState
             var actorStats = new ActorRuntimeStatSeed
             {
                 Attributes = entityManager.GetComponentData<ActorAttributeSet>(playerEntity),
+                AttributeBase = entityManager.GetComponentData<ActorAttributeBaseSet>(playerEntity).Value,
+                AttributeDamage = entityManager.GetComponentData<ActorAttributeDamageSet>(playerEntity).Value,
+                AttributeModifiers = entityManager.GetComponentData<ActorAttributeModifierSet>(playerEntity).Value,
                 Skills = entityManager.GetComponentData<ActorSkillSet>(playerEntity),
+                SkillBase = entityManager.GetComponentData<ActorSkillBaseSet>(playerEntity).Value,
+                SkillDamage = entityManager.GetComponentData<ActorSkillDamageSet>(playerEntity).Value,
+                SkillModifiers = entityManager.GetComponentData<ActorSkillModifierSet>(playerEntity).Value,
                 Vitals = entityManager.GetComponentData<ActorVitalSet>(playerEntity),
+                VitalBase = entityManager.GetComponentData<ActorVitalBaseSet>(playerEntity),
+                VitalModifiers = entityManager.GetComponentData<ActorVitalModifierSet>(playerEntity),
                 EffectModifiers = entityManager.GetComponentData<ActorEffectStatModifiers>(playerEntity),
             };
             var identity = entityManager.HasComponent<ActorIdentitySet>(playerEntity)
@@ -72,6 +81,9 @@ namespace VVardenfell.Runtime.WorldState
             var timePayload = CaptureTimePayload(entityManager);
             var weatherPayload = CaptureWeatherPayload(entityManager);
             var combatPayload = CaptureCombatPayload(entityManager);
+            var magicPayload = CaptureMagicPayload(entityManager);
+            var scriptPayload = CaptureScriptPayload(entityManager, questJournalEntity);
+            var placedRefPayload = CapturePlacedRefStatePayload(entityManager, questJournalEntity);
 
             var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var journalEntries = new WorldJournalEntry[journal.Length];
@@ -160,8 +172,412 @@ namespace VVardenfell.Runtime.WorldState
                 Time = timePayload,
                 Weather = weatherPayload,
                 Combat = combatPayload,
+                Magic = magicPayload,
+                Script = scriptPayload,
+                PlacedRefs = placedRefPayload,
             };
             return true;
+        }
+
+        static MorrowindScriptSavePayload CaptureScriptPayload(EntityManager entityManager, Entity scriptRuntimeEntity)
+        {
+            var runtimeState = entityManager.HasComponent<MorrowindScriptRuntimeState>(scriptRuntimeEntity)
+                ? entityManager.GetComponentData<MorrowindScriptRuntimeState>(scriptRuntimeEntity)
+                : default;
+
+            MorrowindScriptGlobalValue[] globals = Array.Empty<MorrowindScriptGlobalValue>();
+            if (entityManager.HasBuffer<MorrowindScriptGlobalValue>(scriptRuntimeEntity))
+            {
+                var buffer = entityManager.GetBuffer<MorrowindScriptGlobalValue>(scriptRuntimeEntity);
+                globals = new MorrowindScriptGlobalValue[buffer.Length];
+                for (int i = 0; i < buffer.Length; i++)
+                    globals[i] = buffer[i];
+            }
+
+            var globalScripts = CaptureGlobalScripts(entityManager);
+            var objectScripts = CaptureObjectScripts(entityManager, scriptRuntimeEntity);
+            return new MorrowindScriptSavePayload
+            {
+                NextAudioRequestSequence = runtimeState.NextAudioRequestSequence,
+                RandomState = runtimeState.RandomState,
+                Globals = globals,
+                GlobalScripts = globalScripts,
+                ObjectScripts = objectScripts,
+            };
+        }
+
+        static MorrowindGlobalScriptSavePayload[] CaptureGlobalScripts(EntityManager entityManager)
+        {
+            EntityQuery query = GlobalScriptQueryCache.Get(entityManager);
+            int count = query.CalculateEntityCount();
+            if (count == 0)
+                return Array.Empty<MorrowindGlobalScriptSavePayload>();
+
+            using var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using var globals = query.ToComponentDataArray<MorrowindGlobalScriptInstance>(Unity.Collections.Allocator.Temp);
+            using var instances = query.ToComponentDataArray<MorrowindScriptInstance>(Unity.Collections.Allocator.Temp);
+            var result = new MorrowindGlobalScriptSavePayload[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new MorrowindGlobalScriptSavePayload
+                {
+                    ProgramIndex = instances[i].ProgramIndex,
+                    ProgramCounter = instances[i].ProgramCounter,
+                    Status = instances[i].Status,
+                    SuppressActivation = instances[i].SuppressActivation,
+                    DisabledReason = instances[i].DisabledReason.ToString(),
+                    TargetPlacedRefId = globals[i].TargetPlacedRefId,
+                    Locals = CaptureScriptLocals(entityManager, entities[i]),
+                };
+            }
+
+            return result;
+        }
+
+        static MorrowindObjectScriptSavePayload[] CaptureObjectScripts(EntityManager entityManager, Entity scriptRuntimeEntity)
+        {
+            var results = new List<MorrowindObjectScriptSavePayload>();
+            if (entityManager.HasBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity))
+            {
+                var instances = entityManager.GetBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity);
+                var locals = entityManager.HasBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity)
+                    ? entityManager.GetBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity)
+                    : default;
+                for (int i = 0; i < instances.Length; i++)
+                {
+                    var instance = instances[i];
+                    if (instance.PlacedRefId == 0u)
+                        continue;
+
+                    UpsertObjectScriptPayload(results, new MorrowindObjectScriptSavePayload
+                    {
+                        PlacedRefId = instance.PlacedRefId,
+                        ProgramIndex = instance.ProgramIndex,
+                        ProgramCounter = instance.ProgramCounter,
+                        Status = instance.Status,
+                        SuppressActivation = instance.SuppressActivation,
+                        DisabledReason = instance.DisabledReason.ToString(),
+                        Locals = CaptureSavedScriptLocals(locals, instance.PlacedRefId, instance.ProgramIndex),
+                    });
+                }
+            }
+
+            EntityQuery query = ObjectScriptQueryCache.Get(entityManager);
+            int count = query.CalculateEntityCount();
+            if (count == 0)
+                return results.ToArray();
+
+            using var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Unity.Collections.Allocator.Temp);
+            using var instancesLive = query.ToComponentDataArray<MorrowindScriptInstance>(Unity.Collections.Allocator.Temp);
+            for (int i = 0; i < count; i++)
+            {
+                uint placedRefId = identities[i].Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                var instance = instancesLive[i];
+                UpsertObjectScriptPayload(results, new MorrowindObjectScriptSavePayload
+                {
+                    PlacedRefId = placedRefId,
+                    ProgramIndex = instance.ProgramIndex,
+                    ProgramCounter = instance.ProgramCounter,
+                    Status = instance.Status,
+                    SuppressActivation = instance.SuppressActivation,
+                    DisabledReason = instance.DisabledReason.ToString(),
+                    Locals = CaptureScriptLocals(entityManager, entities[i]),
+                });
+            }
+
+            return results.ToArray();
+        }
+
+        static MorrowindScriptLocalValue[] CaptureScriptLocals(EntityManager entityManager, Entity entity)
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity) || !entityManager.HasBuffer<MorrowindScriptLocalValue>(entity))
+                return Array.Empty<MorrowindScriptLocalValue>();
+
+            var buffer = entityManager.GetBuffer<MorrowindScriptLocalValue>(entity);
+            var result = new MorrowindScriptLocalValue[buffer.Length];
+            for (int i = 0; i < buffer.Length; i++)
+                result[i] = buffer[i];
+            return result;
+        }
+
+        static MorrowindScriptLocalValue[] CaptureSavedScriptLocals(
+            DynamicBuffer<PlacedRefSavedScriptLocalValue> locals,
+            uint placedRefId,
+            int programIndex)
+        {
+            if (!locals.IsCreated)
+                return Array.Empty<MorrowindScriptLocalValue>();
+
+            int count = 0;
+            for (int i = 0; i < locals.Length; i++)
+            {
+                if (locals[i].PlacedRefId == placedRefId && locals[i].ProgramIndex == programIndex)
+                    count++;
+            }
+
+            if (count == 0)
+                return Array.Empty<MorrowindScriptLocalValue>();
+
+            var result = new MorrowindScriptLocalValue[count];
+            for (int i = 0; i < locals.Length; i++)
+            {
+                var local = locals[i];
+                if (local.PlacedRefId != placedRefId || local.ProgramIndex != programIndex)
+                    continue;
+
+                if ((uint)local.LocalIndex >= (uint)result.Length)
+                    throw new InvalidOperationException($"[VVardenfell][Save] saved local index {local.LocalIndex} is outside compact local count {result.Length} for ref 0x{placedRefId:X8}.");
+                result[local.LocalIndex] = local.Value;
+            }
+
+            return result;
+        }
+
+        static void UpsertObjectScriptPayload(List<MorrowindObjectScriptSavePayload> results, in MorrowindObjectScriptSavePayload payload)
+        {
+            for (int i = 0; i < results.Count; i++)
+            {
+                if (results[i].PlacedRefId == payload.PlacedRefId && results[i].ProgramIndex == payload.ProgramIndex)
+                {
+                    results[i] = payload;
+                    return;
+                }
+            }
+
+            results.Add(payload);
+        }
+
+        static PlacedRefStateSavePayload CapturePlacedRefStatePayload(EntityManager entityManager, Entity scriptRuntimeEntity)
+        {
+            var entries = new List<PlacedRefStateEntrySavePayload>();
+            var inventories = new List<PlacedRefActorInventorySavePayload>();
+
+            if (entityManager.HasBuffer<PlacedRefSavedState>(scriptRuntimeEntity))
+            {
+                var states = entityManager.GetBuffer<PlacedRefSavedState>(scriptRuntimeEntity);
+                for (int i = 0; i < states.Length; i++)
+                    UpsertPlacedRefState(entries, ToPayload(states[i]));
+            }
+
+            CaptureLivePlacedRefState(entityManager, entries);
+            CaptureActorInventoryPayload(entityManager, scriptRuntimeEntity, inventories);
+            return new PlacedRefStateSavePayload
+            {
+                Entries = entries.ToArray(),
+                ActorInventories = inventories.ToArray(),
+            };
+        }
+
+        static void CaptureLivePlacedRefState(EntityManager entityManager, List<PlacedRefStateEntrySavePayload> entries)
+        {
+            EntityQuery query = PlacedRefStateQueryCache.Get(entityManager);
+            int count = query.CalculateEntityCount();
+            if (count == 0)
+                return;
+
+            using var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Unity.Collections.Allocator.Temp);
+            for (int i = 0; i < count; i++)
+            {
+                Entity entity = entities[i];
+                uint placedRefId = identities[i].Value;
+                if (placedRefId == 0u)
+                    continue;
+
+                var payload = FindPlacedRefState(entries, placedRefId);
+                payload.PlacedRefId = placedRefId;
+
+                if (entityManager.HasComponent<PlacedRefRuntimeState>(entity))
+                {
+                    var state = entityManager.GetComponentData<PlacedRefRuntimeState>(entity);
+                    if (state.Disabled != 0)
+                    {
+                        payload.HasDisabled = 1;
+                        payload.Disabled = state.Disabled;
+                    }
+                }
+
+                if (entityManager.HasComponent<PlacedRefLockState>(entity))
+                {
+                    var lockState = entityManager.GetComponentData<PlacedRefLockState>(entity);
+                    payload.HasLock = 1;
+                    payload.LockLevel = lockState.LockLevel;
+                    payload.Locked = lockState.Locked;
+                    payload.KeyId = lockState.KeyId.ToString();
+                    payload.TrapId = lockState.TrapId.ToString();
+                }
+
+                if (ScriptVisibleSaveStateUtility.TransformDiffersFromInitial(entityManager, entity)
+                    && entityManager.HasComponent<LocalTransform>(entity)
+                    && entityManager.HasComponent<LogicalRefLocation>(entity))
+                {
+                    var transform = entityManager.GetComponentData<LocalTransform>(entity);
+                    var location = entityManager.GetComponentData<LogicalRefLocation>(entity);
+                    payload.HasTransform = 1;
+                    payload.Position = transform.Position;
+                    payload.Rotation = transform.Rotation;
+                    payload.Scale = transform.Scale;
+                    payload.ExteriorCell = location.ExteriorCell;
+                    payload.InteriorCellId = location.InteriorCellId.ToString();
+                    payload.InteriorCellHash = location.InteriorCellHash;
+                    payload.IsInterior = location.IsInterior;
+                }
+
+                if (payload.HasDisabled != 0 || payload.HasLock != 0 || payload.HasTransform != 0)
+                    UpsertPlacedRefState(entries, payload);
+            }
+        }
+
+        static void CaptureActorInventoryPayload(
+            EntityManager entityManager,
+            Entity scriptRuntimeEntity,
+            List<PlacedRefActorInventorySavePayload> inventories)
+        {
+            if (entityManager.HasBuffer<PlacedRefSavedActorInventoryItem>(scriptRuntimeEntity))
+            {
+                var saved = entityManager.GetBuffer<PlacedRefSavedActorInventoryItem>(scriptRuntimeEntity);
+                for (int i = 0; i < saved.Length; i++)
+                {
+                    uint placedRefId = saved[i].PlacedRefId;
+                    if (placedRefId == 0u || ContainsActorInventory(inventories, placedRefId))
+                        continue;
+
+                    inventories.Add(new PlacedRefActorInventorySavePayload
+                    {
+                        PlacedRefId = placedRefId,
+                        Items = CaptureSavedActorInventory(saved, placedRefId),
+                    });
+                }
+            }
+
+            EntityQuery query = ActorInventoryQueryCache.Get(entityManager);
+            using var entities = query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using var identities = query.ToComponentDataArray<PlacedRefIdentity>(Unity.Collections.Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                uint placedRefId = identities[i].Value;
+                if (placedRefId == 0u || !ContainsActorInventory(inventories, placedRefId))
+                    continue;
+
+                UpsertActorInventory(inventories, placedRefId, CaptureActorInventory(entityManager, entities[i]));
+            }
+        }
+
+        static ActorInventoryItem[] CaptureSavedActorInventory(DynamicBuffer<PlacedRefSavedActorInventoryItem> saved, uint placedRefId)
+        {
+            int count = 0;
+            for (int i = 0; i < saved.Length; i++)
+            {
+                if (saved[i].PlacedRefId == placedRefId)
+                    count++;
+            }
+
+            var items = new ActorInventoryItem[count];
+            int index = 0;
+            for (int i = 0; i < saved.Length; i++)
+            {
+                if (saved[i].PlacedRefId == placedRefId)
+                    items[index++] = saved[i].Item;
+            }
+
+            return items;
+        }
+
+        static ActorInventoryItem[] CaptureActorInventory(EntityManager entityManager, Entity entity)
+        {
+            var buffer = entityManager.GetBuffer<ActorInventoryItem>(entity);
+            var items = new ActorInventoryItem[buffer.Length];
+            for (int i = 0; i < buffer.Length; i++)
+                items[i] = buffer[i];
+            return items;
+        }
+
+        static PlacedRefStateEntrySavePayload ToPayload(in PlacedRefSavedState state)
+        {
+            return new PlacedRefStateEntrySavePayload
+            {
+                PlacedRefId = state.PlacedRefId,
+                HasDisabled = state.HasDisabled,
+                Disabled = state.Disabled,
+                HasLock = state.HasLock,
+                LockLevel = state.LockLevel,
+                Locked = state.Locked,
+                KeyId = state.KeyId.ToString(),
+                TrapId = state.TrapId.ToString(),
+                HasTransform = state.HasTransform,
+                Position = state.Position,
+                Rotation = state.Rotation,
+                Scale = state.Scale,
+                ExteriorCell = state.ExteriorCell,
+                InteriorCellId = state.InteriorCellId.ToString(),
+                InteriorCellHash = state.InteriorCellHash,
+                IsInterior = state.IsInterior,
+            };
+        }
+
+        static PlacedRefStateEntrySavePayload FindPlacedRefState(List<PlacedRefStateEntrySavePayload> entries, uint placedRefId)
+        {
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (entries[i].PlacedRefId == placedRefId)
+                    return entries[i];
+            }
+
+            return default;
+        }
+
+        static void UpsertPlacedRefState(List<PlacedRefStateEntrySavePayload> entries, in PlacedRefStateEntrySavePayload payload)
+        {
+            if (payload.PlacedRefId == 0u)
+                return;
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (entries[i].PlacedRefId == payload.PlacedRefId)
+                {
+                    entries[i] = payload;
+                    return;
+                }
+            }
+
+            entries.Add(payload);
+        }
+
+        static bool ContainsActorInventory(List<PlacedRefActorInventorySavePayload> inventories, uint placedRefId)
+        {
+            for (int i = 0; i < inventories.Count; i++)
+            {
+                if (inventories[i].PlacedRefId == placedRefId)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static void UpsertActorInventory(List<PlacedRefActorInventorySavePayload> inventories, uint placedRefId, ActorInventoryItem[] items)
+        {
+            for (int i = 0; i < inventories.Count; i++)
+            {
+                if (inventories[i].PlacedRefId == placedRefId)
+                {
+                    inventories[i] = new PlacedRefActorInventorySavePayload
+                    {
+                        PlacedRefId = placedRefId,
+                        Items = items,
+                    };
+                    return;
+                }
+            }
+
+            inventories.Add(new PlacedRefActorInventorySavePayload
+            {
+                PlacedRefId = placedRefId,
+                Items = items,
+            });
         }
 
         static BookReadHistoryEntry[] CaptureBookReadHistory(EntityManager entityManager)
@@ -189,6 +605,33 @@ namespace VVardenfell.Runtime.WorldState
                 RandomState = state.RandomState,
                 Initialized = 1,
             };
+        }
+
+        static MorrowindMagicSavePayload CaptureMagicPayload(EntityManager entityManager)
+        {
+            Entity entity = WorldStateEntityQueryUtility.GetSingletonEntity<MorrowindMagicRuntimeState>(entityManager);
+            if (entity == Entity.Null)
+                return default;
+
+            var state = entityManager.GetComponentData<MorrowindMagicRuntimeState>(entity);
+            var payload = new MorrowindMagicSavePayload
+            {
+                RandomState = state.RandomState,
+                NextActiveSpellId = state.NextActiveSpellId,
+                Initialized = 1,
+            };
+            Entity spellWindowEntity = WorldStateEntityQueryUtility.GetSingletonEntity<SpellWindowState>(entityManager);
+            if (spellWindowEntity != Entity.Null)
+            {
+                var spellWindow = entityManager.GetComponentData<SpellWindowState>(spellWindowEntity);
+                payload.SelectedSourceKind = spellWindow.SelectedSourceKind;
+                payload.SelectedSpell = spellWindow.SelectedSpell;
+                payload.SelectedInventoryIndex = spellWindow.SelectedInventoryIndex;
+                payload.SelectedItemContent = spellWindow.SelectedItemContent;
+                payload.SelectedEnchantment = spellWindow.SelectedEnchantment;
+            }
+
+            return payload;
         }
 
         static int[] CaptureActorDeathCounts(EntityManager entityManager, Entity scriptRuntimeEntity)
@@ -449,6 +892,91 @@ namespace VVardenfell.Runtime.WorldState
                 s_Query = entityManager.CreateEntityQuery(
                     ComponentType.ReadOnly<ExteriorMapDiscoveryTile>(),
                     ComponentType.ReadOnly<ExteriorMapDiscoverySample>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class GlobalScriptQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<MorrowindGlobalScriptInstance>(),
+                    ComponentType.ReadOnly<MorrowindScriptInstance>(),
+                    ComponentType.ReadOnly<MorrowindScriptLocalValue>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class ObjectScriptQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<PlacedRefIdentity>(),
+                    ComponentType.ReadOnly<MorrowindScriptInstance>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class PlacedRefStateQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<LogicalRefTag>(),
+                    ComponentType.ReadOnly<PlacedRefIdentity>());
+                s_QueryCreated = true;
+                return s_Query;
+            }
+        }
+
+        static class ActorInventoryQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+            {
+                World world = entityManager.World;
+                if (s_QueryCreated && s_World == world)
+                    return s_Query;
+
+                s_World = world;
+                s_Query = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<PlacedRefIdentity>(),
+                    ComponentType.ReadOnly<ActorInventoryItem>());
                 s_QueryCreated = true;
                 return s_Query;
             }

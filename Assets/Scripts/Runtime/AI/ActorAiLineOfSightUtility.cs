@@ -35,8 +35,32 @@ namespace VVardenfell.Runtime.AI
             float3 source,
             float3 target,
             out bool hasLineOfSight)
+            => TryGetLineOfSightOrRequest(
+                entityManager,
+                queueEntity,
+                fixedTick,
+                sourceEntity,
+                targetEntity,
+                source,
+                target,
+                out hasLineOfSight,
+                out _,
+                markPending: true);
+
+        public static bool TryGetLineOfSightOrRequest(
+            EntityManager entityManager,
+            Entity queueEntity,
+            uint fixedTick,
+            Entity sourceEntity,
+            Entity targetEntity,
+            float3 source,
+            float3 target,
+            out bool hasLineOfSight,
+            out bool queuedRequest,
+            bool markPending)
         {
             hasLineOfSight = false;
+            queuedRequest = false;
             float3 delta = target - source;
             float distance = math.length(delta);
             if (distance <= 0.001f)
@@ -55,7 +79,9 @@ namespace VVardenfell.Runtime.AI
                 source + delta / distance * math.max(0f, distance - 0.05f),
                 InteractionCollisionLayers.LineOfSightQueryFilter,
                 DeferredPhysicsQueryUtility.FrameMaxResultAgeTicks,
-                out hasLineOfSight);
+                markPending,
+                out hasLineOfSight,
+                out queuedRequest);
         }
     }
 }

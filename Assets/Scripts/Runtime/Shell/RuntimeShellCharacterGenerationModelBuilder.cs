@@ -22,7 +22,7 @@ namespace VVardenfell.Runtime.Shell
             StatsWindowViewModel reviewStats)
         {
             string classId = state.CustomClassActive != 0 ? customClass.Name.ToString() : state.ClassId.ToString();
-            FixedString64Bytes selectedBirthsignId = state.BirthsignId.IsEmpty ? RequireFirstBirthsignId(ref content) : state.BirthsignId;
+            FixedString64Bytes selectedBirthsignId = ResolveSelectedBirthsignId(ref content, state);
             string birthsignId = selectedBirthsignId.ToString();
             return new CharacterGenerationViewModel
             {
@@ -104,6 +104,20 @@ namespace VVardenfell.Runtime.Shell
                 ReviewSpells = BuildReviewSpells(ref content, knownSpells),
                 ReviewStats = reviewStats,
             };
+        }
+
+        static FixedString64Bytes ResolveSelectedBirthsignId(ref RuntimeContentBlob content, in CharacterGenerationState state)
+        {
+            if ((CharacterGenerationMenu)state.CurrentMenu == CharacterGenerationMenu.Birth)
+            {
+                if (!state.PendingBirthsignId.IsEmpty)
+                    return state.PendingBirthsignId;
+                if (!state.BirthsignId.IsEmpty)
+                    return state.BirthsignId;
+                return RequireFirstBirthsignId(ref content);
+            }
+
+            return state.BirthsignId.IsEmpty ? RequireFirstBirthsignId(ref content) : state.BirthsignId;
         }
 
         static CharacterGenerationChoiceViewModel[] BuildRaceChoices(ref RuntimeContentBlob content, FixedString64Bytes selectedId)

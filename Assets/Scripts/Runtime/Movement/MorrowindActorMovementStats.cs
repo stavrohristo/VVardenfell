@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Magic;
 
 namespace VVardenfell.Runtime.Movement
 {
@@ -166,7 +167,7 @@ namespace VVardenfell.Runtime.Movement
             };
 
             ApplyVitalBases(ref content, attributes, ref seed.Vitals, initializeMissingCurrents: true);
-            return seed;
+            return ActorMagicStatUtility.InitializeAuthoritativeState(seed);
         }
 
         public static ActorRuntimeStatSeed CreateSeedFromActor(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
@@ -186,13 +187,13 @@ namespace VVardenfell.Runtime.Movement
             if (actor.AutoCalculatedStats != 0 || vitals.ModifiedHealthBase <= 0f || vitals.ModifiedFatigueBase <= 0f)
                 ApplyVitalBases(ref content, attributes, ref vitals, initializeMissingCurrents: true);
 
-            return new ActorRuntimeStatSeed
+            return ActorMagicStatUtility.InitializeAuthoritativeState(new ActorRuntimeStatSeed
             {
                 Attributes = attributes,
                 Skills = skills,
                 Vitals = vitals,
                 EffectModifiers = new ActorEffectStatModifiers(),
-            };
+            });
         }
 
         public static ActorIdentitySet CreateIdentityFromActor(ref RuntimeActorDefBlob actor)

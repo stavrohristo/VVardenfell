@@ -177,6 +177,7 @@ namespace VVardenfell.Runtime.Inventory
                 if (inventory[i].Content.Kind != content.Kind
                     || inventory[i].Content.HandleValue != content.HandleValue
                     || !inventory[i].SoulId.IsEmpty
+                    || inventory[i].EnchantmentCharge != -1f
                     || inventory[i].Restocking != 0
                     || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
@@ -194,6 +195,7 @@ namespace VVardenfell.Runtime.Inventory
                 Content = content,
                 Count = count,
                 Condition = condition,
+                EnchantmentCharge = -1f,
                 AuthoredOrder = inventory.Length,
             });
         }

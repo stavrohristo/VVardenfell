@@ -1,5 +1,4 @@
 using System;
-using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
@@ -12,7 +11,6 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptInventoryMutationApplySystem : ISystem
@@ -31,7 +29,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -86,6 +83,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 AddActorItem(ref contentBlob, actorInventory, request.Content, count);
             else
                 RemoveActorItem(actorInventory, request.Content, count);
+            uint placedRefId = request.TargetPlacedRefId;
+            if (placedRefId == 0u && systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
+                placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+            ScriptVisibleSaveStateUtility.ReplaceActorInventory(systemState.EntityManager, target, placedRefId);
         }
 
         void ApplyRemoveSoulGem(ref SystemState systemState, in MorrowindScriptInventoryMutationRequest request)
@@ -126,6 +127,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if (!SameContent(inventory[i].Content, content)
                     || !inventory[i].SoulId.IsEmpty
+                    || inventory[i].EnchantmentCharge != -1f
                     || !InventoryConditionUtility.CanStackCondition(content, inventory[i].Condition, condition))
                 {
                     continue;
@@ -142,6 +144,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Content = content,
                 Count = count,
                 Condition = condition,
+                EnchantmentCharge = -1f,
             });
         }
 

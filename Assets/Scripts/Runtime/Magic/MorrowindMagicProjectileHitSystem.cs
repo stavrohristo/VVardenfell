@@ -39,6 +39,7 @@ namespace VVardenfell.Runtime.Magic
                     CasterEntity = value.Caster,
                     TargetEntity = target,
                     TargetPlacedRefId = target == Entity.Null ? 0u : PlacedRefId(ref systemState, target),
+                    SourceKind = (byte)RuntimeMagicSourceKind.Spell,
                     Spell = new SpellDefHandle { Value = value.SpellHandleValue },
                     Scripted = value.Scripted,
                     AlwaysSucceed = 1,

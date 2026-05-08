@@ -1,4 +1,5 @@
 using Unity.Mathematics;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 
 namespace VVardenfell.Runtime.WorldState
@@ -35,6 +36,72 @@ namespace VVardenfell.Runtime.WorldState
         public MorrowindTimeSavePayload Time;
         public MorrowindWeatherSavePayload Weather;
         public MorrowindCombatSavePayload Combat;
+        public MorrowindMagicSavePayload Magic;
+        public MorrowindScriptSavePayload Script;
+        public PlacedRefStateSavePayload PlacedRefs;
+    }
+
+    public struct MorrowindScriptSavePayload
+    {
+        public uint NextAudioRequestSequence;
+        public uint RandomState;
+        public MorrowindScriptGlobalValue[] Globals;
+        public MorrowindGlobalScriptSavePayload[] GlobalScripts;
+        public MorrowindObjectScriptSavePayload[] ObjectScripts;
+    }
+
+    public struct MorrowindGlobalScriptSavePayload
+    {
+        public int ProgramIndex;
+        public int ProgramCounter;
+        public byte Status;
+        public byte SuppressActivation;
+        public string DisabledReason;
+        public uint TargetPlacedRefId;
+        public MorrowindScriptLocalValue[] Locals;
+    }
+
+    public struct MorrowindObjectScriptSavePayload
+    {
+        public uint PlacedRefId;
+        public int ProgramIndex;
+        public int ProgramCounter;
+        public byte Status;
+        public byte SuppressActivation;
+        public string DisabledReason;
+        public MorrowindScriptLocalValue[] Locals;
+    }
+
+    public struct PlacedRefStateSavePayload
+    {
+        public PlacedRefStateEntrySavePayload[] Entries;
+        public PlacedRefActorInventorySavePayload[] ActorInventories;
+    }
+
+    public struct PlacedRefStateEntrySavePayload
+    {
+        public uint PlacedRefId;
+        public byte HasDisabled;
+        public byte Disabled;
+        public byte HasLock;
+        public int LockLevel;
+        public byte Locked;
+        public string KeyId;
+        public string TrapId;
+        public byte HasTransform;
+        public float3 Position;
+        public quaternion Rotation;
+        public float Scale;
+        public int2 ExteriorCell;
+        public string InteriorCellId;
+        public ulong InteriorCellHash;
+        public byte IsInterior;
+    }
+
+    public struct PlacedRefActorInventorySavePayload
+    {
+        public uint PlacedRefId;
+        public ActorInventoryItem[] Items;
     }
 
     public struct MorrowindQuestJournalSavePayload
@@ -128,6 +195,18 @@ namespace VVardenfell.Runtime.WorldState
     public struct MorrowindCombatSavePayload
     {
         public uint RandomState;
+        public byte Initialized;
+    }
+
+    public struct MorrowindMagicSavePayload
+    {
+        public uint RandomState;
+        public int NextActiveSpellId;
+        public byte SelectedSourceKind;
+        public SpellDefHandle SelectedSpell;
+        public int SelectedInventoryIndex;
+        public ContentReference SelectedItemContent;
+        public EnchantmentDefHandle SelectedEnchantment;
         public byte Initialized;
     }
 

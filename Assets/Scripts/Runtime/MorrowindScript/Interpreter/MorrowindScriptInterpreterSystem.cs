@@ -1595,7 +1595,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         }
 
         static bool IsLineOfSightOpcode(MorrowindScriptOpcode opcode)
-            => opcode == MorrowindScriptOpcode.GetLOS || opcode == MorrowindScriptOpcode.GetDetected;
+            => opcode == MorrowindScriptOpcode.GetLOS;
 
         static bool TryResolveLineOfSightActor(
             EntityManager entityManager,
@@ -1857,7 +1857,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 if ((uint)instance.ProgramIndex >= (uint)Programs.Length)
                 {
-                    Fault(ref instance, FormatScriptFault(default, -1, 0, ScriptFaultReason.InvalidProgramIndex));
+                    Fault(ref instance, FormatScriptFault(default, -1, 0, 0, 0, 0, 0, ScriptFaultReason.InvalidProgramIndex));
                     return false;
                 }
 
@@ -1882,7 +1882,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 if (!QuestJournal.HasBuffer(RuntimeEntity))
                 {
-                    Fault(ref instance, FormatScriptFault(programId, -1, 0, ScriptFaultReason.MissingQuestJournalRuntimeBuffer));
+                    Fault(ref instance, FormatScriptFault(programId, -1, 0, 0, 0, 0, 0, ScriptFaultReason.MissingQuestJournalRuntimeBuffer));
                     return false;
                 }
 
@@ -2026,7 +2026,8 @@ namespace VVardenfell.Runtime.MorrowindScript
 
                 int pc = 0;
                 int maxSteps = math.max(16, program.InstructionCount * 4);
-                for (int step = 0; step < maxSteps; step++)
+                int step = 0;
+                for (; step < maxSteps; step++)
                 {
                     if ((uint)pc >= (uint)program.InstructionCount)
                         break;
@@ -2035,6 +2036,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     context.ProgramCounter = 1;
                     context.FaultProgramCounter = pc;
                     context.FaultOpcode = instruction.Opcode;
+                    context.FaultOperand0 = instruction.Operand0;
+                    context.FaultOperand1 = instruction.Operand1;
+                    context.FaultInt0 = instruction.Int0;
+                    context.FaultInt1 = instruction.Int1;
                     if ((uint)instruction.Opcode >= (uint)OpcodeHandlers.Length)
                     {
                         context.Faulted = 1;
@@ -2051,9 +2056,34 @@ namespace VVardenfell.Runtime.MorrowindScript
                     pc += context.ProgramCounter;
                 }
 
+                if (context.Faulted == 0
+                    && context.Halted == 0
+                    && step >= maxSteps
+                    && (uint)pc < (uint)program.InstructionCount)
+                {
+                    Fault(ref instance, FormatScriptFault(
+                        programId,
+                        context.FaultProgramCounter,
+                        context.FaultOpcode,
+                        context.FaultOperand0,
+                        context.FaultOperand1,
+                        maxSteps,
+                        pc,
+                        ScriptFaultReason.ScriptStepLimitExceeded));
+                    return false;
+                }
+
                 if (context.Faulted != 0)
                 {
-                    Fault(ref instance, FormatScriptFault(programId, context.FaultProgramCounter, context.FaultOpcode, ScriptFaultReason.ScriptVmFault));
+                    Fault(ref instance, FormatScriptFault(
+                        programId,
+                        context.FaultProgramCounter,
+                        context.FaultOpcode,
+                        context.FaultOperand0,
+                        context.FaultOperand1,
+                        context.FaultInt0,
+                        context.FaultInt1,
+                        ScriptFaultReason.ScriptVmFault));
                     return false;
                 }
 
@@ -2087,9 +2117,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 InvalidProgramIndex,
                 MissingQuestJournalRuntimeBuffer,
                 ScriptVmFault,
+                ScriptStepLimitExceeded,
             }
 
-            static FixedString128Bytes FormatScriptFault(FixedString128Bytes programId, int pc, byte opcode, ScriptFaultReason reason)
+            static FixedString128Bytes FormatScriptFault(
+                FixedString128Bytes programId,
+                int pc,
+                byte opcode,
+                byte operand0,
+                short operand1,
+                int int0,
+                int int1,
+                ScriptFaultReason reason)
             {
                 var text = default(FixedString128Bytes);
                 AppendScriptEquals(ref text);
@@ -2102,7 +2141,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                     AppendPcEquals(ref text);
                     text.Append(pc);
                     AppendOpEquals(ref text);
+                    AppendOpcodeName(ref text, opcode);
+                    AppendOpenParen(ref text);
                     text.Append(opcode);
+                    AppendCloseParen(ref text);
+                    AppendModeEquals(ref text);
+                    text.Append(operand0);
+                    AppendArgEquals(ref text);
+                    text.Append(operand1);
+                    AppendKeyEquals(ref text);
+                    text.Append(int0);
+                    AppendValueEquals(ref text);
+                    text.Append(int1);
                 }
                 AppendColonSpace(ref text);
                 AppendFaultReason(ref text, reason);
@@ -2128,6 +2178,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                         break;
                     case ScriptFaultReason.ScriptVmFault:
                         AppendScriptVmFault(ref text);
+                        break;
+                    case ScriptFaultReason.ScriptStepLimitExceeded:
+                        AppendScriptStepLimitExceeded(ref text);
                         break;
                 }
             }
@@ -2169,6 +2222,132 @@ namespace VVardenfell.Runtime.MorrowindScript
                 text.Append((char)' ');
                 text.Append((char)'o');
                 text.Append((char)'p');
+                text.Append((char)'=');
+            }
+
+            static void AppendOpcodeName(ref FixedString128Bytes text, byte opcode)
+            {
+                switch ((MorrowindScriptOpcode)opcode)
+                {
+                    case MorrowindScriptOpcode.RequestSetDisabled:
+                        AppendRequestSetDisabled(ref text);
+                        break;
+                    case MorrowindScriptOpcode.GetItemCount:
+                        AppendGetItemCount(ref text);
+                        break;
+                    case MorrowindScriptOpcode.GetPlayerItemCount:
+                        AppendGetPlayerItemCount(ref text);
+                        break;
+                    default:
+                        AppendUnknownOpcode(ref text);
+                        break;
+                }
+            }
+
+            static void AppendRequestSetDisabled(ref FixedString128Bytes text)
+            {
+                text.Append((char)'R');
+                text.Append((char)'e');
+                text.Append((char)'q');
+                text.Append((char)'S');
+                text.Append((char)'e');
+                text.Append((char)'t');
+                text.Append((char)'D');
+                text.Append((char)'i');
+                text.Append((char)'s');
+                text.Append((char)'a');
+                text.Append((char)'b');
+                text.Append((char)'l');
+                text.Append((char)'e');
+            }
+
+            static void AppendGetItemCount(ref FixedString128Bytes text)
+            {
+                text.Append((char)'G');
+                text.Append((char)'e');
+                text.Append((char)'t');
+                text.Append((char)'I');
+                text.Append((char)'t');
+                text.Append((char)'e');
+                text.Append((char)'m');
+                text.Append((char)'C');
+                text.Append((char)'o');
+                text.Append((char)'u');
+                text.Append((char)'n');
+                text.Append((char)'t');
+            }
+
+            static void AppendGetPlayerItemCount(ref FixedString128Bytes text)
+            {
+                text.Append((char)'G');
+                text.Append((char)'e');
+                text.Append((char)'t');
+                text.Append((char)'P');
+                text.Append((char)'l');
+                text.Append((char)'a');
+                text.Append((char)'y');
+                text.Append((char)'e');
+                text.Append((char)'r');
+                text.Append((char)'I');
+                text.Append((char)'t');
+                text.Append((char)'e');
+                text.Append((char)'m');
+                text.Append((char)'C');
+                text.Append((char)'o');
+                text.Append((char)'u');
+                text.Append((char)'n');
+                text.Append((char)'t');
+            }
+
+            static void AppendUnknownOpcode(ref FixedString128Bytes text)
+            {
+                text.Append((char)'?');
+            }
+
+            static void AppendOpenParen(ref FixedString128Bytes text)
+            {
+                text.Append((char)'(');
+            }
+
+            static void AppendCloseParen(ref FixedString128Bytes text)
+            {
+                text.Append((char)')');
+            }
+
+            static void AppendModeEquals(ref FixedString128Bytes text)
+            {
+                text.Append((char)' ');
+                text.Append((char)'m');
+                text.Append((char)'o');
+                text.Append((char)'d');
+                text.Append((char)'e');
+                text.Append((char)'=');
+            }
+
+            static void AppendArgEquals(ref FixedString128Bytes text)
+            {
+                text.Append((char)' ');
+                text.Append((char)'a');
+                text.Append((char)'r');
+                text.Append((char)'g');
+                text.Append((char)'=');
+            }
+
+            static void AppendKeyEquals(ref FixedString128Bytes text)
+            {
+                text.Append((char)' ');
+                text.Append((char)'k');
+                text.Append((char)'e');
+                text.Append((char)'y');
+                text.Append((char)'=');
+            }
+
+            static void AppendValueEquals(ref FixedString128Bytes text)
+            {
+                text.Append((char)' ');
+                text.Append((char)'v');
+                text.Append((char)'a');
+                text.Append((char)'l');
                 text.Append((char)'=');
             }
 
@@ -2295,6 +2474,37 @@ namespace VVardenfell.Runtime.MorrowindScript
                 text.Append((char)'u');
                 text.Append((char)'l');
                 text.Append((char)'t');
+                text.Append((char)'.');
+            }
+
+            static void AppendScriptStepLimitExceeded(ref FixedString128Bytes text)
+            {
+                text.Append((char)'S');
+                text.Append((char)'c');
+                text.Append((char)'r');
+                text.Append((char)'i');
+                text.Append((char)'p');
+                text.Append((char)'t');
+                text.Append((char)' ');
+                text.Append((char)'s');
+                text.Append((char)'t');
+                text.Append((char)'e');
+                text.Append((char)'p');
+                text.Append((char)' ');
+                text.Append((char)'l');
+                text.Append((char)'i');
+                text.Append((char)'m');
+                text.Append((char)'i');
+                text.Append((char)'t');
+                text.Append((char)' ');
+                text.Append((char)'e');
+                text.Append((char)'x');
+                text.Append((char)'c');
+                text.Append((char)'e');
+                text.Append((char)'e');
+                text.Append((char)'d');
+                text.Append((char)'e');
+                text.Append((char)'d');
                 text.Append((char)'.');
             }
         }

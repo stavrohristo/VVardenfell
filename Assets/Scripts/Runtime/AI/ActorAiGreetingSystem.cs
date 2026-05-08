@@ -91,6 +91,7 @@ namespace VVardenfell.Runtime.AI
             float elapsedSeconds = math.max(0f, SystemAPI.Time.DeltaTime);
             float resetDistance = math.max(0f, greetDistanceResetMw) * WorldScale.MwUnitsToMeters;
             float resetDistanceSq = resetDistance * resetDistance;
+            bool queuedPhysicsRequest = false;
 
             foreach (var (greetingRef, aiSettings, source, placedRef, transformRef, vitals, entity) in SystemAPI
                          .Query<
@@ -156,8 +157,11 @@ namespace VVardenfell.Runtime.AI
                         player,
                         EyePosition(playerPosition),
                         EyePosition(actorPosition),
-                        out bool hasLineOfSight))
+                        out bool hasLineOfSight,
+                        out bool queuedLineOfSightRequest,
+                        markPending: false))
                 {
+                    queuedPhysicsRequest |= queuedLineOfSightRequest;
                     continue;
                 }
 
@@ -226,6 +230,9 @@ namespace VVardenfell.Runtime.AI
                 FacePlayer(ref transformRef.ValueRW, playerPosition);
                 InterruptMovementForGreeting(ref systemState, entity, forceIdle: true);
             }
+
+            if (queuedPhysicsRequest && !systemState.EntityManager.IsComponentEnabled<DeferredPhysicsQueryPending>(deferredPhysicsQueueEntity))
+                systemState.EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(deferredPhysicsQueueEntity, true);
         }
 
         void ResetAllGreetingsAndRelease(ref SystemState systemState)

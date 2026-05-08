@@ -235,7 +235,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 case MorrowindScriptOpcode.GetDisposition:
                     return MorrowindScriptRequirementMask.ActorDispositions;
                 case MorrowindScriptOpcode.GetLOS:
-                case MorrowindScriptOpcode.GetDetected:
                     return MorrowindScriptRequirementMask.ActorLineOfSight;
                 case MorrowindScriptOpcode.GetSpell:
                     return MorrowindScriptRequirementMask.ActorKnownSpellSnapshots;

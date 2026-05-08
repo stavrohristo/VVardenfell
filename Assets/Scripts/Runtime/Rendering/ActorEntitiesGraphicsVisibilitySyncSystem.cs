@@ -66,10 +66,25 @@ namespace VVardenfell.Runtime.Rendering
                     && LocalPlayerVisualLookup.HasComponent(instance.Actor))
                 {
                     var visual = LocalPlayerVisualLookup[instance.Actor];
-                    var expectedMode = visual.FirstPerson != 0
-                        ? PlayerViewMode.FirstPerson
-                        : PlayerViewMode.ThirdPerson;
-                    visible = LocalPlayerPresentation.Mode == expectedMode;
+                    bool firstAndThirdShareActor = LocalPlayerPresentation.FirstPersonVisual == LocalPlayerPresentation.ThirdPersonVisual;
+                    if (!firstAndThirdShareActor)
+                    {
+                        var expectedMode = visual.FirstPerson != 0
+                            ? PlayerViewMode.FirstPerson
+                            : PlayerViewMode.ThirdPerson;
+                        visible = LocalPlayerPresentation.Mode == expectedMode;
+                    }
+
+                    bool firstPersonActive = LocalPlayerPresentation.Mode == PlayerViewMode.FirstPerson
+                                             && instance.Actor == LocalPlayerPresentation.FirstPersonVisual;
+                    if (instance.VisibilityMode == ActorRenderMeshVisibilityMode.FirstPersonCameraHidden)
+                        visible = visible && !firstPersonActive;
+                    else if (instance.VisibilityMode == ActorRenderMeshVisibilityMode.FirstPersonShadowOnly)
+                        visible = visible && firstPersonActive;
+                }
+                else if (instance.VisibilityMode == ActorRenderMeshVisibilityMode.FirstPersonShadowOnly)
+                {
+                    visible = false;
                 }
                 materialMesh.ValueRW = visible;
             }

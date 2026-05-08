@@ -5,6 +5,8 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
+using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.UI.Shell;
 
 namespace VVardenfell.Runtime.Shell
@@ -14,6 +16,7 @@ namespace VVardenfell.Runtime.Shell
         const int MagicEffectFlagTargetSkill = 0x1;
         const int MagicEffectFlagTargetAttribute = 0x2;
         const int MagicEffectFlagNoMagnitude = 0x8;
+        const uint BookRecordTag = (uint)'B' | ((uint)'O' << 8) | ((uint)'O' << 16) | ((uint)'K' << 24);
 
         SpellWindowViewModel BuildSpellModel(ref RuntimeContentBlob contentBlob, in SpellWindowState state, in PlayerPresentationStats playerStats)
         {
@@ -21,10 +24,10 @@ namespace VVardenfell.Runtime.Shell
             var model = new SpellWindowViewModel
             {
                 NormalizedRect = RuntimeWindowGeometryUtility.ToUnityRect(state.Rect),
-                Title = "Magic",
+                Title = ResolveSelectedMagicTitle(ref contentBlob, state),
                 FilterText = state.FilterText.ToString(),
-                FooterButtonText = "Delete",
-                EmptyStateText = "No known spells",
+                FooterButtonText = RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sDelete", "Delete"),
+                EmptyStateText = "None",
                 SpellSummaryText = $"Known spells: 0   Cached definitions: {spellCount}",
                 EffectSummaryText = "No selected spell",
                 ActiveEffects = BuildActiveEffectIcons(ref contentBlob, playerStats),
@@ -33,40 +36,23 @@ namespace VVardenfell.Runtime.Shell
             if (!playerStats.HasPlayer || !EntityManager.Exists(playerStats.PlayerEntity) || !EntityManager.HasBuffer<ActorKnownSpell>(playerStats.PlayerEntity))
                 return model;
 
-            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity);
+            var knownSpells = EntityManager.GetBuffer<ActorKnownSpell>(playerStats.PlayerEntity, true);
+            var activeEffects = EntityManager.HasBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity)
+                ? EntityManager.GetBuffer<ActorActiveMagicEffect>(playerStats.PlayerEntity, true)
+                : default;
             var entries = new List<SpellWindowEntryViewModel>(knownSpells.Length);
-            int selectedIndex = knownSpells.Length == 0 ? -1 : Math.Clamp(state.SelectedSpellIndex, 0, knownSpells.Length - 1);
             string filter = state.FilterText.ToString();
-            for (int i = 0; i < knownSpells.Length; i++)
-            {
-                var spellHandle = knownSpells[i].Spell;
-                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= contentBlob.Spells.Length)
-                    continue;
-
-                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, spellHandle);
-                if (!MatchesSpellFilter(ref spell, filter))
-                    continue;
-
-                entries.Add(new SpellWindowEntryViewModel
-                {
-                    SpellIndex = i,
-                    Name = RuntimeContentMetadataResolver.ResolveSpellName(ref spell),
-                    CostText = spell.Cost.ToString(),
-                    TypeText = RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType),
-                    EffectTooltipText = BuildSpellEffectTooltip(ref contentBlob, ref spell),
-                    SpellTooltip = BuildSpellTooltip(ref contentBlob, ref spell),
-                    Selected = i == selectedIndex,
-                });
-            }
-
+            AddSpellGroup(ref contentBlob, entries, knownSpells, activeEffects, filter, state, playerStats, MorrowindSpellCostUtility.SpellTypePower, RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sPowers", "Powers"), string.Empty);
+            AddSpellGroup(ref contentBlob, entries, knownSpells, activeEffects, filter, state, playerStats, MorrowindSpellCostUtility.SpellTypeSpell, RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sSpells", "Spells"), RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sCostChance", "Cost/Chance"));
+            AddEnchantedItemGroup(ref contentBlob, entries, playerStats, filter, state);
             model.Entries = entries.ToArray();
-            model.SpellSummaryText = $"Known spells: {entries.Count}   Cached definitions: {spellCount}";
+            model.SpellSummaryText = $"Magic sources: {CountSelectableEntries(entries)}   Cached definitions: {spellCount}";
             model.EmptyStateText = entries.Count == 0 && !string.IsNullOrWhiteSpace(filter)
                 ? $"No spells match \"{filter.Trim()}\""
-                : "No known spells";
-            if (selectedIndex >= 0 && selectedIndex < knownSpells.Length)
+                : "None";
+            if (state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.Spell && state.SelectedSpell.IsValid)
             {
-                var spellHandle = knownSpells[selectedIndex].Spell;
+                var spellHandle = state.SelectedSpell;
                 if (spellHandle.IsValid && spellHandle.Index >= 0 && spellHandle.Index < contentBlob.Spells.Length)
                 {
                     ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, spellHandle);
@@ -74,11 +60,181 @@ namespace VVardenfell.Runtime.Shell
                     model.Effects = BuildSpellEffectRows(ref contentBlob, ref spell);
                 }
             }
+            else if (state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.EnchantedItem && state.SelectedEnchantment.IsValid)
+            {
+                ref RuntimeEnchantmentDefBlob enchantment = ref RuntimeContentBlobUtility.Get(ref contentBlob, state.SelectedEnchantment);
+                model.EffectSummaryText = $"Magic Item   Charge {enchantment.Charge}";
+                model.Effects = BuildEnchantmentEffectRows(ref contentBlob, ref enchantment);
+            }
 
             return model;
         }
 
-        static bool MatchesSpellFilter(ref RuntimeSpellDefBlob spell, string filter)
+        void AddSpellGroup(
+            ref RuntimeContentBlob contentBlob,
+            List<SpellWindowEntryViewModel> entries,
+            DynamicBuffer<ActorKnownSpell> knownSpells,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
+            string filter,
+            in SpellWindowState state,
+            in PlayerPresentationStats playerStats,
+            int spellType,
+            string groupName,
+            string rightHeader)
+        {
+            var groupEntries = new List<SpellWindowEntryViewModel>();
+            for (int i = 0; i < knownSpells.Length; i++)
+            {
+                var spellHandle = knownSpells[i].Spell;
+                if (!spellHandle.IsValid || spellHandle.Index < 0 || spellHandle.Index >= contentBlob.Spells.Length)
+                    continue;
+
+                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, spellHandle);
+                if (spell.SpellType != spellType || !MatchesSpellFilter(ref contentBlob, ref spell, filter))
+                    continue;
+
+                groupEntries.Add(new SpellWindowEntryViewModel
+                {
+                    SpellIndex = i,
+                    SourceKind = RuntimeMagicSourceKind.Spell,
+                    Spell = spellHandle,
+                    InventoryIndex = -1,
+                    Name = RuntimeContentMetadataResolver.ResolveSpellName(ref spell),
+                    CostText = spell.SpellType == MorrowindSpellCostUtility.SpellTypeSpell
+                        ? $"{MorrowindSpellCostUtility.CalculateSpellCost(ref contentBlob, ref spell)}/{ResolveSpellChance(ref contentBlob, ref spell, playerStats, activeEffects)}"
+                        : string.Empty,
+                    TypeText = RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType),
+                    EffectTooltipText = BuildSpellEffectTooltip(ref contentBlob, ref spell),
+                    SpellTooltip = BuildSpellTooltip(ref contentBlob, ref spell),
+                    Count = 1,
+                    Active = true,
+                    Selected = state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.Spell && state.SelectedSpell.Value == spellHandle.Value,
+                });
+            }
+
+            AddSortedGroup(entries, groupName, rightHeader, groupEntries);
+        }
+
+        void AddEnchantedItemGroup(
+            ref RuntimeContentBlob contentBlob,
+            List<SpellWindowEntryViewModel> entries,
+            in PlayerPresentationStats playerStats,
+            string filter,
+            in SpellWindowState state)
+        {
+            Entity player = playerStats.PlayerEntity;
+            if (!EntityManager.HasBuffer<PlayerInventoryItem>(player))
+                return;
+
+            var inventory = EntityManager.GetBuffer<PlayerInventoryItem>(player, true);
+            bool hasEquipment = EntityManager.HasBuffer<ActorEquipmentSlot>(player);
+            var equipment = hasEquipment ? EntityManager.GetBuffer<ActorEquipmentSlot>(player, true) : default;
+            var groupEntries = new List<SpellWindowEntryViewModel>();
+            for (int i = 0; i < inventory.Length; i++)
+            {
+                var item = inventory[i];
+                if (item.Count <= 0 || item.Content.Kind != ContentReferenceKind.Item)
+                    continue;
+                ref RuntimeBaseDefBlob itemDef = ref RuntimeContentBlobUtility.Get(ref contentBlob, new ItemDefHandle { Value = item.Content.HandleValue });
+                if (itemDef.EnchantIdHash == 0UL)
+                    continue;
+                bool hasItemEquipment = RuntimeContentBlobUtility.TryGetItemEquipment(ref contentBlob, item.Content, out var itemEquipment);
+                bool isScrollRecord = itemDef.RecordTag == BookRecordTag;
+                if (!hasItemEquipment && !isScrollRecord)
+                    continue;
+                if (!RuntimeContentBlobUtility.TryGetEnchantmentHandleByIdHash(ref contentBlob, itemDef.EnchantIdHash, out var enchantmentHandle))
+                    throw new InvalidOperationException($"[VVardenfell][Magic] Item {itemDef.Id.ToString()} references missing enchantment {itemDef.EnchantId.ToString()}.");
+                ref RuntimeEnchantmentDefBlob enchantment = ref RuntimeContentBlobUtility.Get(ref contentBlob, enchantmentHandle);
+                if (!MorrowindEnchantmentUtility.IsUsableMagicItemType(enchantment.EnchantmentType))
+                    continue;
+                if (enchantment.EnchantmentType == MorrowindEnchantmentUtility.WhenUsed && !hasItemEquipment)
+                    continue;
+                if (enchantment.EnchantmentType == MorrowindEnchantmentUtility.WhenUsed && !CanEquipMagicItem(ref contentBlob, playerStats, itemEquipment))
+                    continue;
+                if (enchantment.EnchantmentType == MorrowindEnchantmentUtility.CastOnce && !isScrollRecord)
+                    throw new InvalidOperationException($"[VVardenfell][Magic] Cast-once enchantment {enchantment.Id.ToString()} is attached to non-scroll item {itemDef.Id.ToString()}.");
+                if (!MatchesEnchantmentFilter(ref contentBlob, ref itemDef, ref enchantment, filter))
+                    continue;
+
+                bool equipped = hasEquipment && IsEquipped(equipment, i, item.Content);
+                int castCost = enchantment.EnchantmentType == MorrowindEnchantmentUtility.CastOnce
+                    ? 100
+                    : MorrowindEnchantmentUtility.CalculateCastCost(ref contentBlob, ref enchantment, playerStats.Skills);
+                float maxCharge = enchantment.EnchantmentType == MorrowindEnchantmentUtility.CastOnce
+                    ? 100
+                    : MorrowindEnchantmentUtility.CalculateCharge(ref contentBlob, ref enchantment);
+                float currentCharge = enchantment.EnchantmentType == MorrowindEnchantmentUtility.CastOnce
+                    ? maxCharge
+                    : MorrowindEnchantmentUtility.ResolveCurrentCharge(ref contentBlob, ref enchantment, item.EnchantmentCharge);
+                int charge = (int)currentCharge;
+                string name = RuntimeContentMetadataResolver.ResolveDisplayName(ref itemDef, "Unknown item");
+                groupEntries.Add(new SpellWindowEntryViewModel
+                {
+                    SpellIndex = -1,
+                    SourceKind = RuntimeMagicSourceKind.EnchantedItem,
+                    InventoryIndex = i,
+                    ItemContent = item.Content,
+                    Enchantment = enchantmentHandle,
+                    Name = item.Count > 1 ? $"{name} ({item.Count})" : name,
+                    CostText = $"{castCost}/{charge}",
+                    TypeText = enchantment.EnchantmentType == MorrowindEnchantmentUtility.CastOnce ? "Cast Once" : "Magic Item",
+                    EffectTooltipText = BuildEnchantmentEffectTooltip(ref contentBlob, ref enchantment),
+                    Count = item.Count,
+                    Active = enchantment.EnchantmentType == MorrowindEnchantmentUtility.WhenUsed && equipped,
+                    ShowChargeBar = true,
+                    ChargeFillNormalized = maxCharge > 0f ? Math.Clamp(currentCharge / maxCharge, 0f, 1f) : 0f,
+                    Selected = state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.EnchantedItem
+                               && state.SelectedInventoryIndex == i
+                               && state.SelectedItemContent.Kind == item.Content.Kind
+                               && state.SelectedItemContent.HandleValue == item.Content.HandleValue
+                               && state.SelectedEnchantment.Value == enchantmentHandle.Value,
+                });
+            }
+
+            AddSortedGroup(entries, RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sMagicItem", "Magic Item"), RuntimeContentMetadataResolver.ResolveGameSettingString(ref contentBlob, "sCostCharge", "Cost/Charge"), groupEntries);
+        }
+
+        static int CountSelectableEntries(List<SpellWindowEntryViewModel> entries)
+        {
+            int count = 0;
+            for (int i = 0; i < entries.Count; i++)
+                if (!entries[i].IsGroupHeader)
+                    count++;
+            return count;
+        }
+
+        static void AddSortedGroup(List<SpellWindowEntryViewModel> entries, string groupName, string rightHeader, List<SpellWindowEntryViewModel> groupEntries)
+        {
+            if (groupEntries.Count == 0)
+                return;
+            groupEntries.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            entries.Add(new SpellWindowEntryViewModel { IsGroupHeader = true, HasGroupSeparator = entries.Count > 0, Active = true, Name = groupName, CostText = rightHeader });
+            entries.AddRange(groupEntries);
+        }
+
+        string ResolveSelectedMagicTitle(ref RuntimeContentBlob contentBlob, in SpellWindowState state)
+        {
+            if (state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.Spell
+                && state.SelectedSpell.IsValid
+                && state.SelectedSpell.Index >= 0
+                && state.SelectedSpell.Index < contentBlob.Spells.Length)
+            {
+                ref RuntimeSpellDefBlob spell = ref RuntimeContentBlobUtility.Get(ref contentBlob, state.SelectedSpell);
+                return RuntimeContentMetadataResolver.ResolveSpellName(ref spell);
+            }
+
+            if (state.SelectedSourceKind == (byte)RuntimeMagicSourceKind.EnchantedItem
+                && state.SelectedItemContent.Kind == ContentReferenceKind.Item
+                && state.SelectedItemContent.HandleValue > 0)
+            {
+                ref RuntimeBaseDefBlob item = ref RuntimeContentBlobUtility.Get(ref contentBlob, new ItemDefHandle { Value = state.SelectedItemContent.HandleValue });
+                return RuntimeContentMetadataResolver.ResolveDisplayName(ref item, "Magic Item");
+            }
+
+            return "None";
+        }
+
+        static bool MatchesSpellFilter(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell, string filter)
         {
             if (string.IsNullOrWhiteSpace(filter))
                 return true;
@@ -87,11 +243,115 @@ namespace VVardenfell.Runtime.Shell
             string name = spell.Name.ToString();
             if (!string.IsNullOrWhiteSpace(name) && name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
-            string id = spell.Id.ToString();
-            if (!string.IsNullOrWhiteSpace(id) && id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+            return SpellEffectsMatchFilter(ref contentBlob, spell.EffectStartIndex, spell.EffectCount, needle);
+        }
+
+        static int ResolveSpellChance(
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeSpellDefBlob spell,
+            in PlayerPresentationStats playerStats,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects)
+            => (int)Math.Clamp(MorrowindSpellCostUtility.CalculateSuccessChance(
+                ref contentBlob,
+                ref spell,
+                playerStats.Attributes,
+                playerStats.Skills,
+                playerStats.Vitals,
+                playerStats.DerivedMovement,
+                activeEffects,
+                checkMagicka: false,
+                out _), 0f, 100f);
+
+        static bool IsEquipped(DynamicBuffer<ActorEquipmentSlot> equipment, int inventoryIndex, ContentReference content)
+        {
+            for (int i = 0; i < equipment.Length; i++)
+            {
+                var slot = equipment[i];
+                if (slot.InventoryIndex == inventoryIndex && slot.Content.Kind == content.Kind && slot.Content.HandleValue == content.HandleValue)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool MatchesEnchantmentFilter(
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeBaseDefBlob item,
+            ref RuntimeEnchantmentDefBlob enchantment,
+            string filter)
+        {
+            if (string.IsNullOrWhiteSpace(filter))
                 return true;
 
-            return RuntimeContentMetadataResolver.ResolveSpellTypeName(spell.SpellType).IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+            string needle = filter.Trim();
+            string name = item.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name) && name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            return SpellEffectsMatchFilter(ref contentBlob, enchantment.EffectStartIndex, enchantment.EffectCount, needle);
+        }
+
+        static bool SpellEffectsMatchFilter(ref RuntimeContentBlob contentBlob, int effectStartIndex, int effectCount, string needle)
+        {
+            if (effectStartIndex < 0 || effectCount <= 0)
+                return false;
+            int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - effectStartIndex);
+            int count = Math.Min(effectCount, available);
+            for (int i = 0; i < count; i++)
+            {
+                var effect = contentBlob.MagicEffectInstances[effectStartIndex + i];
+                string name = BuildSpellTooltipEffectText(ref contentBlob, effect);
+                if (!string.IsNullOrWhiteSpace(name) && name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        bool CanEquipMagicItem(ref RuntimeContentBlob contentBlob, in PlayerPresentationStats playerStats, in ItemEquipmentDef equipment)
+        {
+            if (equipment.Slot == ItemEquipmentSlot.None)
+                return false;
+            if (equipment.Kind == ItemEquipmentKind.Armor && equipment.Health == 0)
+                return false;
+            if (equipment.Kind != ItemEquipmentKind.Weapon
+                && equipment.Kind != ItemEquipmentKind.Armor
+                && equipment.Kind != ItemEquipmentKind.Clothing)
+            {
+                return false;
+            }
+
+            if (!playerStats.HasPlayer
+                || !EntityManager.Exists(playerStats.PlayerEntity)
+                || !EntityManager.HasComponent<PlayerRaceAppearance>(playerStats.PlayerEntity))
+            {
+                throw new InvalidOperationException("[VVardenfell][Magic] Magic item equip filtering requires player race appearance.");
+            }
+
+            PlayerRaceAppearance appearance = EntityManager.GetComponentData<PlayerRaceAppearance>(playerStats.PlayerEntity);
+            if (ActorEquipmentRuntimeUtility.IsBeastRace(ref contentBlob, RuntimeContentStableHash.HashId(appearance.RaceId.ToString()))
+                && HasBeastForbiddenPart(ref contentBlob, equipment))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        static bool HasBeastForbiddenPart(ref RuntimeContentBlob contentBlob, in ItemEquipmentDef equipment)
+        {
+            RuntimeContentBlobUtility.RequireRange(equipment.FirstBodyPartIndex, equipment.BodyPartCount, contentBlob.ItemEquipmentBodyParts.Length, "item equipment body part");
+            for (int i = 0; i < equipment.BodyPartCount; i++)
+            {
+                var part = contentBlob.ItemEquipmentBodyParts[equipment.FirstBodyPartIndex + i].Part;
+                if (part == ItemEquipmentPartReference.Head
+                    || part == ItemEquipmentPartReference.LeftFoot
+                    || part == ItemEquipmentPartReference.RightFoot)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         static SpellWindowEffectRow[] BuildSpellEffectRows(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
@@ -105,6 +365,29 @@ namespace VVardenfell.Runtime.Shell
             for (int i = 0; i < count; i++)
             {
                 var effect = contentBlob.MagicEffectInstances[spell.EffectStartIndex + i];
+                rows[i] = new SpellWindowEffectRow
+                {
+                    EffectId = effect.EffectId,
+                    Name = RuntimeContentMetadataResolver.ResolveMagicEffectName(ref contentBlob, effect.EffectId),
+                    DetailText = BuildEffectDetail(ref contentBlob, effect),
+                    IconPath = RuntimeContentMetadataResolver.ResolveMagicEffectIconPath(ref contentBlob, effect.EffectId),
+                };
+            }
+
+            return rows;
+        }
+
+        static SpellWindowEffectRow[] BuildEnchantmentEffectRows(ref RuntimeContentBlob contentBlob, ref RuntimeEnchantmentDefBlob enchantment)
+        {
+            if (enchantment.EffectStartIndex < 0 || enchantment.EffectCount <= 0)
+                return Array.Empty<SpellWindowEffectRow>();
+
+            int available = Math.Max(0, contentBlob.MagicEffectInstances.Length - enchantment.EffectStartIndex);
+            int count = Math.Min(enchantment.EffectCount, available);
+            var rows = new SpellWindowEffectRow[count];
+            for (int i = 0; i < count; i++)
+            {
+                var effect = contentBlob.MagicEffectInstances[enchantment.EffectStartIndex + i];
                 rows[i] = new SpellWindowEffectRow
                 {
                     EffectId = effect.EffectId,
@@ -411,6 +694,17 @@ namespace VVardenfell.Runtime.Shell
         static string BuildSpellEffectTooltip(ref RuntimeContentBlob contentBlob, ref RuntimeSpellDefBlob spell)
         {
             var effects = BuildSpellEffectRows(ref contentBlob, ref spell);
+            return BuildEffectRowsTooltip(effects);
+        }
+
+        static string BuildEnchantmentEffectTooltip(ref RuntimeContentBlob contentBlob, ref RuntimeEnchantmentDefBlob enchantment)
+        {
+            var effects = BuildEnchantmentEffectRows(ref contentBlob, ref enchantment);
+            return BuildEffectRowsTooltip(effects);
+        }
+
+        static string BuildEffectRowsTooltip(SpellWindowEffectRow[] effects)
+        {
             if (effects.Length == 0)
                 return string.Empty;
 

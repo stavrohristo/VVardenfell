@@ -151,6 +151,10 @@ namespace VVardenfell.Runtime.MorrowindScript
         public byte Faulted;
         public int FaultProgramCounter;
         public byte FaultOpcode;
+        public byte FaultOperand0;
+        public short FaultOperand1;
+        public int FaultInt0;
+        public int FaultInt1;
     }
 
     [BurstCompile]
@@ -550,13 +554,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                     context,
                     instruction->Operand0,
                     instruction->Int0,
-                    out float3 sourcePosition)
-                || !TryResolveDistancePosition(
+                    out float3 sourcePosition))
+            {
+                return;
+            }
+
+            if (!TryResolveSoftDistancePosition(
                     context,
                     (byte)instruction->Operand1,
                     instruction->Int1,
                     out float3 targetPosition))
             {
+                PushZeroFloat(context);
                 return;
             }
 
@@ -1093,7 +1102,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            context->Faulted = 1;
+            PushZeroInteger(context);
         }
 
         [BurstCompile]
@@ -1533,10 +1542,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!TryResolveRefTarget(context, instruction, out uint targetPlacedRefId, out Entity targetEntity))
                 return;
 
-            if (!TryResolveActorTarget(context, (byte)instruction->Operand1, instruction->Int1, out uint combatTargetPlacedRefId, out Entity combatTargetEntity))
+            if (!TryResolveSoftActorTarget(context, (byte)instruction->Operand1, instruction->Int1, out uint combatTargetPlacedRefId, out Entity combatTargetEntity))
                 return;
 
-            if (targetPlacedRefId == 0u || context->AiRuntimeEntity == Entity.Null || combatTargetEntity == Entity.Null)
+            if (targetPlacedRefId == 0u || context->AiRuntimeEntity == Entity.Null)
             {
                 context->Faulted = 1;
                 return;
@@ -1611,9 +1620,15 @@ namespace VVardenfell.Runtime.MorrowindScript
                 };
             }
 
-            if (matchCount != 1 || instruction->Operand1 < 1 || instruction->Operand1 > 4)
+            if (instruction->Operand1 < 1 || instruction->Operand1 > 4)
             {
                 context->Faulted = 1;
+                return;
+            }
+
+            if (matchCount != 1)
+            {
+                PushZeroInteger(context);
                 return;
             }
 
@@ -1657,7 +1672,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (matchCount != 1)
             {
-                context->Faulted = 1;
+                PushZeroInteger(context);
                 return;
             }
 
@@ -1907,7 +1922,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (matchCount != 1)
             {
-                context->Faulted = 1;
+                PushZeroFloat(context);
                 return;
             }
 
@@ -2174,7 +2189,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (matchCount != 1)
             {
-                context->Faulted = 1;
+                PushZeroFloat(context);
                 return;
             }
 
@@ -2554,6 +2569,26 @@ namespace VVardenfell.Runtime.MorrowindScript
                 IntValue = count,
                 FloatValue = count,
                 ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        static void PushZeroInteger(MorrowindScriptExecutionContext* context)
+        {
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = 0,
+                FloatValue = 0f,
+                ValueKind = (byte)MorrowindScriptValueKind.Integer,
+            });
+        }
+
+        static void PushZeroFloat(MorrowindScriptExecutionContext* context)
+        {
+            Push(context, new MorrowindScriptStackValue
+            {
+                IntValue = 0,
+                FloatValue = 0f,
+                ValueKind = (byte)MorrowindScriptValueKind.Float,
             });
         }
 
@@ -3241,15 +3276,49 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
             }
 
-            byte followTargetMode = destinationInteriorCellHash != 0UL
+            bool hasLegacySerializedTarget = destinationInteriorCellHash == 0UL
+                                             && instruction->Int2 >= (int)MorrowindScriptRefTargetMode.PlacedRef
+                                             && instruction->Int2 <= (int)MorrowindScriptRefTargetMode.ActiveContentRef;
+            bool hasLegacyZeroPlayerTarget = destinationInteriorCellHash == 0UL
+                                             && instruction->Int1 == 0
+                                             && instruction->Int2 == 0
+                                             && context->MessageCount == 0;
+            byte followTargetMode = destinationInteriorCellHash != 0UL || hasLegacyZeroPlayerTarget
                 ? (byte)MorrowindScriptRefTargetMode.Player
-                : (byte)instruction->Int2;
-            int followTargetRefKey = destinationInteriorCellHash != 0UL ? 0 : instruction->Int1;
-            if (followTargetMode == 0 && followTargetRefKey == 0)
-                followTargetMode = (byte)MorrowindScriptRefTargetMode.Player;
-
-            if (!TryResolveActorTarget(context, followTargetMode, followTargetRefKey, out uint followTargetPlacedRefId, out Entity followTargetEntity))
+                : hasLegacySerializedTarget
+                    ? (byte)instruction->Int2
+                    : (byte)0;
+            int followTargetRefKey = hasLegacySerializedTarget ? instruction->Int1 : 0;
+            int followTargetMessageIndex = destinationInteriorCellHash != 0UL || hasLegacySerializedTarget || hasLegacyZeroPlayerTarget
+                ? -1
+                : instruction->Int1;
+            uint followTargetPlacedRefId = 0u;
+            Entity followTargetEntity = Entity.Null;
+            FixedString128Bytes targetId = default;
+            if (followTargetMode == (byte)MorrowindScriptRefTargetMode.Player)
+            {
+                followTargetEntity = context->PlayerEntity;
+            }
+            else if (hasLegacySerializedTarget)
+            {
+                if (!TryResolveActorTarget(context, followTargetMode, followTargetRefKey, out followTargetPlacedRefId, out followTargetEntity))
+                    return;
+            }
+            else if ((context->Messages == null && context->MessageCount > 0)
+                     || (uint)followTargetMessageIndex >= (uint)context->MessageCount)
+            {
+                context->Faulted = 1;
                 return;
+            }
+            else
+            {
+                targetId.CopyFromTruncated(context->Messages[followTargetMessageIndex]);
+                if (IsPlayerTarget(targetId) && context->PlayerEntity != Entity.Null)
+                {
+                    followTargetEntity = context->PlayerEntity;
+                    targetId = default;
+                }
+            }
 
             context->Ecb.AppendToBuffer(context->SortKey, context->AiRuntimeEntity, new MorrowindScriptAiPackageRequest
             {
@@ -3267,6 +3336,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     : 256f * WorldScale.MwUnitsToMeters,
                 DurationHours = math.max(0f, instruction->Float0),
                 IdleSeconds = 0.5f,
+                TargetId = targetId,
             });
         }
 
@@ -3363,9 +3433,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return false;
 
             int targetRefKey = instruction->Int0;
+            bool allowAmbiguousFirstMatch = instruction->Operand1 != 0;
             if (context->ActiveExplicitRefs.IsCreated
                 && context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var activeTarget)
-                && activeTarget.Ambiguous == 0
+                && (activeTarget.Ambiguous == 0 || allowAmbiguousFirstMatch)
                 && activeTarget.PlacedRefId != 0u)
             {
                 return false;
@@ -3373,7 +3444,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             return !context->AllExplicitRefs.IsCreated
                 || !context->AllExplicitRefs.TryGetValue(targetRefKey, out var target)
-                || target.Ambiguous != 0
+                || (target.Ambiguous != 0 && !allowAmbiguousFirstMatch)
                 || target.PlacedRefId == 0u;
         }
 
@@ -3457,7 +3528,16 @@ namespace VVardenfell.Runtime.MorrowindScript
 
         [BurstCompile]
         static void GetDetected(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
-            => PushLineOfSightResult(context, instruction);
+        {
+            if (!IsSoftActorTargetMode(instruction->Operand0)
+                || !IsSoftActorTargetMode((byte)instruction->Operand1))
+            {
+                context->Faulted = 1;
+                return;
+            }
+
+            PushZeroInteger(context);
+        }
 
         [BurstCompile]
         static void GetAttacked(MorrowindScriptExecutionContext* context, MorrowindScriptInstructionRuntime* instruction)
@@ -3689,9 +3769,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return TryResolveRefTarget(context, instruction, out targetPlacedRefId, out targetEntity);
 
             int targetRefKey = instruction->Int0;
+            bool allowAmbiguousFirstMatch = instruction->Operand1 != 0;
             if (context->ActiveExplicitRefs.IsCreated
                 && context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var activeTarget)
-                && activeTarget.Ambiguous == 0
+                && (activeTarget.Ambiguous == 0 || allowAmbiguousFirstMatch)
                 && activeTarget.PlacedRefId != 0u)
             {
                 targetPlacedRefId = activeTarget.PlacedRefId;
@@ -3701,7 +3782,7 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             if (!context->AllExplicitRefs.IsCreated
                 || !context->AllExplicitRefs.TryGetValue(targetRefKey, out var target)
-                || target.Ambiguous != 0
+                || (target.Ambiguous != 0 && !allowAmbiguousFirstMatch)
                 || target.PlacedRefId == 0u)
             {
                 targetPlacedRefId = 0u;
@@ -3913,6 +3994,74 @@ namespace VVardenfell.Runtime.MorrowindScript
             return TryResolveRefTarget(context, targetMode, targetRefKey, out targetPlacedRefId, out targetEntity);
         }
 
+        static bool IsSoftActorTargetMode(byte targetMode)
+            => targetMode == (byte)MorrowindScriptRefTargetMode.Self
+               || targetMode == (byte)MorrowindScriptRefTargetMode.Player
+               || targetMode == (byte)MorrowindScriptRefTargetMode.PlacedRef
+               || targetMode == (byte)MorrowindScriptRefTargetMode.ActiveContentRef;
+
+        static bool TryResolveSoftActorTarget(
+            MorrowindScriptExecutionContext* context,
+            byte targetMode,
+            int targetRefKey,
+            out uint targetPlacedRefId,
+            out Entity targetEntity)
+        {
+            targetPlacedRefId = 0u;
+            targetEntity = Entity.Null;
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Self)
+            {
+                targetPlacedRefId = context->PlacedRefId;
+                targetEntity = context->Entity;
+                return targetEntity != Entity.Null;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Player)
+            {
+                targetEntity = context->PlayerEntity;
+                return targetEntity != Entity.Null;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.PlacedRef)
+            {
+                targetPlacedRefId = unchecked((uint)targetRefKey);
+                if (targetPlacedRefId == 0u)
+                    return false;
+                if (!context->LogicalRefs.IsCreated)
+                {
+                    context->Faulted = 1;
+                    return false;
+                }
+
+                return context->LogicalRefs.TryGetValue(targetPlacedRefId, out targetEntity)
+                       && targetEntity != Entity.Null;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.ActiveContentRef)
+            {
+                if (!context->ActiveExplicitRefs.IsCreated)
+                {
+                    context->Faulted = 1;
+                    return false;
+                }
+
+                if (!context->ActiveExplicitRefs.TryGetValue(targetRefKey, out var target)
+                    || target.Ambiguous != 0
+                    || target.PlacedRefId == 0u
+                    || target.Entity == Entity.Null)
+                {
+                    return false;
+                }
+
+                targetPlacedRefId = target.PlacedRefId;
+                targetEntity = target.Entity;
+                return true;
+            }
+
+            context->Faulted = 1;
+            return false;
+        }
+
         static bool TryResolveDistancePosition(
             MorrowindScriptExecutionContext* context,
             byte targetMode,
@@ -3939,6 +4088,38 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             return TryResolveTargetTransform(context, targetMode, targetRefKey, out position, out _);
+        }
+
+        static bool TryResolveSoftDistancePosition(
+            MorrowindScriptExecutionContext* context,
+            byte targetMode,
+            int targetRefKey,
+            out float3 position)
+        {
+            position = default;
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Player)
+            {
+                if (context->HasPlayerPosition == 0)
+                    return false;
+
+                position = context->PlayerPosition;
+                return true;
+            }
+
+            if (targetMode == (byte)MorrowindScriptRefTargetMode.Self)
+            {
+                position = context->Position;
+                return true;
+            }
+
+            if (!TryResolveSoftActorTarget(context, targetMode, targetRefKey, out _, out Entity entity))
+                return false;
+
+            if (!context->CurrentTransforms.HasComponent(entity))
+                return false;
+
+            position = context->CurrentTransforms[entity].Position;
+            return true;
         }
 
         static bool TryResolveTargetTransform(
@@ -4088,6 +4269,44 @@ namespace VVardenfell.Runtime.MorrowindScript
             ulong source = BuildScriptLoopSourceKey(placedRefId, sourceEntity);
             return (source << 32) ^ (uint)soundHandleValue;
         }
+
+        static bool IsPlayerTarget(FixedString128Bytes targetId)
+        {
+            int start = 0;
+            int end = targetId.Length - 1;
+            while (start <= end && IsTrimByte(targetId[start]))
+                start++;
+            while (end >= start && IsTrimByte(targetId[end]))
+                end--;
+            while (start <= end && targetId[start] == (byte)'"')
+                start++;
+            while (end >= start && targetId[end] == (byte)'"')
+                end--;
+
+            if (end - start + 1 != 6)
+                return false;
+
+            return ToLowerAscii(targetId[start]) == (byte)'p'
+                   && ToLowerAscii(targetId[start + 1]) == (byte)'l'
+                   && ToLowerAscii(targetId[start + 2]) == (byte)'a'
+                   && ToLowerAscii(targetId[start + 3]) == (byte)'y'
+                   && ToLowerAscii(targetId[start + 4]) == (byte)'e'
+                   && ToLowerAscii(targetId[start + 5]) == (byte)'r';
+        }
+
+        static bool IsTrimByte(byte value)
+            => value == (byte)' '
+               || value == (byte)'\t'
+               || value == (byte)'\n'
+               || value == (byte)'\r'
+               || value == (byte)'\f'
+               || value == (byte)'\v'
+               || value == (byte)',';
+
+        static byte ToLowerAscii(byte value)
+            => value >= (byte)'A' && value <= (byte)'Z'
+                ? (byte)(value + 32)
+                : value;
 
         public static ulong HashStringPrefix(string value)
         {

@@ -204,10 +204,13 @@ namespace VVardenfell.Runtime.Shell
                 case CharacterGenerationAction.ChooseBirthsign:
                     RequireId(request.Id, "birthsign");
                     CharacterGenerationUtility.RequireBirthsign(ref content, request.Id);
-                    charGen.BirthsignId = request.Id;
+                    charGen.PendingBirthsignId = request.Id;
                     if (request.Byte0 != 0)
+                    {
+                        charGen.BirthsignId = charGen.PendingBirthsignId;
+                        Apply(ref systemState, ref content, ref charGen);
                         HandleDialogDone(systemState.EntityManager, charGenEntity, ref charGen, ref shell, CharacterGenerationStage.BirthSignChosen, CharacterGenerationMenu.Review);
-                    Apply(ref systemState, ref content, ref charGen);
+                    }
                     break;
                 case CharacterGenerationAction.ReviewOpenName:
                     charGen.Stage = (byte)CharacterGenerationStage.ReviewNext;
@@ -247,6 +250,9 @@ namespace VVardenfell.Runtime.Shell
             ref RuntimeShellState shell,
             CharacterGenerationMenu menu)
         {
+            if (menu == CharacterGenerationMenu.Birth)
+                charGen.PendingBirthsignId = charGen.BirthsignId;
+
             if (menu == CharacterGenerationMenu.None)
             {
                 CharacterGenerationUtility.Close(ref charGen);
@@ -268,9 +274,20 @@ namespace VVardenfell.Runtime.Shell
             ref CharacterGenerationState charGen,
             ref RuntimeShellState shell)
         {
-            if ((CharacterGenerationMenu)charGen.CurrentMenu == CharacterGenerationMenu.Race)
+            CharacterGenerationMenu currentMenu = (CharacterGenerationMenu)charGen.CurrentMenu;
+            if (currentMenu == CharacterGenerationMenu.Birth)
+            {
+                charGen.PendingBirthsignId = charGen.BirthsignId;
+                if (charGen.Stage == (byte)CharacterGenerationStage.ReviewNext)
+                {
+                    OpenRequestedMenu(systemState.EntityManager, charGenEntity, ref charGen, ref shell, CharacterGenerationMenu.Review);
+                    return;
+                }
+            }
+
+            if (currentMenu == CharacterGenerationMenu.Race)
                 Apply(ref systemState, ref content, ref charGen);
-            else if ((CharacterGenerationMenu)charGen.CurrentMenu == CharacterGenerationMenu.ClassGenerateResult)
+            else if (currentMenu == CharacterGenerationMenu.ClassGenerateResult)
             {
                 if (charGen.GeneratedClassId.IsEmpty)
                     throw new InvalidOperationException("[VVardenfell][CharGen] Generated class result cannot be applied before all questions are answered.");
@@ -279,15 +296,14 @@ namespace VVardenfell.Runtime.Shell
                 charGen.CustomClassActive = 0;
                 Apply(ref systemState, ref content, ref charGen);
             }
-            else if ((CharacterGenerationMenu)charGen.CurrentMenu == CharacterGenerationMenu.ClassPick
-                || (CharacterGenerationMenu)charGen.CurrentMenu == CharacterGenerationMenu.ClassCreate
-                || (CharacterGenerationMenu)charGen.CurrentMenu == CharacterGenerationMenu.Birth)
+            else if (currentMenu == CharacterGenerationMenu.ClassPick
+                || currentMenu == CharacterGenerationMenu.ClassCreate)
             {
-                if ((CharacterGenerationMenu)charGen.CurrentMenu != CharacterGenerationMenu.ClassCreate || IsCustomClassComplete(ref systemState))
+                if (currentMenu != CharacterGenerationMenu.ClassCreate || IsCustomClassComplete(ref systemState))
                     Apply(ref systemState, ref content, ref charGen);
             }
 
-            CharacterGenerationMenu next = (CharacterGenerationMenu)charGen.CurrentMenu switch
+            CharacterGenerationMenu next = currentMenu switch
             {
                 CharacterGenerationMenu.Race => CharacterGenerationMenu.Name,
                 CharacterGenerationMenu.ClassChoice => CharacterGenerationMenu.Race,

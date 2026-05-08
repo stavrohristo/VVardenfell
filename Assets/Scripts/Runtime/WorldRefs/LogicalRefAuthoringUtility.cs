@@ -205,8 +205,16 @@ namespace VVardenfell.Runtime.Components
         {
             var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(ref content, ref actor);
             ecb.AddComponent(logicalEntity, statSeed.Attributes);
+            ecb.AddComponent(logicalEntity, new ActorAttributeBaseSet { Value = statSeed.AttributeBase });
+            ecb.AddComponent(logicalEntity, new ActorAttributeDamageSet { Value = statSeed.AttributeDamage });
+            ecb.AddComponent(logicalEntity, new ActorAttributeModifierSet { Value = statSeed.AttributeModifiers });
             ecb.AddComponent(logicalEntity, statSeed.Skills);
+            ecb.AddComponent(logicalEntity, new ActorSkillBaseSet { Value = statSeed.SkillBase });
+            ecb.AddComponent(logicalEntity, new ActorSkillDamageSet { Value = statSeed.SkillDamage });
+            ecb.AddComponent(logicalEntity, new ActorSkillModifierSet { Value = statSeed.SkillModifiers });
             ecb.AddComponent(logicalEntity, statSeed.Vitals);
+            ecb.AddComponent(logicalEntity, statSeed.VitalBase);
+            ecb.AddComponent(logicalEntity, statSeed.VitalModifiers);
             ecb.AddComponent(logicalEntity, statSeed.EffectModifiers);
             ecb.AddComponent(logicalEntity, new ActorDispositionState
             {
@@ -431,6 +439,7 @@ namespace VVardenfell.Runtime.Components
                 Content = itemContent,
                 Count = visibleCount,
                 Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
+                EnchantmentCharge = -1f,
                 AuthoredOrder = authoredOrder,
                 Restocking = (byte)(count < 0 ? 1 : 0),
             });

@@ -1,13 +1,12 @@
 using System;
 using Unity.Collections;
-using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
-    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindGameplayMutationSystemGroup))]
     [UpdateAfter(typeof(MorrowindScriptInterpreterSystem))]
     public partial struct MorrowindScriptActorLocalSetApplySystem : ISystem
@@ -23,7 +22,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindScriptActorLocalSetRequest>();
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
@@ -48,6 +46,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException("[VVardenfell][MWScript] actor-local Set local index is outside the runtime local buffer.");
 
             locals[request.LocalIndex] = request.Value;
+            if (systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
+            {
+                uint placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+                if (placedRefId != 0u)
+                    ScriptVisibleSaveStateUtility.UpsertObjectScript(systemState.EntityManager, target, placedRefId);
+            }
         }
 
         Entity ResolveUniqueActor(int actorHandleValue)

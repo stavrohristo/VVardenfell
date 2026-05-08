@@ -27,9 +27,14 @@ namespace VVardenfell.Runtime.Components
         public uint CasterPlacedRefId;
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
+        public byte SourceKind;
         public SpellDefHandle Spell;
+        public EnchantmentDefHandle Enchantment;
+        public ContentReference SourceContent;
+        public int SourceInventoryIndex;
         public byte Scripted;
         public byte AlwaysSucceed;
+        public byte Prevalidated;
         public byte IgnoreReflect;
         public byte IgnoreSpellAbsorption;
         public byte ProjectileImpact;

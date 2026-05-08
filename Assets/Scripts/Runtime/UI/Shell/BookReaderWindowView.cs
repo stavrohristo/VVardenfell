@@ -227,6 +227,7 @@ namespace VVardenfell.Runtime.UI.Shell
                     image.preserveAspect = false;
                     image.raycastTarget = false;
                     SetTopLeftUi(image.rectTransform, element.X, element.Y, element.Width, element.Height);
+                    image.rectTransform.localScale = new Vector3(1f, -1f, 1f);
                     created.Add(image.gameObject);
                 }
                 else

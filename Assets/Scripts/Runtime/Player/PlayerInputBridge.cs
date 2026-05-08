@@ -101,8 +101,18 @@ namespace VVardenfell.Runtime.Player
             if (shell.PlayerMagicDisabled != 0)
                 readyMagicTogglePressedThisFrame = false;
 
-            if (readyMagicTogglePressedThisFrame)
-                magic.MagicReadied = magic.MagicReadied == 0 ? (byte)1 : (byte)0;
+            if (readyWeaponTogglePressedThisFrame)
+            {
+                magic.MagicReadied = 0;
+                magic.CastInProgress = 0;
+                magic.CastRequested = 0;
+                magic.CastRange = 0;
+                magic.CastingSourceKind = 0;
+                magic.CastingSpell = default;
+                magic.CastingEnchantment = default;
+                magic.CastingItemContent = default;
+                magic.CastingInventoryIndex = -1;
+            }
 
             bool magicConsumesAttack = magic.MagicReadied != 0 && shell.PlayerMagicDisabled == 0;
             bool castMagicPressedThisFrame = magicConsumesAttack && attackPressedThisFrame;

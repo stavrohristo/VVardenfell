@@ -344,11 +344,22 @@ namespace VVardenfell.Runtime.UI.Shell
 
         Image CreateStaticImage(string name, Transform parent, string key, float x, float y, float width, float height)
         {
-            var image = RuntimeUiFactory.CreateImage(name, parent, Color.white);
+            var root = RuntimeUiFactory.CreateAnchoredRect(
+                name,
+                parent,
+                new Vector2(0f, 1f),
+                new Vector2(0f, 1f),
+                Vector2.zero,
+                Vector2.zero);
+            root.pivot = new Vector2(0f, 1f);
+            SetTopLeft(root, x, y, width, height);
+
+            var image = RuntimeUiFactory.CreateImage("Image", root, Color.white);
             image.sprite = RequireSprite(key);
             image.type = Image.Type.Simple;
             image.preserveAspect = false;
-            SetTopLeft(image.rectTransform, x, y, width, height);
+            RuntimeUiFactory.Stretch(image.rectTransform);
+            image.rectTransform.localScale = new Vector3(1f, -1f, 1f);
             return image;
         }
 

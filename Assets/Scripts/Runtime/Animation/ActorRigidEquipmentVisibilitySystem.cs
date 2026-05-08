@@ -63,7 +63,8 @@ namespace VVardenfell.Runtime.Animation
                 if (actor != Entity.Null && WeaponStateLookup.HasComponent(actor))
                 {
                     ActorWeaponAnimationState weaponState = WeaponStateLookup[actor];
-                    visible = weaponState.Drawn != 0 || weaponState.Phase == ActorWeaponAnimationPhase.Equipping;
+                    visible = weaponState.WeaponType != ActorWeaponAnimationUtility.SpellWeaponType
+                              && (weaponState.Drawn != 0 || weaponState.Phase == ActorWeaponAnimationPhase.Equipping);
                 }
 
                 SetRenderLeafVisible(entity, visible);

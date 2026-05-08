@@ -80,6 +80,10 @@ namespace VVardenfell.Core.Cache
         public const ulong iFightKilling = 0xE325150EFC78638AUL;
         public const ulong iGreetDistanceMultiplier = 0xD75A153A8C4D363DUL;
         public const ulong iGreetDuration = 0x2847E5C0C7849C15UL;
+        public const ulong iMagicItemChargeConst = 0x96E1A13E1A6CC977UL;
+        public const ulong iMagicItemChargeOnce = 0x2177570EEE0A4C5DUL;
+        public const ulong iMagicItemChargeStrike = 0x3411A26355854C0EUL;
+        public const ulong iMagicItemChargeUse = 0x4B32506C6DBF326FUL;
         public const ulong iKnockDownOddsBase = 0x9771D7D38417620BUL;
         public const ulong iKnockDownOddsMult = 0xA7A5330ED43B471CUL;
         public const ulong iVoiceHitOdds = 0xC2C0E47AA0BAE901UL;
@@ -93,6 +97,7 @@ namespace VVardenfell.Core.Cache
         public const ulong OnPCHitMe = 0x53E690D2B85B4704UL;
         public const ulong prisonmarker = 0x2FB926AA877B47FCUL;
         public const ulong sMagicContractDisease = 0x0D0777BDC796B133UL;
+        public const ulong sMagicInsufficientCharge = 0x4C91EBB45D1C10CEUL;
         public const ulong sMagicInsufficientSP = 0xD4B4405755FB41B5UL;
         public const ulong sMagicSkillFail = 0x4C065CE1CB3CA062UL;
         public const ulong sDefaultCellname = 0x2604D6BE27CF6F38UL;

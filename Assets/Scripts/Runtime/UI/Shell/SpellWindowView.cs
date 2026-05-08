@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.UI.Assets;
 using VVardenfell.Runtime.UI.Framework;
 
@@ -40,6 +42,8 @@ namespace VVardenfell.Runtime.UI.Shell
         static readonly Color RowSelectedColor = new(0.42f, 0.32f, 0.15f, 0.92f);
         static readonly Color SelectedTextColor = new(0.98f, 0.93f, 0.80f);
         static readonly Color DeleteButtonCenterColor = new(0.12f, 0.1f, 0.08f, 0.88f);
+        static readonly Color ChargeTrackColor = new(0.03f, 0.025f, 0.02f, 0.88f);
+        static readonly Color ChargeFillColor = new(0.41f, 0.56f, 0.78f, 0.95f);
 
         // Pixel heights.
         const float CaptionPixelHeight = RuntimeClassicUiFontSizes.Caption;
@@ -68,10 +72,15 @@ namespace VVardenfell.Runtime.UI.Shell
         sealed class SpellRow
         {
             public int EntryIndex;
+            public SpellWindowEntryViewModel Entry;
             public RectTransform Root;
             public Image Background;
+            public Image Separator;
             public BitmapTextGraphic Name;
             public BitmapTextGraphic Cost;
+            public RectTransform ChargeRoot;
+            public Image ChargeTrack;
+            public RectTransform ChargeFill;
             public Button Button;
         }
 
@@ -81,8 +90,10 @@ namespace VVardenfell.Runtime.UI.Shell
         readonly MorrowindWindowView _window;
         readonly RuntimeWindowDragHandle _dragHandle;
         readonly RuntimeWindowResizeHandle _resizeHandle;
-        readonly Action<int> _onSelectionChanged;
+        readonly Action<SpellWindowEntryViewModel> _onSelectionChanged;
+        readonly Action<SpellWindowEntryViewModel> _onDeleteEntry;
         readonly Action<string> _onFilterChanged;
+        readonly Action _onDelete;
 
         readonly RuntimeMagicEffectIconStripView _effectsStrip;
         readonly BitmapTextGraphic _emptyText;
@@ -99,15 +110,19 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiTheme theme,
             RuntimeInventoryIconService iconService,
             Action onRectChanged,
-            Action<int> onSelectionChanged,
+            Action<SpellWindowEntryViewModel> onSelectionChanged,
+            Action<SpellWindowEntryViewModel> onDeleteEntry,
             Action<string> onFilterChanged,
+            Action onDelete,
             Action onPinToggled = null)
         {
             _theme = theme;
             _viewport = viewport;
             _iconService = iconService;
             _onSelectionChanged = onSelectionChanged;
+            _onDeleteEntry = onDeleteEntry;
             _onFilterChanged = onFilterChanged;
+            _onDelete = onDelete;
 
             _window = RuntimeUiFactory.CreateMorrowindWindow(
                 "SpellWindow",
@@ -297,8 +312,7 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiFactory.Stretch(deleteButton.Root);
             deleteButton.Label.PixelHeight = RuntimeClassicUiMetrics.Ui(BodyTextPixelHeight);
             deleteButton.Label.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
-            // Wire when the shell exposes RequestDeleteSpell; for now click is a no-op so
-            // the button is visible and styled but inert.
+            deleteButton.Button.onClick.AddListener(() => _onDelete?.Invoke());
 
             // Spell list fills the space between the effects strip and the bottom row.
             var listRoot = RuntimeUiFactory.CreateAnchorRect(
@@ -378,20 +392,35 @@ namespace VVardenfell.Runtime.UI.Shell
 
                 var entry = entries[i];
                 row.EntryIndex = entry.SpellIndex;
+                row.Entry = entry;
                 if (entry.SpellTooltip != null)
                     RuntimeUiPopupUtility.SetSpellTooltip(row.Root.gameObject, entry.SpellTooltip);
                 else
                     RuntimeUiPopupUtility.SetTooltip(row.Root.gameObject, BuildSpellTooltip(entry));
                 row.Root.anchoredPosition = new Vector2(0f, -rowHeight * i);
                 row.Root.sizeDelta = new Vector2(0f, rowHeight);
+                row.Button.interactable = !entry.IsGroupHeader;
+                row.Separator.gameObject.SetActive(entry.IsGroupHeader && entry.HasGroupSeparator);
                 row.Name.Text = string.IsNullOrWhiteSpace(entry.Name) ? "--" : entry.Name.Trim();
                 row.Cost.Text = FormatCost(entry);
-                row.Background.color = entry.Selected
+                bool showChargeBar = entry.ShowChargeBar && !entry.IsGroupHeader;
+                row.ChargeRoot.gameObject.SetActive(showChargeBar);
+                if (showChargeBar)
+                    row.ChargeFill.anchorMax = new Vector2(Mathf.Clamp01(entry.ChargeFillNormalized), 1f);
+                row.Background.color = entry.IsGroupHeader
+                    ? new Color(0f, 0f, 0f, 0.42f)
+                    : entry.Selected
                     ? RowSelectedColor
                     : (i % 2 == 0 ? RowAltColor : RowBaseColor);
-                Color textColor = entry.Selected ? SelectedTextColor : BodyTextColor;
+                Color textColor = entry.IsGroupHeader
+                    ? new Color(0.98f, 0.82f, 0.46f)
+                    : entry.Selected
+                    ? SelectedTextColor
+                    : entry.Active
+                    ? BodyTextColor
+                    : DimTextColor;
                 row.Name.color = textColor;
-                row.Cost.color = entry.Selected ? SelectedTextColor : DimTextColor;
+                row.Cost.color = entry.Selected ? SelectedTextColor : entry.Active ? DimTextColor : SubtleTextColor;
             }
 
             _rowsRoot.sizeDelta = new Vector2(0f, rowHeight * entries.Length);
@@ -441,6 +470,15 @@ namespace VVardenfell.Runtime.UI.Shell
             var background = RuntimeUiFactory.CreateImage("Background", root, RowBaseColor);
             RuntimeUiFactory.Stretch(background.rectTransform);
 
+            var separator = RuntimeUiFactory.CreateImage("Separator", root, new Color(0.68f, 0.55f, 0.28f, 0.9f));
+            separator.rectTransform.anchorMin = new Vector2(0f, 1f);
+            separator.rectTransform.anchorMax = new Vector2(1f, 1f);
+            separator.rectTransform.pivot = new Vector2(0.5f, 1f);
+            separator.rectTransform.anchoredPosition = Vector2.zero;
+            separator.rectTransform.sizeDelta = new Vector2(0f, RuntimeClassicUiMetrics.Ui(1f));
+            separator.raycastTarget = false;
+            separator.gameObject.SetActive(false);
+
             var button = root.gameObject.AddComponent<Button>();
             button.transition = Selectable.Transition.None;
             button.targetGraphic = background;
@@ -456,12 +494,7 @@ namespace VVardenfell.Runtime.UI.Shell
             name.PixelHeight = RuntimeClassicUiMetrics.Ui(BodyTextPixelHeight);
             name.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             name.raycastTarget = false;
-            RuntimeUiFactory.SetInset(
-                name.rectTransform,
-                RuntimeClassicUiMetrics.Ui(8f),
-                0f,
-                -RuntimeClassicUiMetrics.Ui(70f),
-                0f);
+            RuntimeUiFactory.SetInset(name.rectTransform, RuntimeClassicUiMetrics.Ui(8f), 0f, -RuntimeClassicUiMetrics.Ui(92f), 0f);
 
             var cost = RuntimeUiFactory.CreateBitmapText(
                 "Cost",
@@ -473,25 +506,60 @@ namespace VVardenfell.Runtime.UI.Shell
             cost.PixelHeight = RuntimeClassicUiMetrics.Ui(CostTextPixelHeight);
             cost.VerticalAlignment = BitmapTextVerticalAlignment.Middle;
             cost.raycastTarget = false;
-            RuntimeUiFactory.SetInset(
-                cost.rectTransform,
-                RuntimeClassicUiMetrics.Ui(60f),
-                0f,
-                -RuntimeClassicUiMetrics.Ui(8f),
-                0f);
+            RuntimeUiFactory.SetInset(cost.rectTransform, RuntimeClassicUiMetrics.Ui(150f), 0f, -RuntimeClassicUiMetrics.Ui(8f), 0f);
+
+            var chargeTrackRoot = RuntimeUiFactory.CreateAnchorRect(
+                "ChargeBar",
+                root,
+                new Vector2(1f, 0f),
+                new Vector2(1f, 0f),
+                new Vector2(1f, 0f),
+                new Vector2(-RuntimeClassicUiMetrics.Ui(68f), RuntimeClassicUiMetrics.Ui(3f)),
+                new Vector2(-RuntimeClassicUiMetrics.Ui(8f), RuntimeClassicUiMetrics.Ui(7f)));
+            var chargeTrack = RuntimeUiFactory.CreateImage("Track", chargeTrackRoot, ChargeTrackColor);
+            RuntimeUiFactory.Stretch(chargeTrack.rectTransform);
+            chargeTrack.raycastTarget = false;
+
+            var chargeFillImage = RuntimeUiFactory.CreateImage("Fill", chargeTrackRoot, ChargeFillColor);
+            chargeFillImage.sprite = _theme?.LoadingBarFillSprite;
+            if (chargeFillImage.sprite != null)
+                chargeFillImage.type = Image.Type.Sliced;
+            chargeFillImage.raycastTarget = false;
+            RuntimeUiFactory.Stretch(chargeFillImage.rectTransform);
+            chargeTrackRoot.gameObject.SetActive(false);
 
             var row = new SpellRow
             {
                 EntryIndex = index,
                 Root = root,
                 Background = background,
+                Separator = separator,
                 Name = name,
                 Cost = cost,
+                ChargeRoot = chargeTrackRoot,
+                ChargeTrack = chargeTrack,
+                ChargeFill = chargeFillImage.rectTransform,
                 Button = button,
             };
 
-            button.onClick.AddListener(() => _onSelectionChanged?.Invoke(row.EntryIndex));
+            button.onClick.AddListener(() => HandleRowClicked(row.Entry));
             return row;
+        }
+
+        void HandleRowClicked(SpellWindowEntryViewModel entry)
+        {
+            if (entry == null || entry.IsGroupHeader)
+                return;
+
+            var keyboard = Keyboard.current;
+            bool shift = keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
+            if (shift && entry.SourceKind != RuntimeMagicSourceKind.EnchantedItem)
+            {
+                _onDeleteEntry?.Invoke(entry);
+                return;
+            }
+
+            _onSelectionChanged?.Invoke(entry);
         }
 
         void SyncFilterText(string filterText)

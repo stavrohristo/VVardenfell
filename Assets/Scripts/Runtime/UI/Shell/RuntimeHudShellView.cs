@@ -230,7 +230,9 @@ namespace VVardenfell.Runtime.UI.Shell
                 _iconService,
                 RequestSpellWindowRectUpdate,
                 RequestSpellSelection,
+                RequestDeleteMagicSource,
                 RequestSpellFilterText,
+                RequestDeleteSelectedMagicSource,
                 onPinToggled: () => RequestTogglePin(VVardenfell.Runtime.Components.RuntimeShellPinnableWindow.Spell));
             _mapView = new MapWindowView(
                 _suiteRoot,
@@ -407,8 +409,11 @@ namespace VVardenfell.Runtime.UI.Shell
                     SaveConfig();
             }
 
-            SetActiveIfChanged(_pauseRoot.gameObject, pauseMenuOpen && !saveLoadVisible && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible);
-            SetActiveIfChanged(_modalRoot.gameObject, pauseMenuOpen && modalOpen && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible);
+            bool shellModalVisible = modalOpen && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible;
+            SetActiveIfChanged(_pauseRoot.gameObject, (pauseMenuOpen || shellModalVisible) && !saveLoadVisible && !optionsOpen && !restMenuVisible && !characterGenerationVisible && !bookReaderVisible);
+            for (int i = 0; i < _buttons.Count; i++)
+                SetActiveIfChanged(_buttons[i].Button.gameObject, pauseMenuOpen && !shellModalVisible);
+            SetActiveIfChanged(_modalRoot.gameObject, shellModalVisible);
             _saveLoadBrowserView.Sync(optionsOpen ? null : saveLoadModel);
             _popupLayer?.Sync();
             if (!inventoryVisible && !containerVisible)
@@ -417,10 +422,15 @@ namespace VVardenfell.Runtime.UI.Shell
 
             if (_modalRoot.gameObject.activeSelf)
             {
-                _modalTitle.Text = string.IsNullOrWhiteSpace(modalTitle) ? "Unavailable" : modalTitle.Trim();
+                bool hasModalTitle = !string.IsNullOrWhiteSpace(modalTitle);
+                SetActiveIfChanged(_modalTitle.gameObject, hasModalTitle);
+                _modalTitle.Text = hasModalTitle ? modalTitle.Trim() : string.Empty;
                 _modalBody.Text = string.IsNullOrWhiteSpace(modalBody)
                     ? "This action is not available in the current runtime shell slice."
                     : modalBody.Trim();
+                _modalBody.rectTransform.offsetMax = new Vector2(
+                    -RuntimeClassicUiMetrics.Ui(20f),
+                    -RuntimeClassicUiMetrics.Ui(hasModalTitle ? 40f : 16f));
                 SyncModalButtons(modalButtons);
                 _eventSystem?.SetSelectedGameObject(null);
             }
@@ -1156,10 +1166,35 @@ namespace VVardenfell.Runtime.UI.Shell
                 Debug.LogWarning($"[VVardenfell][UI] failed updating spell window rect: {error}");
         }
 
-        void RequestSpellSelection(int spellIndex)
+        void RequestSpellSelection(SpellWindowEntryViewModel entry)
         {
-            if (!RuntimeShellRequestBridge.TrySelectSpell(spellIndex, out string error))
-                Debug.LogWarning($"[VVardenfell][UI] failed selecting spell {spellIndex}: {error}");
+            if (entry == null || entry.IsGroupHeader)
+                return;
+            if (!RuntimeShellRequestBridge.TrySelectMagicSource(
+                    entry.SourceKind,
+                    entry.SpellIndex,
+                    entry.Spell,
+                    entry.InventoryIndex,
+                    entry.ItemContent,
+                    entry.Enchantment,
+                    out string error))
+            {
+                Debug.LogWarning($"[VVardenfell][UI] failed selecting magic source {entry.Name}: {error}");
+            }
+        }
+
+        void RequestDeleteSelectedMagicSource()
+        {
+            if (!RuntimeShellRequestBridge.TryDeleteSelectedMagicSource(out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed deleting selected magic source: {error}");
+        }
+
+        void RequestDeleteMagicSource(SpellWindowEntryViewModel entry)
+        {
+            if (entry == null || entry.IsGroupHeader)
+                return;
+            if (!RuntimeShellRequestBridge.TryDeleteMagicSource(entry.SourceKind, entry.Spell, out string error))
+                Debug.LogWarning($"[VVardenfell][UI] failed deleting magic source {entry.Name}: {error}");
         }
 
         void RequestSpellFilterText(string value)

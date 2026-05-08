@@ -6,6 +6,7 @@ using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -35,6 +36,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(systemState.EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceResolveRequest>(systemState.EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(systemState.EntityManager, runtimeEntity);
+                ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(systemState.EntityManager, runtimeEntity);
                 ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(systemState.EntityManager);
                 RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(systemState.EntityManager);
                 return;
@@ -147,6 +149,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.EntityManager.AddBuffer<MorrowindScriptActorEventConsumeRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindScriptStartRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindScriptStopRequest>(runtime);
+            ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(systemState.EntityManager, runtime);
             systemState.EntityManager.AddComponentData(runtime, new MorrowindMagicRuntimeState
             {
                 RandomState = 0xA5C38F2Du,

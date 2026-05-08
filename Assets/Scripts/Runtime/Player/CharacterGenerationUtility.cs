@@ -43,6 +43,7 @@ namespace VVardenfell.Runtime.Player
                 RaceId = raceId,
                 ClassId = classId,
                 BirthsignId = identity.BirthSignName,
+                PendingBirthsignId = identity.BirthSignName,
                 GenerateRandomState = 0x6D2B79F5u,
             };
             state.HeadId = RequireFirstPlayableBodyPartId(ref content, state.RaceId, male: true, ActorBodyPartMeshPart.Head);

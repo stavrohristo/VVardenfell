@@ -83,6 +83,7 @@ namespace VVardenfell.Runtime.Components
         public FixedString64Bytes HairId;
         public FixedString64Bytes ClassId;
         public FixedString64Bytes BirthsignId;
+        public FixedString64Bytes PendingBirthsignId;
         public FixedString64Bytes GeneratedClassId;
     }
 

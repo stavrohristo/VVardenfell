@@ -7,6 +7,7 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.MorrowindScript
@@ -65,6 +66,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     continue;
 
                 stateLookup.DisabledByPlacedRef[request.TargetPlacedRefId] = request.Disabled;
+                ScriptVisibleSaveStateUtility.UpsertDisabled(systemState.EntityManager, request.TargetPlacedRefId, request.Disabled);
                 Entity target = ResolveLiveTarget(ref systemState, request, logicalRefLookup);
                 if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                     continue;

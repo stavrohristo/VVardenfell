@@ -75,35 +75,20 @@ namespace VVardenfell.Runtime.Player
                 : default;
             bool hasAppearance = !appearance.RaceId.IsEmpty;
 
-            Entity firstPersonVisual = CreatePlayerVisual(ref systemState, 
+            Entity playerVisual = CreatePlayerVisual(ref systemState,
                 ref ecb,
                 player,
                 view,
                 actorHandle,
                 appearance,
-                hasAppearance,
-                firstPerson: true,
-                actorRecipeFirstPerson: false,
-                hiddenPartMask: BuildFirstPersonBodyHiddenPartMask(),
-                visible: true);
-            Entity thirdPersonVisual = CreatePlayerVisual(ref systemState, 
-                ref ecb,
-                player,
-                view,
-                actorHandle,
-                appearance,
-                hasAppearance,
-                firstPerson: false,
-                actorRecipeFirstPerson: false,
-                hiddenPartMask: 0u,
-                visible: false);
+                hasAppearance);
 
             ecb.AddComponent(player, new LocalPlayerPresentationState
             {
                 Mode = PlayerViewMode.FirstPerson,
                 ThirdPersonDistance = 3f,
-                FirstPersonVisual = firstPersonVisual,
-                ThirdPersonVisual = thirdPersonVisual,
+                FirstPersonVisual = playerVisual,
+                ThirdPersonVisual = playerVisual,
                 Actor = actorHandle,
             });
             ecb.AddComponent(player, new LocalPlayerPresentationPose());
@@ -117,23 +102,15 @@ namespace VVardenfell.Runtime.Player
             Entity view,
             ActorDefHandle actorHandle,
             PlayerRaceAppearance appearance,
-            bool hasAppearance,
-            bool firstPerson,
-            bool actorRecipeFirstPerson,
-            uint hiddenPartMask,
-            bool visible)
+            bool hasAppearance)
         {
             Entity visual = ecb.CreateEntity();
-            ecb.SetName(visual, new FixedString64Bytes(firstPerson
-                ? "VVardenfell.PlayerFirstPersonVisual"
-                : "VVardenfell.PlayerThirdPersonVisual"));
+            ecb.SetName(visual, new FixedString64Bytes("VVardenfell.PlayerVisual"));
             ecb.AddComponent(visual, new ActorSpawnSource
             {
                 Definition = actorHandle,
-                FirstPerson = (byte)(actorRecipeFirstPerson ? 1 : 0),
+                FirstPerson = 0,
             });
-            if (hiddenPartMask != 0u)
-                ecb.AddComponent(visual, new ActorHiddenVisualPartMask { Mask = hiddenPartMask });
             if (hasAppearance)
             {
                 ecb.AddComponent(visual, new ActorRuntimeAppearance
@@ -148,7 +125,7 @@ namespace VVardenfell.Runtime.Player
             {
                 Player = player,
                 View = view,
-                FirstPerson = (byte)(firstPerson ? 1 : 0),
+                FirstPerson = 1,
             });
             ecb.AddComponent(visual, LocalTransform.Identity);
             ecb.AddComponent(visual, new LocalToWorld());
@@ -159,9 +136,9 @@ namespace VVardenfell.Runtime.Player
                 Phase = ActorWeaponAnimationPhase.Hidden,
             });
             ecb.AddComponent<ActorRenderVisible>(visual);
-            ecb.SetComponentEnabled<ActorRenderVisible>(visual, visible);
+            ecb.SetComponentEnabled<ActorRenderVisible>(visual, true);
             ecb.AddComponent<ActorShadowCasterVisible>(visual);
-            ecb.SetComponentEnabled<ActorShadowCasterVisible>(visual, !firstPerson);
+            ecb.SetComponentEnabled<ActorShadowCasterVisible>(visual, true);
 
             if (systemState.EntityManager.HasBuffer<ActorEquipmentSlot>(player))
             {
@@ -176,10 +153,6 @@ namespace VVardenfell.Runtime.Player
 
             return visual;
         }
-
-        static uint BuildFirstPersonBodyHiddenPartMask()
-            => ActorVisualContentRules.PartMask(ActorVisualPartReference.Head)
-               | ActorVisualContentRules.PartMask(ActorVisualPartReference.Hair);
 
         MorrowindMovementState ResolveInitialMovementState(ref SystemState systemState, Entity player)
         {

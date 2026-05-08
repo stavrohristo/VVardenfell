@@ -27,8 +27,18 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
                 ComponentType.ReadWrite<ActorActiveSpell>(),
+                ComponentType.ReadWrite<ActorAttributeSet>(),
+                ComponentType.ReadWrite<ActorAttributeBaseSet>(),
+                ComponentType.ReadWrite<ActorAttributeDamageSet>(),
+                ComponentType.ReadWrite<ActorAttributeModifierSet>(),
+                ComponentType.ReadWrite<ActorSkillSet>(),
+                ComponentType.ReadWrite<ActorSkillBaseSet>(),
+                ComponentType.ReadWrite<ActorSkillDamageSet>(),
+                ComponentType.ReadWrite<ActorSkillModifierSet>(),
                 ComponentType.ReadWrite<ActorEffectStatModifiers>(),
                 ComponentType.ReadWrite<ActorVitalSet>(),
+                ComponentType.ReadWrite<ActorVitalBaseSet>(),
+                ComponentType.ReadWrite<ActorVitalModifierSet>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
             systemState.RequireForUpdate(_actorQuery);
@@ -50,11 +60,12 @@ namespace VVardenfell.Runtime.Player
                 if (dirty)
                     RebuildPassiveSpellEffects(ref content, knownSpells, activeSpells, activeEffects);
                 InjectDebugActiveEffects(activeEffects);
-                bool changed = ApplyAndTickActiveEffects(ref systemState, ref content, entity, activeSpells, activeEffects, dt);
+                bool changed = ApplyAndTickActiveEffects(ref systemState, ref content, entity, knownSpells, activeSpells, activeEffects, dt);
 
                 if (dirty || changed)
                 {
                     modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
+                    RecomputeMagicStatReadModel(systemState.EntityManager, entity, activeEffects, modifiers.ValueRW);
                     PlayerEncumbranceDirtyUtility.MarkIfPlayer(systemState.EntityManager, entity);
                     systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
                 }
@@ -146,7 +157,11 @@ namespace VVardenfell.Runtime.Player
                     ActiveSpellId = activeSpellId,
                     Spell = handle,
                     SourceKind = ActorActiveSpellSourceKind.PassiveSpell,
-                    Flags = ActorActiveSpellFlags.SpellStore | ActorActiveSpellFlags.IgnoreResistances | ActorActiveSpellFlags.IgnoreReflect | ActorActiveSpellFlags.IgnoreSpellAbsorption,
+                    Flags = ActorActiveSpellFlags.SpellStore
+                            | ActorActiveSpellFlags.IgnoreResistances
+                            | ActorActiveSpellFlags.IgnoreReflect
+                            | ActorActiveSpellFlags.IgnoreSpellAbsorption
+                            | (spell.SpellType == 1 ? ActorActiveSpellFlags.AffectsBaseValues : ActorActiveSpellFlags.None),
                     SourceName = sourceName,
                     SourceId = sourceId,
                     SourceIdHash = spell.IdHash,
@@ -211,22 +226,121 @@ namespace VVardenfell.Runtime.Player
             return modifiers;
         }
 
-        bool ApplyAndTickActiveEffects(ref SystemState systemState, ref RuntimeContentBlob content, Entity entity, DynamicBuffer<ActorActiveSpell> activeSpells, DynamicBuffer<ActorActiveMagicEffect> activeEffects, float deltaSeconds)
+        static void RecomputeMagicStatReadModel(
+            EntityManager entityManager,
+            Entity entity,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
+            in ActorEffectStatModifiers effectModifiers)
+        {
+            var attributeBase = entityManager.GetComponentData<ActorAttributeBaseSet>(entity);
+            var attributeDamage = entityManager.GetComponentData<ActorAttributeDamageSet>(entity);
+            var attributeModifiers = entityManager.GetComponentData<ActorAttributeModifierSet>(entity);
+            var skillBase = entityManager.GetComponentData<ActorSkillBaseSet>(entity);
+            var skillDamage = entityManager.GetComponentData<ActorSkillDamageSet>(entity);
+            var skillModifiers = entityManager.GetComponentData<ActorSkillModifierSet>(entity);
+            var vitalBase = entityManager.GetComponentData<ActorVitalBaseSet>(entity);
+            var vitalModifiers = new ActorVitalModifierSet();
+
+            attributeModifiers.Value = default;
+            skillModifiers.Value = default;
+            for (int i = 0; i < activeEffects.Length; i++)
+            {
+                var effect = activeEffects[i];
+                if (effect.Applied == 0 || effect.Remove != 0)
+                    continue;
+                if (effect.DurationSeconds >= 0f && effect.TimeLeftSeconds <= 0f)
+                    continue;
+
+                if (effect.EffectId == MorrowindMagicEffectIds.FortifyAttribute)
+                    ActorMagicStatUtility.AddAttribute(ref attributeModifiers.Value, effect.Attribute, effect.Magnitude);
+                else if (effect.EffectId == MorrowindMagicEffectIds.DrainAttribute || effect.EffectId == MorrowindMagicEffectIds.AbsorbAttribute)
+                    ActorMagicStatUtility.AddAttribute(ref attributeModifiers.Value, effect.Attribute, -effect.Magnitude);
+                else if (effect.EffectId == MorrowindMagicEffectIds.FortifySkill)
+                    ActorMagicStatUtility.AddSkill(ref skillModifiers.Value, effect.Skill, effect.Magnitude);
+                else if (effect.EffectId == MorrowindMagicEffectIds.DrainSkill || effect.EffectId == MorrowindMagicEffectIds.AbsorbSkill)
+                    ActorMagicStatUtility.AddSkill(ref skillModifiers.Value, effect.Skill, -effect.Magnitude);
+                else if (effect.EffectId == MorrowindMagicEffectIds.FortifyHealth)
+                    vitalModifiers.Health += effect.Magnitude;
+                else if (effect.EffectId == MorrowindMagicEffectIds.FortifyMagicka)
+                    vitalModifiers.Magicka += effect.Magnitude;
+                else if (effect.EffectId == MorrowindMagicEffectIds.FortifyFatigue)
+                    vitalModifiers.Fatigue += effect.Magnitude;
+                else if (effect.EffectId == MorrowindMagicEffectIds.DrainHealth)
+                    vitalModifiers.Health -= effect.Magnitude;
+                else if (effect.EffectId == MorrowindMagicEffectIds.DrainMagicka)
+                    vitalModifiers.Magicka -= effect.Magnitude;
+                else if (effect.EffectId == MorrowindMagicEffectIds.DrainFatigue)
+                    vitalModifiers.Fatigue -= effect.Magnitude;
+            }
+
+            var seed = new ActorRuntimeStatSeed
+            {
+                AttributeBase = attributeBase.Value,
+                AttributeDamage = attributeDamage.Value,
+                AttributeModifiers = attributeModifiers.Value,
+                SkillBase = skillBase.Value,
+                SkillDamage = skillDamage.Value,
+                SkillModifiers = skillModifiers.Value,
+                VitalBase = vitalBase,
+                VitalModifiers = vitalModifiers,
+                Vitals = entityManager.GetComponentData<ActorVitalSet>(entity),
+                EffectModifiers = effectModifiers,
+            };
+            ActorMagicStatUtility.RecomputeReadModel(ref seed);
+            entityManager.SetComponentData(entity, seed.Attributes);
+            entityManager.SetComponentData(entity, attributeModifiers);
+            entityManager.SetComponentData(entity, seed.Skills);
+            entityManager.SetComponentData(entity, skillModifiers);
+            entityManager.SetComponentData(entity, seed.Vitals);
+            entityManager.SetComponentData(entity, vitalModifiers);
+        }
+
+        bool ApplyAndTickActiveEffects(
+            ref SystemState systemState,
+            ref RuntimeContentBlob content,
+            Entity entity,
+            DynamicBuffer<ActorKnownSpell> knownSpells,
+            DynamicBuffer<ActorActiveSpell> activeSpells,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
+            float deltaSeconds)
         {
             bool changed = false;
             for (int i = 0; i < activeEffects.Length; i++)
-                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(systemState.EntityManager, ref content, entity, activeSpells, activeEffects, i, deltaSeconds);
+                changed |= MorrowindMagicEffectApplicationUtility.ApplyOrTick(systemState.EntityManager, ref content, entity, activeSpells, knownSpells, activeEffects, i, deltaSeconds);
 
             for (int i = activeEffects.Length - 1; i >= 0; i--)
             {
                 if (activeEffects[i].Remove != 0)
                 {
+                    int activeSpellId = activeEffects[i].ActiveSpellId;
                     activeEffects.RemoveAt(i);
+                    RemoveActiveSpellIfEmpty(activeSpells, activeEffects, activeSpellId);
                     changed = true;
                 }
             }
 
             return changed;
+        }
+
+        static void RemoveActiveSpellIfEmpty(
+            DynamicBuffer<ActorActiveSpell> activeSpells,
+            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
+            int activeSpellId)
+        {
+            if (activeSpellId == 0)
+                return;
+
+            for (int i = 0; i < activeEffects.Length; i++)
+            {
+                if (activeEffects[i].ActiveSpellId == activeSpellId)
+                    return;
+            }
+
+            for (int i = activeSpells.Length - 1; i >= 0; i--)
+            {
+                if (activeSpells[i].ActiveSpellId == activeSpellId)
+                    activeSpells.RemoveAt(i);
+            }
         }
 
     }

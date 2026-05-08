@@ -9,6 +9,7 @@ namespace VVardenfell.Runtime.Animation
     {
         public const int NoWeaponType = -1;
         public const int UnsupportedWeaponType = -2;
+        public const int SpellWeaponType = -3;
 
         public const ulong HandToHandGroupHash = 7030538165725426052UL;
         public const ulong ShortBladeOneHandGroupHash = 15575628719417304706UL;
@@ -17,6 +18,7 @@ namespace VVardenfell.Runtime.Animation
         public const ulong BluntOneHandGroupHash = 3424523255587147629UL;
         public const ulong BluntTwoHandGroupHash = 12170368887997081879UL;
         public const ulong WeaponTwoWideGroupHash = 9222977795105608650UL;
+        public const ulong SpellCastGroupHash = 17742388106480298794UL;
 
         public const ulong EquipStartMarkerHash = 14901750540547209035UL;
         public const ulong EquipStopMarkerHash = 13045998434533941849UL;
@@ -69,6 +71,9 @@ namespace VVardenfell.Runtime.Animation
             {
                 case NoWeaponType:
                     primaryHash = HandToHandGroupHash;
+                    return true;
+                case SpellWeaponType:
+                    primaryHash = SpellCastGroupHash;
                     return true;
                 case 0:
                     primaryHash = ShortBladeOneHandGroupHash;

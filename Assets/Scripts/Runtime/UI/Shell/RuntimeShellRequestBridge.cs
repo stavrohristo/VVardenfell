@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Collections;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Shell;
 
@@ -683,6 +684,54 @@ namespace VVardenfell.Runtime.UI.Shell
                 {
                     request.PendingSelectionChange = 1;
                     request.SelectedSpellIndex = spellIndex;
+                },
+                out error);
+        }
+
+        public static bool TrySelectMagicSource(
+            RuntimeMagicSourceKind sourceKind,
+            int spellIndex,
+            SpellDefHandle spell,
+            int inventoryIndex,
+            ContentReference itemContent,
+            EnchantmentDefHandle enchantment,
+            out string error)
+        {
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    request.PendingSelectionChange = 1;
+                    request.SelectedSourceKind = (byte)sourceKind;
+                    request.SelectedSpellIndex = spellIndex;
+                    request.SelectedSpell = spell;
+                    request.SelectedInventoryIndex = inventoryIndex;
+                    request.SelectedItemContent = itemContent;
+                    request.SelectedEnchantment = enchantment;
+                },
+                out error);
+        }
+
+        public static bool TryDeleteSelectedMagicSource(out string error)
+        {
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    request.PendingDeleteSelected = 1;
+                },
+                out error);
+        }
+
+        public static bool TryDeleteMagicSource(RuntimeMagicSourceKind sourceKind, SpellDefHandle spell, out string error)
+        {
+            return TryMutateRequest<SpellWindowRequest>(
+                "Spell window request state",
+                (ref SpellWindowRequest request) =>
+                {
+                    request.PendingDeleteSource = 1;
+                    request.DeleteSourceKind = (byte)sourceKind;
+                    request.DeleteSpell = spell;
                 },
                 out error);
         }

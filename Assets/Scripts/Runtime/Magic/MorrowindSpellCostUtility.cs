@@ -17,6 +17,8 @@ namespace VVardenfell.Runtime.Magic
         public const int MagicEffectFlagNoMagnitude = 0x8;
         public const int MagicEffectFlagHarmful = 0x10;
         public const int MagicEffectFlagAppliedOnce = 0x1000;
+        public const int MagicEffectFlagNonRecastable = 0x4000;
+        public const int MagicEffectFlagUnreflectable = 0x10000;
 
         public static int CalculateSpellCost(ref RuntimeContentBlob content, ref RuntimeSpellDefBlob spell)
         {

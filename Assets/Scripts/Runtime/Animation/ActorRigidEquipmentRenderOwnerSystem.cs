@@ -62,7 +62,8 @@ namespace VVardenfell.Runtime.Animation
                 return Entity.Null;
 
             var weaponState = systemState.EntityManager.GetComponentData<ActorWeaponAnimationState>(attachment.Actor);
-            return weaponState.Drawn != 0 || weaponState.Phase == ActorWeaponAnimationPhase.Equipping
+            return weaponState.WeaponType != ActorWeaponAnimationUtility.SpellWeaponType
+                   && (weaponState.Drawn != 0 || weaponState.Phase == ActorWeaponAnimationPhase.Equipping)
                 ? attachment.Actor
                 : Entity.Null;
         }

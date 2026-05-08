@@ -170,6 +170,11 @@ namespace VVardenfell.Runtime.Player
             var skills = init.PlayerActorStats.Skills;
             var vitals = init.PlayerActorStats.Vitals;
             var effectModifiers = init.PlayerActorStats.EffectModifiers;
+            var statSeed = VVardenfell.Runtime.Magic.ActorMagicStatUtility.InitializeAuthoritativeState(init.PlayerActorStats);
+            attributes = statSeed.Attributes;
+            skills = statSeed.Skills;
+            vitals = statSeed.Vitals;
+            effectModifiers = statSeed.EffectModifiers;
             MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, ref vitals, initializeMissingCurrents: true);
             var derivedStats = MorrowindActorMovementStats.BuildDerived(ref content, attributes, skills, vitals, effectModifiers, 0f);
             var movementSpeed = MorrowindActorMovementStats.BuildPlayerMovementSpeed(
@@ -199,8 +204,16 @@ namespace VVardenfell.Runtime.Player
             });
             em.AddComponentData(player, movementSpeed);
             em.AddComponentData(player, attributes);
+            em.AddComponentData(player, new ActorAttributeBaseSet { Value = statSeed.AttributeBase });
+            em.AddComponentData(player, new ActorAttributeDamageSet { Value = statSeed.AttributeDamage });
+            em.AddComponentData(player, new ActorAttributeModifierSet { Value = statSeed.AttributeModifiers });
             em.AddComponentData(player, skills);
+            em.AddComponentData(player, new ActorSkillBaseSet { Value = statSeed.SkillBase });
+            em.AddComponentData(player, new ActorSkillDamageSet { Value = statSeed.SkillDamage });
+            em.AddComponentData(player, new ActorSkillModifierSet { Value = statSeed.SkillModifiers });
             em.AddComponentData(player, vitals);
+            em.AddComponentData(player, statSeed.VitalBase);
+            em.AddComponentData(player, statSeed.VitalModifiers);
             em.AddComponentData(player, effectModifiers);
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, new ActorScriptEventState());
@@ -563,6 +576,7 @@ namespace VVardenfell.Runtime.Player
                     Content = item.Content,
                     Count = item.Count,
                     Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, item.Content),
+                    EnchantmentCharge = -1f,
                 });
             }
         }

@@ -11,6 +11,7 @@ namespace VVardenfell.Runtime.Components
         public int SoulActorHandleValue;
         public int Count;
         public int Condition;
+        public float EnchantmentCharge;
     }
 
     public struct ActorInventoryItem : IBufferElementData
@@ -20,6 +21,7 @@ namespace VVardenfell.Runtime.Components
         public int SoulActorHandleValue;
         public int Count;
         public int Condition;
+        public float EnchantmentCharge;
         public int AuthoredOrder;
         public byte Restocking;
     }

@@ -2,6 +2,7 @@ using System;
 using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
@@ -42,21 +43,29 @@ namespace VVardenfell.Runtime.Player
             if (target == Entity.Null || !entityManager.Exists(target))
                 throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation target is not loaded.");
 
-            if (!entityManager.HasComponent<ActorAttributeSet>(target))
-                throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation target has no ActorAttributeSet.");
+            if (!entityManager.HasComponent<ActorAttributeSet>(target)
+                || !entityManager.HasComponent<ActorAttributeBaseSet>(target)
+                || !entityManager.HasComponent<ActorAttributeDamageSet>(target)
+                || !entityManager.HasComponent<ActorAttributeModifierSet>(target))
+                throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation target has no authoritative attribute state.");
 
             if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.None)
                 throw new InvalidOperationException("[VVardenfell][Player] Actor attribute mutation requires a concrete attribute.");
 
-            var attributes = entityManager.GetComponentData<ActorAttributeSet>(target);
-            float current = GetAttribute(attributes, (ActorAttributeKind)request.Attribute);
+            var attributeBase = entityManager.GetComponentData<ActorAttributeBaseSet>(target);
+            var attributeDamage = entityManager.GetComponentData<ActorAttributeDamageSet>(target);
+            var attributeModifiers = entityManager.GetComponentData<ActorAttributeModifierSet>(target);
+            var attributes = ActorMagicStatUtility.Combine(attributeBase.Value, attributeDamage.Value, attributeModifiers.Value);
+            float current = GetAttribute(attributeBase.Value, (ActorAttributeKind)request.Attribute);
             float value = (ActorAttributeMutationKind)request.Kind switch
             {
                 ActorAttributeMutationKind.Set => request.Value,
                 ActorAttributeMutationKind.Mod => current + request.Value,
                 _ => throw new InvalidOperationException("[VVardenfell][Player] Unknown actor attribute mutation kind."),
             };
-            SetAttribute(ref attributes, (ActorAttributeKind)request.Attribute, value);
+            SetAttribute(ref attributeBase.Value, (ActorAttributeKind)request.Attribute, value);
+            attributes = ActorMagicStatUtility.Combine(attributeBase.Value, attributeDamage.Value, attributeModifiers.Value);
+            entityManager.SetComponentData(target, attributeBase);
             entityManager.SetComponentData(target, attributes);
             if ((ActorAttributeKind)request.Attribute == ActorAttributeKind.Strength)
                 PlayerEncumbranceDirtyUtility.MarkIfPlayer(entityManager, target);

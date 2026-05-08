@@ -29,7 +29,7 @@ namespace VVardenfell.Runtime.Shell
             if (SystemAPI.TryGetSingletonRW<RuntimeEnemyHealthBarState>(out var enemyHealth))
                 AdvanceEnemyHealthBar(ref enemyHealth.ValueRW, SystemAPI.Time.DeltaTime);
 
-            if (state.PauseMenuOpen == 0 && state.SaveLoadBrowserOpen == 0 && state.ModalOpen != 0)
+            if (state.PauseMenuOpen == 0 && state.SaveLoadBrowserOpen == 0 && state.InventoryOpen == 0 && state.ContainerOpen == 0 && state.ModalOpen != 0)
                 RuntimeShellStateUtility.ClearModal(ref state);
 
             if (state.ContainerOpen != 0)

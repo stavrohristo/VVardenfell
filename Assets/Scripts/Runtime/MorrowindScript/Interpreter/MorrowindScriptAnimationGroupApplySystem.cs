@@ -74,7 +74,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             {
                 var presentation = systemState.EntityManager.GetComponentData<LocalPlayerPresentationState>(target);
                 TryApplyAnimationTarget(ref systemState, presentation.FirstPersonVisual, group, request);
-                TryApplyAnimationTarget(ref systemState, presentation.ThirdPersonVisual, group, request);
+                if (presentation.ThirdPersonVisual != presentation.FirstPersonVisual)
+                    TryApplyAnimationTarget(ref systemState, presentation.ThirdPersonVisual, group, request);
                 return;
             }
 

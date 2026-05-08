@@ -6,7 +6,6 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bake;
 using VVardenfell.Importer.Bsa;
-using VVardenfell.Importer.Dds;
 using VVardenfell.Runtime.UI.Framework;
 using Object = UnityEngine.Object;
 
@@ -240,7 +239,7 @@ namespace VVardenfell.Runtime.UI.Assets
             if (bytes.Length != byteCount)
                 throw new EndOfStreamException($"Truncated UI image payload for '{record.Id}'.");
 
-            Texture2D texture = DecodeImage(bytes, record.Extension, record.SourcePath);
+            Texture2D texture = RuntimeUiTextureDecoder.Decode(bytes, record.Extension, record.SourcePath, FilterMode.Bilinear);
             texture.name = record.Id;
             texture.wrapMode = TextureWrapMode.Clamp;
             texture.filterMode = FilterMode.Bilinear;
@@ -302,43 +301,14 @@ namespace VVardenfell.Runtime.UI.Assets
 
             FlipRgbaRowsInPlace(pixels, width, height);
 
-            var texture = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false, linear: false)
-            {
-                name = record.Id + "_atlas",
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Point,
-            };
-            texture.LoadRawTextureData(pixels);
-            texture.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+            var texture = RuntimeUiTextureDecoder.CreateRgba32Texture(
+                pixels,
+                width,
+                height,
+                record.Id + "_atlas",
+                FilterMode.Point);
 
             return new BitmapFontAsset(record.Id, texture, defaultHeight, glyphs);
-        }
-
-        private static Texture2D DecodeImage(byte[] bytes, string extension, string sourcePath)
-        {
-            extension = (extension ?? "").ToLowerInvariant();
-            return extension switch
-            {
-                ".dds" => DdsTexture.Load(bytes, sourcePath),
-                ".tga" => TgaTexture.Load(bytes, sourcePath),
-                ".png" or ".bmp" or ".jpg" or ".jpeg" => LoadViaImageConversion(bytes, sourcePath),
-                _ => throw new NotSupportedException($"Unsupported UI image format '{extension}' for '{sourcePath}'."),
-            };
-        }
-
-        private static Texture2D LoadViaImageConversion(byte[] bytes, string sourcePath)
-        {
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false, linear: false)
-            {
-                name = sourcePath ?? "UI Image",
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-            };
-
-            if (!ImageConversion.LoadImage(tex, bytes, markNonReadable: true))
-                throw new InvalidDataException($"Failed to decode UI image '{sourcePath}'.");
-
-            return tex;
         }
 
         private static void FlipRgbaRowsInPlace(byte[] pixels, int width, int height)

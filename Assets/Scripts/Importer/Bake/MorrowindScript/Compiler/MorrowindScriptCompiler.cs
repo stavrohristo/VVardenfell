@@ -749,7 +749,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiFollowFailure))
+                if (TryCompileAiFollow(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, messages, instructions, out string aiFollowFailure))
                 {
                     continue;
                 }
@@ -760,7 +760,7 @@ namespace VVardenfell.Importer.Bake
                     return;
                 }
 
-                if (TryCompileAiEscort(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, instructions, out string aiEscortFailure))
+                if (TryCompileAiEscort(line, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, messages, instructions, out string aiEscortFailure))
                 {
                     continue;
                 }
@@ -2016,14 +2016,26 @@ namespace VVardenfell.Importer.Bake
                     return false;
                 }
 
-                instructions.Add(new MorrowindScriptInstructionDef
+                if (refTargetMode == MorrowindScriptRefTargetMode.Player)
                 {
-                    Opcode = (byte)MorrowindScriptOpcode.GetItemCount,
-                    Operand0 = (byte)refTargetMode,
-                    Operand1 = (short)content.Kind,
-                    Int0 = unchecked((int)refTargetPlacedRefId),
-                    Int1 = content.HandleValue,
-                });
+                    instructions.Add(new MorrowindScriptInstructionDef
+                    {
+                        Opcode = (byte)MorrowindScriptOpcode.GetPlayerItemCount,
+                        Operand0 = (byte)content.Kind,
+                        Int0 = content.HandleValue,
+                    });
+                }
+                else
+                {
+                    instructions.Add(new MorrowindScriptInstructionDef
+                    {
+                        Opcode = (byte)MorrowindScriptOpcode.GetItemCount,
+                        Operand0 = (byte)refTargetMode,
+                        Operand1 = (short)content.Kind,
+                        Int0 = unchecked((int)refTargetPlacedRefId),
+                        Int1 = content.HandleValue,
+                    });
+                }
                 stackDepth++;
                 maxStack = Math.Max(maxStack, stackDepth);
                 return true;
@@ -2051,39 +2063,6 @@ namespace VVardenfell.Importer.Bake
                     {
                         Opcode = (byte)MorrowindScriptOpcode.HasSoulGem,
                         Int0 = ActorDefHandle.FromIndex(actorIndex).Value,
-                    });
-                    stackDepth++;
-                    maxStack = Math.Max(maxStack, stackDepth);
-                    return true;
-                }
-
-                if (count >= 2
-                    && tokens[start].Equals("getitemcount", StringComparison.OrdinalIgnoreCase))
-                {
-                    string itemId = NormalizeGoldId(string.Join(" ", tokens, start + 1, count - 1).Trim().Trim('"'));
-                    if (string.IsNullOrWhiteSpace(itemId))
-                    {
-                        failure = "GetItemCount requires one item id.";
-                        return false;
-                    }
-
-                    if (!carryableLookup.TryGetValue(ContentId.NormalizeId(itemId), out var content) || !content.IsValid)
-                    {
-                        failure = $"GetItemCount references unknown carryable '{itemId}'.";
-                        return false;
-                    }
-
-                    if (content.Kind == ContentReferenceKind.LeveledItem)
-                    {
-                        failure = $"GetItemCount cannot query leveled item list '{itemId}' in MWScript V1.";
-                        return false;
-                    }
-
-                    instructions.Add(new MorrowindScriptInstructionDef
-                    {
-                        Opcode = (byte)MorrowindScriptOpcode.GetPlayerItemCount,
-                        Operand0 = (byte)content.Kind,
-                        Int0 = content.HandleValue,
                     });
                     stackDepth++;
                     maxStack = Math.Max(maxStack, stackDepth);
@@ -5566,6 +5545,7 @@ namespace VVardenfell.Importer.Bake
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
             IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptMessageDef> messages,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -5580,7 +5560,8 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!TryResolveDistanceTarget(tokens[1].Trim('"'), explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var followTargetMode, out uint followTargetRefKey, out failure))
+            string followTargetId = NormalizeToken(tokens[1]).Trim('"');
+            if (!TryResolveDistanceTarget(followTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out _, out _, out failure))
                 return false;
 
             if (!TryParseAiFollowNumbers(tokens, 2, line, out float duration, out float x, out float y, out float z, out failure))
@@ -5595,14 +5576,15 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
+            int followTargetMessageIndex = messages.Count;
+            messages.Add(new MorrowindScriptMessageDef { Text = followTargetId });
             instructions.Add(new MorrowindScriptInstructionDef
             {
                 Opcode = (byte)MorrowindScriptOpcode.AiFollow,
                 Operand0 = (byte)targetMode,
                 Operand1 = tokens.Length > 6 ? (short)1 : (short)0,
                 Int0 = unchecked((int)targetPlacedRefId),
-                Int1 = unchecked((int)followTargetRefKey),
-                Int2 = (int)followTargetMode,
+                Int1 = followTargetMessageIndex,
                 Float0 = duration,
                 Float1 = x * WorldScale.MwUnitsToMeters,
                 Float2 = z * WorldScale.MwUnitsToMeters,
@@ -5665,6 +5647,7 @@ namespace VVardenfell.Importer.Bake
             IReadOnlyDictionary<string, uint> explicitRefTargets,
             ISet<string> ambiguousExplicitRefTargets,
             IReadOnlyDictionary<string, ContentReference> explicitContentTargets,
+            List<MorrowindScriptMessageDef> messages,
             List<MorrowindScriptInstructionDef> instructions,
             out string failure)
         {
@@ -5679,7 +5662,8 @@ namespace VVardenfell.Importer.Bake
                 return false;
             }
 
-            if (!TryResolveDistanceTarget(tokens[1].Trim('"'), explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out var escortTargetMode, out uint escortTargetRefKey, out failure))
+            string escortTargetId = NormalizeToken(tokens[1]).Trim('"');
+            if (!TryResolveDistanceTarget(escortTargetId, explicitRefTargets, ambiguousExplicitRefTargets, explicitContentTargets, out _, out _, out failure))
                 return false;
 
             if (!TryParseAiFollowNumbers(tokens, 2, line, out float duration, out float x, out float y, out float z, out failure))
@@ -5694,14 +5678,15 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
+            int escortTargetMessageIndex = messages.Count;
+            messages.Add(new MorrowindScriptMessageDef { Text = escortTargetId });
             instructions.Add(new MorrowindScriptInstructionDef
             {
                 Opcode = (byte)MorrowindScriptOpcode.AiEscort,
                 Operand0 = (byte)targetMode,
                 Operand1 = tokens.Length > 6 ? (short)1 : (short)0,
                 Int0 = unchecked((int)targetPlacedRefId),
-                Int1 = unchecked((int)escortTargetRefKey),
-                Int2 = (int)escortTargetMode,
+                Int1 = escortTargetMessageIndex,
                 Float0 = duration,
                 Float1 = x * WorldScale.MwUnitsToMeters,
                 Float2 = z * WorldScale.MwUnitsToMeters,

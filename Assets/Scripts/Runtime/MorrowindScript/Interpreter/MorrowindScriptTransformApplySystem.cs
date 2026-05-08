@@ -96,31 +96,38 @@ namespace VVardenfell.Runtime.MorrowindScript
                     if (systemState.EntityManager.HasComponent<PlayerTag>(target))
                         ApplyPlayerPositionCell(ref systemState, target, request, ref worldCells);
                     else
+                    {
                         ApplyPositionCell(ref systemState, target, request, loadedCells, ref worldCells, interiorActive, activeInteriorCellHash);
+                        CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
+                    }
                     continue;
                 }
 
                 if (request.Operation == 3)
                 {
                     ApplyPosition(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
                 if (request.Operation == 4)
                 {
                     ApplyPositionOnly(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
                 if (request.Operation == 5)
                 {
                     ApplyMove(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
                 if (request.Operation == 6)
                 {
                     ApplySetAtStart(ref systemState, target, request, loadedCells, interiorActive, activeInteriorCellHash);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
@@ -130,12 +137,14 @@ namespace VVardenfell.Runtime.MorrowindScript
                         -LogicalRefRotationUtility.ResolveAxis(request.Axis),
                         request.Radians);
                     LogicalRefRotationUtility.ApplyWorldDelta(systemState.EntityManager, target, worldDelta);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
                 if (request.Operation == 1)
                 {
                     LogicalRefRotationUtility.SetAngle(systemState.EntityManager, target, request.Axis, request.Radians);
+                    CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
                     continue;
                 }
 
@@ -143,7 +152,25 @@ namespace VVardenfell.Runtime.MorrowindScript
                     LogicalRefRotationUtility.ResolveAxis(request.Axis),
                     request.Radians);
                 LogicalRefRotationUtility.ApplyDelta(systemState.EntityManager, target, delta);
+                CommitTransformIfPlacedRef(ref systemState, target, request.TargetPlacedRefId);
             }
+        }
+
+        void CommitTransformIfPlacedRef(ref SystemState systemState, Entity target, uint requestPlacedRefId)
+        {
+            uint placedRefId = requestPlacedRefId;
+            if (placedRefId == 0u
+                && target != Entity.Null
+                && systemState.EntityManager.Exists(target)
+                && systemState.EntityManager.HasComponent<PlacedRefIdentity>(target))
+            {
+                placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(target).Value;
+            }
+
+            if (placedRefId == 0u)
+                return;
+
+            ScriptVisibleSaveStateUtility.UpsertTransform(systemState.EntityManager, target, placedRefId);
         }
 
         void ApplyPlayerPositionCell(

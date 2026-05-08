@@ -48,8 +48,6 @@ namespace VVardenfell.Runtime.Shell
             ref var state = ref SystemAPI.GetSingletonRW<SpellWindowState>().ValueRW;
             ref var request = ref SystemAPI.GetSingletonRW<SpellWindowRequest>().ValueRW;
             RuntimeWindowGeometryUtility.ApplyRectRequest(ref state.Rect, ref request.RectRequest);
-            if (request.PendingSelectionChange != 0)
-                state.SelectedSpellIndex = request.SelectedSpellIndex;
             if (request.PendingFilterTextChange != 0)
                 state.FilterText = request.FilterText;
             state.Visible = shell.InventoryOpen != 0 && shell.ContainerOpen == 0 && shell.MagicMenuDisabled == 0 ? (byte)1 : (byte)0;

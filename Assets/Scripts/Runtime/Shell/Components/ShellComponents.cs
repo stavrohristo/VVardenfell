@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
 {
@@ -254,11 +255,24 @@ namespace VVardenfell.Runtime.Components
         public RuntimeWindowRectRequest RectRequest;
     }
 
+    public enum RuntimeMagicSourceKind : byte
+    {
+        None = 0,
+        Spell = 1,
+        EnchantedItem = 2,
+    }
+
     public struct SpellWindowState : IComponentData
     {
         public byte Visible;
         public RuntimeWindowRect Rect;
         public int SelectedSpellIndex;
+        public byte SelectedSourceKind;
+        public SpellDefHandle SelectedSpell;
+        public int SelectedInventoryIndex;
+        public ContentReference SelectedItemContent;
+        public EnchantmentDefHandle SelectedEnchantment;
+        public SpellDefHandle DeleteConfirmSpell;
         public byte Pinned;
         public FixedString64Bytes FilterText;
     }
@@ -268,6 +282,15 @@ namespace VVardenfell.Runtime.Components
         public RuntimeWindowRectRequest RectRequest;
         public byte PendingSelectionChange;
         public int SelectedSpellIndex;
+        public byte SelectedSourceKind;
+        public SpellDefHandle SelectedSpell;
+        public int SelectedInventoryIndex;
+        public ContentReference SelectedItemContent;
+        public EnchantmentDefHandle SelectedEnchantment;
+        public byte PendingDeleteSelected;
+        public byte PendingDeleteSource;
+        public byte DeleteSourceKind;
+        public SpellDefHandle DeleteSpell;
         public byte PendingFilterTextChange;
         public FixedString64Bytes FilterText;
     }

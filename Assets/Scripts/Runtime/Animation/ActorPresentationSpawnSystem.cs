@@ -357,6 +357,7 @@ namespace VVardenfell.Runtime.Animation
             int previousBucketIndex = -1;
             int previousMaterialIndex = -1;
             int previousTextureSlice = -1;
+            bool localPlayerVisual = entityManager.HasComponent<LocalPlayerVisual>(actorEntity);
             for (int i = 0; i < skinMeshes.Length; i++)
             {
                 int skinMeshIndex = skinMeshes[i].SkinMeshIndex;
@@ -369,6 +370,8 @@ namespace VVardenfell.Runtime.Animation
                 {
                     throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} has no Entities Graphics render prototype.");
                 }
+                if (!entityManager.Exists(prototype))
+                    throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} render prototype entity={prototype.Index}:{prototype.Version} no longer exists.");
 
                 if (info.BucketIndex != previousBucketIndex
                     || info.MaterialIndex != previousMaterialIndex
@@ -380,41 +383,105 @@ namespace VVardenfell.Runtime.Animation
                 }
 
                 Entity child = ecb.Instantiate(prototype);
-                ecb.SetName(child, $"VVardenfell.ActorRenderMesh[{skinMeshIndex}]");
-                ecb.SetComponent(child, LocalTransform.Identity);
-                ecb.SetComponent(child, initialLocalToWorld);
-                ecb.AddComponent(child, new Parent { Value = actorEntity });
                 int renderMeshIndex = skinMeshes[i].RigidMirrorX != 0 && info.MirroredMeshIndex >= 0
                     ? info.MirroredMeshIndex
                     : info.MeshIndex;
-                ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(info.MaterialIndex, renderMeshIndex));
-                ecb.SetComponent(child, new TextureSlice { Value = info.TextureSlice });
-                ecb.SetComponent(child, new ActorDeformedMeshIndex { Value = vertexCursor });
-                ecb.SetComponent(child, new RenderBounds
-                {
-                    Value = new AABB
-                    {
-                        Center = actorBounds.Center,
-                        Extents = BuildAnimatedRenderCullExtents(actorBounds),
-                    },
-                });
-                ecb.SetComponent(child, new ActorRenderMeshInstance
-                {
-                    Actor = actorEntity,
-                    SkinMeshIndex = skinMeshIndex,
-                });
+                byte visibilityMode = localPlayerVisual && IsFirstPersonCameraHiddenPart(skinMeshes[i].PartReference)
+                    ? ActorRenderMeshVisibilityMode.FirstPersonCameraHidden
+                    : ActorRenderMeshVisibilityMode.Normal;
+                ConfigureActorRenderChild(
+                    ref ecb,
+                    actorEntity,
+                    child,
+                    skinMeshIndex,
+                    renderMeshIndex,
+                    info.MaterialIndex,
+                    info.TextureSlice,
+                    vertexCursor,
+                    initialLocalToWorld,
+                    actorBounds,
+                    visibilityMode,
+                    ref linked,
+                    createdLinkedBuffer);
 
-                if (createdLinkedBuffer)
-                    linked.Add(new LinkedEntityGroup { Value = child });
-                else
-                    ecb.AppendToBuffer(actorEntity, new LinkedEntityGroup { Value = child });
+                if (visibilityMode == ActorRenderMeshVisibilityMode.FirstPersonCameraHidden)
+                {
+                    if (!renderResources.TryGetShadowOnlyPrototype(info.BucketIndex, out Entity shadowOnlyPrototype))
+                        throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} has no Entities Graphics shadow-only render prototype.");
+                    if (!entityManager.Exists(shadowOnlyPrototype))
+                        throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} shadow-only render prototype entity={shadowOnlyPrototype.Index}:{shadowOnlyPrototype.Version} no longer exists.");
+
+                    Entity shadowOnlyChild = ecb.Instantiate(shadowOnlyPrototype);
+                    ConfigureActorRenderChild(
+                        ref ecb,
+                        actorEntity,
+                        shadowOnlyChild,
+                        skinMeshIndex,
+                        renderMeshIndex,
+                        info.MaterialIndex,
+                        info.TextureSlice,
+                        vertexCursor,
+                        initialLocalToWorld,
+                        actorBounds,
+                        ActorRenderMeshVisibilityMode.FirstPersonShadowOnly,
+                        ref linked,
+                        createdLinkedBuffer);
+                }
 
                 vertexCursor += math.max(0, skinMesh.VertexCount);
             }
         }
 
+        static void ConfigureActorRenderChild(
+            ref EntityCommandBuffer ecb,
+            Entity actorEntity,
+            Entity child,
+            int skinMeshIndex,
+            int renderMeshIndex,
+            int materialIndex,
+            int textureSlice,
+            int vertexCursor,
+            LocalToWorld initialLocalToWorld,
+            ActorLocalBounds actorBounds,
+            byte visibilityMode,
+            ref DynamicBuffer<LinkedEntityGroup> linked,
+            bool createdLinkedBuffer)
+        {
+            ecb.SetName(child, visibilityMode == ActorRenderMeshVisibilityMode.FirstPersonShadowOnly
+                ? $"VVardenfell.ActorShadowOnlyRenderMesh[{skinMeshIndex}]"
+                : $"VVardenfell.ActorRenderMesh[{skinMeshIndex}]");
+            ecb.SetComponent(child, LocalTransform.Identity);
+            ecb.SetComponent(child, initialLocalToWorld);
+            ecb.AddComponent(child, new Parent { Value = actorEntity });
+            ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(materialIndex, renderMeshIndex));
+            ecb.SetComponent(child, new TextureSlice { Value = textureSlice });
+            ecb.SetComponent(child, new ActorDeformedMeshIndex { Value = vertexCursor });
+            ecb.SetComponent(child, new RenderBounds
+            {
+                Value = new AABB
+                {
+                    Center = actorBounds.Center,
+                    Extents = BuildAnimatedRenderCullExtents(actorBounds),
+                },
+            });
+            ecb.SetComponent(child, new ActorRenderMeshInstance
+            {
+                Actor = actorEntity,
+                SkinMeshIndex = skinMeshIndex,
+                VisibilityMode = visibilityMode,
+            });
+
+            if (createdLinkedBuffer)
+                linked.Add(new LinkedEntityGroup { Value = child });
+            else
+                ecb.AppendToBuffer(actorEntity, new LinkedEntityGroup { Value = child });
+        }
+
         static float3 BuildAnimatedRenderCullExtents(ActorLocalBounds actorBounds)
             => math.max(actorBounds.Extents + k_AnimatedRenderCullPadding, k_MinAnimatedRenderCullExtents);
+
+        static bool IsFirstPersonCameraHiddenPart(ActorVisualPartReference part)
+            => part == ActorVisualPartReference.Head || part == ActorVisualPartReference.Hair;
 
         static int ResolveAccumulationBoneIndex(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
         {
@@ -645,7 +712,7 @@ namespace VVardenfell.Runtime.Animation
                     if (entry.SkinMeshIndex < 0)
                         continue;
 
-                    if (AddBakedSkinEntry(buffer, ref catalog, entry.SkinMeshIndex, entry.AttachBoneIndex, entry.RigidMirrorX))
+                    if (AddBakedSkinEntry(buffer, ref catalog, entry.SkinMeshIndex, entry.AttachBoneIndex, entry.RigidMirrorX, part))
                         added++;
                 }
 
@@ -864,7 +931,7 @@ namespace VVardenfell.Runtime.Animation
                     ref ActorSkinMeshBlob mesh = ref catalog.SkinMeshes[i];
                     if (!IsRenderableSkinMesh(mesh) || mesh.IsRigid != 0 || !MatchesMeshFilter(ref catalog, mesh, meshFilter))
                         continue;
-                    AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX);
+                    AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX, reference);
                     added++;
                 }
             }
@@ -892,7 +959,7 @@ namespace VVardenfell.Runtime.Animation
                     continue;
                 if (mesh.IsRigid != 0 && attachBoneIndex < 0)
                     throw new InvalidOperationException($"[VVardenfell][CharGen] {context} declared rigid {reference} mesh '{mesh.NodeName}' but rig has no attach bone.");
-                AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX);
+                AddRuntimeSkinMesh(buffer, i, mesh, attachBoneIndex, rigidMirrorX, reference);
                 added++;
             }
 
@@ -904,12 +971,14 @@ namespace VVardenfell.Runtime.Animation
             int skinMeshIndex,
             in ActorSkinMeshBlob mesh,
             int attachBoneIndex,
-            byte rigidMirrorX)
+            byte rigidMirrorX,
+            ActorVisualPartReference reference)
         {
             buffer.Add(new ActorSkinMesh
             {
                 SkinMeshIndex = skinMeshIndex,
                 AttachBoneIndex = mesh.IsRigid != 0 ? attachBoneIndex : -1,
+                PartReference = reference,
                 RigidMirrorX = mesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
             });
         }
@@ -1044,7 +1113,7 @@ namespace VVardenfell.Runtime.Animation
                 if ((coveredParts & mask) != 0)
                     continue;
 
-                if (AddBakedSkinEntry(buffer, ref catalog, entry.SkinMeshIndex, entry.AttachBoneIndex, entry.RigidMirrorX))
+                if (AddBakedSkinEntry(buffer, ref catalog, entry.SkinMeshIndex, entry.AttachBoneIndex, entry.RigidMirrorX, entry.PartReference))
                     added++;
             }
 
@@ -1056,7 +1125,8 @@ namespace VVardenfell.Runtime.Animation
             ref ActorAnimationCatalogBlob catalog,
             int skinMeshIndex,
             int attachBoneIndex,
-            byte rigidMirrorX)
+            byte rigidMirrorX,
+            ActorVisualPartReference reference)
         {
             if ((uint)skinMeshIndex >= (uint)catalog.SkinMeshes.Length)
                 return false;
@@ -1069,6 +1139,7 @@ namespace VVardenfell.Runtime.Animation
             {
                 SkinMeshIndex = skinMeshIndex,
                 AttachBoneIndex = skinMesh.IsRigid != 0 ? attachBoneIndex : -1,
+                PartReference = reference,
                 RigidMirrorX = skinMesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
             });
             return true;

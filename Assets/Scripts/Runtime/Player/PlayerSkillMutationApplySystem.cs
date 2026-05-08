@@ -2,6 +2,7 @@ using System;
 using Unity.Burst;
 using Unity.Entities;
 using VVardenfell.Runtime.Components;
+using VVardenfell.Runtime.Magic;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Systems;
 
@@ -18,7 +19,10 @@ namespace VVardenfell.Runtime.Player
         {
             _playerQuery = state.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<ActorSkillSet>());
+                ComponentType.ReadWrite<ActorSkillSet>(),
+                ComponentType.ReadWrite<ActorSkillBaseSet>(),
+                ComponentType.ReadOnly<ActorSkillDamageSet>(),
+                ComponentType.ReadOnly<ActorSkillModifierSet>());
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
             state.RequireForUpdate<PlayerSkillMutationRequest>();
             state.RequireForUpdate(_playerQuery);
@@ -33,9 +37,13 @@ namespace VVardenfell.Runtime.Player
                 return;
 
             Entity player = _playerQuery.GetSingletonEntity();
-            var skills = state.EntityManager.GetComponentData<ActorSkillSet>(player);
+            var skillBase = state.EntityManager.GetComponentData<ActorSkillBaseSet>(player);
             for (int i = 0; i < requests.Length; i++)
-                ApplyRequest(ref skills, requests[i]);
+                ApplyRequest(ref skillBase.Value, requests[i]);
+            var skillDamage = state.EntityManager.GetComponentData<ActorSkillDamageSet>(player);
+            var skillModifiers = state.EntityManager.GetComponentData<ActorSkillModifierSet>(player);
+            var skills = ActorMagicStatUtility.Combine(skillBase.Value, skillDamage.Value, skillModifiers.Value);
+            state.EntityManager.SetComponentData(player, skillBase);
             state.EntityManager.SetComponentData(player, skills);
 
             requests.Clear();

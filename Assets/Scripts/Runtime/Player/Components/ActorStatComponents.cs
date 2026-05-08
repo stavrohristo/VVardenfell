@@ -57,6 +57,50 @@ namespace VVardenfell.Runtime.Components
         public float ModifiedFatigueBase;
     }
 
+    public struct ActorAttributeBaseSet : IComponentData
+    {
+        public ActorAttributeSet Value;
+    }
+
+    public struct ActorAttributeDamageSet : IComponentData
+    {
+        public ActorAttributeSet Value;
+    }
+
+    public struct ActorAttributeModifierSet : IComponentData
+    {
+        public ActorAttributeSet Value;
+    }
+
+    public struct ActorSkillBaseSet : IComponentData
+    {
+        public ActorSkillSet Value;
+    }
+
+    public struct ActorSkillDamageSet : IComponentData
+    {
+        public ActorSkillSet Value;
+    }
+
+    public struct ActorSkillModifierSet : IComponentData
+    {
+        public ActorSkillSet Value;
+    }
+
+    public struct ActorVitalBaseSet : IComponentData
+    {
+        public float Health;
+        public float Magicka;
+        public float Fatigue;
+    }
+
+    public struct ActorVitalModifierSet : IComponentData
+    {
+        public float Health;
+        public float Magicka;
+        public float Fatigue;
+    }
+
     public struct ActorEffectStatModifiers : IComponentData
     {
         public float JumpMagnitude;
@@ -68,6 +112,14 @@ namespace VVardenfell.Runtime.Components
     public struct ActorMagicCastState : IComponentData
     {
         public byte MagicReadied;
+        public byte CastInProgress;
+        public byte CastRequested;
+        public byte CastRange;
+        public byte CastingSourceKind;
+        public SpellDefHandle CastingSpell;
+        public EnchantmentDefHandle CastingEnchantment;
+        public ContentReference CastingItemContent;
+        public int CastingInventoryIndex;
     }
 
     public struct ActorDispositionState : IComponentData
@@ -104,6 +156,7 @@ namespace VVardenfell.Runtime.Components
         IgnoreReflect = 1 << 4,
         IgnoreSpellAbsorption = 1 << 5,
         Scripted = 1 << 6,
+        AffectsBaseValues = 1 << 7,
     }
 
     public struct ActorActiveSpell : IBufferElementData
@@ -147,6 +200,11 @@ namespace VVardenfell.Runtime.Components
         public byte IgnoreResistances;
         public byte IgnoreReflect;
         public byte IgnoreSpellAbsorption;
+        public ushort RuntimeFlags;
+        public int Arg0;
+        public int Arg1;
+        public uint ArgPlacedRefId;
+        public ulong ArgIdHash;
         public ActorActiveMagicEffectSourceKind SourceKind;
         public FixedString64Bytes SourceName;
         public FixedString64Bytes SourceId;
@@ -164,8 +222,16 @@ namespace VVardenfell.Runtime.Components
     public struct ActorRuntimeStatSeed
     {
         public ActorAttributeSet Attributes;
+        public ActorAttributeSet AttributeBase;
+        public ActorAttributeSet AttributeDamage;
+        public ActorAttributeSet AttributeModifiers;
         public ActorSkillSet Skills;
+        public ActorSkillSet SkillBase;
+        public ActorSkillSet SkillDamage;
+        public ActorSkillSet SkillModifiers;
         public ActorVitalSet Vitals;
+        public ActorVitalBaseSet VitalBase;
+        public ActorVitalModifierSet VitalModifiers;
         public ActorEffectStatModifiers EffectModifiers;
     }
 

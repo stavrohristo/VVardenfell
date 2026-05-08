@@ -16,8 +16,13 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 29;
+        const int PayloadVersion = 33;
+        const int MagicSourcePayloadVersion = 33;
+        const int InventoryEnchantmentChargePayloadVersion = 33;
+        const int MagicRuntimePayloadVersion = 32;
+        const int ScriptVisibleStatePayloadVersion = 31;
         const int BookReadHistoryPayloadVersion = 29;
+        const int CharacterGenerationPendingBirthsignPayloadVersion = 30;
         const int CharacterGenerationPayloadVersion = 28;
         const int ActiveSpellSourcePayloadVersion = 27;
         const int EquipmentConditionPayloadVersion = 26;
@@ -47,23 +52,8 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion
-                && version != RegionWeatherOverridePayloadVersion
-                && version != EquipmentConditionPayloadVersion
-                && version != InventoryConditionPayloadVersion
-                && version != CombatPayloadVersion
-                && version != PlayerEquipmentPayloadVersion
-                && version != CapturedSoulInventoryPayloadVersion
-                && version != PlayerCrimePayloadVersion
-                && version != BookReadHistoryPayloadVersion
-                && version != PreviousPayloadVersion
-                && version != PreviousPlayerFactionPayloadVersion
-                && version != DialoguePayloadVersion
-                && version != QuestJournalDatePayloadVersion
-                && version != QuestJournalPayloadVersion
-                && version != WeatherPayloadVersion
-                && version != LegacyPayloadVersion)
-                throw new InvalidDataException($"unsupported save version {version}");
+            if (version != PayloadVersion)
+                throw new InvalidDataException($"unsupported save version {version}; magic runtime saves require v{MagicRuntimePayloadVersion}");
         }
 
         static WorldSavePayload ReadPayloadFromAnySave(Stream stream, out SaveGameSlotMetadata metadata)
@@ -177,6 +167,9 @@ namespace VVardenfell.Runtime.WorldState
             WriteTimePayload(w, payload.Time);
             WriteWeatherPayload(w, payload.Weather);
             WriteCombatPayload(w, payload.Combat);
+            WriteMagicPayload(w, payload.Magic);
+            WriteScriptPayload(w, payload.Script);
+            WritePlacedRefStatePayload(w, payload.PlacedRefs);
         }
 
         static WorldSavePayload ReadPayload(BinaryReader r)
@@ -186,22 +179,8 @@ namespace VVardenfell.Runtime.WorldState
                 throw new InvalidDataException("unexpected save magic");
 
             int version = r.ReadInt32();
-            if (version != PayloadVersion
-                && version != RegionWeatherOverridePayloadVersion
-                && version != EquipmentConditionPayloadVersion
-                && version != InventoryConditionPayloadVersion
-                && version != CombatPayloadVersion
-                && version != PlayerEquipmentPayloadVersion
-                && version != CapturedSoulInventoryPayloadVersion
-                && version != PlayerCrimePayloadVersion
-                && version != PreviousPayloadVersion
-                && version != PreviousPlayerFactionPayloadVersion
-                && version != DialoguePayloadVersion
-                && version != QuestJournalDatePayloadVersion
-                && version != QuestJournalPayloadVersion
-                && version != WeatherPayloadVersion
-                && version != LegacyPayloadVersion)
-                throw new InvalidDataException($"unsupported save version {version}");
+            if (version != PayloadVersion)
+                throw new InvalidDataException($"unsupported save version {version}; magic runtime saves require v{MagicRuntimePayloadVersion}");
 
             var payload = new WorldSavePayload
             {
@@ -216,7 +195,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 payload.PlayerAppearance = ReadPlayerAppearance(r);
                 payload.PlayerCustomClass = ReadPlayerCustomClass(r);
-                payload.CharacterGeneration = ReadCharacterGeneration(r);
+                payload.CharacterGeneration = ReadCharacterGeneration(r, version);
             }
             else
             {
@@ -234,6 +213,7 @@ namespace VVardenfell.Runtime.WorldState
                     RaceId = payload.PlayerIdentity.RaceName,
                     ClassId = payload.PlayerIdentity.ClassName,
                     BirthsignId = payload.PlayerIdentity.BirthSignName,
+                    PendingBirthsignId = payload.PlayerIdentity.BirthSignName,
                     Male = 1,
                 };
             }
@@ -354,6 +334,27 @@ namespace VVardenfell.Runtime.WorldState
             payload.Combat = version >= CombatPayloadVersion
                 ? ReadCombatPayload(r)
                 : default;
+            payload.Magic = ReadMagicPayload(r, version);
+
+            if (version >= ScriptVisibleStatePayloadVersion)
+            {
+                payload.Script = ReadScriptPayload(r);
+                payload.PlacedRefs = ReadPlacedRefStatePayload(r, version);
+            }
+            else
+            {
+                payload.Script = new MorrowindScriptSavePayload
+                {
+                    Globals = null,
+                    GlobalScripts = null,
+                    ObjectScripts = null,
+                };
+                payload.PlacedRefs = new PlacedRefStateSavePayload
+                {
+                    Entries = null,
+                    ActorInventories = null,
+                };
+            }
 
             return payload;
         }
@@ -371,6 +372,298 @@ namespace VVardenfell.Runtime.WorldState
                 RandomState = r.ReadUInt32(),
                 Initialized = r.ReadByte(),
             };
+        }
+
+        static void WriteMagicPayload(BinaryWriter w, in MorrowindMagicSavePayload value)
+        {
+            w.Write(value.RandomState);
+            w.Write(value.NextActiveSpellId);
+            w.Write(value.SelectedSourceKind);
+            w.Write(value.SelectedSpell.Value);
+            w.Write(value.SelectedInventoryIndex);
+            WriteContentReference(w, value.SelectedItemContent);
+            w.Write(value.SelectedEnchantment.Value);
+            w.Write(value.Initialized);
+        }
+
+        static MorrowindMagicSavePayload ReadMagicPayload(BinaryReader r, int version)
+        {
+            var payload = new MorrowindMagicSavePayload
+            {
+                RandomState = r.ReadUInt32(),
+                NextActiveSpellId = r.ReadInt32(),
+            };
+            if (version >= MagicSourcePayloadVersion)
+            {
+                payload.SelectedSourceKind = r.ReadByte();
+                payload.SelectedSpell = new SpellDefHandle { Value = r.ReadInt32() };
+                payload.SelectedInventoryIndex = r.ReadInt32();
+                payload.SelectedItemContent = ReadContentReference(r);
+                payload.SelectedEnchantment = new EnchantmentDefHandle { Value = r.ReadInt32() };
+            }
+
+            payload.Initialized = r.ReadByte();
+            return payload;
+        }
+
+        static void WriteScriptPayload(BinaryWriter w, in MorrowindScriptSavePayload payload)
+        {
+            w.Write(payload.NextAudioRequestSequence);
+            w.Write(payload.RandomState);
+            w.Write(payload.Globals?.Length ?? 0);
+            if (payload.Globals != null)
+            {
+                for (int i = 0; i < payload.Globals.Length; i++)
+                    WriteScriptValue(w, payload.Globals[i]);
+            }
+
+            w.Write(payload.GlobalScripts?.Length ?? 0);
+            if (payload.GlobalScripts != null)
+            {
+                for (int i = 0; i < payload.GlobalScripts.Length; i++)
+                    WriteGlobalScript(w, payload.GlobalScripts[i]);
+            }
+
+            w.Write(payload.ObjectScripts?.Length ?? 0);
+            if (payload.ObjectScripts != null)
+            {
+                for (int i = 0; i < payload.ObjectScripts.Length; i++)
+                    WriteObjectScript(w, payload.ObjectScripts[i]);
+            }
+        }
+
+        static MorrowindScriptSavePayload ReadScriptPayload(BinaryReader r)
+        {
+            var payload = new MorrowindScriptSavePayload
+            {
+                NextAudioRequestSequence = r.ReadUInt32(),
+                RandomState = r.ReadUInt32(),
+            };
+
+            int globalCount = ReadCount(r, "script global");
+            payload.Globals = new MorrowindScriptGlobalValue[globalCount];
+            for (int i = 0; i < globalCount; i++)
+                payload.Globals[i] = ReadScriptGlobalValue(r);
+
+            int globalScriptCount = ReadCount(r, "global script");
+            payload.GlobalScripts = new MorrowindGlobalScriptSavePayload[globalScriptCount];
+            for (int i = 0; i < globalScriptCount; i++)
+                payload.GlobalScripts[i] = ReadGlobalScript(r);
+
+            int objectScriptCount = ReadCount(r, "object script");
+            payload.ObjectScripts = new MorrowindObjectScriptSavePayload[objectScriptCount];
+            for (int i = 0; i < objectScriptCount; i++)
+                payload.ObjectScripts[i] = ReadObjectScript(r);
+
+            return payload;
+        }
+
+        static void WritePlacedRefStatePayload(BinaryWriter w, in PlacedRefStateSavePayload payload)
+        {
+            w.Write(payload.Entries?.Length ?? 0);
+            if (payload.Entries != null)
+            {
+                for (int i = 0; i < payload.Entries.Length; i++)
+                    WritePlacedRefStateEntry(w, payload.Entries[i]);
+            }
+
+            w.Write(payload.ActorInventories?.Length ?? 0);
+            if (payload.ActorInventories != null)
+            {
+                for (int i = 0; i < payload.ActorInventories.Length; i++)
+                    WritePlacedRefActorInventory(w, payload.ActorInventories[i]);
+            }
+        }
+
+        static PlacedRefStateSavePayload ReadPlacedRefStatePayload(BinaryReader r, int version)
+        {
+            var payload = new PlacedRefStateSavePayload();
+            int entryCount = ReadCount(r, "placed ref state");
+            payload.Entries = new PlacedRefStateEntrySavePayload[entryCount];
+            for (int i = 0; i < entryCount; i++)
+                payload.Entries[i] = ReadPlacedRefStateEntry(r);
+
+            int inventoryCount = ReadCount(r, "placed ref actor inventory");
+            payload.ActorInventories = new PlacedRefActorInventorySavePayload[inventoryCount];
+            for (int i = 0; i < inventoryCount; i++)
+                payload.ActorInventories[i] = ReadPlacedRefActorInventory(r, version);
+
+            return payload;
+        }
+
+        static void WriteGlobalScript(BinaryWriter w, in MorrowindGlobalScriptSavePayload value)
+        {
+            w.Write(value.ProgramIndex);
+            w.Write(value.ProgramCounter);
+            w.Write(value.Status);
+            w.Write(value.SuppressActivation);
+            w.Write(value.DisabledReason ?? string.Empty);
+            w.Write(value.TargetPlacedRefId);
+            WriteScriptLocals(w, value.Locals);
+        }
+
+        static MorrowindGlobalScriptSavePayload ReadGlobalScript(BinaryReader r)
+        {
+            return new MorrowindGlobalScriptSavePayload
+            {
+                ProgramIndex = r.ReadInt32(),
+                ProgramCounter = r.ReadInt32(),
+                Status = r.ReadByte(),
+                SuppressActivation = r.ReadByte(),
+                DisabledReason = r.ReadString(),
+                TargetPlacedRefId = r.ReadUInt32(),
+                Locals = ReadScriptLocals(r),
+            };
+        }
+
+        static void WriteObjectScript(BinaryWriter w, in MorrowindObjectScriptSavePayload value)
+        {
+            w.Write(value.PlacedRefId);
+            w.Write(value.ProgramIndex);
+            w.Write(value.ProgramCounter);
+            w.Write(value.Status);
+            w.Write(value.SuppressActivation);
+            w.Write(value.DisabledReason ?? string.Empty);
+            WriteScriptLocals(w, value.Locals);
+        }
+
+        static MorrowindObjectScriptSavePayload ReadObjectScript(BinaryReader r)
+        {
+            return new MorrowindObjectScriptSavePayload
+            {
+                PlacedRefId = r.ReadUInt32(),
+                ProgramIndex = r.ReadInt32(),
+                ProgramCounter = r.ReadInt32(),
+                Status = r.ReadByte(),
+                SuppressActivation = r.ReadByte(),
+                DisabledReason = r.ReadString(),
+                Locals = ReadScriptLocals(r),
+            };
+        }
+
+        static void WriteScriptLocals(BinaryWriter w, MorrowindScriptLocalValue[] locals)
+        {
+            w.Write(locals?.Length ?? 0);
+            if (locals == null)
+                return;
+
+            for (int i = 0; i < locals.Length; i++)
+                WriteScriptValue(w, locals[i]);
+        }
+
+        static MorrowindScriptLocalValue[] ReadScriptLocals(BinaryReader r)
+        {
+            int localCount = ReadCount(r, "script local");
+            var locals = new MorrowindScriptLocalValue[localCount];
+            for (int i = 0; i < localCount; i++)
+            {
+                var value = ReadScriptGlobalValue(r);
+                locals[i] = new MorrowindScriptLocalValue
+                {
+                    IntValue = value.IntValue,
+                    FloatValue = value.FloatValue,
+                    ValueKind = value.ValueKind,
+                };
+            }
+
+            return locals;
+        }
+
+        static void WriteScriptValue(BinaryWriter w, in MorrowindScriptLocalValue value)
+        {
+            w.Write(value.IntValue);
+            w.Write(value.FloatValue);
+            w.Write(value.ValueKind);
+        }
+
+        static void WriteScriptValue(BinaryWriter w, in MorrowindScriptGlobalValue value)
+        {
+            w.Write(value.IntValue);
+            w.Write(value.FloatValue);
+            w.Write(value.ValueKind);
+        }
+
+        static MorrowindScriptGlobalValue ReadScriptGlobalValue(BinaryReader r)
+        {
+            return new MorrowindScriptGlobalValue
+            {
+                IntValue = r.ReadInt32(),
+                FloatValue = r.ReadSingle(),
+                ValueKind = r.ReadByte(),
+            };
+        }
+
+        static void WritePlacedRefStateEntry(BinaryWriter w, in PlacedRefStateEntrySavePayload value)
+        {
+            w.Write(value.PlacedRefId);
+            w.Write(value.HasDisabled);
+            w.Write(value.Disabled);
+            w.Write(value.HasLock);
+            w.Write(value.LockLevel);
+            w.Write(value.Locked);
+            w.Write(value.KeyId ?? string.Empty);
+            w.Write(value.TrapId ?? string.Empty);
+            w.Write(value.HasTransform);
+            w.Write(value.Position.x);
+            w.Write(value.Position.y);
+            w.Write(value.Position.z);
+            w.Write(value.Rotation.value.x);
+            w.Write(value.Rotation.value.y);
+            w.Write(value.Rotation.value.z);
+            w.Write(value.Rotation.value.w);
+            w.Write(value.Scale);
+            w.Write(value.ExteriorCell.x);
+            w.Write(value.ExteriorCell.y);
+            w.Write(value.InteriorCellId ?? string.Empty);
+            w.Write(value.InteriorCellHash);
+            w.Write(value.IsInterior);
+        }
+
+        static PlacedRefStateEntrySavePayload ReadPlacedRefStateEntry(BinaryReader r)
+        {
+            return new PlacedRefStateEntrySavePayload
+            {
+                PlacedRefId = r.ReadUInt32(),
+                HasDisabled = r.ReadByte(),
+                Disabled = r.ReadByte(),
+                HasLock = r.ReadByte(),
+                LockLevel = r.ReadInt32(),
+                Locked = r.ReadByte(),
+                KeyId = r.ReadString(),
+                TrapId = r.ReadString(),
+                HasTransform = r.ReadByte(),
+                Position = new float3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                Rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                Scale = r.ReadSingle(),
+                ExteriorCell = new int2(r.ReadInt32(), r.ReadInt32()),
+                InteriorCellId = r.ReadString(),
+                InteriorCellHash = r.ReadUInt64(),
+                IsInterior = r.ReadByte(),
+            };
+        }
+
+        static void WritePlacedRefActorInventory(BinaryWriter w, in PlacedRefActorInventorySavePayload value)
+        {
+            w.Write(value.PlacedRefId);
+            w.Write(value.Items?.Length ?? 0);
+            if (value.Items == null)
+                return;
+
+            for (int i = 0; i < value.Items.Length; i++)
+                WriteActorInventoryItem(w, value.Items[i]);
+        }
+
+        static PlacedRefActorInventorySavePayload ReadPlacedRefActorInventory(BinaryReader r, int version)
+        {
+            var payload = new PlacedRefActorInventorySavePayload
+            {
+                PlacedRefId = r.ReadUInt32(),
+            };
+            int itemCount = ReadCount(r, "placed ref actor inventory item");
+            payload.Items = new ActorInventoryItem[itemCount];
+            for (int i = 0; i < itemCount; i++)
+                payload.Items[i] = ReadActorInventoryItem(r, version);
+            return payload;
         }
 
         static void WriteBookReadHistory(BinaryWriter w, BookReadHistoryEntry[] history)
@@ -629,6 +922,7 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.SoulActorHandleValue);
             w.Write(value.Count);
             w.Write(value.Condition);
+            w.Write(value.EnchantmentCharge);
         }
 
         static PlayerInventoryItem ReadInventoryEntry(BinaryReader r, int version)
@@ -654,6 +948,8 @@ namespace VVardenfell.Runtime.WorldState
                 condition = InventoryConditionUtility.ResolveInitialCondition(ref contentBlob.Value, content);
             }
 
+            float enchantmentCharge = version >= InventoryEnchantmentChargePayloadVersion ? r.ReadSingle() : -1f;
+
             return new PlayerInventoryItem
             {
                 Content = content,
@@ -661,6 +957,34 @@ namespace VVardenfell.Runtime.WorldState
                 SoulActorHandleValue = soulActorHandleValue,
                 Count = count,
                 Condition = condition,
+                EnchantmentCharge = enchantmentCharge,
+            };
+        }
+
+        static void WriteActorInventoryItem(BinaryWriter w, in ActorInventoryItem value)
+        {
+            WriteContentReference(w, value.Content);
+            w.Write(value.SoulId.ToString());
+            w.Write(value.SoulActorHandleValue);
+            w.Write(value.Count);
+            w.Write(value.Condition);
+            w.Write(value.EnchantmentCharge);
+            w.Write(value.AuthoredOrder);
+            w.Write(value.Restocking);
+        }
+
+        static ActorInventoryItem ReadActorInventoryItem(BinaryReader r, int version)
+        {
+            return new ActorInventoryItem
+            {
+                Content = ReadContentReference(r),
+                SoulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                SoulActorHandleValue = r.ReadInt32(),
+                Count = r.ReadInt32(),
+                Condition = r.ReadInt32(),
+                EnchantmentCharge = version >= InventoryEnchantmentChargePayloadVersion ? r.ReadSingle() : -1f,
+                AuthoredOrder = r.ReadInt32(),
+                Restocking = r.ReadByte(),
             };
         }
 
@@ -932,97 +1256,44 @@ namespace VVardenfell.Runtime.WorldState
 
         static void WriteActorStats(BinaryWriter w, in ActorRuntimeStatSeed value)
         {
-            w.Write(value.Attributes.Strength);
-            w.Write(value.Attributes.Intelligence);
-            w.Write(value.Attributes.Willpower);
-            w.Write(value.Attributes.Agility);
-            w.Write(value.Attributes.Speed);
-            w.Write(value.Attributes.Endurance);
-            w.Write(value.Attributes.Personality);
-            w.Write(value.Attributes.Luck);
-            w.Write(value.Skills.Block);
-            w.Write(value.Skills.Armorer);
-            w.Write(value.Skills.MediumArmor);
-            w.Write(value.Skills.HeavyArmor);
-            w.Write(value.Skills.BluntWeapon);
-            w.Write(value.Skills.LongBlade);
-            w.Write(value.Skills.Axe);
-            w.Write(value.Skills.Spear);
-            w.Write(value.Skills.Athletics);
-            w.Write(value.Skills.Enchant);
-            w.Write(value.Skills.Destruction);
-            w.Write(value.Skills.Alteration);
-            w.Write(value.Skills.Illusion);
-            w.Write(value.Skills.Conjuration);
-            w.Write(value.Skills.Mysticism);
-            w.Write(value.Skills.Restoration);
-            w.Write(value.Skills.Alchemy);
-            w.Write(value.Skills.Unarmored);
-            w.Write(value.Skills.Security);
-            w.Write(value.Skills.Sneak);
-            w.Write(value.Skills.Acrobatics);
-            w.Write(value.Skills.LightArmor);
-            w.Write(value.Skills.ShortBlade);
-            w.Write(value.Skills.Marksman);
-            w.Write(value.Skills.Mercantile);
-            w.Write(value.Skills.Speechcraft);
-            w.Write(value.Skills.HandToHand);
+            WriteAttributeSet(w, value.Attributes);
+            WriteAttributeSet(w, value.AttributeBase);
+            WriteAttributeSet(w, value.AttributeDamage);
+            WriteAttributeSet(w, value.AttributeModifiers);
+            WriteSkillSet(w, value.Skills);
+            WriteSkillSet(w, value.SkillBase);
+            WriteSkillSet(w, value.SkillDamage);
+            WriteSkillSet(w, value.SkillModifiers);
             w.Write(value.Vitals.CurrentHealth);
             w.Write(value.Vitals.ModifiedHealthBase);
             w.Write(value.Vitals.CurrentMagicka);
             w.Write(value.Vitals.ModifiedMagickaBase);
             w.Write(value.Vitals.CurrentFatigue);
             w.Write(value.Vitals.ModifiedFatigueBase);
+            w.Write(value.VitalBase.Health);
+            w.Write(value.VitalBase.Magicka);
+            w.Write(value.VitalBase.Fatigue);
+            w.Write(value.VitalModifiers.Health);
+            w.Write(value.VitalModifiers.Magicka);
+            w.Write(value.VitalModifiers.Fatigue);
             w.Write(value.EffectModifiers.JumpMagnitude);
             w.Write(value.EffectModifiers.FeatherMagnitude);
             w.Write(value.EffectModifiers.BurdenMagnitude);
+            w.Write(value.EffectModifiers.FortifyMaximumMagickaMagnitude);
         }
 
         static ActorRuntimeStatSeed ReadActorStats(BinaryReader r)
         {
             var result = new ActorRuntimeStatSeed
             {
-                Attributes = new ActorAttributeSet
-                {
-                    Strength = r.ReadSingle(),
-                    Intelligence = r.ReadSingle(),
-                    Willpower = r.ReadSingle(),
-                    Agility = r.ReadSingle(),
-                    Speed = r.ReadSingle(),
-                    Endurance = r.ReadSingle(),
-                    Personality = r.ReadSingle(),
-                    Luck = r.ReadSingle(),
-                },
-                Skills = new ActorSkillSet
-                {
-                    Block = r.ReadSingle(),
-                    Armorer = r.ReadSingle(),
-                    MediumArmor = r.ReadSingle(),
-                    HeavyArmor = r.ReadSingle(),
-                    BluntWeapon = r.ReadSingle(),
-                    LongBlade = r.ReadSingle(),
-                    Axe = r.ReadSingle(),
-                    Spear = r.ReadSingle(),
-                    Athletics = r.ReadSingle(),
-                    Enchant = r.ReadSingle(),
-                    Destruction = r.ReadSingle(),
-                    Alteration = r.ReadSingle(),
-                    Illusion = r.ReadSingle(),
-                    Conjuration = r.ReadSingle(),
-                    Mysticism = r.ReadSingle(),
-                    Restoration = r.ReadSingle(),
-                    Alchemy = r.ReadSingle(),
-                    Unarmored = r.ReadSingle(),
-                    Security = r.ReadSingle(),
-                    Sneak = r.ReadSingle(),
-                    Acrobatics = r.ReadSingle(),
-                    LightArmor = r.ReadSingle(),
-                    ShortBlade = r.ReadSingle(),
-                    Marksman = r.ReadSingle(),
-                    Mercantile = r.ReadSingle(),
-                    Speechcraft = r.ReadSingle(),
-                    HandToHand = r.ReadSingle(),
-                },
+                Attributes = ReadAttributeSet(r),
+                AttributeBase = ReadAttributeSet(r),
+                AttributeDamage = ReadAttributeSet(r),
+                AttributeModifiers = ReadAttributeSet(r),
+                Skills = ReadSkillSet(r),
+                SkillBase = ReadSkillSet(r),
+                SkillDamage = ReadSkillSet(r),
+                SkillModifiers = ReadSkillSet(r),
                 EffectModifiers = new ActorEffectStatModifiers
                 {
                 },
@@ -1037,16 +1308,119 @@ namespace VVardenfell.Runtime.WorldState
                 CurrentFatigue = r.ReadSingle(),
                 ModifiedFatigueBase = r.ReadSingle(),
             };
+            result.VitalBase = new ActorVitalBaseSet
+            {
+                Health = r.ReadSingle(),
+                Magicka = r.ReadSingle(),
+                Fatigue = r.ReadSingle(),
+            };
+            result.VitalModifiers = new ActorVitalModifierSet
+            {
+                Health = r.ReadSingle(),
+                Magicka = r.ReadSingle(),
+                Fatigue = r.ReadSingle(),
+            };
 
             result.EffectModifiers = new ActorEffectStatModifiers
             {
                 JumpMagnitude = r.ReadSingle(),
                 FeatherMagnitude = r.ReadSingle(),
                 BurdenMagnitude = r.ReadSingle(),
+                FortifyMaximumMagickaMagnitude = r.ReadSingle(),
             };
-            var contentBlob = RequireRuntimeContentBlob();
-            MorrowindActorMovementStats.ApplyVitalBases(ref contentBlob.Value, result.Attributes, ref result.Vitals, initializeMissingCurrents: true);
-            return result;
+            return VVardenfell.Runtime.Magic.ActorMagicStatUtility.InitializeAuthoritativeState(result);
+        }
+
+        static void WriteAttributeSet(BinaryWriter w, in ActorAttributeSet value)
+        {
+            w.Write(value.Strength);
+            w.Write(value.Intelligence);
+            w.Write(value.Willpower);
+            w.Write(value.Agility);
+            w.Write(value.Speed);
+            w.Write(value.Endurance);
+            w.Write(value.Personality);
+            w.Write(value.Luck);
+        }
+
+        static ActorAttributeSet ReadAttributeSet(BinaryReader r)
+        {
+            return new ActorAttributeSet
+            {
+                Strength = r.ReadSingle(),
+                Intelligence = r.ReadSingle(),
+                Willpower = r.ReadSingle(),
+                Agility = r.ReadSingle(),
+                Speed = r.ReadSingle(),
+                Endurance = r.ReadSingle(),
+                Personality = r.ReadSingle(),
+                Luck = r.ReadSingle(),
+            };
+        }
+
+        static void WriteSkillSet(BinaryWriter w, in ActorSkillSet value)
+        {
+            w.Write(value.Block);
+            w.Write(value.Armorer);
+            w.Write(value.MediumArmor);
+            w.Write(value.HeavyArmor);
+            w.Write(value.BluntWeapon);
+            w.Write(value.LongBlade);
+            w.Write(value.Axe);
+            w.Write(value.Spear);
+            w.Write(value.Athletics);
+            w.Write(value.Enchant);
+            w.Write(value.Destruction);
+            w.Write(value.Alteration);
+            w.Write(value.Illusion);
+            w.Write(value.Conjuration);
+            w.Write(value.Mysticism);
+            w.Write(value.Restoration);
+            w.Write(value.Alchemy);
+            w.Write(value.Unarmored);
+            w.Write(value.Security);
+            w.Write(value.Sneak);
+            w.Write(value.Acrobatics);
+            w.Write(value.LightArmor);
+            w.Write(value.ShortBlade);
+            w.Write(value.Marksman);
+            w.Write(value.Mercantile);
+            w.Write(value.Speechcraft);
+            w.Write(value.HandToHand);
+        }
+
+        static ActorSkillSet ReadSkillSet(BinaryReader r)
+        {
+            return new ActorSkillSet
+            {
+                Block = r.ReadSingle(),
+                Armorer = r.ReadSingle(),
+                MediumArmor = r.ReadSingle(),
+                HeavyArmor = r.ReadSingle(),
+                BluntWeapon = r.ReadSingle(),
+                LongBlade = r.ReadSingle(),
+                Axe = r.ReadSingle(),
+                Spear = r.ReadSingle(),
+                Athletics = r.ReadSingle(),
+                Enchant = r.ReadSingle(),
+                Destruction = r.ReadSingle(),
+                Alteration = r.ReadSingle(),
+                Illusion = r.ReadSingle(),
+                Conjuration = r.ReadSingle(),
+                Mysticism = r.ReadSingle(),
+                Restoration = r.ReadSingle(),
+                Alchemy = r.ReadSingle(),
+                Unarmored = r.ReadSingle(),
+                Security = r.ReadSingle(),
+                Sneak = r.ReadSingle(),
+                Acrobatics = r.ReadSingle(),
+                LightArmor = r.ReadSingle(),
+                ShortBlade = r.ReadSingle(),
+                Marksman = r.ReadSingle(),
+                Mercantile = r.ReadSingle(),
+                Speechcraft = r.ReadSingle(),
+                HandToHand = r.ReadSingle(),
+            };
         }
 
         static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
@@ -1162,12 +1536,13 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.HairId.ToString());
             w.Write(value.ClassId.ToString());
             w.Write(value.BirthsignId.ToString());
+            w.Write(value.PendingBirthsignId.ToString());
             w.Write(value.GeneratedClassId.ToString());
         }
 
-        static CharacterGenerationState ReadCharacterGeneration(BinaryReader r)
+        static CharacterGenerationState ReadCharacterGeneration(BinaryReader r, int version)
         {
-            return new CharacterGenerationState
+            var value = new CharacterGenerationState
             {
                 Initialized = r.ReadByte(),
                 Finalized = r.ReadByte(),
@@ -1186,8 +1561,13 @@ namespace VVardenfell.Runtime.WorldState
                 HairId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 ClassId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 BirthsignId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
-                GeneratedClassId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
             };
+
+            value.PendingBirthsignId = version >= CharacterGenerationPendingBirthsignPayloadVersion
+                ? RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString())
+                : value.BirthsignId;
+            value.GeneratedClassId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString());
+            return value;
         }
 
         static void WritePlayerCrime(BinaryWriter w, in PlayerCrimeState value)
@@ -1238,6 +1618,11 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.IgnoreResistances);
             w.Write(value.IgnoreReflect);
             w.Write(value.IgnoreSpellAbsorption);
+            w.Write(value.RuntimeFlags);
+            w.Write(value.Arg0);
+            w.Write(value.Arg1);
+            w.Write(value.ArgPlacedRefId);
+            w.Write(value.ArgIdHash);
             w.Write((byte)value.SourceKind);
             w.Write(value.SourceName.ToString());
             w.Write(value.SourceId.ToString());
@@ -1293,6 +1678,11 @@ namespace VVardenfell.Runtime.WorldState
                 IgnoreResistances = r.ReadByte(),
                 IgnoreReflect = r.ReadByte(),
                 IgnoreSpellAbsorption = r.ReadByte(),
+                RuntimeFlags = r.ReadUInt16(),
+                Arg0 = r.ReadInt32(),
+                Arg1 = r.ReadInt32(),
+                ArgPlacedRefId = r.ReadUInt32(),
+                ArgIdHash = r.ReadUInt64(),
                 SourceKind = (ActorActiveMagicEffectSourceKind)r.ReadByte(),
                 SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
                 SourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),

@@ -59,9 +59,7 @@ namespace VVardenfell.Runtime.Shell
                 ComponentType.ReadOnly<ActorSkillSet>(),
                 ComponentType.ReadOnly<ActorVitalSet>(),
                 ComponentType.ReadOnly<ActorDerivedMovementStats>(),
-                ComponentType.ReadOnly<LocalTransform>(),
-                ComponentType.ReadOnly<ActorKnownSpell>(),
-                ComponentType.ReadOnly<ActorActiveMagicEffect>());
+                ComponentType.ReadOnly<LocalTransform>());
             _playerInventoryQuery = GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadOnly<PlayerInventoryItem>());
@@ -161,8 +159,10 @@ namespace VVardenfell.Runtime.Shell
                 : null;
             bool visible = !BootstrapPresentationGate.BlocksGameplayInput;
             bool showHud = shell.HudVisible != 0;
+            bool showHudChrome = showHud && !SystemAPI.HasSingleton<CharGenStage>();
             RuntimeHudViewModel hudModel = BuildHudModel(
                 showHud,
+                showHudChrome,
                 ref contentBlob,
                 interaction,
                 hudPreferences,

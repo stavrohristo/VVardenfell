@@ -12,6 +12,15 @@ namespace VVardenfell.Runtime.Animation
     public partial struct ActorWeaponAnimationSystem : ISystem
     {
         const int CombatOverlayPriority = 40;
+        const ulong SelfStartMarkerHash = 10179819465993188655UL;
+        const ulong SelfReleaseMarkerHash = 18149065862640264910UL;
+        const ulong SelfStopMarkerHash = 6163052633529419029UL;
+        const ulong TouchStartMarkerHash = 9750376835238723124UL;
+        const ulong TouchReleaseMarkerHash = 16570883444969621989UL;
+        const ulong TouchStopMarkerHash = 10699017043350398000UL;
+        const ulong TargetStartMarkerHash = 989263509605477796UL;
+        const ulong TargetReleaseMarkerHash = 8348009748216247445UL;
+        const ulong TargetStopMarkerHash = 10328737979966807904UL;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -79,6 +88,7 @@ namespace VVardenfell.Runtime.Animation
             DynamicBuffer<ActorAnimationOverlayState> overlays)
         {
             bool supportedMelee = ActorWeaponAnimationUtility.IsSupportedMelee(state.WeaponType);
+            bool spellWeapon = state.WeaponType == ActorWeaponAnimationUtility.SpellWeaponType;
             if (state.ReadyWeaponTogglePressed != 0 && !IsAttacking(state.Phase))
                 ToggleDrawState(ref catalog, presentation, ref state, overlays);
 
@@ -107,9 +117,14 @@ namespace VVardenfell.Runtime.Animation
                     if (state.Drawn != 0)
                     {
                         EnsureReadyHold(ref catalog, presentation, ref state, overlays);
-                        if (supportedMelee && state.AttackPressed != 0)
+                        if (spellWeapon && state.SpellCastPressed != 0)
+                            StartSpellCast(ref catalog, presentation, ref state, overlays);
+                        else if (supportedMelee && state.AttackPressed != 0)
                             StartWindUp(ref catalog, presentation, movementState, ref state, overlays);
                     }
+                    break;
+                case ActorWeaponAnimationPhase.SpellCasting:
+                    UpdateSpellCast(ref catalog, presentation, ref state, overlays);
                     break;
                 case ActorWeaponAnimationPhase.AttackWindUp:
                     UpdateWindUp(ref catalog, presentation, ref state, overlays);
@@ -135,12 +150,14 @@ namespace VVardenfell.Runtime.Animation
             state.ReadyWeaponTogglePressed = 0;
             state.AttackPressed = 0;
             state.AttackReleased = 0;
+            state.SpellCastPressed = 0;
         }
 
         static bool IsAttacking(ActorWeaponAnimationPhase phase)
             => phase == ActorWeaponAnimationPhase.AttackWindUp
                || phase == ActorWeaponAnimationPhase.AttackRelease
-               || phase == ActorWeaponAnimationPhase.AttackFollow;
+               || phase == ActorWeaponAnimationPhase.AttackFollow
+               || phase == ActorWeaponAnimationPhase.SpellCasting;
 
         static void ToggleDrawState(
             ref ActorAnimationCatalogBlob catalog,
@@ -168,8 +185,93 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
+            if (state.WeaponType == ActorWeaponAnimationUtility.SpellWeaponType)
+                throw new System.InvalidOperationException($"[VVardenfell][Magic] Spell ready animation is missing spellcast {(draw ? "equip" : "unequip")} start/stop markers.");
+
             state.Phase = draw ? ActorWeaponAnimationPhase.Equipped : ActorWeaponAnimationPhase.Hidden;
             if (draw)
+                EnsureReadyHold(ref catalog, presentation, ref state, overlays);
+            else
+                ClearUpperBodyOverlay(overlays);
+        }
+
+        static void StartSpellCast(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ref ActorWeaponAnimationState state,
+            DynamicBuffer<ActorAnimationOverlayState> overlays)
+        {
+            ResolveSpellCastMarkers(state.SpellCastRange, out ulong startHash, out ulong releaseHash, out ulong stopHash);
+            if (!TryResolveWeaponWindow(
+                    ref catalog,
+                    presentation,
+                    ActorWeaponAnimationUtility.SpellWeaponType,
+                    startHash,
+                    stopHash,
+                    out var group,
+                    out float startTime,
+                    out float stopTime))
+            {
+                throw new System.InvalidOperationException($"[VVardenfell][Magic] Spellcast animation has no valid range window for range {state.SpellCastRange}.");
+            }
+
+            if (!TryResolveWeaponMarker(ref catalog, presentation, ActorWeaponAnimationUtility.SpellWeaponType, releaseHash, out float releaseTime)
+                || releaseTime < startTime
+                || releaseTime > stopTime)
+            {
+                throw new System.InvalidOperationException($"[VVardenfell][Magic] Spellcast animation has no valid release marker for range {state.SpellCastRange}.");
+            }
+
+            state.Phase = ActorWeaponAnimationPhase.SpellCasting;
+            StartUpperBodyOverlay(overlays, group, startTime, stopTime, holdAtStop: false);
+        }
+
+        static void UpdateSpellCast(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ref ActorWeaponAnimationState state,
+            DynamicBuffer<ActorAnimationOverlayState> overlays)
+        {
+            ResolveSpellCastMarkers(state.SpellCastRange, out _, out ulong releaseHash, out _);
+            if (!TryResolveWeaponMarker(ref catalog, presentation, ActorWeaponAnimationUtility.SpellWeaponType, releaseHash, out float releaseTime))
+                throw new System.InvalidOperationException($"[VVardenfell][Magic] Spellcast animation has no release marker for range {state.SpellCastRange}.");
+
+            if (!TryGetUpperBodyOverlay(overlays, out _, out var overlay)
+                || !ActorAnimationPlaybackUtility.CanSample(overlay.Playback))
+            {
+                FinishSpellCast(ref catalog, presentation, ref state, overlays);
+                return;
+            }
+
+            if (state.SpellCastReleasePending == 0
+                && overlay.Playback.PreviousTime < releaseTime
+                && overlay.Playback.Time >= releaseTime)
+            {
+                state.SpellCastReleasePending = 1;
+                state.SpellCastReleaseSourceKind = state.SpellCastSourceKind;
+                state.SpellCastReleaseSpell = state.SpellCastSpell;
+                state.SpellCastReleaseEnchantment = state.SpellCastEnchantment;
+                state.SpellCastReleaseItemContent = state.SpellCastItemContent;
+                state.SpellCastReleaseInventoryIndex = state.SpellCastInventoryIndex;
+            }
+
+            if (!ActorAnimationPlaybackUtility.IsActive(overlay.Playback) || PlaybackReachedStop(overlay.Playback))
+                FinishSpellCast(ref catalog, presentation, ref state, overlays);
+        }
+
+        static void FinishSpellCast(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorPresentation presentation,
+            ref ActorWeaponAnimationState state,
+            DynamicBuffer<ActorAnimationOverlayState> overlays)
+        {
+            state.Phase = state.Drawn != 0
+                ? ActorWeaponAnimationPhase.Equipped
+                : ActorWeaponAnimationPhase.Hidden;
+            state.SpellCastPressed = 0;
+            state.SpellCastRange = 0;
+            state.SpellCastSpell = default;
+            if (state.Drawn != 0)
                 EnsureReadyHold(ref catalog, presentation, ref state, overlays);
             else
                 ClearUpperBodyOverlay(overlays);
@@ -368,10 +470,36 @@ namespace VVardenfell.Runtime.Animation
                     out _,
                     out float stopTime))
             {
+                if (state.WeaponType == ActorWeaponAnimationUtility.SpellWeaponType)
+                    throw new System.InvalidOperationException("[VVardenfell][Magic] Spell ready hold requires spellcast equip start/stop markers.");
                 return;
             }
 
             StartUpperBodyOverlay(overlays, group, stopTime, stopTime, holdAtStop: true);
+        }
+
+        static void ResolveSpellCastMarkers(byte range, out ulong startHash, out ulong releaseHash, out ulong stopHash)
+        {
+            switch (range)
+            {
+                case 0:
+                    startHash = SelfStartMarkerHash;
+                    releaseHash = SelfReleaseMarkerHash;
+                    stopHash = SelfStopMarkerHash;
+                    return;
+                case 1:
+                    startHash = TouchStartMarkerHash;
+                    releaseHash = TouchReleaseMarkerHash;
+                    stopHash = TouchStopMarkerHash;
+                    return;
+                case 2:
+                    startHash = TargetStartMarkerHash;
+                    releaseHash = TargetReleaseMarkerHash;
+                    stopHash = TargetStopMarkerHash;
+                    return;
+                default:
+                    throw new System.InvalidOperationException($"[VVardenfell][Magic] Unsupported spellcast animation range {range}.");
+            }
         }
 
         static ActorWeaponAttackType ResolveAttackType(float2 localMove)

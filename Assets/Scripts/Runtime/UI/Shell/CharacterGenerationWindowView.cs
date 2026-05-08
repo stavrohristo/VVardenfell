@@ -1018,6 +1018,7 @@ namespace VVardenfell.Runtime.UI.Shell
             RuntimeUiFactory.Stretch(image.rectTransform);
             image.rectTransform.offsetMin = RuntimeClassicUiMetrics.Ui(new Vector2(2f, 2f));
             image.rectTransform.offsetMax = RuntimeClassicUiMetrics.Ui(new Vector2(-2f, -2f));
+            image.rectTransform.localScale = new Vector3(1f, -1f, 1f);
         }
 
         Sprite RequireClassImageSprite(CharacterGenerationClassDetailViewModel detail)

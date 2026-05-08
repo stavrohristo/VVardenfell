@@ -30,11 +30,13 @@ namespace VVardenfell.Runtime.UI.Shell
                 Vector2.zero);
             root.pivot = new Vector2(0f, 1f);
 
-            var image = root.gameObject.AddComponent<Image>();
+            var image = RuntimeUiFactory.CreateImage("Image", root, Color.white);
             image.sprite = RequireSprite(theme, normalKey);
             image.type = Image.Type.Simple;
             image.preserveAspect = false;
             image.raycastTarget = true;
+            RuntimeUiFactory.Stretch(image.rectTransform);
+            image.rectTransform.localScale = new Vector3(1f, -1f, 1f);
 
             var button = root.gameObject.AddComponent<Button>();
             button.targetGraphic = image;

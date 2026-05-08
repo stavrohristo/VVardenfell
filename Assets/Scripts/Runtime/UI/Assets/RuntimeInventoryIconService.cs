@@ -4,7 +4,6 @@ using System.IO;
 using UnityEngine;
 using VVardenfell.Core.Config;
 using VVardenfell.Importer.Bsa;
-using VVardenfell.Importer.Dds;
 using Object = UnityEngine.Object;
 
 namespace VVardenfell.Runtime.UI.Assets
@@ -180,7 +179,7 @@ namespace VVardenfell.Runtime.UI.Assets
                 try
                 {
                     var bytes = _bsaArchive.Read(entry);
-                    texture = DecodeImage(bytes, Path.GetExtension(candidate), candidate);
+                    texture = RuntimeUiTextureDecoder.Decode(bytes, Path.GetExtension(candidate), candidate, FilterMode.Point);
                     if (texture != null)
                         return true;
                 }
@@ -213,7 +212,7 @@ namespace VVardenfell.Runtime.UI.Assets
                 try
                 {
                     var bytes = _bsaArchive.Read(entry);
-                    texture = DecodeImage(bytes, Path.GetExtension(candidate), candidate);
+                    texture = RuntimeUiTextureDecoder.Decode(bytes, Path.GetExtension(candidate), candidate, FilterMode.Bilinear);
                     if (texture != null)
                         return true;
                 }
@@ -238,7 +237,7 @@ namespace VVardenfell.Runtime.UI.Assets
 
                 try
                 {
-                    texture = DecodeImage(File.ReadAllBytes(fullPath), Path.GetExtension(fullPath), candidate);
+                    texture = RuntimeUiTextureDecoder.Decode(File.ReadAllBytes(fullPath), Path.GetExtension(fullPath), candidate, FilterMode.Bilinear);
                     return texture != null;
                 }
                 catch (Exception ex)
@@ -262,7 +261,7 @@ namespace VVardenfell.Runtime.UI.Assets
 
                 try
                 {
-                    texture = DecodeImage(File.ReadAllBytes(fullPath), Path.GetExtension(fullPath), candidate);
+                    texture = RuntimeUiTextureDecoder.Decode(File.ReadAllBytes(fullPath), Path.GetExtension(fullPath), candidate, FilterMode.Point);
                     return texture != null;
                 }
                 catch (Exception ex)
@@ -285,33 +284,6 @@ namespace VVardenfell.Runtime.UI.Assets
             yield return dds;
             if (!string.Equals(normalizedPath, dds, StringComparison.OrdinalIgnoreCase))
                 yield return normalizedPath;
-        }
-
-        Texture2D DecodeImage(byte[] bytes, string extension, string sourcePath)
-        {
-            extension = (extension ?? string.Empty).ToLowerInvariant();
-            return extension switch
-            {
-                ".dds" => DdsTexture.Load(bytes, sourcePath),
-                ".tga" => TgaTexture.Load(bytes, sourcePath),
-                ".png" or ".bmp" or ".jpg" or ".jpeg" => LoadViaImageConversion(bytes, sourcePath),
-                _ => throw new NotSupportedException($"Unsupported icon image format '{extension}' for '{sourcePath}'."),
-            };
-        }
-
-        static Texture2D LoadViaImageConversion(byte[] bytes, string sourcePath)
-        {
-            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false, linear: false)
-            {
-                name = sourcePath ?? "Inventory Icon",
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Point,
-            };
-
-            if (!ImageConversion.LoadImage(texture, bytes, markNonReadable: true))
-                throw new InvalidDataException($"Failed to decode inventory icon '{sourcePath}'.");
-
-            return texture;
         }
 
         Sprite GetFallbackSprite()
