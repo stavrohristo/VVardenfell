@@ -36,6 +36,7 @@ namespace VVardenfell.Runtime.AI
                     TargetPlacedRefId = request.TargetPlacedRefId,
                     VoicePath = request.VoicePath,
                     Subtitle = request.Subtitle,
+                    AllowMissingVoicePath = 1,
                 });
             }
 

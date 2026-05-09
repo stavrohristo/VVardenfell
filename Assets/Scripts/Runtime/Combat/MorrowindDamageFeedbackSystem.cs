@@ -8,7 +8,6 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Systems;
-using VVardenfell.Runtime.Vfx;
 
 namespace VVardenfell.Runtime.Combat
 {
@@ -45,7 +44,6 @@ namespace VVardenfell.Runtime.Combat
                 EmitBlockImpactAudio(ref systemState, ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
                 EmitArmorImpactAudio(ref systemState, ref content, ref audioState, hasAudioState, ref ecb, damage.ValueRO);
                 EmitAppliedDamageAudio(ref systemState, ref content, ref audioState, hasAudioState, ref randomState, ref ecb, damage.ValueRO);
-                EmitBloodVfxRequest(ref systemState, ref content, ref randomState, ref ecb, damage.ValueRO);
                 ecb.DestroyEntity(entity);
             }
 
@@ -187,96 +185,6 @@ namespace VVardenfell.Runtime.Combat
             }
 
             return null;
-        }
-
-        void EmitBloodVfxRequest(ref SystemState systemState, 
-            ref RuntimeContentBlob content,
-            ref uint randomState,
-            ref EntityCommandBuffer ecb,
-            in MorrowindDamageAppliedEvent damage)
-        {
-            if (damage.Amount <= 0f
-                || damage.TargetVital != MorrowindDamageTargetVital.Health
-                || damage.HasHitPosition == 0)
-            {
-                return;
-            }
-
-            if (damage.Target == Entity.Null || !systemState.EntityManager.Exists(damage.Target))
-                throw new InvalidOperationException("[VVardenfell][Damage] Blood VFX target entity is missing.");
-            if (!systemState.EntityManager.HasComponent<ActorSpawnSource>(damage.Target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(ref systemState, damage.Target)} has no ActorSpawnSource.");
-            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(damage.Target))
-                throw new InvalidOperationException($"[VVardenfell][Damage] Blood VFX target ref={PlacedRefId(ref systemState, damage.Target)} has no LogicalRefLocation.");
-
-            int modelVariant = (int)(NextRandom(ref randomState) % 3u);
-            string model = "meshes/" + RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentStableHash.HashId($"Blood_Model_{modelVariant}"));
-            var actorSource = systemState.EntityManager.GetComponentData<ActorSpawnSource>(damage.Target);
-            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, actorSource.Definition);
-            string texture = ResolveBloodTexture(ref content, actor.BloodType);
-            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(damage.Target);
-            float3 bloodPosition = ResolveBloodVfxPosition(ref systemState, damage, ref randomState);
-
-            Entity requestEntity = ecb.CreateEntity();
-            ecb.AddComponent(requestEntity, new MorrowindVfxSpawnRequest
-            {
-                ModelPath = model,
-                TextureOverridePath = texture,
-                Position = bloodPosition,
-                Rotation = quaternion.identity,
-                Scale = 1f,
-                ExteriorCell = location.ExteriorCell,
-                InteriorCellId = location.InteriorCellId,
-                InteriorCellHash = location.InteriorCellHash,
-                IsInterior = location.IsInterior,
-            });
-        }
-
-        float3 ResolveBloodVfxPosition(ref SystemState systemState, in MorrowindDamageAppliedEvent damage, ref uint randomState)
-        {
-            if (damage.Target == Entity.Null
-                || damage.Attacker == Entity.Null
-                || !systemState.EntityManager.Exists(damage.Target)
-                || !systemState.EntityManager.Exists(damage.Attacker)
-                || !systemState.EntityManager.HasComponent<LocalTransform>(damage.Target)
-                || !systemState.EntityManager.HasComponent<LocalTransform>(damage.Attacker)
-                || !systemState.EntityManager.HasComponent<ActorLocalBounds>(damage.Target))
-            {
-                return damage.HitPosition;
-            }
-
-            var targetTransform = systemState.EntityManager.GetComponentData<LocalTransform>(damage.Target);
-            var attackerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(damage.Attacker);
-            var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(damage.Target);
-            float scale = math.max(0.01f, targetTransform.Scale);
-            float3 extents = bounds.Extents * scale;
-            float3 targetBase = targetTransform.Position;
-            float3 directionToAttacker = math.normalizesafe(
-                new float3(attackerTransform.Position.x - targetBase.x, 0f, attackerTransform.Position.z - targetBase.z),
-                new float3(0f, 0f, 1f));
-
-            float forwardRadius = math.max(0.01f, extents.z);
-            float width = math.max(0.01f, extents.x * 2f);
-            float height = math.max(0.01f, extents.y * 2f);
-            float xOffset = (NextRandom01(ref randomState) - 0.5f) * 0.5f;
-            float heightT = 0.2f + NextRandom01(ref randomState) * 0.8f;
-
-            return targetBase
-                   + directionToAttacker * forwardRadius
-                   + new float3(width * xOffset, height * heightT, 0f);
-        }
-
-        static float NextRandom01(ref uint randomState)
-            => (NextRandom(ref randomState) & 0x00FFFFFFu) / 16777216f;
-
-        static string ResolveBloodTexture(ref RuntimeContentBlob content, int bloodType)
-        {
-            string typedId = $"Blood_Texture_{bloodType}";
-            string typed = RuntimeContentBlobUtility.RequireGameSettingStringAllowEmptyByIdHash(ref content, RuntimeContentStableHash.HashId(typedId));
-            if (!string.IsNullOrWhiteSpace(typed))
-                return typed;
-
-            return RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref content, RuntimeContentKnownHashes.Blood_Texture_0);
         }
 
         uint PlacedRefId(ref SystemState systemState, Entity entity)

@@ -411,7 +411,8 @@ namespace VVardenfell.Runtime.Magic
             if (vitals.CurrentHealth <= 0f)
             {
                 var aftermath = ActorHitAftermathStateUtility.Require(entityManager, target, $"[VVardenfell][Magic] Vital magic target entity={target.Index}:{target.Version}");
-                ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                ActorHitAftermathStateUtility.MarkDead(entityManager, target, ref vitals, ref aftermath);
+                entityManager.SetComponentData(target, vitals);
                 entityManager.SetComponentData(target, aftermath);
             }
         }

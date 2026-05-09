@@ -145,6 +145,8 @@ namespace VVardenfell.Runtime.Inventory
                 Drawn = 1,
                 Phase = ActorWeaponAnimationPhase.Equipped,
             });
+            systemState.EntityManager.AddComponent<ActorRigidEquipmentRenderOwnerActorDirty>(preview);
+            systemState.EntityManager.SetComponentEnabled<ActorRigidEquipmentRenderOwnerActorDirty>(preview, false);
 
             _previewEntity = preview;
             _lastActor = actorHandle;

@@ -57,6 +57,7 @@ namespace VVardenfell.Runtime.Streaming
             try
             {
                 WorldResources.RuntimeMode = options.Mode;
+                WorldBootstrapStateUtility.PublishRuntimeMode(em, options.Mode);
                 RuntimeBootstrapRequestUtility.PublishAll(em);
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;

@@ -68,8 +68,7 @@ namespace VVardenfell.Runtime.Combat
             var targetAttributes = systemState.EntityManager.GetComponentData<ActorAttributeSet>(target);
             var targetVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
             var targetEffects = systemState.EntityManager.GetBuffer<ActorActiveMagicEffect>(target, true);
-            bool targetInCombat = systemState.EntityManager.HasComponent<ActorCombatTargetState>(target)
-                                  && systemState.EntityManager.GetComponentData<ActorCombatTargetState>(target).Active != 0;
+            bool targetInCombat = MorrowindCombatTargetUtility.IsInCombat(systemState.EntityManager, target);
 
             MorrowindMeleeCombatMechanics.ResolveWeaponEquipment(
                 ref content,

@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
-using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Streaming;
@@ -50,6 +50,8 @@ namespace VVardenfell.Runtime.Vfx
         readonly List<Instance> _instances = new(MaxInstances);
         readonly MorrowindVfxParticleGpu[] _particleScratch = new MorrowindVfxParticleGpu[MaxParticles];
         readonly float3[] _instanceDeltaScratch = new float3[MaxInstances];
+        readonly FollowResult[] _followResultScratch = new FollowResult[MaxInstances];
+        readonly bool[] _followResultSetScratch = new bool[MaxInstances];
         readonly bool[] _instanceSlotUsed = new bool[MaxInstances];
         readonly int[] _particleCountByBucket;
         readonly Dictionary<string, int> _effectIndexByModelPath = new(StringComparer.OrdinalIgnoreCase);
@@ -81,6 +83,19 @@ namespace VVardenfell.Runtime.Vfx
             public Entity FollowEntity;
             public float3 LastFollowPosition;
             public int CreatedFrame;
+        }
+
+        public struct FollowRequest
+        {
+            public int InstanceIndex;
+            public Entity FollowEntity;
+        }
+
+        public struct FollowResult
+        {
+            public int InstanceIndex;
+            public byte Found;
+            public float3 Position;
         }
 
         public MorrowindVfxResources(CacheLoader cache)
@@ -270,9 +285,40 @@ namespace VVardenfell.Runtime.Vfx
             }
         }
 
-        public void Tick(float deltaTime, EntityManager entityManager)
+        public void CollectFollowRequests(NativeList<FollowRequest> requests)
+        {
+            requests.Clear();
+            if (requests.Capacity < _instances.Count)
+                requests.Capacity = _instances.Count;
+
+            for (int i = 0; i < _instances.Count; i++)
+            {
+                var instance = _instances[i];
+                if (instance.FollowEntity == Entity.Null)
+                    continue;
+
+                requests.AddNoResize(new FollowRequest
+                {
+                    InstanceIndex = i,
+                    FollowEntity = instance.FollowEntity,
+                });
+            }
+        }
+
+        public void Tick(float deltaTime, NativeArray<FollowResult> followResults)
         {
             Array.Clear(_instanceDeltaScratch, 0, _instanceDeltaScratch.Length);
+            Array.Clear(_followResultSetScratch, 0, math.min(_instances.Count, _followResultSetScratch.Length));
+            for (int i = 0; i < followResults.Length; i++)
+            {
+                var result = followResults[i];
+                if ((uint)result.InstanceIndex >= (uint)_followResultScratch.Length)
+                    continue;
+
+                _followResultScratch[result.InstanceIndex] = result;
+                _followResultSetScratch[result.InstanceIndex] = true;
+            }
+
             for (int i = _instances.Count - 1; i >= 0; i--)
             {
                 var instance = _instances[i];
@@ -294,13 +340,13 @@ namespace VVardenfell.Runtime.Vfx
 
                 if (instance.FollowEntity != Entity.Null)
                 {
-                    if (!entityManager.Exists(instance.FollowEntity) || !entityManager.HasComponent<LocalTransform>(instance.FollowEntity))
+                    if (!_followResultSetScratch[i] || _followResultScratch[i].Found == 0)
                     {
                         RemoveInstanceAt(i);
                         continue;
                     }
 
-                    float3 followPosition = entityManager.GetComponentData<LocalTransform>(instance.FollowEntity).Position;
+                    float3 followPosition = _followResultScratch[i].Position;
                     _instanceDeltaScratch[instance.Slot] = followPosition - instance.LastFollowPosition;
                     instance.LastFollowPosition = followPosition;
                 }

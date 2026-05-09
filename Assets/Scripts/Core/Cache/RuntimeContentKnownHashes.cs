@@ -86,6 +86,7 @@ namespace VVardenfell.Core.Cache
         public const ulong iMagicItemChargeUse = 0x4B32506C6DBF326FUL;
         public const ulong iKnockDownOddsBase = 0x9771D7D38417620BUL;
         public const ulong iKnockDownOddsMult = 0xA7A5330ED43B471CUL;
+        public const ulong iVoiceAttackOdds = 0x71B4FC7EFA837E14UL;
         public const ulong iVoiceHitOdds = 0xC2C0E47AA0BAE901UL;
         public const ulong month = 0xF4BDC3936FAF56A5UL;
         public const ulong player = 0x4580FAB03B7EB9C0UL;

@@ -3,9 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Components;
-using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Magic;
-using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Player
@@ -16,14 +14,13 @@ namespace VVardenfell.Runtime.Player
         const short BurdenEffectId = 7;
         const short FeatherEffectId = 8;
         const short JumpEffectId = 9;
-        const bool InjectDebugBuffs = false;
-        const string DebugBuffSourceId = "vv_debug_buff_test";
 
-        EntityQuery _actorQuery;
+        EntityQuery _dirtyActorQuery;
+        EntityQuery _tickingActorQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
-            _actorQuery = systemState.GetEntityQuery(
+            _dirtyActorQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActorKnownSpell>(),
                 ComponentType.ReadWrite<ActorActiveMagicEffect>(),
                 ComponentType.ReadWrite<ActorActiveSpell>(),
@@ -41,81 +38,104 @@ namespace VVardenfell.Runtime.Player
                 ComponentType.ReadWrite<ActorVitalModifierSet>(),
                 ComponentType.ReadOnly<ActorActiveMagicEffectDirty>());
 
-            systemState.RequireForUpdate(_actorQuery);
+            _tickingActorQuery = systemState.GetEntityQuery(
+                ComponentType.ReadOnly<ActorKnownSpell>(),
+                ComponentType.ReadWrite<ActorActiveMagicEffect>(),
+                ComponentType.ReadWrite<ActorActiveSpell>(),
+                ComponentType.ReadWrite<ActorAttributeSet>(),
+                ComponentType.ReadWrite<ActorAttributeBaseSet>(),
+                ComponentType.ReadWrite<ActorAttributeDamageSet>(),
+                ComponentType.ReadWrite<ActorAttributeModifierSet>(),
+                ComponentType.ReadWrite<ActorSkillSet>(),
+                ComponentType.ReadWrite<ActorSkillBaseSet>(),
+                ComponentType.ReadWrite<ActorSkillDamageSet>(),
+                ComponentType.ReadWrite<ActorSkillModifierSet>(),
+                ComponentType.ReadWrite<ActorEffectStatModifiers>(),
+                ComponentType.ReadWrite<ActorVitalSet>(),
+                ComponentType.ReadWrite<ActorVitalBaseSet>(),
+                ComponentType.ReadWrite<ActorVitalModifierSet>(),
+                ComponentType.ReadOnly<ActorActiveMagicEffectTicking>());
+
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
+            int tickingCount = _tickingActorQuery.CalculateEntityCount();
+            int dirtyCount = _dirtyActorQuery.CalculateEntityCount();
+            if (tickingCount == 0 && dirtyCount == 0)
+                return;
+
             float dt = math.max(0f, SystemAPI.Time.DeltaTime);
             var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
             if (!contentBlobReference.Blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Active magic effect update requires runtime content blob.");
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-            foreach (var (knownSpells, activeEffects, activeSpells, modifiers, vitals, entity) in
-                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>, RefRW<ActorVitalSet>>()
+
+            if (tickingCount > 0 && dt > 0f)
+                TickActiveMagicEffects(ref systemState, ref content, dt);
+
+            if (dirtyCount > 0)
+                RebuildDirtyActiveMagicEffects(ref systemState, ref content);
+        }
+
+        void TickActiveMagicEffects(ref SystemState systemState, ref RuntimeContentBlob content, float deltaSeconds)
+        {
+            foreach (var (knownSpells, activeEffects, activeSpells, modifiers, entity) in
+                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>>()
+                         .WithAll<ActorActiveMagicEffectTicking>()
                          .WithEntityAccess())
             {
-                bool dirty = systemState.EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity);
-                if (dirty)
-                    RebuildPassiveSpellEffects(ref content, knownSpells, activeSpells, activeEffects);
-                InjectDebugActiveEffects(activeEffects);
-                bool changed = ApplyAndTickActiveEffects(ref systemState, ref content, entity, knownSpells, activeSpells, activeEffects, dt);
+                if (systemState.EntityManager.IsComponentEnabled<ActorActiveMagicEffectDirty>(entity))
+                    continue;
 
-                if (dirty || changed)
+                bool changed = ApplyAndTickActiveEffects(ref systemState, ref content, entity, knownSpells, activeSpells, activeEffects, deltaSeconds);
+                if (changed)
                 {
                     modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
                     RecomputeMagicStatReadModel(systemState.EntityManager, entity, activeEffects, modifiers.ValueRW);
                     PlayerEncumbranceDirtyUtility.MarkIfPlayer(systemState.EntityManager, entity);
-                    systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
                 }
+
+                SetTickingEnabled(systemState.EntityManager, entity, RequiresActiveMagicEffectTick(activeEffects));
             }
         }
 
-        static void InjectDebugActiveEffects(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
+        void RebuildDirtyActiveMagicEffects(ref SystemState systemState, ref RuntimeContentBlob content)
         {
-            if (!InjectDebugBuffs || HasDebugBuffs(activeEffects))
-                return;
+            foreach (var (knownSpells, activeEffects, activeSpells, modifiers, entity) in
+                     SystemAPI.Query<DynamicBuffer<ActorKnownSpell>, DynamicBuffer<ActorActiveMagicEffect>, DynamicBuffer<ActorActiveSpell>, RefRW<ActorEffectStatModifiers>>()
+                         .WithAll<ActorActiveMagicEffectDirty>()
+                         .WithEntityAccess())
+            {
+                RebuildPassiveSpellEffects(ref content, knownSpells, activeSpells, activeEffects);
+                ApplyAndTickActiveEffects(ref systemState, ref content, entity, knownSpells, activeSpells, activeEffects, 0f);
 
-            AddDebugEffect(activeEffects, 0, 0f, "Water Breathing");
-            AddDebugEffect(activeEffects, 4, 15f, "Fire Shield");
-            AddDebugEffect(activeEffects, FeatherEffectId, 25f, "Feather");
-            AddDebugEffect(activeEffects, JumpEffectId, 20f, "Jump");
+                modifiers.ValueRW = BuildSupportedModifiers(activeEffects);
+                RecomputeMagicStatReadModel(systemState.EntityManager, entity, activeEffects, modifiers.ValueRW);
+                PlayerEncumbranceDirtyUtility.MarkIfPlayer(systemState.EntityManager, entity);
+                systemState.EntityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(entity, false);
+                SetTickingEnabled(systemState.EntityManager, entity, RequiresActiveMagicEffectTick(activeEffects));
+            }
         }
 
-        static bool HasDebugBuffs(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
+        static void SetTickingEnabled(EntityManager entityManager, Entity entity, bool enabled)
         {
-            ulong debugSourceHash = RuntimeContentStableHash.HashId(RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId));
+            if (!entityManager.HasComponent<ActorActiveMagicEffectTicking>(entity))
+                throw new System.InvalidOperationException($"[VVardenfell][Magic] Active magic effect actor {entity.Index}:{entity.Version} has no ActorActiveMagicEffectTicking marker.");
+            entityManager.SetComponentEnabled<ActorActiveMagicEffectTicking>(entity, enabled);
+        }
+
+        static bool RequiresActiveMagicEffectTick(DynamicBuffer<ActorActiveMagicEffect> activeEffects)
+        {
             for (int i = 0; i < activeEffects.Length; i++)
             {
-                if (activeEffects[i].SourceIdHash == debugSourceHash)
+                var effect = activeEffects[i];
+                if (effect.Applied == 0 || effect.Remove != 0 || effect.DurationSeconds >= 0f)
                     return true;
             }
 
             return false;
-        }
-
-        static void AddDebugEffect(
-            DynamicBuffer<ActorActiveMagicEffect> activeEffects,
-            short effectId,
-            float magnitude,
-            string sourceName)
-        {
-            var sourceId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(DebugBuffSourceId);
-            activeEffects.Add(new ActorActiveMagicEffect
-            {
-                EffectId = effectId,
-                Skill = -1,
-                Attribute = -1,
-                Magnitude = magnitude,
-                DurationSeconds = -1f,
-                TimeLeftSeconds = -1f,
-                Applied = 1,
-                SourceKind = ActorActiveMagicEffectSourceKind.TimedSpell,
-                SourceName = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(sourceName),
-                SourceId = sourceId,
-                SourceIdHash = RuntimeContentStableHash.HashId(sourceId),
-            });
         }
 
         static void RebuildPassiveSpellEffects(
@@ -341,186 +361,6 @@ namespace VVardenfell.Runtime.Player
                 if (activeSpells[i].ActiveSpellId == activeSpellId)
                     activeSpells.RemoveAt(i);
             }
-        }
-
-    }
-
-    [UpdateAfter(typeof(ActorActiveMagicEffectSystem))]
-    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup), OrderFirst = true)]
-    public partial struct PlayerActorEncumbranceSystem : ISystem
-    {
-        EntityQuery _dirtyPlayerQuery;
-
-        public void OnCreate(ref SystemState systemState)
-        {
-            _dirtyPlayerQuery = systemState.GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadWrite<ActorAttributeSet>(),
-                ComponentType.ReadWrite<ActorEffectStatModifiers>(),
-                ComponentType.ReadWrite<ActorDerivedMovementStats>(),
-                ComponentType.ReadOnly<PlayerInventoryItem>(),
-                ComponentType.ReadOnly<PlayerEncumbranceDirty>());
-
-            systemState.RequireForUpdate(_dirtyPlayerQuery);
-            systemState.RequireForUpdate<RuntimeContentBlobReference>();
-        }
-
-        public void OnUpdate(ref SystemState systemState)
-        {
-            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
-            if (!contentBlobReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player encumbrance requires runtime content blob.");
-            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-
-            foreach (var (attributes, effectModifiers, derived, inventory, entity) in
-                     SystemAPI.Query<
-                             RefRO<ActorAttributeSet>,
-                             RefRO<ActorEffectStatModifiers>,
-                             RefRW<ActorDerivedMovementStats>,
-                             DynamicBuffer<PlayerInventoryItem>>()
-                         .WithAll<PlayerTag, PlayerEncumbranceDirty>()
-                         .WithEntityAccess())
-            {
-                float inventoryWeight = SumInventoryWeight(ref content, inventory);
-
-                derived.ValueRW.CarryCapacity = MorrowindActorMovementStats.ComputeCarryCapacity(ref content, attributes.ValueRO);
-                derived.ValueRW.Encumbrance = MorrowindActorMovementStats.ComputeEncumbrance(effectModifiers.ValueRO, inventoryWeight);
-                derived.ValueRW.NormalizedEncumbrance = MorrowindActorMovementStats.ComputeNormalizedEncumbrance(
-                    derived.ValueRO.Encumbrance,
-                    derived.ValueRO.CarryCapacity);
-
-                systemState.EntityManager.SetComponentEnabled<PlayerEncumbranceDirty>(entity, false);
-            }
-        }
-
-        static float SumInventoryWeight(ref RuntimeContentBlob content, DynamicBuffer<PlayerInventoryItem> inventory)
-        {
-            float totalWeight = 0f;
-            for (int i = 0; i < inventory.Length; i++)
-            {
-                var entry = inventory[i];
-                if (entry.Count <= 0 || !entry.Content.IsValid)
-                    continue;
-
-                float weight = RuntimeContentBlobUtility.RequireCarryWeight(ref content, entry.Content);
-                if (weight < 0f)
-                    continue;
-
-                totalWeight += weight * entry.Count;
-            }
-
-            return totalWeight;
-        }
-    }
-
-    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
-    [UpdateAfter(typeof(PlayerActorEncumbranceSystem))]
-    public partial struct PlayerActorFatigueSystem : ISystem
-    {
-        EntityQuery _playerQuery;
-
-        public void OnCreate(ref SystemState systemState)
-        {
-            _playerQuery = systemState.GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<ActorAttributeSet>(),
-                ComponentType.ReadOnly<ActorSkillSet>(),
-                ComponentType.ReadWrite<ActorVitalSet>(),
-                ComponentType.ReadOnly<ActorEffectStatModifiers>(),
-                ComponentType.ReadOnly<ActorDerivedMovementStats>(),
-                ComponentType.ReadOnly<MorrowindMovementSpeed>(),
-                ComponentType.ReadOnly<MorrowindMovementInput>(),
-                ComponentType.ReadOnly<MorrowindMovementState>());
-
-            systemState.RequireForUpdate(_playerQuery);
-            systemState.RequireForUpdate<RuntimeContentBlobReference>();
-        }
-
-        public void OnUpdate(ref SystemState systemState)
-        {
-            if (_playerQuery.IsEmptyIgnoreFilter)
-                return;
-
-            float dt = SystemAPI.Time.DeltaTime;
-            if (dt <= 0f)
-                return;
-            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
-            if (!contentBlobReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player fatigue requires runtime content blob.");
-            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-
-            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
-            var skills = _playerQuery.GetSingleton<ActorSkillSet>();
-            ref var vitals = ref _playerQuery.GetSingletonRW<ActorVitalSet>().ValueRW;
-            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
-            var derived = _playerQuery.GetSingleton<ActorDerivedMovementStats>();
-            var movementSpeed = _playerQuery.GetSingleton<MorrowindMovementSpeed>();
-            var movementInput = _playerQuery.GetSingleton<MorrowindMovementInput>();
-            var movementState = _playerQuery.GetSingleton<MorrowindMovementState>();
-
-            MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, effectModifiers, ref vitals, initializeMissingCurrents: false);
-            var context = MorrowindPlayerSpeedResolver.Build(ref content, attributes, skills, vitals, effectModifiers, derived, movementSpeed);
-
-            float fatigue = vitals.CurrentFatigue;
-            fatigue -= context.GetMovementFatigueLossPerSecond(
-                movementInput.RunHeld && !movementState.SneakHeld,
-                movementState.SneakHeld,
-                movementState.SpeedFactor) * dt;
-            if (movementState.JumpAccepted)
-                fatigue -= context.GetJumpFatigueLoss();
-
-            if (fatigue < vitals.ModifiedFatigueBase)
-                fatigue = math.min(vitals.ModifiedFatigueBase, fatigue + context.GetFatigueRestorePerSecond() * dt);
-
-            vitals.CurrentFatigue = fatigue;
-        }
-    }
-
-    [UpdateInGroup(typeof(MorrowindPhysicsPostQueryMutationSystemGroup))]
-    [UpdateAfter(typeof(PlayerActorFatigueSystem))]
-    public partial struct PlayerActorDerivedMovementStatsSystem : ISystem
-    {
-        EntityQuery _playerQuery;
-
-        public void OnCreate(ref SystemState systemState)
-        {
-            _playerQuery = systemState.GetEntityQuery(
-                ComponentType.ReadOnly<PlayerTag>(),
-                ComponentType.ReadOnly<ActorAttributeSet>(),
-                ComponentType.ReadOnly<ActorSkillSet>(),
-                ComponentType.ReadWrite<ActorVitalSet>(),
-                ComponentType.ReadOnly<ActorEffectStatModifiers>(),
-                ComponentType.ReadWrite<ActorDerivedMovementStats>(),
-                ComponentType.ReadWrite<MorrowindMovementSpeed>());
-
-            systemState.RequireForUpdate(_playerQuery);
-            systemState.RequireForUpdate<RuntimeContentBlobReference>();
-        }
-
-        public void OnUpdate(ref SystemState systemState)
-        {
-            if (_playerQuery.IsEmptyIgnoreFilter)
-                return;
-
-            var attributes = _playerQuery.GetSingleton<ActorAttributeSet>();
-            var skills = _playerQuery.GetSingleton<ActorSkillSet>();
-            ref var vitals = ref _playerQuery.GetSingletonRW<ActorVitalSet>().ValueRW;
-            var effectModifiers = _playerQuery.GetSingleton<ActorEffectStatModifiers>();
-            ref var derived = ref _playerQuery.GetSingletonRW<ActorDerivedMovementStats>().ValueRW;
-            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
-            if (!contentBlobReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Player movement derived stats require runtime content blob.");
-            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-            MorrowindActorMovementStats.ApplyVitalBases(ref content, attributes, effectModifiers, ref vitals, initializeMissingCurrents: false);
-            MorrowindActorMovementStats.ApplyMovementDerived(ref content, attributes, skills, vitals, effectModifiers, ref derived);
-            ref var movementSpeed = ref _playerQuery.GetSingletonRW<MorrowindMovementSpeed>().ValueRW;
-            movementSpeed = MorrowindActorMovementStats.BuildPlayerMovementSpeed(
-                ref content,
-                attributes,
-                skills,
-                vitals,
-                effectModifiers,
-                derived);
         }
     }
 }

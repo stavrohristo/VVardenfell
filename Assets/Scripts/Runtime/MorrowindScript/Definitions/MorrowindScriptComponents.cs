@@ -255,6 +255,7 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
         public FixedString512Bytes VoicePath;
         public FixedString512Bytes Subtitle;
+        public byte AllowMissingVoicePath;
     }
 
     public struct MorrowindCombatHitVoiceSayRequest : IBufferElementData
@@ -271,6 +272,15 @@ namespace VVardenfell.Runtime.Components
         public uint TargetPlacedRefId;
         public ActorDefHandle Actor;
         public int DialogueIndex;
+        public uint RandomState;
+    }
+
+    public struct MorrowindCombatVoiceResolveRequest : IBufferElementData
+    {
+        public Entity TargetEntity;
+        public uint TargetPlacedRefId;
+        public ActorDefHandle Actor;
+        public ulong DialogueIdHash;
         public uint RandomState;
     }
 
@@ -522,5 +532,6 @@ namespace VVardenfell.Runtime.Components
         public byte Kind;
         public byte Spatial;
         public byte Looping;
+        public byte AllowMissingDirectPath;
     }
 }

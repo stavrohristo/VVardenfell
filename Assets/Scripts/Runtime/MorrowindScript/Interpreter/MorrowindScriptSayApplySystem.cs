@@ -85,6 +85,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Pitch = 1f,
                 Kind = (byte)MorrowindScriptAudioKind.PlaySound3DVP,
                 Spatial = playLocal ? (byte)0 : (byte)1,
+                AllowMissingDirectPath = request.AllowMissingVoicePath,
             });
 
         }

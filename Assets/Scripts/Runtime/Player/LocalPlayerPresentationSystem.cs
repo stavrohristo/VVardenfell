@@ -135,6 +135,8 @@ namespace VVardenfell.Runtime.Player
                 WeaponType = ActorWeaponAnimationUtility.NoWeaponType,
                 Phase = ActorWeaponAnimationPhase.Hidden,
             });
+            ecb.AddComponent<ActorRigidEquipmentRenderOwnerActorDirty>(visual);
+            ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerActorDirty>(visual, false);
             ecb.AddComponent<ActorRenderVisible>(visual);
             ecb.SetComponentEnabled<ActorRenderVisible>(visual, true);
             ecb.AddComponent<ActorShadowCasterVisible>(visual);

@@ -172,6 +172,9 @@ namespace VVardenfell.Runtime.Movement
 
         public static ActorRuntimeStatSeed CreateSeedFromActor(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
         {
+            if (actor.Kind == ActorDefKind.Npc && actor.AutoCalculatedStats != 0)
+                return CreateAutoCalculatedNpcSeed(ref content, ref actor);
+
             var attributes = ToAttributeSet(actor.Attributes);
             var skills = ToSkillSet(actor.Skills);
             var vitals = new ActorVitalSet
@@ -186,6 +189,32 @@ namespace VVardenfell.Runtime.Movement
 
             if (actor.AutoCalculatedStats != 0 || vitals.ModifiedHealthBase <= 0f || vitals.ModifiedFatigueBase <= 0f)
                 ApplyVitalBases(ref content, attributes, ref vitals, initializeMissingCurrents: true);
+
+            return ActorMagicStatUtility.InitializeAuthoritativeState(new ActorRuntimeStatSeed
+            {
+                Attributes = attributes,
+                Skills = skills,
+                Vitals = vitals,
+                EffectModifiers = new ActorEffectStatModifiers(),
+            });
+        }
+
+        static ActorRuntimeStatSeed CreateAutoCalculatedNpcSeed(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
+        {
+            if (actor.RaceIdHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][Movement] auto-calculated NPC '{actor.Id}' has no race.");
+            if (actor.ClassIdHash == 0UL)
+                throw new InvalidOperationException($"[VVardenfell][Movement] auto-calculated NPC '{actor.Id}' has no class.");
+            if (!RuntimeContentBlobUtility.TryGetRaceHandleByIdHash(ref content, actor.RaceIdHash, out var raceHandle) || !raceHandle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Movement] auto-calculated NPC '{actor.Id}' references unresolved race '{actor.RaceId}'.");
+            if (!RuntimeContentBlobUtility.TryGetClassHandleByIdHash(ref content, actor.ClassIdHash, out var classHandle) || !classHandle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][Movement] auto-calculated NPC '{actor.Id}' references unresolved class '{actor.ClassId}'.");
+
+            ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref content, raceHandle);
+            ref RuntimeClassDefBlob npcClass = ref RuntimeContentBlobUtility.GetClass(ref content, classHandle);
+            var attributes = AutoCalculateNpcAttributes(ref content, ref actor, ref race, ref npcClass);
+            var skills = AutoCalculateNpcSkills(ref content, ref actor, ref race, ref npcClass);
+            var vitals = AutoCalculateNpcVitals(ref content, actor.Level, npcClass.Specialization, in attributes, ref npcClass);
 
             return ActorMagicStatUtility.InitializeAuthoritativeState(new ActorRuntimeStatSeed
             {
@@ -635,6 +664,297 @@ namespace VVardenfell.Runtime.Movement
         static float Gmst(ref RuntimeContentBlob content, ulong idHash)
             => RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, idHash);
 
+        static ActorAttributeSet AutoCalculateNpcAttributes(
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
+            ref RuntimeRaceDefBlob race,
+            ref RuntimeClassDefBlob npcClass)
+        {
+            bool male = (actor.Flags & 1u) == 0u;
+            var attributes = BuildRaceAttributes(ref content, ref race, male);
+            AddClassAttributeBonus(ref attributes, npcClass.FavoredAttribute0);
+            AddClassAttributeBonus(ref attributes, npcClass.FavoredAttribute1);
+
+            int level = actor.Level;
+            for (int attributeIndex = 0; attributeIndex < 8; attributeIndex++)
+            {
+                float modifierSum = 0f;
+                for (int skillIndex = 0; skillIndex < 27; skillIndex++)
+                {
+                    if (ResolveSkillAttributeIndex(ref content, skillIndex) != attributeIndex)
+                        continue;
+
+                    float add = 0.2f;
+                    if (ClassHasMinorSkill(ref content, ref npcClass, skillIndex))
+                        add = 0.5f;
+                    if (ClassHasMajorSkill(ref content, ref npcClass, skillIndex))
+                        add = 1f;
+                    modifierSum += add;
+                }
+
+                SetAttributeByIndex(
+                    ref attributes,
+                    attributeIndex,
+                    math.min(RoundIeee754(GetAttributeByIndex(attributes, attributeIndex) + (level - 1) * modifierSum), 100f));
+            }
+
+            return attributes;
+        }
+
+        static ActorSkillSet AutoCalculateNpcSkills(
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
+            ref RuntimeRaceDefBlob race,
+            ref RuntimeClassDefBlob npcClass)
+        {
+            var skills = new ActorSkillSet();
+            AddClassSkillBonuses(ref content, ref npcClass, ref skills);
+
+            int level = actor.Level;
+            for (int skillIndex = 0; skillIndex < 27; skillIndex++)
+            {
+                float majorMultiplier = ClassHasAnySkill(ref content, ref npcClass, skillIndex) ? 1f : 0.1f;
+                float specMultiplier = 0f;
+                int specBonus = 0;
+                if (ResolveSkillSpecialization(ref content, skillIndex) == npcClass.Specialization)
+                {
+                    specMultiplier = 0.5f;
+                    specBonus = 5;
+                }
+
+                float value = GetSkillByIndex(skills, skillIndex)
+                              + 5f
+                              + ResolveRaceSkillBonus(ref content, ref race, skillIndex)
+                              + specBonus
+                              + (level - 1) * (majorMultiplier + specMultiplier);
+                SetSkillByIndex(ref skills, skillIndex, math.min(RoundIeee754(value), 100f));
+            }
+
+            return skills;
+        }
+
+        static ActorVitalSet AutoCalculateNpcVitals(
+            ref RuntimeContentBlob content,
+            int level,
+            int classSpecialization,
+            in ActorAttributeSet attributes,
+            ref RuntimeClassDefBlob npcClass)
+        {
+            int multiplier = 3;
+            if (classSpecialization == 0)
+                multiplier += 2;
+            else if (classSpecialization == 2)
+                multiplier += 1;
+            if (npcClass.FavoredAttribute0 == 5 || npcClass.FavoredAttribute1 == 5)
+                multiplier += 1;
+
+            float health = math.floor(0.5f * (attributes.Strength + attributes.Endurance)) + multiplier * (level - 1);
+            float magicka = math.max(0f, attributes.Intelligence * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentStableHash.HashId("fNPCbaseMagickaMult")));
+            float fatigue = ComputeModifiedFatigueBase(attributes);
+            return new ActorVitalSet
+            {
+                CurrentHealth = health,
+                ModifiedHealthBase = health,
+                CurrentMagicka = magicka,
+                ModifiedMagickaBase = magicka,
+                CurrentFatigue = fatigue,
+                ModifiedFatigueBase = fatigue,
+            };
+        }
+
+        static ActorAttributeSet BuildRaceAttributes(ref RuntimeContentBlob content, ref RuntimeRaceDefBlob race, bool male)
+        {
+            int first = male ? race.FirstMaleAttributeIndex : race.FirstFemaleAttributeIndex;
+            int count = male ? race.MaleAttributeCount : race.FemaleAttributeCount;
+            RuntimeContentBlobUtility.RequireRange(first, count, male ? content.RaceMaleAttributes.Length : content.RaceFemaleAttributes.Length, "race attributes");
+            if (count < 8)
+                throw new InvalidOperationException($"[VVardenfell][Movement] race '{race.Id}' has {count} {(male ? "male" : "female")} attributes; 8 required.");
+
+            if (male)
+            {
+                return new ActorAttributeSet
+                {
+                    Strength = content.RaceMaleAttributes[first],
+                    Intelligence = content.RaceMaleAttributes[first + 1],
+                    Willpower = content.RaceMaleAttributes[first + 2],
+                    Agility = content.RaceMaleAttributes[first + 3],
+                    Speed = content.RaceMaleAttributes[first + 4],
+                    Endurance = content.RaceMaleAttributes[first + 5],
+                    Personality = content.RaceMaleAttributes[first + 6],
+                    Luck = content.RaceMaleAttributes[first + 7],
+                };
+            }
+
+            return new ActorAttributeSet
+            {
+                Strength = content.RaceFemaleAttributes[first],
+                Intelligence = content.RaceFemaleAttributes[first + 1],
+                Willpower = content.RaceFemaleAttributes[first + 2],
+                Agility = content.RaceFemaleAttributes[first + 3],
+                Speed = content.RaceFemaleAttributes[first + 4],
+                Endurance = content.RaceFemaleAttributes[first + 5],
+                Personality = content.RaceFemaleAttributes[first + 6],
+                Luck = content.RaceFemaleAttributes[first + 7],
+            };
+        }
+
+        static void AddClassAttributeBonus(ref ActorAttributeSet attributes, int attributeIndex)
+        {
+            if (attributeIndex < 0 || attributeIndex >= 8)
+                return;
+            SetAttributeByIndex(ref attributes, attributeIndex, GetAttributeByIndex(attributes, attributeIndex) + 10f);
+        }
+
+        static void AddClassSkillBonuses(ref RuntimeContentBlob content, ref RuntimeClassDefBlob npcClass, ref ActorSkillSet skills)
+        {
+            RuntimeContentBlobUtility.RequireRange(npcClass.FirstMinorSkillIndex, npcClass.MinorSkillCount, content.ClassMinorSkills.Length, "class minor skills");
+            RuntimeContentBlobUtility.RequireRange(npcClass.FirstMajorSkillIndex, npcClass.MajorSkillCount, content.ClassMajorSkills.Length, "class major skills");
+            for (int i = 0; i < npcClass.MinorSkillCount; i++)
+                AddSkillByIndex(ref skills, content.ClassMinorSkills[npcClass.FirstMinorSkillIndex + i], 10f);
+            for (int i = 0; i < npcClass.MajorSkillCount; i++)
+                AddSkillByIndex(ref skills, content.ClassMajorSkills[npcClass.FirstMajorSkillIndex + i], 25f);
+        }
+
+        static bool ClassHasAnySkill(ref RuntimeContentBlob content, ref RuntimeClassDefBlob npcClass, int skillIndex)
+            => ClassHasMinorSkill(ref content, ref npcClass, skillIndex)
+               || ClassHasMajorSkill(ref content, ref npcClass, skillIndex);
+
+        static bool ClassHasMinorSkill(ref RuntimeContentBlob content, ref RuntimeClassDefBlob npcClass, int skillIndex)
+        {
+            RuntimeContentBlobUtility.RequireRange(npcClass.FirstMinorSkillIndex, npcClass.MinorSkillCount, content.ClassMinorSkills.Length, "class minor skills");
+            for (int i = 0; i < npcClass.MinorSkillCount; i++)
+            {
+                if (content.ClassMinorSkills[npcClass.FirstMinorSkillIndex + i] == skillIndex)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool ClassHasMajorSkill(ref RuntimeContentBlob content, ref RuntimeClassDefBlob npcClass, int skillIndex)
+        {
+            RuntimeContentBlobUtility.RequireRange(npcClass.FirstMajorSkillIndex, npcClass.MajorSkillCount, content.ClassMajorSkills.Length, "class major skills");
+            for (int i = 0; i < npcClass.MajorSkillCount; i++)
+            {
+                if (content.ClassMajorSkills[npcClass.FirstMajorSkillIndex + i] == skillIndex)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static int ResolveRaceSkillBonus(ref RuntimeContentBlob content, ref RuntimeRaceDefBlob race, int skillIndex)
+        {
+            RuntimeContentBlobUtility.RequireRange(race.FirstSkillBonusIndex, race.SkillBonusCount, content.RaceSkillBonuses.Length, "race skill bonus");
+            for (int i = 0; i < race.SkillBonusCount; i++)
+            {
+                var bonus = content.RaceSkillBonuses[race.FirstSkillBonusIndex + i];
+                if (bonus.Skill == skillIndex)
+                    return bonus.Bonus;
+            }
+
+            return 0;
+        }
+
+        static int ResolveSkillAttributeIndex(ref RuntimeContentBlob content, int skillIndex)
+        {
+            if (TryResolveParsedSkillMetadata(ref content, skillIndex, out int attributeIndex, out _))
+                return attributeIndex;
+            return CanonicalSkillAttributeIndex(skillIndex);
+        }
+
+        static int ResolveSkillSpecialization(ref RuntimeContentBlob content, int skillIndex)
+        {
+            if (TryResolveParsedSkillMetadata(ref content, skillIndex, out _, out int specialization))
+                return specialization;
+            return CanonicalSkillSpecialization(skillIndex);
+        }
+
+        static bool TryResolveParsedSkillMetadata(ref RuntimeContentBlob content, int skillIndex, out int attributeIndex, out int specialization)
+        {
+            attributeIndex = 0;
+            specialization = 0;
+            for (int i = 0; i < content.Skills.Length; i++)
+            {
+                ref RuntimeGenericRecordDefBlob skill = ref content.Skills[i];
+                if (skill.Int0 != skillIndex)
+                    continue;
+                if (skill.Float1 <= 0.5f)
+                    return false;
+                if (skill.Int1 < 0 || skill.Int1 >= 8)
+                    throw new InvalidOperationException($"[VVardenfell][Movement] skill '{skill.Id}' has invalid governing attribute {skill.Int1}.");
+                if (skill.Int2 < 0 || skill.Int2 >= 3)
+                    throw new InvalidOperationException($"[VVardenfell][Movement] skill '{skill.Id}' has invalid specialization {skill.Int2}.");
+
+                attributeIndex = skill.Int1;
+                specialization = skill.Int2;
+                return true;
+            }
+
+            return false;
+        }
+
+        static int CanonicalSkillAttributeIndex(int skillIndex)
+            => skillIndex switch
+            {
+                0 => 3,
+                1 => 0,
+                2 => 5,
+                3 => 5,
+                4 => 0,
+                5 => 0,
+                6 => 0,
+                7 => 5,
+                8 => 4,
+                9 => 1,
+                10 => 2,
+                11 => 2,
+                12 => 6,
+                13 => 1,
+                14 => 2,
+                15 => 2,
+                16 => 1,
+                17 => 4,
+                18 => 1,
+                19 => 3,
+                20 => 0,
+                21 => 3,
+                22 => 4,
+                23 => 3,
+                24 => 6,
+                25 => 6,
+                26 => 4,
+                _ => throw new InvalidOperationException($"[VVardenfell][Movement] invalid skill index {skillIndex}."),
+            };
+
+        static int CanonicalSkillSpecialization(int skillIndex)
+            => skillIndex switch
+            {
+                >= 0 and <= 8 => 0,
+                >= 9 and <= 17 => 1,
+                >= 18 and <= 26 => 2,
+                _ => throw new InvalidOperationException($"[VVardenfell][Movement] invalid skill index {skillIndex}."),
+            };
+
+        static float RoundIeee754(float value)
+        {
+            float whole = math.floor(value);
+            float fraction = value - whole;
+            if (fraction < 0.5f)
+                return whole;
+            if (fraction > 0.5f)
+                return whole + 1f;
+
+            return IsEven(whole) ? whole : whole + 1f;
+        }
+
+        static bool IsEven(float value)
+        {
+            double d = value;
+            double half = Math.Truncate(d / 2.0);
+            return 2.0 * half == d;
+        }
+
         static void ClampVitals(ref ActorVitalSet vitals, bool initializeMissingCurrents)
         {
             if (initializeMissingCurrents)
@@ -757,6 +1077,107 @@ namespace VVardenfell.Runtime.Movement
                 Speechcraft = skills.Speechcraft,
                 HandToHand = skills.HandToHand,
             };
+        }
+
+        static float GetAttributeByIndex(in ActorAttributeSet attributes, int index)
+            => index switch
+            {
+                0 => attributes.Strength,
+                1 => attributes.Intelligence,
+                2 => attributes.Willpower,
+                3 => attributes.Agility,
+                4 => attributes.Speed,
+                5 => attributes.Endurance,
+                6 => attributes.Personality,
+                7 => attributes.Luck,
+                _ => throw new InvalidOperationException($"[VVardenfell][Movement] invalid attribute index {index}."),
+            };
+
+        static void SetAttributeByIndex(ref ActorAttributeSet attributes, int index, float value)
+        {
+            switch (index)
+            {
+                case 0: attributes.Strength = value; break;
+                case 1: attributes.Intelligence = value; break;
+                case 2: attributes.Willpower = value; break;
+                case 3: attributes.Agility = value; break;
+                case 4: attributes.Speed = value; break;
+                case 5: attributes.Endurance = value; break;
+                case 6: attributes.Personality = value; break;
+                case 7: attributes.Luck = value; break;
+                default: throw new InvalidOperationException($"[VVardenfell][Movement] invalid attribute index {index}.");
+            }
+        }
+
+        static float GetSkillByIndex(in ActorSkillSet skills, int index)
+            => index switch
+            {
+                0 => skills.Block,
+                1 => skills.Armorer,
+                2 => skills.MediumArmor,
+                3 => skills.HeavyArmor,
+                4 => skills.BluntWeapon,
+                5 => skills.LongBlade,
+                6 => skills.Axe,
+                7 => skills.Spear,
+                8 => skills.Athletics,
+                9 => skills.Enchant,
+                10 => skills.Destruction,
+                11 => skills.Alteration,
+                12 => skills.Illusion,
+                13 => skills.Conjuration,
+                14 => skills.Mysticism,
+                15 => skills.Restoration,
+                16 => skills.Alchemy,
+                17 => skills.Unarmored,
+                18 => skills.Security,
+                19 => skills.Sneak,
+                20 => skills.Acrobatics,
+                21 => skills.LightArmor,
+                22 => skills.ShortBlade,
+                23 => skills.Marksman,
+                24 => skills.Mercantile,
+                25 => skills.Speechcraft,
+                26 => skills.HandToHand,
+                _ => throw new InvalidOperationException($"[VVardenfell][Movement] invalid skill index {index}."),
+            };
+
+        static void AddSkillByIndex(ref ActorSkillSet skills, int index, float value)
+            => SetSkillByIndex(ref skills, index, GetSkillByIndex(skills, index) + value);
+
+        static void SetSkillByIndex(ref ActorSkillSet skills, int index, float value)
+        {
+            switch (index)
+            {
+                case 0: skills.Block = value; break;
+                case 1: skills.Armorer = value; break;
+                case 2: skills.MediumArmor = value; break;
+                case 3: skills.HeavyArmor = value; break;
+                case 4: skills.BluntWeapon = value; break;
+                case 5: skills.LongBlade = value; break;
+                case 6: skills.Axe = value; break;
+                case 7: skills.Spear = value; break;
+                case 8: skills.Athletics = value; break;
+                case 9: skills.Enchant = value; break;
+                case 10: skills.Destruction = value; break;
+                case 11: skills.Alteration = value; break;
+                case 12: skills.Illusion = value; break;
+                case 13: skills.Conjuration = value; break;
+                case 14: skills.Mysticism = value; break;
+                case 15: skills.Restoration = value; break;
+                case 16: skills.Alchemy = value; break;
+                case 17: skills.Unarmored = value; break;
+                case 18: skills.Security = value; break;
+                case 19: skills.Sneak = value; break;
+                case 20: skills.Acrobatics = value; break;
+                case 21: skills.LightArmor = value; break;
+                case 22: skills.ShortBlade = value; break;
+                case 23: skills.Marksman = value; break;
+                case 24: skills.Mercantile = value; break;
+                case 25: skills.Speechcraft = value; break;
+                case 26: skills.HandToHand = value; break;
+                default: throw new InvalidOperationException($"[VVardenfell][Movement] invalid skill index {index}.");
+            }
         }
 
         static bool HasAnyAttribute(in ActorAttributeDef attributes)

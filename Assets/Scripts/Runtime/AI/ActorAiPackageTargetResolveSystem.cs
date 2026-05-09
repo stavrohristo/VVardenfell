@@ -60,7 +60,8 @@ namespace VVardenfell.Runtime.AI
             return packageType == (byte)ActorAiRuntimePackageType.Follow
                    || packageType == (byte)ActorAiRuntimePackageType.Escort
                    || packageType == (byte)ActorAiRuntimePackageType.Activate
-                   || packageType == (byte)ActorAiRuntimePackageType.Pursue;
+                   || packageType == (byte)ActorAiRuntimePackageType.Pursue
+                   || packageType == (byte)ActorAiRuntimePackageType.Combat;
         }
 
         bool TryResolveTarget(ref SystemState systemState, 

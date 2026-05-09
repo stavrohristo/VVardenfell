@@ -380,4 +380,8 @@ namespace VVardenfell.Runtime.Animation
     {
     }
 
+    public struct ActorRigidEquipmentRenderOwnerActorDirty : IComponentData, IEnableableComponent
+    {
+    }
+
 }

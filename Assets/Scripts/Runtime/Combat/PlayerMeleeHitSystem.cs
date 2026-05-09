@@ -310,7 +310,7 @@ namespace VVardenfell.Runtime.Combat
                          .WithNone<PlayerTag>()
                          .WithEntityAccess())
             {
-                if (entity == player || vitals.ValueRO.CurrentHealth <= 0f)
+                if (entity == player || ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, entity))
                     continue;
                 if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(entity)
                     && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0)
@@ -375,8 +375,7 @@ namespace VVardenfell.Runtime.Combat
             if (!systemState.EntityManager.HasComponent<ActorVitalSet>(logicalEntity))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee actor entity={logicalEntity.Index}:{logicalEntity.Version} has no ActorVitalSet.");
 
-            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(logicalEntity);
-            if (vitals.CurrentHealth <= 0f)
+            if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, logicalEntity))
                 return false;
 
             placedRefId = systemState.EntityManager.GetComponentData<PlacedRefIdentity>(logicalEntity).Value;

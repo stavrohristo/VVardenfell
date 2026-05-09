@@ -111,8 +111,6 @@ namespace VVardenfell.Runtime.Movement
             _playerTagLookup = state.GetComponentLookup<PlayerTag>(isReadOnly: true);
             _passiveActorLookup = state.GetComponentLookup<PassiveActorPresence>(isReadOnly: true);
 
-            state.RequireForUpdate(_playerQuery);
-            state.RequireForUpdate(_viewQuery);
             state.RequireForUpdate(_mutationQueueQuery);
             state.RequireForUpdate<PhysicsWorldSingleton>();
             state.RequireForUpdate<MorrowindMovementSettings>();
@@ -124,14 +122,6 @@ namespace VVardenfell.Runtime.Movement
             float dt = SystemAPI.Time.DeltaTime;
             if (dt <= 0f)
                 return;
-
-            int playerCount = _playerQuery.CalculateEntityCount();
-            if (playerCount != 1)
-                throw new InvalidOperationException($"[VVardenfell][Movement] Expected exactly one player movement entity, found {playerCount}.");
-
-            int viewCount = _viewQuery.CalculateEntityCount();
-            if (viewCount != 1)
-                throw new InvalidOperationException($"[VVardenfell][Movement] Expected exactly one player view entity, found {viewCount}.");
 
             int mutationQueueCount = _mutationQueueQuery.CalculateEntityCount();
             if (mutationQueueCount != 1)
@@ -154,35 +144,48 @@ namespace VVardenfell.Runtime.Movement
             _playerTagLookup.Update(ref state);
             _passiveActorLookup.Update(ref state);
 
-            var ecb = new EntityCommandBuffer(Allocator.TempJob);
             state.Dependency.Complete();
-            new PlayerActorMovementJob
+
+            int playerCount = _playerQuery.CalculateEntityCount();
+            int viewCount = _viewQuery.CalculateEntityCount();
+            if (playerCount > 1)
+                throw new InvalidOperationException($"[VVardenfell][Movement] Expected at most one player movement entity, found {playerCount}.");
+            if (viewCount > 1)
+                throw new InvalidOperationException($"[VVardenfell][Movement] Expected at most one player view entity, found {viewCount}.");
+            if (playerCount != viewCount)
+                throw new InvalidOperationException($"[VVardenfell][Movement] Player movement/view mismatch: players={playerCount}, views={viewCount}.");
+
+            if (playerCount == 1)
             {
-                PlayerEntity = _playerQuery.GetSingletonEntity(),
-                ViewEntity = _viewQuery.GetSingletonEntity(),
-                MutationQueueEntity = _mutationQueueQuery.GetSingletonEntity(),
-                CommandBuffer = ecb.AsParallelWriter(),
-                CollisionWorld = physicsWorld.CollisionWorld,
-                Settings = settings,
-                DeltaTime = dt,
-                TransformLookup = _transformLookup,
-                LocalToWorldLookup = _localToWorldLookup,
-                ColliderLookup = _colliderLookup,
-                CharacterLookup = _characterLookup,
-                ControlLookup = _controlLookup,
-                PlayerStateLookup = _playerStateLookup,
-                StanceColliderLookup = _stanceColliderLookup,
-                InputLookup = _inputLookup,
-                MovementStateLookup = _movementStateLookup,
-                SpeedLookup = _speedLookup,
-                ViewLookup = _viewLookup,
-                PlayerTagLookup = _playerTagLookup,
-                PassiveActorLookup = _passiveActorLookup,
-            }.Run();
-            ecb.Playback(state.EntityManager);
-            ecb.Dispose();
-            _playerTagLookup.Update(ref state);
-            _passiveActorLookup.Update(ref state);
+                var ecb = new EntityCommandBuffer(Allocator.TempJob);
+                new PlayerActorMovementJob
+                {
+                    PlayerEntity = _playerQuery.GetSingletonEntity(),
+                    ViewEntity = _viewQuery.GetSingletonEntity(),
+                    MutationQueueEntity = _mutationQueueQuery.GetSingletonEntity(),
+                    CommandBuffer = ecb.AsParallelWriter(),
+                    CollisionWorld = physicsWorld.CollisionWorld,
+                    Settings = settings,
+                    DeltaTime = dt,
+                    TransformLookup = _transformLookup,
+                    LocalToWorldLookup = _localToWorldLookup,
+                    ColliderLookup = _colliderLookup,
+                    CharacterLookup = _characterLookup,
+                    ControlLookup = _controlLookup,
+                    PlayerStateLookup = _playerStateLookup,
+                    StanceColliderLookup = _stanceColliderLookup,
+                    InputLookup = _inputLookup,
+                    MovementStateLookup = _movementStateLookup,
+                    SpeedLookup = _speedLookup,
+                    ViewLookup = _viewLookup,
+                    PlayerTagLookup = _playerTagLookup,
+                    PassiveActorLookup = _passiveActorLookup,
+                }.Run();
+                ecb.Playback(state.EntityManager);
+                ecb.Dispose();
+                _playerTagLookup.Update(ref state);
+                _passiveActorLookup.Update(ref state);
+            }
 
             int nonPlayerCount = _nonPlayerQuery.CalculateEntityCount();
             if (nonPlayerCount == 0)

@@ -20,6 +20,7 @@ namespace VVardenfell.Runtime.AI
         Follow = 3,
         Activate = 4,
         Pursue = 5,
+        Combat = 6,
     }
 
     public enum ActorAiPlannerStatus : byte
@@ -39,6 +40,7 @@ namespace VVardenfell.Runtime.AI
         public float3 HomePosition;
         public float WaitUntilTime;
         public float LastPackageActionTime;
+        public float NextCombatEngagementTime;
         public uint RandomSeed;
         public byte Status;
         public byte FollowActive;
@@ -538,9 +540,10 @@ namespace VVardenfell.Runtime.AI
             {
                 scheduled = TryScheduleFollow(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
             }
-            else if (package.Type == (byte)ActorAiRuntimePackageType.Pursue)
+            else if (package.Type == (byte)ActorAiRuntimePackageType.Pursue
+                     || package.Type == (byte)ActorAiRuntimePackageType.Combat)
             {
-                scheduled = TrySchedulePursue(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
+                scheduled = TryScheduleMovingTarget(package, startNode, actorPosition, ref aiState, ref traversalRequest, out waiting);
             }
             else if (package.Type == (byte)ActorAiRuntimePackageType.Activate)
             {
@@ -691,7 +694,7 @@ namespace VVardenfell.Runtime.AI
             return true;
         }
 
-        bool TrySchedulePursue(
+        bool TryScheduleMovingTarget(
             in ActorAiPackageRuntime package,
             int startNode,
             float3 actorPosition,
@@ -740,7 +743,8 @@ namespace VVardenfell.Runtime.AI
                 return false;
 
             var package = packages[aiState.CurrentPackageIndex];
-            if (package.Type != (byte)ActorAiRuntimePackageType.Pursue)
+            if (package.Type != (byte)ActorAiRuntimePackageType.Pursue
+                && package.Type != (byte)ActorAiRuntimePackageType.Combat)
                 return false;
 
             if (package.FollowTargetEntity == Entity.Null || !TargetTransforms.HasComponent(package.FollowTargetEntity))
@@ -752,7 +756,18 @@ namespace VVardenfell.Runtime.AI
 
             float stopDistance = math.max(0.5f, package.FollowDistance);
             if (math.lengthsq(FlatDelta(targetPosition, actorPosition)) <= stopDistance * stopDistance)
-                return false;
+            {
+                traversalState.ActivePathRequestId = 0;
+                traversalState.CurrentNodeOffset = 0;
+                traversalState.PathNodeCount = 0;
+                traversalState.Status = (byte)PathGridTraversalStatus.Idle;
+                traversalState.Run = 0;
+                traversalRequest = default;
+                hasPendingRequest = false;
+                aiState.Status = (byte)ActorAiPlannerStatus.Waiting;
+                aiState.WaitUntilTime = ElapsedTime + 0.01f;
+                return true;
+            }
 
             if (!TryResolveNearestNode(anchorPathGridIndex, actorPosition, out int startNode))
                 return false;

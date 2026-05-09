@@ -19,9 +19,27 @@ namespace VVardenfell.Runtime.Combat
     [UpdateBefore(typeof(MorrowindMeleeDamageRollSystem))]
     public partial struct ActorMeleeHitSystem : ISystem
     {
+        EntityQuery _combatActorQuery;
+
         public void OnCreate(ref SystemState systemState)
         {
-            systemState.RequireForUpdate<ActorCombatTargetState>();
+            _combatActorQuery = systemState.GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<ActorActiveCombatTarget>(),
+                    ComponentType.ReadOnly<LocalTransform>(),
+                    ComponentType.ReadOnly<ActorLocalBounds>(),
+                    ComponentType.ReadWrite<ActorWeaponAnimationState>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<PlayerTag>(),
+                    ComponentType.ReadOnly<LocalPlayerVisual>(),
+                },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
+            });
+            systemState.RequireForUpdate(_combatActorQuery);
             systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
             systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
             systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
@@ -45,18 +63,22 @@ namespace VVardenfell.Runtime.Combat
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
 
             foreach (var (combat, transform, actorBounds, weaponState, entity) in
-                     SystemAPI.Query<
-                             RefRO<ActorCombatTargetState>,
-                             RefRO<LocalTransform>,
-                             RefRO<ActorLocalBounds>,
-                             RefRW<ActorWeaponAnimationState>>()
-                         .WithNone<PlayerTag, LocalPlayerVisual>()
-                         .WithEntityAccess())
+                         SystemAPI.Query<
+                                 RefRO<ActorActiveCombatTarget>,
+                                 RefRO<LocalTransform>,
+                                 RefRO<ActorLocalBounds>,
+                                 RefRW<ActorWeaponAnimationState>>()
+                             .WithNone<PlayerTag, LocalPlayerVisual>()
+                             .WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)
+                             .WithEntityAccess())
             {
-                if (combat.ValueRO.Active == 0)
-                    continue;
-
                 ref var weapon = ref weaponState.ValueRW;
+                if (!SystemAPI.IsComponentEnabled<ActorActiveCombatTarget>(entity))
+                {
+                    ClearPendingMeleeEvents(ref weapon);
+                    continue;
+                }
+
                 if (weapon.MeleeSwingPending != 0)
                 {
                     EmitWeaponSwish(ref systemState, ref content, entity, transform.ValueRO.Position, weapon, ref audioState, hasAudioState, ref audioEcb);
@@ -92,6 +114,16 @@ namespace VVardenfell.Runtime.Combat
                 systemState.EntityManager.SetComponentData(audioEntity, audioState);
             audioEcb.Playback(systemState.EntityManager);
             audioEcb.Dispose();
+        }
+
+        static void ClearPendingMeleeEvents(ref ActorWeaponAnimationState weapon)
+        {
+            weapon.MeleeSwingPending = 0;
+            weapon.MeleeSwingAttackStrength = 0f;
+            weapon.MeleeSwingWeaponContent = default;
+            weapon.MeleeHitPending = 0;
+            weapon.MeleeHitAttackStrength = 0f;
+            weapon.MeleeHitWeaponContent = default;
         }
 
         bool TryQueueActorMeleeHit(ref SystemState systemState, 
@@ -166,11 +198,7 @@ namespace VVardenfell.Runtime.Combat
             if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(attacker))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(ref systemState, attacker)} has no ActorHitAftermathState.");
 
-            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(attacker);
-            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(attacker);
-            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Attacker ref={PlacedRefId(ref systemState, attacker)} is marked dead but still has positive health.");
-            return vitals.CurrentHealth > 0f && aftermath.Dead == 0;
+            return ActorHitAftermathStateUtility.IsAlive(systemState.EntityManager, attacker);
         }
 
         bool TryResolveTargetBounds(ref SystemState systemState, 
@@ -200,11 +228,7 @@ namespace VVardenfell.Runtime.Combat
             if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
                 throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target entity={target.Index}:{target.Version} has no LocalTransform.");
 
-            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
-            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
-            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][ActorMelee] Target ref={PlacedRefId(ref systemState, target)} is marked dead but still has positive health.");
-            if (vitals.CurrentHealth <= 0f || aftermath.Dead != 0)
+            if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, target))
                 return false;
 
             var transform = systemState.EntityManager.GetComponentData<LocalTransform>(target);

@@ -123,8 +123,46 @@ namespace VVardenfell.Runtime.Streaming
         public static void PublishGameInitialization(EntityManager em)
             => PublishGameInitialization(em, WorldBootstrapOptions.Vanilla);
 
+        public static void PublishRuntimeMode(EntityManager em, BootstrapRuntimeMode mode)
+        {
+            EntityQuery query = RuntimeBootstrapModeStateQueryCache.Get(em);
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+            em.SetName(entity, "VVardenfell.RuntimeMode");
+
+            var modeState = new RuntimeBootstrapModeState
+            {
+                Mode = (byte)mode,
+            };
+            if (em.HasComponent<RuntimeBootstrapModeState>(entity))
+                em.SetComponentData(entity, modeState);
+            else
+                em.AddComponentData(entity, modeState);
+
+            PublishPresentationGate(em, mode);
+        }
+
+        static void PublishPresentationGate(EntityManager em, BootstrapRuntimeMode mode)
+        {
+            EntityQuery enabledQuery = RuntimePresentationEnabledQueryCache.Get(em);
+            if (!enabledQuery.IsEmptyIgnoreFilter)
+                em.DestroyEntity(enabledQuery);
+            EntityQuery disabledQuery = RuntimePresentationDisabledQueryCache.Get(em);
+            if (!disabledQuery.IsEmptyIgnoreFilter)
+                em.DestroyEntity(disabledQuery);
+
+            Entity entity = em.CreateEntity();
+            em.SetName(entity, "VVardenfell.RuntimePresentationGate");
+            if (BootstrapRuntimeModeUtility.IsSandboxMode(mode))
+                em.AddComponentData(entity, new RuntimePresentationDisabled());
+            else
+                em.AddComponentData(entity, new RuntimePresentationEnabled());
+        }
+
         public static void PublishGameInitialization(EntityManager em, WorldBootstrapOptions options)
         {
+            PublishRuntimeMode(em, options.Mode);
             RuntimeBootstrapRequestUtility.PublishAll(em);
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
             var contentBlob = RequireRuntimeContentBlob();
@@ -557,6 +595,36 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeModelPrefabBlobReference>());
+        }
+
+        static class RuntimeBootstrapModeStateQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadWrite<RuntimeBootstrapModeState>());
+        }
+
+        static class RuntimePresentationEnabledQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimePresentationEnabled>());
+        }
+
+        static class RuntimePresentationDisabledQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimePresentationDisabled>());
         }
 
         static class LoadQueueQueryCache

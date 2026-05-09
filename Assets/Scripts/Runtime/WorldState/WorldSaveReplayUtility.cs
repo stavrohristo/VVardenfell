@@ -307,6 +307,12 @@ namespace VVardenfell.Runtime.WorldState
             if (!entityManager.HasComponent<ActorActiveMagicEffectDirty>(playerEntity))
                 entityManager.AddComponent<ActorActiveMagicEffectDirty>(playerEntity);
             entityManager.SetComponentEnabled<ActorActiveMagicEffectDirty>(playerEntity, true);
+            if (!entityManager.HasComponent<ActorActiveMagicEffectTicking>(playerEntity))
+                entityManager.AddComponent<ActorActiveMagicEffectTicking>(playerEntity);
+            entityManager.SetComponentEnabled<ActorActiveMagicEffectTicking>(playerEntity, false);
+            if (!entityManager.HasComponent<ActorHitAftermathAnimationActive>(playerEntity))
+                entityManager.AddComponent<ActorHitAftermathAnimationActive>(playerEntity);
+            entityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(playerEntity, false);
             PlayerEncumbranceDirtyUtility.EnsureMarker(entityManager, playerEntity, enabled: true);
             if (!entityManager.HasComponent<LocalPlayerViewModeDirty>(playerEntity))
                 entityManager.AddComponent<LocalPlayerViewModeDirty>(playerEntity);

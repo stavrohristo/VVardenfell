@@ -6,6 +6,7 @@ using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
+using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Systems;
@@ -125,8 +126,7 @@ namespace VVardenfell.Runtime.Books
 
             ContentReference content = inventory[inventoryIndex].Content;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
-            if (systemState.EntityManager.HasComponent<ActorCombatTargetState>(inventoryEntity)
-                && systemState.EntityManager.GetComponentData<ActorCombatTargetState>(inventoryEntity).Active != 0)
+            if (MorrowindCombatTargetUtility.IsInCombat(systemState.EntityManager, inventoryEntity))
             {
                 string message = RuntimeContentBlobUtility.RequireGameSettingStringByIdHash(ref contentBlob, RuntimeContentStableHash.HashId("sInventoryMessage4"));
                 ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;

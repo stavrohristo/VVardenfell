@@ -2,6 +2,7 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Systems;
 
@@ -21,11 +22,13 @@ namespace VVardenfell.Runtime.Animation
         const ulong TargetStartMarkerHash = 989263509605477796UL;
         const ulong TargetReleaseMarkerHash = 8348009748216247445UL;
         const ulong TargetStopMarkerHash = 10328737979966807904UL;
+        ComponentLookup<ActorDead> _deadLookup;
 
         public void OnCreate(ref SystemState systemState)
         {
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<ActorWeaponAnimationState>();
+            _deadLookup = systemState.GetComponentLookup<ActorDead>(isReadOnly: true);
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -35,13 +38,25 @@ namespace VVardenfell.Runtime.Animation
                 return;
 
             ref var catalog = ref catalogRef.Value;
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            _deadLookup.Update(ref systemState);
+            EntityCommandBuffer ecb = default;
             bool markedRenderOwnersDirty = false;
             foreach (var (presentation, movementState, weaponState, overlays, entity) in
                      SystemAPI.Query<RefRO<ActorPresentation>, RefRO<MorrowindMovementState>, RefRW<ActorWeaponAnimationState>, DynamicBuffer<ActorAnimationOverlayState>>()
                          .WithEntityAccess())
             {
                 bool hadRenderOwner = HasRigidEquipmentRenderOwner(weaponState.ValueRO);
+                if (IsDead(entity))
+                {
+                    ResetDeadWeaponAnimation(ref weaponState.ValueRW, overlays);
+                    if (hadRenderOwner != HasRigidEquipmentRenderOwner(weaponState.ValueRO))
+                    {
+                        EnsureCommandBuffer(ref ecb);
+                        markedRenderOwnersDirty |= MarkRigidEquipmentRenderOwnersDirty(ref systemState, ref ecb, entity);
+                    }
+                    continue;
+                }
+
                 UpdateWeaponAnimation(
                     ref catalog,
                     presentation.ValueRO,
@@ -49,36 +64,66 @@ namespace VVardenfell.Runtime.Animation
                     ref weaponState.ValueRW,
                     overlays);
                 if (hadRenderOwner != HasRigidEquipmentRenderOwner(weaponState.ValueRO))
+                {
+                    EnsureCommandBuffer(ref ecb);
                     markedRenderOwnersDirty |= MarkRigidEquipmentRenderOwnersDirty(ref systemState, ref ecb, entity);
+                }
             }
 
             if (markedRenderOwnersDirty)
+            {
                 ecb.Playback(systemState.EntityManager);
-            ecb.Dispose();
+                ecb.Dispose();
+            }
+        }
+
+        bool IsDead(Entity entity)
+            => _deadLookup.HasComponent(entity) && _deadLookup.IsComponentEnabled(entity);
+
+        static void EnsureCommandBuffer(ref EntityCommandBuffer ecb)
+        {
+            if (!ecb.IsCreated)
+                ecb = new EntityCommandBuffer(Allocator.Temp);
         }
 
         bool MarkRigidEquipmentRenderOwnersDirty(ref SystemState systemState, ref EntityCommandBuffer ecb, Entity actor)
         {
-            bool marked = false;
-            foreach (var (attachment, entity) in
-                     SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
-                         .WithEntityAccess())
-            {
-                if (attachment.ValueRO.Actor != actor)
-                    continue;
+            if (actor == Entity.Null || !systemState.EntityManager.Exists(actor))
+                throw new System.InvalidOperationException("[VVardenfell][Animation] Rigid equipment render owner dirty actor is missing.");
 
-                if (systemState.EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerDirty>(entity))
-                    ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, true);
-                else
-                    ecb.AddComponent<ActorRigidEquipmentRenderOwnerDirty>(entity);
-                marked = true;
-            }
-
-            return marked;
+            if (systemState.EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerActorDirty>(actor))
+                ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerActorDirty>(actor, true);
+            else
+                ecb.AddComponent<ActorRigidEquipmentRenderOwnerActorDirty>(actor);
+            return true;
         }
 
         static bool HasRigidEquipmentRenderOwner(in ActorWeaponAnimationState state)
             => state.Drawn != 0 || state.Phase == ActorWeaponAnimationPhase.Equipping;
+
+        static void ResetDeadWeaponAnimation(ref ActorWeaponAnimationState state, DynamicBuffer<ActorAnimationOverlayState> overlays)
+        {
+            state.Drawn = 0;
+            state.Phase = ActorWeaponAnimationPhase.Hidden;
+            state.AttackStrength = 0f;
+            state.AttackMinTime = 0f;
+            state.AttackMaxTime = 0f;
+            state.ReadyWeaponTogglePressed = 0;
+            state.AttackHeld = 0;
+            state.AttackPressed = 0;
+            state.AttackReleased = 0;
+            state.ReleaseQueued = 0;
+            state.AiAttackTypeOverride = 0;
+            state.MeleeHitPending = 0;
+            state.MeleeHitAttackStrength = 0f;
+            state.MeleeHitWeaponContent = default;
+            state.MeleeSwingPending = 0;
+            state.MeleeSwingAttackStrength = 0f;
+            state.MeleeSwingWeaponContent = default;
+            state.SpellCastPressed = 0;
+            state.SpellCastReleasePending = 0;
+            ClearUpperBodyOverlay(overlays);
+        }
 
         internal static void UpdateWeaponAnimation(
             ref ActorAnimationCatalogBlob catalog,

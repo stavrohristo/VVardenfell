@@ -10,7 +10,6 @@ namespace VVardenfell.Runtime.Components
         public byte KnockedDownOneFrame;
         public byte KnockedDownOverOneFrame;
         public byte KnockedOut;
-        public byte Dead;
         public byte DeathAnimationFinished;
         public uint Sequence;
         public uint AnimatedSequence;

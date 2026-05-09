@@ -229,10 +229,18 @@ namespace VVardenfell.Runtime.Components
             });
             ecb.AddComponent(logicalEntity, new ActorScriptEventState());
             ecb.AddComponent(logicalEntity, new ActorHitAftermathState());
+            ecb.AddComponent<ActorHitAftermathAnimationActive>(logicalEntity);
+            ecb.SetComponentEnabled<ActorHitAftermathAnimationActive>(logicalEntity, false);
+            ecb.AddComponent<ActorDead>(logicalEntity);
+            ecb.SetComponentEnabled<ActorDead>(logicalEntity, false);
+            ecb.AddBuffer<ActorCombatTarget>(logicalEntity);
+            ecb.AddComponent(logicalEntity, new ActorActiveCombatTarget());
+            ecb.SetComponentEnabled<ActorActiveCombatTarget>(logicalEntity, false);
             ecb.AddComponent(logicalEntity, ActorCrimeState.Default);
             ecb.AddComponent(logicalEntity, new ActorFriendlyHitState());
             ecb.AddComponent(logicalEntity, new ActorBlockState());
             ecb.AddComponent(logicalEntity, new ActorMeleeCombatAiState());
+            ecb.AddComponent(logicalEntity, new ActorCombatMovementState());
             ecb.AddComponent(logicalEntity, new ActorAiGreetingState());
             var derivedMovement = MorrowindActorMovementStats.BuildDerived(
                 ref content,
@@ -251,6 +259,8 @@ namespace VVardenfell.Runtime.Components
             ecb.AddBuffer<ActorUsedPower>(logicalEntity);
             ecb.AddComponent(logicalEntity, new ActorMagicCastState());
             ecb.AddComponent<ActorActiveMagicEffectDirty>(logicalEntity);
+            ecb.AddComponent<ActorActiveMagicEffectTicking>(logicalEntity);
+            ecb.SetComponentEnabled<ActorActiveMagicEffectTicking>(logicalEntity, false);
             QueueActorFactionMembership(ref ecb, logicalEntity, ref content, ref actor);
 
             QueueActorCollider(entityManager, ref ecb, logicalEntity);
@@ -418,7 +428,14 @@ namespace VVardenfell.Runtime.Components
                     resolvedItems.Dispose();
             }
 
-            MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(ref content, ref actor, inventory.AsArray(), equipment);
+            try
+            {
+                MorrowindEquipmentAutoEquipUtility.SelectInitialEquipment(ref content, ref actor, inventory.AsArray(), equipment);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException($"[VVardenfell][WorldRefs] failed to auto-equip actor '{actor.Id.ToString()}' ref=0x{placedRefId:X8}: {ex.Message}", ex);
+            }
         }
 
         static void AddActorInventoryItem(

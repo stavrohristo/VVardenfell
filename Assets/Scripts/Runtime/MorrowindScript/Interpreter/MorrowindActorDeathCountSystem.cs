@@ -31,18 +31,17 @@ namespace VVardenfell.Runtime.MorrowindScript
                          .WithNone<MorrowindActorDeathCounted>()
                          .WithEntityAccess())
             {
-                if (!state.EntityManager.HasComponent<ActorHitAftermathState>(entity))
+                if (!state.EntityManager.HasComponent<ActorDead>(entity))
                 {
                     if (vitals.ValueRO.CurrentHealth <= 0f)
-                        throw new InvalidOperationException("Actor reached zero health without ActorHitAftermathState.");
+                        throw new InvalidOperationException("Actor reached zero health without ActorDead.");
                     continue;
                 }
 
-                var aftermath = state.EntityManager.GetComponentData<ActorHitAftermathState>(entity);
-                if (aftermath.Dead == 0)
+                if (!state.EntityManager.IsComponentEnabled<ActorDead>(entity))
                 {
                     if (vitals.ValueRO.CurrentHealth <= 0f)
-                        throw new InvalidOperationException("Actor reached zero health without explicit dead aftermath state.");
+                        throw new InvalidOperationException("Actor reached zero health without enabled ActorDead.");
                     continue;
                 }
 

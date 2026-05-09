@@ -72,9 +72,8 @@ namespace VVardenfell.Runtime.Combat
             if (!entityManager.HasComponent<ActorHitAftermathState>(target))
                 throw new InvalidOperationException($"[VVardenfell][HUD] Enemy health target ref={PlacedRefId(entityManager, target)} has no ActorHitAftermathState.");
 
-            var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(target);
             var vitals = entityManager.GetComponentData<ActorVitalSet>(target);
-            if (aftermath.Dead != 0 && vitals.CurrentHealth <= 0f)
+            if (ActorHitAftermathStateUtility.IsDead(entityManager, target) && vitals.CurrentHealth <= 0f)
                 return;
 
             state.Target = target;

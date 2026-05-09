@@ -118,6 +118,11 @@ namespace VVardenfell.Runtime.Animation
                         Phase = ActorWeaponAnimationPhase.Hidden,
                     });
                 }
+                if (!systemState.EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerActorDirty>(entity))
+                {
+                    ecb.AddComponent<ActorRigidEquipmentRenderOwnerActorDirty>(entity);
+                    ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerActorDirty>(entity, false);
+                }
                 ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
                 ecb.AddBuffer<ActorAnimationOverlayState>(entity);
                 ecb.AddBuffer<ActorAnimationEvent>(entity);
@@ -372,6 +377,7 @@ namespace VVardenfell.Runtime.Animation
                 }
                 if (!entityManager.Exists(prototype))
                     throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} render prototype entity={prototype.Index}:{prototype.Version} no longer exists.");
+                ActorRenderChildPrototypeComponents prototypeComponents = ActorRenderChildPrototypeComponents.Resolve(entityManager, prototype);
 
                 if (info.BucketIndex != previousBucketIndex
                     || info.MaterialIndex != previousMaterialIndex
@@ -399,6 +405,7 @@ namespace VVardenfell.Runtime.Animation
                     info.TextureSlice,
                     vertexCursor,
                     initialLocalToWorld,
+                    prototypeComponents,
                     actorBounds,
                     visibilityMode,
                     ref linked,
@@ -410,6 +417,7 @@ namespace VVardenfell.Runtime.Animation
                         throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} has no Entities Graphics shadow-only render prototype.");
                     if (!entityManager.Exists(shadowOnlyPrototype))
                         throw new InvalidOperationException($"Actor skin mesh {skinMeshIndex} shadow-only render prototype entity={shadowOnlyPrototype.Index}:{shadowOnlyPrototype.Version} no longer exists.");
+                    ActorRenderChildPrototypeComponents shadowOnlyPrototypeComponents = ActorRenderChildPrototypeComponents.Resolve(entityManager, shadowOnlyPrototype);
 
                     Entity shadowOnlyChild = ecb.Instantiate(shadowOnlyPrototype);
                     ConfigureActorRenderChild(
@@ -422,6 +430,7 @@ namespace VVardenfell.Runtime.Animation
                         info.TextureSlice,
                         vertexCursor,
                         initialLocalToWorld,
+                        shadowOnlyPrototypeComponents,
                         actorBounds,
                         ActorRenderMeshVisibilityMode.FirstPersonShadowOnly,
                         ref linked,
@@ -442,6 +451,7 @@ namespace VVardenfell.Runtime.Animation
             int textureSlice,
             int vertexCursor,
             LocalToWorld initialLocalToWorld,
+            ActorRenderChildPrototypeComponents prototypeComponents,
             ActorLocalBounds actorBounds,
             byte visibilityMode,
             ref DynamicBuffer<LinkedEntityGroup> linked,
@@ -450,13 +460,19 @@ namespace VVardenfell.Runtime.Animation
             ecb.SetName(child, visibilityMode == ActorRenderMeshVisibilityMode.FirstPersonShadowOnly
                 ? $"VVardenfell.ActorShadowOnlyRenderMesh[{skinMeshIndex}]"
                 : $"VVardenfell.ActorRenderMesh[{skinMeshIndex}]");
-            ecb.SetComponent(child, LocalTransform.Identity);
-            ecb.SetComponent(child, initialLocalToWorld);
+            if (prototypeComponents.HasLocalTransform)
+                ecb.SetComponent(child, LocalTransform.Identity);
+            else
+                ecb.AddComponent(child, LocalTransform.Identity);
+            if (prototypeComponents.HasLocalToWorld)
+                ecb.SetComponent(child, initialLocalToWorld);
+            else
+                ecb.AddComponent(child, initialLocalToWorld);
             ecb.AddComponent(child, new Parent { Value = actorEntity });
-            ecb.SetComponent(child, MaterialMeshInfo.FromRenderMeshArrayIndices(materialIndex, renderMeshIndex));
-            ecb.SetComponent(child, new TextureSlice { Value = textureSlice });
-            ecb.SetComponent(child, new ActorDeformedMeshIndex { Value = vertexCursor });
-            ecb.SetComponent(child, new RenderBounds
+            SetOrAdd(ref ecb, child, prototypeComponents.HasMaterialMeshInfo, MaterialMeshInfo.FromRenderMeshArrayIndices(materialIndex, renderMeshIndex));
+            SetOrAdd(ref ecb, child, prototypeComponents.HasTextureSlice, new TextureSlice { Value = textureSlice });
+            SetOrAdd(ref ecb, child, prototypeComponents.HasActorDeformedMeshIndex, new ActorDeformedMeshIndex { Value = vertexCursor });
+            SetOrAdd(ref ecb, child, prototypeComponents.HasRenderBounds, new RenderBounds
             {
                 Value = new AABB
                 {
@@ -464,7 +480,7 @@ namespace VVardenfell.Runtime.Animation
                     Extents = BuildAnimatedRenderCullExtents(actorBounds),
                 },
             });
-            ecb.SetComponent(child, new ActorRenderMeshInstance
+            SetOrAdd(ref ecb, child, prototypeComponents.HasActorRenderMeshInstance, new ActorRenderMeshInstance
             {
                 Actor = actorEntity,
                 SkinMeshIndex = skinMeshIndex,
@@ -475,6 +491,44 @@ namespace VVardenfell.Runtime.Animation
                 linked.Add(new LinkedEntityGroup { Value = child });
             else
                 ecb.AppendToBuffer(actorEntity, new LinkedEntityGroup { Value = child });
+        }
+
+        static void SetOrAdd<T>(
+            ref EntityCommandBuffer ecb,
+            Entity entity,
+            bool hasComponent,
+            T value)
+            where T : unmanaged, IComponentData
+        {
+            if (hasComponent)
+                ecb.SetComponent(entity, value);
+            else
+                ecb.AddComponent(entity, value);
+        }
+
+        struct ActorRenderChildPrototypeComponents
+        {
+            public bool HasLocalTransform;
+            public bool HasLocalToWorld;
+            public bool HasMaterialMeshInfo;
+            public bool HasTextureSlice;
+            public bool HasActorDeformedMeshIndex;
+            public bool HasRenderBounds;
+            public bool HasActorRenderMeshInstance;
+
+            public static ActorRenderChildPrototypeComponents Resolve(EntityManager entityManager, Entity prototype)
+            {
+                return new ActorRenderChildPrototypeComponents
+                {
+                    HasLocalTransform = entityManager.HasComponent<LocalTransform>(prototype),
+                    HasLocalToWorld = entityManager.HasComponent<LocalToWorld>(prototype),
+                    HasMaterialMeshInfo = entityManager.HasComponent<MaterialMeshInfo>(prototype),
+                    HasTextureSlice = entityManager.HasComponent<TextureSlice>(prototype),
+                    HasActorDeformedMeshIndex = entityManager.HasComponent<ActorDeformedMeshIndex>(prototype),
+                    HasRenderBounds = entityManager.HasComponent<RenderBounds>(prototype),
+                    HasActorRenderMeshInstance = entityManager.HasComponent<ActorRenderMeshInstance>(prototype),
+                };
+            }
         }
 
         static float3 BuildAnimatedRenderCullExtents(ActorLocalBounds actorBounds)

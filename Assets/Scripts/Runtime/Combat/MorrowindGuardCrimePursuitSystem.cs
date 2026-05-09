@@ -90,7 +90,7 @@ namespace VVardenfell.Runtime.Combat
                     continue;
                 if (settingsRef.ValueRO.Alarm < 100)
                     continue;
-                if (vitals.ValueRO.CurrentHealth <= 0f)
+                if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, entity))
                     continue;
                 if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(entity)
                     && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0)
@@ -222,12 +222,7 @@ namespace VVardenfell.Runtime.Combat
         }
 
         static bool IsInCombat(ref SystemState systemState, Entity actor)
-        {
-            if (!systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
-                return false;
-
-            return systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
-        }
+            => MorrowindCombatTargetUtility.IsInCombat(systemState.EntityManager, actor);
 
         static void SetHitAttemptActor(ref SystemState systemState, Entity actor, Entity target)
         {

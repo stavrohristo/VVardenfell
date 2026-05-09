@@ -121,18 +121,30 @@ namespace VVardenfell.Runtime.Magic
 
         public static void AddAttribute(ref ActorAttributeSet attributes, sbyte attribute, float value)
         {
-            if (attribute < 0)
-                throw new InvalidOperationException("[VVardenfell][Magic] Attribute-targeted effect has no attribute argument.");
-            var kind = (ActorAttributeKind)attribute;
+            var kind = ToAttributeKind(attribute);
             SetAttribute(ref attributes, kind, GetAttribute(attributes, kind) + value);
         }
 
         public static void AddSkill(ref ActorSkillSet skills, sbyte skill, float value)
         {
-            if (skill < 0)
-                throw new InvalidOperationException("[VVardenfell][Magic] Skill-targeted effect has no skill argument.");
-            var kind = (ActorSkillKind)skill;
+            var kind = ToSkillKind(skill);
             SetSkill(ref skills, kind, PlayerSkillMutationApplySystem.GetSkill(skills, kind) + value);
+        }
+
+        static ActorAttributeKind ToAttributeKind(sbyte attribute)
+        {
+            if ((uint)attribute >= 8u)
+                throw new InvalidOperationException("[VVardenfell][Magic] Attribute-targeted effect has invalid attribute argument.");
+
+            return (ActorAttributeKind)(attribute + 1);
+        }
+
+        static ActorSkillKind ToSkillKind(sbyte skill)
+        {
+            if ((uint)skill >= 27u)
+                throw new InvalidOperationException("[VVardenfell][Magic] Skill-targeted effect has invalid skill argument.");
+
+            return (ActorSkillKind)(skill + 1);
         }
 
         public static void SetSkill(ref ActorSkillSet skills, ActorSkillKind skill, float value)

@@ -81,8 +81,8 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<MorrowindTimeState>();
             RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate<RuntimeWorldCellBlobReference>();
-            RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<ContainerSessionItem>();
+            RequireForUpdate<RuntimePresentationEnabled>();
         }
 
         protected override void OnDestroy()
@@ -94,6 +94,12 @@ namespace VVardenfell.Runtime.Shell
 
         protected override void OnUpdate()
         {
+            if (_playerInventoryQuery.IsEmptyIgnoreFilter)
+            {
+                HideShellView();
+                return;
+            }
+
             if (_view == null && !_creationFailed)
             {
                 try
@@ -267,6 +273,35 @@ namespace VVardenfell.Runtime.Shell
                 ResolveModalTitle(shell.ModalOpen != 0, shell.ModalTitle),
                 ResolveModalBody(shell.ModalOpen != 0, shell.ModalBody),
                 ResolveModalButtons(shell.ModalOpen != 0, shell));
+        }
+
+        void HideShellView()
+        {
+            _view?.Sync(
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                RuntimeShellMenuActionId.Resume,
+                false,
+                false,
+                false,
+                0f,
+                0f,
+                string.Empty,
+                string.Empty,
+                Array.Empty<string>());
         }
 
         PlayerCustomClass ResolvePlayerCustomClass(in PlayerPresentationStats playerStats)

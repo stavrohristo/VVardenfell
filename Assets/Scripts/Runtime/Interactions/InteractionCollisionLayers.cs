@@ -71,6 +71,13 @@ namespace VVardenfell.Runtime.Interactions
             GroupIndex = 0,
         };
 
+        public static CollisionFilter ActorBodyQueryFilter => new()
+        {
+            BelongsTo = DynamicRef,
+            CollidesWith = Player,
+            GroupIndex = 0,
+        };
+
         public static CollisionFilter GeometryFilter => new()
         {
             BelongsTo = Geometry,

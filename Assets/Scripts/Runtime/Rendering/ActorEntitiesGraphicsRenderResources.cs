@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Entities;
+using Unity.Entities.Graphics;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
@@ -93,13 +94,30 @@ namespace VVardenfell.Runtime.Rendering
 
             for (int i = 0; i < _prototypes.Length; i++)
             {
-                if (_prototypes[i] == Entity.Null || !entityManager.Exists(_prototypes[i]))
+                if (!IsCompleteRenderPrototype(entityManager, _prototypes[i]))
                     return false;
-                if (_shadowOnlyPrototypes[i] == Entity.Null || !entityManager.Exists(_shadowOnlyPrototypes[i]))
+                if (!IsCompleteRenderPrototype(entityManager, _shadowOnlyPrototypes[i]))
                     return false;
             }
 
             return true;
+        }
+
+        static bool IsCompleteRenderPrototype(EntityManager entityManager, Entity prototype)
+        {
+            if (prototype == Entity.Null || !entityManager.Exists(prototype))
+                return false;
+
+            return entityManager.HasComponent<LocalTransform>(prototype)
+                   && entityManager.HasComponent<LocalToWorld>(prototype)
+                   && entityManager.HasComponent<MaterialMeshInfo>(prototype)
+                   && entityManager.HasComponent<RenderBounds>(prototype)
+                   && entityManager.HasComponent<WorldRenderBounds>(prototype)
+                   && entityManager.HasComponent<PerInstanceCullingTag>(prototype)
+                   && entityManager.HasComponent(prototype, ComponentType.ReadWrite<RenderFilterSettings>())
+                   && entityManager.HasComponent(prototype, ComponentType.ReadWrite<RenderMeshArray>())
+                   && entityManager.HasComponent(prototype, ComponentType.ChunkComponent<ChunkWorldRenderBounds>())
+                   && entityManager.HasComponent(prototype, ComponentType.ChunkComponent<EntitiesGraphicsChunkInfo>());
         }
 
         public bool TryGetPrototype(int bucketIndex, out Entity prototype)
@@ -328,6 +346,7 @@ namespace VVardenfell.Runtime.Rendering
         {
             _prototypes = new Entity[bucketCount];
             _shadowOnlyPrototypes = new Entity[bucketCount];
+            int prototypeMeshIndex = ResolvePrototypeMeshIndex();
             var renderDesc = new RenderMeshDescription(
                 shadowCastingMode: ShadowCastingMode.On,
                 receiveShadows: true,
@@ -343,20 +362,37 @@ namespace VVardenfell.Runtime.Rendering
                     entityManager,
                     $"VVardenfell.ActorRenderPrefab[b{bucket}]",
                     renderDesc,
-                    bucket);
+                    bucket,
+                    prototypeMeshIndex);
                 _shadowOnlyPrototypes[bucket] = CreatePrototype(
                     entityManager,
                     $"VVardenfell.ActorShadowOnlyRenderPrefab[b{bucket}]",
                     shadowOnlyDesc,
-                    bucket);
+                    bucket,
+                    prototypeMeshIndex);
             }
+        }
+
+        int ResolvePrototypeMeshIndex()
+        {
+            if (_meshes == null || _meshes.Length == 0)
+                throw new InvalidOperationException("Actor Entities Graphics render resources require at least one generated actor mesh.");
+
+            for (int i = 0; i < _meshes.Length; i++)
+            {
+                if (_meshes[i] != null)
+                    return i;
+            }
+
+            throw new InvalidOperationException("Actor Entities Graphics render resources could not find a valid generated actor mesh.");
         }
 
         Entity CreatePrototype(
             EntityManager entityManager,
             string name,
             in RenderMeshDescription desc,
-            int bucket)
+            int bucket,
+            int prototypeMeshIndex)
         {
             Entity prototype = entityManager.CreateEntity();
             entityManager.SetName(prototype, name);
@@ -365,12 +401,23 @@ namespace VVardenfell.Runtime.Rendering
                 entityManager,
                 desc,
                 _renderMeshArrays[bucket],
-                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
-            entityManager.AddComponentData(prototype, LocalTransform.Identity);
+                MaterialMeshInfo.FromRenderMeshArrayIndices(0, prototypeMeshIndex));
+            if (entityManager.HasComponent<LocalTransform>(prototype))
+                entityManager.SetComponentData(prototype, LocalTransform.Identity);
+            else
+                entityManager.AddComponentData(prototype, LocalTransform.Identity);
+
+            if (entityManager.HasComponent<LocalToWorld>(prototype))
+                entityManager.SetComponentData(prototype, new LocalToWorld { Value = float4x4.identity });
+            else
+                entityManager.AddComponentData(prototype, new LocalToWorld { Value = float4x4.identity });
             entityManager.AddComponentData(prototype, default(TextureSlice));
             entityManager.AddComponentData(prototype, default(ActorDeformedMeshIndex));
             entityManager.AddComponentData(prototype, default(ActorRenderMeshInstance));
             entityManager.AddComponent<Prefab>(prototype);
+            if (!IsCompleteRenderPrototype(entityManager, prototype))
+                throw new InvalidOperationException($"Actor Entities Graphics prototype '{name}' was created without the required render component composition.");
+
             return prototype;
         }
 

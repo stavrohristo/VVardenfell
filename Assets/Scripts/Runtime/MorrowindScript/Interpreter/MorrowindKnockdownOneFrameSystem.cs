@@ -26,7 +26,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(entity))
                     throw new InvalidOperationException("[VVardenfell][Aftermath] Knockdown actor has no ActorScriptEventState.");
 
-                if (aftermath.ValueRO.Dead != 0 || aftermath.ValueRO.KnockedDown == 0)
+                if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, entity) || aftermath.ValueRO.KnockedDown == 0)
                 {
                     aftermath.ValueRW.KnockedDownOneFrame = 0;
                     aftermath.ValueRW.KnockedDownOverOneFrame = 0;

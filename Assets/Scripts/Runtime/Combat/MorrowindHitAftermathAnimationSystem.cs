@@ -18,12 +18,22 @@ namespace VVardenfell.Runtime.Combat
         const int MaxHitReactionVariants = 16;
         const int MaxDeathVariants = 5;
         const uint InfiniteLoops = uint.MaxValue;
+        EntityQuery _activeQuery;
+        ComponentLookup<ActorDead> _deadLookup;
 
         public void OnCreate(ref SystemState systemState)
         {
-            systemState.RequireForUpdate<ActorHitAftermathState>();
+            _activeQuery = systemState.GetEntityQuery(
+                ComponentType.ReadWrite<ActorHitAftermathState>(),
+                ComponentType.ReadOnly<ActorHitAftermathAnimationActive>(),
+                ComponentType.ReadOnly<ActorPresentation>(),
+                ComponentType.ReadOnly<ActorVitalSet>(),
+                ComponentType.ReadWrite<ActorAnimationOverlayState>());
+
+            systemState.RequireForUpdate(_activeQuery);
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            _deadLookup = systemState.GetComponentLookup<ActorDead>(isReadOnly: true);
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -35,18 +45,25 @@ namespace VVardenfell.Runtime.Combat
             var combatState = SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>();
             var random = new Unity.Mathematics.Random(combatState.ValueRO.RandomState == 0u ? 0x6E624EB7u : combatState.ValueRO.RandomState);
             ref var catalog = ref catalogRef.Value;
+            _deadLookup.Update(ref systemState);
 
-            foreach (var (aftermath, entity) in
-                     SystemAPI.Query<RefRW<ActorHitAftermathState>>()
+            foreach (var (aftermath, presentation, vitals, overlays, entity) in
+                     SystemAPI.Query<
+                             RefRW<ActorHitAftermathState>,
+                             RefRO<ActorPresentation>,
+                             RefRO<ActorVitalSet>,
+                             DynamicBuffer<ActorAnimationOverlayState>>()
+                         .WithAll<ActorHitAftermathAnimationActive>()
                          .WithEntityAccess())
             {
-                if (!HasAnyAftermath(aftermath.ValueRO))
+                if (!HasAnyAftermath(entity, aftermath.ValueRO))
+                {
+                    RemoveAftermathOverlays(overlays);
+                    systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(entity, false);
                     continue;
+                }
 
-                RequireAnimationComposition(ref systemState, entity);
-                var presentation = systemState.EntityManager.GetComponentData<ActorPresentation>(entity);
-                var overlays = systemState.EntityManager.GetBuffer<ActorAnimationOverlayState>(entity);
-                ApplyAnimation(ref systemState, entity, aftermath, ref catalog, presentation, overlays, ref random);
+                ApplyAnimation(ref systemState, entity, aftermath, ref catalog, presentation.ValueRO, vitals.ValueRO, overlays, ref random);
             }
 
             combatState.ValueRW.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
@@ -57,10 +74,11 @@ namespace VVardenfell.Runtime.Combat
             RefRW<ActorHitAftermathState> aftermath,
             ref ActorAnimationCatalogBlob catalog,
             in ActorPresentation presentation,
+            in ActorVitalSet vitals,
             DynamicBuffer<ActorAnimationOverlayState> overlays,
             ref Unity.Mathematics.Random random)
         {
-            if (aftermath.ValueRO.Dead != 0)
+            if (IsDead(entity))
             {
                 ApplyDeathAnimation(ref systemState, entity, aftermath, ref catalog, presentation, overlays, ref random);
                 return;
@@ -68,10 +86,6 @@ namespace VVardenfell.Runtime.Combat
 
             if (aftermath.ValueRO.KnockedOut != 0)
             {
-                if (!systemState.EntityManager.HasComponent<ActorVitalSet>(entity))
-                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Knockout actor ref={PlacedRefId(ref systemState, entity)} has no ActorVitalSet.");
-
-                var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(entity);
                 if (vitals.CurrentFatigue >= 0f && vitals.ModifiedFatigueBase > 0f)
                 {
                     aftermath.ValueRW.KnockedOut = 0;
@@ -79,6 +93,7 @@ namespace VVardenfell.Runtime.Combat
                     aftermath.ValueRW.KnockedDownOneFrame = 0;
                     aftermath.ValueRW.KnockedDownOverOneFrame = 0;
                     RemoveAftermathOverlays(overlays);
+                    systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(entity, false);
                     return;
                 }
 
@@ -108,6 +123,7 @@ namespace VVardenfell.Runtime.Combat
                         aftermath.ValueRW.KnockedDown = 0;
                         aftermath.ValueRW.KnockedDownOneFrame = 0;
                         aftermath.ValueRW.KnockedDownOverOneFrame = 0;
+                        systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(entity, false);
                         return;
                     }
                 }
@@ -136,6 +152,7 @@ namespace VVardenfell.Runtime.Combat
                     {
                         RemoveAftermathOverlays(overlays);
                         aftermath.ValueRW.HitRecovery = 0;
+                        systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(entity, false);
                         return;
                     }
 
@@ -177,6 +194,7 @@ namespace VVardenfell.Runtime.Combat
                 && overlays[overlayIndex].Playback.Time >= overlays[overlayIndex].Playback.StopTime)
             {
                 aftermath.ValueRW.DeathAnimationFinished = 1;
+                systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(entity, false);
                 return;
             }
 
@@ -326,11 +344,14 @@ namespace VVardenfell.Runtime.Combat
                 out _);
         }
 
-        static bool HasAnyAftermath(in ActorHitAftermathState aftermath)
-            => aftermath.Dead != 0
+        bool HasAnyAftermath(Entity entity, in ActorHitAftermathState aftermath)
+            => IsDead(entity)
                || aftermath.KnockedOut != 0
                || aftermath.KnockedDown != 0
                || aftermath.HitRecovery != 0;
+
+        bool IsDead(Entity entity)
+            => _deadLookup.HasComponent(entity) && _deadLookup.IsComponentEnabled(entity);
 
         static bool IsPlaybackComplete(in ActorAnimationPlaybackState playback)
             => !ActorAnimationPlaybackUtility.IsActive(playback) || playback.Time >= playback.StopTime;
@@ -358,16 +379,6 @@ namespace VVardenfell.Runtime.Combat
                     overlays.RemoveAt(i);
                 }
             }
-        }
-
-        void RequireAnimationComposition(ref SystemState systemState, Entity entity)
-        {
-            if (!systemState.EntityManager.HasComponent<ActorPresentation>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorPresentation.");
-            if (!systemState.EntityManager.HasComponent<ActorAnimationState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationState.");
-            if (!systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(entity))
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, entity)} has no ActorAnimationOverlayState buffer.");
         }
 
         uint PlacedRefId(ref SystemState systemState, Entity entity)

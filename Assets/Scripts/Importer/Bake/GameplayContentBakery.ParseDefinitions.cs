@@ -86,6 +86,17 @@ namespace VVardenfell.Importer.Bake
                             def.Int0 = bytes[0];
                         break;
                     }
+                    case var tag when tag == SkdtTag && recordTag == SkilTag:
+                    {
+                        byte[] bytes = esm.ReadSubrecordBytes();
+                        if (bytes.Length < 8)
+                            break;
+
+                        def.Int1 = ReadInt32(bytes, 0);
+                        def.Int2 = ReadInt32(bytes, 4);
+                        def.Float1 = 1f;
+                        break;
+                    }
                     case var tag when tag == IntvTag:
                     {
                         byte[] bytes = esm.ReadSubrecordBytes();

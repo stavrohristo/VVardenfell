@@ -9,6 +9,7 @@ using CapsuleCollider = Unity.Physics.CapsuleCollider;
 
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.AI;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
@@ -115,6 +116,8 @@ namespace VVardenfell.Runtime.Player
                 _localPlayerVisualQuery,
                 _playerViewQuery,
                 _playerQuery);
+            Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
+            ConfigureMainCameraForInitialization(cam, init);
             if (init.SpawnLocalPlayer == 0)
             {
                 ConfigureStreamingAfterInitialization(ref systemState, em, init, scriptDrivenVanillaStart: false);
@@ -218,6 +221,13 @@ namespace VVardenfell.Runtime.Player
             em.AddComponentData(player, derivedStats);
             em.AddComponentData(player, new ActorScriptEventState());
             em.AddComponentData(player, new ActorHitAftermathState());
+            em.AddComponent<ActorHitAftermathAnimationActive>(player);
+            em.SetComponentEnabled<ActorHitAftermathAnimationActive>(player, false);
+            em.AddComponent<ActorDead>(player);
+            em.SetComponentEnabled<ActorDead>(player, false);
+            em.AddBuffer<ActorCombatTarget>(player);
+            em.AddComponentData(player, new ActorActiveCombatTarget());
+            em.SetComponentEnabled<ActorActiveCombatTarget>(player, false);
             em.AddComponentData(player, ActorCrimeState.Default);
             em.AddComponentData(player, new ActorFriendlyHitState());
             em.AddComponentData(player, new ActorBlockState());
@@ -263,6 +273,8 @@ namespace VVardenfell.Runtime.Player
                 }
             }
             em.AddComponent<ActorActiveMagicEffectDirty>(player);
+            em.AddComponent<ActorActiveMagicEffectTicking>(player);
+            em.SetComponentEnabled<ActorActiveMagicEffectTicking>(player, false);
             var activeSpells = em.AddBuffer<ActorActiveSpell>(player);
             if (em.HasBuffer<ActorActiveSpell>(initEntity))
             {
@@ -315,9 +327,6 @@ namespace VVardenfell.Runtime.Player
                 Rotation = init.PlayerRotation,
             });
 
-            Camera cam = SystemAPI.GetSingleton<MainCameraSingleton>().GetRequiredCamera();
-            cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
-
             bool vanillaScriptDrivenNewGame = hasNewGameRequest && init.RuntimeMode == (byte)BootstrapRuntimeMode.Vanilla;
             ConfigureStreamingAfterInitialization(ref systemState, em, init, vanillaScriptDrivenNewGame);
             RestoreCharacterGenerationState(em, init);
@@ -326,6 +335,30 @@ namespace VVardenfell.Runtime.Player
 
             MorrowindRuntimeLifecycleUtility.EnsureActive(em, _runtimeActiveQuery);
             ClearInitializationRequests(ref systemState, hasNewGameRequest, hasContinueRequest, hasLoadRequest, initEntity);
+        }
+
+        static void ConfigureMainCameraForInitialization(Camera cam, in GameInitializationSingleton init)
+        {
+            cam.farClipPlane = Mathf.Max(cam.farClipPlane, 4000f);
+
+            var freeCamera = cam.GetComponent<UnityEngine.Rendering.FreeCamera>();
+            bool enableFreeCamera = init.RuntimeMode == (byte)BootstrapRuntimeMode.CombatSandbox;
+            if (enableFreeCamera && freeCamera == null)
+                throw new System.InvalidOperationException("[VVardenfell][CombatSandbox] Main Camera is missing UnityEngine.Rendering.FreeCamera.");
+
+            if (freeCamera != null)
+                freeCamera.enabled = enableFreeCamera;
+
+            if (!enableFreeCamera)
+                return;
+
+            cam.transform.SetPositionAndRotation(
+                new Vector3(init.PlayerPosition.x, init.PlayerPosition.y, init.PlayerPosition.z),
+                new Quaternion(
+                    init.PlayerRotation.value.x,
+                    init.PlayerRotation.value.y,
+                    init.PlayerRotation.value.z,
+                    init.PlayerRotation.value.w));
         }
 
         static PlayerRaceAppearance CreateInitialPlayerAppearance(

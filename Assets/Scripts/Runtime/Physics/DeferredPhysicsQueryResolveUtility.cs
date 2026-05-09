@@ -1,5 +1,9 @@
 using System;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Physics;
 using Unity.Profiling;
@@ -29,6 +33,32 @@ namespace VVardenfell.Runtime.Physics
         public int RemainingRequests;
     }
 
+    internal struct DeferredPhysicsQueryResolveScratch : IDisposable
+    {
+        public NativeList<DeferredPhysicsQueryRequest> OwnedRequests;
+        public NativeList<DeferredPhysicsQueryRequest> RemainingRequests;
+        public NativeList<DeferredPhysicsQueryResult> ResolvedResults;
+
+        public bool IsCreated => OwnedRequests.IsCreated;
+
+        public DeferredPhysicsQueryResolveScratch(int initialCapacity, Allocator allocator)
+        {
+            OwnedRequests = new NativeList<DeferredPhysicsQueryRequest>(initialCapacity, allocator);
+            RemainingRequests = new NativeList<DeferredPhysicsQueryRequest>(initialCapacity, allocator);
+            ResolvedResults = new NativeList<DeferredPhysicsQueryResult>(initialCapacity, allocator);
+        }
+
+        public void Dispose()
+        {
+            if (OwnedRequests.IsCreated)
+                OwnedRequests.Dispose();
+            if (RemainingRequests.IsCreated)
+                RemainingRequests.Dispose();
+            if (ResolvedResults.IsCreated)
+                ResolvedResults.Dispose();
+        }
+    }
+
     internal static class DeferredPhysicsQueryResolveUtility
     {
         const float MinUsableHitFraction = 0.001f;
@@ -39,11 +69,6 @@ namespace VVardenfell.Runtime.Physics
         static readonly ProfilerMarker k_ProcessRequests = new("VV.Physics.DeferredQuery.ProcessRequests");
         static readonly ProfilerMarker k_FrameOwnedRequests = new("VV.Physics.DeferredQuery.FrameOwnedRequests");
         static readonly ProfilerMarker k_FixedOwnedRequests = new("VV.Physics.DeferredQuery.FixedOwnedRequests");
-        static readonly ProfilerMarker k_GenericRayRequests = new("VV.Physics.DeferredQuery.Kind.GenericRay");
-        static readonly ProfilerMarker k_InteractionPickRequests = new("VV.Physics.DeferredQuery.Kind.InteractionPick");
-        static readonly ProfilerMarker k_LineOfSightRequests = new("VV.Physics.DeferredQuery.Kind.LineOfSight");
-        static readonly ProfilerMarker k_MeleeConfirmationRequests = new("VV.Physics.DeferredQuery.Kind.MeleeConfirmation");
-        static readonly ProfilerMarker k_ProjectileSegmentRequests = new("VV.Physics.DeferredQuery.Kind.ProjectileSegment");
 
         public static DeferredPhysicsQueryResolveStats ResolveOwnedRequests(
             EntityManager entityManager,
@@ -52,7 +77,8 @@ namespace VVardenfell.Runtime.Physics
             uint fixedTick,
             uint buildSequence,
             DeferredPhysicsQueryKindMask ownedKinds,
-            DeferredPhysicsQueryResolveDomain domain)
+            DeferredPhysicsQueryResolveDomain domain,
+            ref DeferredPhysicsQueryResolveScratch scratch)
         {
             using var resolveScope = k_ResolveQueries.Auto();
             var requests = entityManager.GetBuffer<DeferredPhysicsQueryRequest>(queueEntity);
@@ -73,25 +99,28 @@ namespace VVardenfell.Runtime.Physics
             using (DomainMarker(domain).Auto())
             using (k_ProcessRequests.Auto())
             {
-                int write = 0;
-                int originalLength = requests.Length;
-                for (int read = 0; read < originalLength; read++)
+                SplitOwnedRequests(requests, ownedKinds, ref scratch, out stats);
+                requests.Clear();
+                requests.EnsureCapacity(scratch.RemainingRequests.Length);
+                for (int i = 0; i < scratch.RemainingRequests.Length; i++)
+                    requests.Add(scratch.RemainingRequests[i]);
+
+                if (scratch.OwnedRequests.Length > 0)
                 {
-                    var request = requests[read];
-                    if (Owns(request.Kind, ownedKinds))
+                    EnsureListLength(ref scratch.ResolvedResults, scratch.OwnedRequests.Length);
+                    var job = new ResolveDeferredPhysicsQueriesJob
                     {
-                        ResolveRequestProfiled(physicsWorld, request, buildSequence, results);
-                        stats.OwnedRequests++;
-                        continue;
-                    }
+                        CollisionWorld = physicsWorld.CollisionWorld,
+                        BuildSequence = buildSequence,
+                        Requests = scratch.OwnedRequests.AsArray(),
+                        Results = scratch.ResolvedResults.AsArray(),
+                    };
+                    job.Schedule(scratch.OwnedRequests.Length, 32).Complete();
 
-                    if (write != read)
-                        requests[write] = request;
-                    write++;
+                    results.EnsureCapacity(results.Length + scratch.ResolvedResults.Length);
+                    for (int i = 0; i < scratch.ResolvedResults.Length; i++)
+                        results.Add(scratch.ResolvedResults[i]);
                 }
-
-                while (requests.Length > write)
-                    requests.RemoveAt(requests.Length - 1);
             }
 
             stats.RemainingRequests = requests.Length;
@@ -104,6 +133,48 @@ namespace VVardenfell.Runtime.Physics
 
             entityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(queueEntity, requests.Length > 0);
             return stats;
+        }
+
+        static void SplitOwnedRequests(
+            DynamicBuffer<DeferredPhysicsQueryRequest> requests,
+            DeferredPhysicsQueryKindMask ownedKinds,
+            ref DeferredPhysicsQueryResolveScratch scratch,
+            out DeferredPhysicsQueryResolveStats stats)
+        {
+            EnsureListCapacity(ref scratch.OwnedRequests, requests.Length);
+            EnsureListCapacity(ref scratch.RemainingRequests, requests.Length);
+            scratch.OwnedRequests.Clear();
+            scratch.RemainingRequests.Clear();
+            scratch.ResolvedResults.Clear();
+
+            stats = default;
+            for (int i = 0; i < requests.Length; i++)
+            {
+                var request = requests[i];
+                if (Owns(request.Kind, ownedKinds))
+                {
+                    scratch.OwnedRequests.AddNoResize(request);
+                    stats.OwnedRequests++;
+                }
+                else
+                {
+                    scratch.RemainingRequests.AddNoResize(request);
+                }
+            }
+        }
+
+        static void EnsureListCapacity<T>(ref NativeList<T> list, int capacity)
+            where T : unmanaged
+        {
+            if (list.Capacity < capacity)
+                list.Capacity = capacity;
+        }
+
+        static void EnsureListLength<T>(ref NativeList<T> list, int length)
+            where T : unmanaged
+        {
+            EnsureListCapacity(ref list, length);
+            list.ResizeUninitialized(length);
         }
 
         static ProfilerMarker DomainMarker(DeferredPhysicsQueryResolveDomain domain)
@@ -134,100 +205,72 @@ namespace VVardenfell.Runtime.Physics
             }
         }
 
-        static void ResolveRequestProfiled(
-            in PhysicsWorldSingleton physicsWorld,
-            in DeferredPhysicsQueryRequest request,
-            uint buildSequence,
-            DynamicBuffer<DeferredPhysicsQueryResult> results)
+        [BurstCompile]
+        struct ResolveDeferredPhysicsQueriesJob : IJobParallelFor
         {
-            switch (request.Kind)
+            [ReadOnly] public CollisionWorld CollisionWorld;
+            public uint BuildSequence;
+            [ReadOnly] public NativeArray<DeferredPhysicsQueryRequest> Requests;
+            [NativeDisableParallelForRestriction] public NativeArray<DeferredPhysicsQueryResult> Results;
+
+            public void Execute(int index)
             {
-                case DeferredPhysicsQueryKind.GenericRay:
-                    using (k_GenericRayRequests.Auto())
-                        ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
-                case DeferredPhysicsQueryKind.InteractionPick:
-                    using (k_InteractionPickRequests.Auto())
-                        ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
-                case DeferredPhysicsQueryKind.LineOfSight:
-                    using (k_LineOfSightRequests.Auto())
-                        ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
-                case DeferredPhysicsQueryKind.MeleeConfirmation:
-                    using (k_MeleeConfirmationRequests.Auto())
-                        ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
-                case DeferredPhysicsQueryKind.ProjectileSegment:
-                    using (k_ProjectileSegmentRequests.Auto())
-                        ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
-                default:
-                    ResolveRequest(physicsWorld, request, buildSequence, results);
-                    break;
+                var request = Requests[index];
+                var result = new DeferredPhysicsQueryResult
+                {
+                    Sequence = request.Sequence,
+                    Kind = request.Kind,
+                    Status = DeferredPhysicsQueryStatus.Miss,
+                    RequesterEntity = request.RequesterEntity,
+                    TargetEntity = request.TargetEntity,
+                    HitEntity = Entity.Null,
+                    RequestFixedTick = request.RequestFixedTick,
+                    PhysicsBuildSequence = BuildSequence,
+                };
+
+                float3 delta = request.End - request.Start;
+                if (math.lengthsq(delta) <= 0.00000001f)
+                {
+                    Results[index] = result;
+                    return;
+                }
+
+                if (request.Collider.IsCreated)
+                {
+                    ResolveColliderCast(CollisionWorld, request, ref result);
+                    Results[index] = result;
+                    return;
+                }
+
+                var input = new RaycastInput
+                {
+                    Start = request.Start,
+                    End = request.End,
+                    Filter = request.Filter,
+                };
+
+                var collector = new NearestUsableRaycastCollector
+                {
+                    Request = request,
+                };
+                if (!CollisionWorld.CastRay(input, ref collector) || !collector.Found)
+                {
+                    Results[index] = result;
+                    return;
+                }
+
+                var nearest = collector.Nearest;
+                result.Status = DeferredPhysicsQueryStatus.Hit;
+                result.HitEntity = nearest.Entity;
+                result.Position = nearest.Position;
+                result.Normal = nearest.SurfaceNormal;
+                result.Fraction = nearest.Fraction;
+                Results[index] = result;
             }
-        }
-
-        static void ResolveRequest(
-            in PhysicsWorldSingleton physicsWorld,
-            in DeferredPhysicsQueryRequest request,
-            uint buildSequence,
-            DynamicBuffer<DeferredPhysicsQueryResult> results)
-        {
-            var result = new DeferredPhysicsQueryResult
-            {
-                Sequence = request.Sequence,
-                Kind = request.Kind,
-                Status = DeferredPhysicsQueryStatus.Miss,
-                RequesterEntity = request.RequesterEntity,
-                TargetEntity = request.TargetEntity,
-                HitEntity = Entity.Null,
-                RequestFixedTick = request.RequestFixedTick,
-                PhysicsBuildSequence = buildSequence,
-            };
-
-            float3 delta = request.End - request.Start;
-            if (math.lengthsq(delta) <= 0.00000001f)
-            {
-                results.Add(result);
-                return;
-            }
-
-            if (request.Collider.IsCreated)
-            {
-                ResolveColliderCast(physicsWorld, request, ref result);
-                results.Add(result);
-                return;
-            }
-
-            var input = new RaycastInput
-            {
-                Start = request.Start,
-                End = request.End,
-                Filter = request.Filter,
-            };
-
-            var collector = new NearestUsableRaycastCollector
-            {
-                Request = request,
-            };
-            if (!physicsWorld.CollisionWorld.CastRay(input, ref collector) || !collector.Found)
-            {
-                results.Add(result);
-                return;
-            }
-
-            var nearest = collector.Nearest;
-            result.Status = DeferredPhysicsQueryStatus.Hit;
-            result.HitEntity = nearest.Entity;
-            result.Position = nearest.Position;
-            result.Normal = nearest.SurfaceNormal;
-            result.Fraction = nearest.Fraction;
-            results.Add(result);
         }
 
         static void ResolveColliderCast(
-            in PhysicsWorldSingleton physicsWorld,
+            in CollisionWorld collisionWorld,
             in DeferredPhysicsQueryRequest request,
             ref DeferredPhysicsQueryResult result)
         {
@@ -236,7 +279,7 @@ namespace VVardenfell.Runtime.Physics
             {
                 Request = request,
             };
-            if (!physicsWorld.CollisionWorld.CastCollider(input, ref collector) || !collector.Found)
+            if (!collisionWorld.CastCollider(input, ref collector) || !collector.Found)
                 return;
 
             var nearest = collector.Nearest;

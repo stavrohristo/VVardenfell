@@ -75,7 +75,7 @@ namespace VVardenfell.Runtime.Combat
             if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Block] Target ref={PlacedRefId(ref systemState, target)} has no ActorHitAftermathState.");
             var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
-            if (aftermath.Dead != 0
+            if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, target)
                 || aftermath.KnockedDown != 0
                 || aftermath.KnockedOut != 0
                 || aftermath.HitRecovery != 0)

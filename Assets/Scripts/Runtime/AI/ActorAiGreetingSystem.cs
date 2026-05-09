@@ -78,11 +78,10 @@ namespace VVardenfell.Runtime.AI
             var sayRequests = systemState.EntityManager.GetBuffer<ActorAiPassiveGreetingSayRequest>(runtimeEntity);
             Entity player = _playerQuery.GetSingletonEntity();
             var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(player);
-            var playerVitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(player);
             Entity deferredPhysicsQueueEntity = SystemAPI.GetSingletonEntity<DeferredPhysicsQueryQueueTag>();
             uint fixedTick = SystemAPI.GetSingleton<MorrowindPhysicsFrameState>().FixedTick;
             bool showSubtitles = SystemAPI.GetSingleton<RuntimeHudPreferences>().ShowSubtitles != 0;
-            if (playerVitals.CurrentHealth <= 0f)
+            if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, player))
             {
                 ResetAllGreetingsAndRelease(ref systemState);
                 return;
@@ -105,7 +104,7 @@ namespace VVardenfell.Runtime.AI
                          .WithEntityAccess())
             {
                 ref var greeting = ref greetingRef.ValueRW;
-                if (vitals.ValueRO.CurrentHealth <= 0f || IsCombatBlocked(ref systemState, entity) || !CanPassiveGreetCurrentPackage(ref systemState, entity))
+                if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, entity) || IsCombatBlocked(ref systemState, entity) || !CanPassiveGreetCurrentPackage(ref systemState, entity))
                 {
                     if (greeting.Phase == (byte)ActorAiGreetingPhase.InProgress)
                         ReleaseGreetingInterrupt(ref systemState, entity);
@@ -246,12 +245,7 @@ namespace VVardenfell.Runtime.AI
         }
 
         bool IsCombatBlocked(ref SystemState systemState, Entity actor)
-        {
-            if (!systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
-                return false;
-
-            return systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor).Active != 0;
-        }
+            => MorrowindCombatTargetUtility.IsInCombat(systemState.EntityManager, actor);
 
         bool CanPassiveGreetCurrentPackage(ref SystemState systemState, Entity actor)
         {

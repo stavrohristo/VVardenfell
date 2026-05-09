@@ -12,7 +12,7 @@ namespace VVardenfell.Runtime.Bootstrap
         // between phases doesn't feel like swapping dialogs.
         const float WindowWidth = 720f;
         const float PickerHeight = 232f;
-        const float ModePickerHeight = 294f;
+        const float ModePickerHeight = 344f;
         const float ProgressHeight = 232f;
         const float ErrorHeight = 204f;
         const float DialogVisualScale = 1.5f;
@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
         MorrowindButtonView _sandboxButton;
+        MorrowindButtonView _combatSandboxButton;
         Text _pathPromptText;
         Text _pathErrorText;
         Text _modePromptText;
@@ -367,6 +368,27 @@ namespace VVardenfell.Runtime.Bootstrap
             ReplaceButtonLabel(_sandboxButton, "Sandbox");
             _sandboxButton.Button.onClick.AddListener(OnSandboxPressed);
 
+            var combatSandboxRect = RuntimeUiFactory.CreateAnchoredRect(
+                "CombatSandboxButtonRow",
+                _modeRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
+            combatSandboxRect.pivot = new Vector2(0f, 1f);
+
+            _combatSandboxButton = RuntimeUiFactory.CreateMorrowindButton(
+                "CombatSandboxButton",
+                combatSandboxRect,
+                _theme,
+                "Combat Sandbox",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            RuntimeUiFactory.Stretch(_combatSandboxButton.Root);
+            ReplaceButtonLabel(_combatSandboxButton, "Combat Sandbox");
+            _combatSandboxButton.Button.onClick.AddListener(OnCombatSandboxPressed);
+
         }
 
         void BuildProgressView()
@@ -555,6 +577,11 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnSandboxPressed()
         {
             _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
+        }
+
+        void OnCombatSandboxPressed()
+        {
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.CombatSandbox);
         }
 
         void OnDestroy()

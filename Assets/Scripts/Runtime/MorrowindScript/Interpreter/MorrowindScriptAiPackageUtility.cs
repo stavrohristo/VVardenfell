@@ -5,6 +5,7 @@ using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
@@ -15,55 +16,6 @@ namespace VVardenfell.Runtime.MorrowindScript
 {
     static class MorrowindScriptAiPackageUtility
     {
-        public static bool TryApplyCombatFollowRequest(
-            ref RuntimeContentBlob content,
-            EntityManager entityManager,
-            Entity target,
-            uint targetPlacedRefId,
-            Entity followTarget,
-            uint followTargetPlacedRefId,
-            float3 targetPosition,
-            float followDistance)
-        {
-            if (target == Entity.Null || followTarget == Entity.Null || !entityManager.Exists(target) || !entityManager.Exists(followTarget))
-                return false;
-            if (!entityManager.HasComponent<ActorSpawnSource>(target))
-                return true;
-
-            EnsureActorAiComponents(ref content, entityManager, target, targetPlacedRefId);
-            ResetTraversal(entityManager, target);
-
-            var packages = entityManager.HasBuffer<ActorAiPackageRuntime>(target)
-                ? entityManager.GetBuffer<ActorAiPackageRuntime>(target)
-                : entityManager.AddBuffer<ActorAiPackageRuntime>(target);
-            packages.Clear();
-            packages.Add(new ActorAiPackageRuntime
-            {
-                Type = (byte)ActorAiRuntimePackageType.Follow,
-                ShouldRepeat = 1,
-                AllowPartial = 1,
-                TargetPathGridIndex = -1,
-                TargetPosition = targetPosition,
-                FollowTargetEntity = followTarget,
-                FollowTargetPlacedRefId = followTargetPlacedRefId,
-                FollowDistance = math.max(0f, followDistance),
-            });
-
-            var aiState = entityManager.GetComponentData<ActorAiState>(target);
-            aiState.CurrentPackageIndex = 0;
-            aiState.CurrentNodeIndex = -1;
-            aiState.GoalNodeIndex = -1;
-            aiState.WaitUntilTime = 0f;
-            aiState.FollowActive = 0;
-            aiState.PendingIdleGroup = 0;
-            aiState.ActiveIdleGroupHash = 0UL;
-            aiState.Status = (byte)ActorAiPlannerStatus.Idle;
-            if (entityManager.HasComponent<LocalTransform>(target))
-                aiState.HomePosition = entityManager.GetComponentData<LocalTransform>(target).Position;
-            entityManager.SetComponentData(target, aiState);
-            return true;
-        }
-
         public static bool TryApplyPursueRequest(
             ref RuntimeContentBlob content,
             EntityManager entityManager,
@@ -74,6 +26,91 @@ namespace VVardenfell.Runtime.MorrowindScript
             float3 targetPosition,
             float followDistance)
         {
+            return TryApplyMovingTargetRequest(
+                ref content,
+                entityManager,
+                target,
+                targetPlacedRefId,
+                followTarget,
+                followTargetPlacedRefId,
+                targetPosition,
+                followDistance,
+                ActorAiRuntimePackageType.Pursue);
+        }
+
+        public static bool TryApplyCombatRequest(
+            ref RuntimeContentBlob content,
+            EntityManager entityManager,
+            Entity target,
+            uint targetPlacedRefId,
+            Entity followTarget,
+            uint followTargetPlacedRefId,
+            float3 targetPosition,
+            float followDistance)
+        {
+            if (target == Entity.Null || followTarget == Entity.Null || !entityManager.Exists(target) || !entityManager.Exists(followTarget))
+                return false;
+            if (!entityManager.HasComponent<ActorSpawnSource>(target))
+                return true;
+
+            EnsureActorAiComponents(ref content, entityManager, target, targetPlacedRefId);
+
+            var packages = entityManager.HasBuffer<ActorAiPackageRuntime>(target)
+                ? entityManager.GetBuffer<ActorAiPackageRuntime>(target)
+                : entityManager.AddBuffer<ActorAiPackageRuntime>(target);
+
+            var combatPackage = new ActorAiPackageRuntime
+            {
+                Type = (byte)ActorAiRuntimePackageType.Combat,
+                ShouldRepeat = 1,
+                AllowPartial = 1,
+                TargetPathGridIndex = -1,
+                TargetPosition = targetPosition,
+                FollowTargetEntity = followTarget,
+                FollowTargetPlacedRefId = followTargetPlacedRefId,
+                FollowDistance = math.max(0f, followDistance),
+            };
+
+            bool sameTarget = packages.Length > 0
+                              && packages[0].Type == (byte)ActorAiRuntimePackageType.Combat
+                              && packages[0].FollowTargetEntity == followTarget
+                              && packages[0].FollowTargetPlacedRefId == followTargetPlacedRefId;
+            if (packages.Length > 0 && packages[0].Type == (byte)ActorAiRuntimePackageType.Combat)
+                packages[0] = combatPackage;
+            else
+                packages.Insert(0, combatPackage);
+
+            var aiState = entityManager.GetComponentData<ActorAiState>(target);
+            if (!sameTarget)
+            {
+                ResetTraversal(entityManager, target);
+                aiState.CurrentNodeIndex = -1;
+                aiState.GoalNodeIndex = -1;
+                aiState.WaitUntilTime = 0f;
+                aiState.FollowActive = 0;
+                aiState.PendingIdleGroup = 0;
+                aiState.ActiveIdleGroupHash = 0UL;
+                aiState.Status = (byte)ActorAiPlannerStatus.Idle;
+            }
+
+            aiState.CurrentPackageIndex = 0;
+            if (entityManager.HasComponent<LocalTransform>(target))
+                aiState.HomePosition = entityManager.GetComponentData<LocalTransform>(target).Position;
+            entityManager.SetComponentData(target, aiState);
+            return true;
+        }
+
+        static bool TryApplyMovingTargetRequest(
+            ref RuntimeContentBlob content,
+            EntityManager entityManager,
+            Entity target,
+            uint targetPlacedRefId,
+            Entity followTarget,
+            uint followTargetPlacedRefId,
+            float3 targetPosition,
+            float followDistance,
+            ActorAiRuntimePackageType packageType)
+        {
             if (target == Entity.Null || followTarget == Entity.Null || !entityManager.Exists(target) || !entityManager.Exists(followTarget))
                 return false;
             if (!entityManager.HasComponent<ActorSpawnSource>(target))
@@ -88,7 +125,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             packages.Clear();
             packages.Add(new ActorAiPackageRuntime
             {
-                Type = (byte)ActorAiRuntimePackageType.Pursue,
+                Type = (byte)packageType,
                 ShouldRepeat = 1,
                 AllowPartial = 1,
                 TargetPathGridIndex = -1,
@@ -225,6 +262,39 @@ namespace VVardenfell.Runtime.MorrowindScript
             ResetTraversal(entityManager, actor);
         }
 
+        public static void ClearCombatPackages(EntityManager entityManager, Entity actor)
+        {
+            if (actor == Entity.Null || !entityManager.Exists(actor) || !entityManager.HasBuffer<ActorAiPackageRuntime>(actor))
+                return;
+
+            var packages = entityManager.GetBuffer<ActorAiPackageRuntime>(actor);
+            bool removedCurrent = false;
+            int currentIndex = entityManager.HasComponent<ActorAiState>(actor)
+                ? entityManager.GetComponentData<ActorAiState>(actor).CurrentPackageIndex
+                : -1;
+            for (int i = packages.Length - 1; i >= 0; i--)
+            {
+                if (packages[i].Type != (byte)ActorAiRuntimePackageType.Combat)
+                    continue;
+
+                if (i == currentIndex)
+                    removedCurrent = true;
+                packages.RemoveAt(i);
+            }
+
+            if (!removedCurrent || !entityManager.HasComponent<ActorAiState>(actor))
+                return;
+
+            var aiState = entityManager.GetComponentData<ActorAiState>(actor);
+            aiState.CurrentPackageIndex = 0;
+            aiState.CurrentNodeIndex = -1;
+            aiState.GoalNodeIndex = -1;
+            aiState.WaitUntilTime = 0f;
+            aiState.Status = packages.Length > 0 ? (byte)ActorAiPlannerStatus.Idle : (byte)ActorAiPlannerStatus.Complete;
+            entityManager.SetComponentData(actor, aiState);
+            ResetTraversal(entityManager, actor);
+        }
+
         static byte ResolvePackageType(byte packageType)
         {
             if (packageType == (byte)MorrowindScriptAiPackageRequestType.Travel)
@@ -346,6 +416,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             entityManager.SetComponentEnabled<PathGridTraversalAwaitingResult>(actor, false);
             if (!entityManager.HasBuffer<PathGridTraversalNode>(actor))
                 entityManager.AddBuffer<PathGridTraversalNode>(actor);
+
+            if (!entityManager.HasComponent<ActorCombatMovementState>(actor))
+                entityManager.AddComponentData(actor, new ActorCombatMovementState());
         }
 
         static void ResetTraversal(EntityManager entityManager, Entity actor)

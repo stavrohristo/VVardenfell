@@ -2,7 +2,6 @@ using System;
 using Unity.Collections;
 using Unity.Entities;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Audio;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
@@ -48,7 +47,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException($"[VVardenfell][OnHit] Hit voice request for ref=0x{request.TargetPlacedRefId:X8} has invalid dialogue index {request.DialogueIndex}.");
 
             uint randomState = request.RandomState == 0u ? 1u : request.RandomState;
-            if (!MorrowindDialogueFilterUtility.TryFindRandomMatchingVoicedInfo(
+            if (!MorrowindDialogueFilterUtility.TryFindRandomMatchingVoicedInfoNoAlloc(
                     ref contentBlob,
                     systemState.EntityManager,
                     request.TargetEntity,
@@ -56,12 +55,11 @@ namespace VVardenfell.Runtime.MorrowindScript
                     request.DialogueIndex,
                     choice: 0,
                     ref randomState,
-                    MorrowindVoiceAudioAvailability.IsVoiceAvailable,
                     out int infoIndex,
-                    out string unsupportedReason))
+                    out byte unsupportedFunction))
             {
-                if (!string.IsNullOrWhiteSpace(unsupportedReason))
-                    throw new InvalidOperationException($"[VVardenfell][OnHit] Hit voice dialogue for actor ref=0x{request.TargetPlacedRefId:X8} is unsupported: {unsupportedReason}");
+                if (unsupportedFunction != 0)
+                    throw new InvalidOperationException($"[VVardenfell][OnHit] Hit voice dialogue for actor ref=0x{request.TargetPlacedRefId:X8} has unsupported select function {(DialogueConditionFunction)unsupportedFunction}.");
                 return;
             }
 

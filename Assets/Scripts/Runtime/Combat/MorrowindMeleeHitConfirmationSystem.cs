@@ -150,11 +150,7 @@ namespace VVardenfell.Runtime.Combat
             if (!systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
                 throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no ActorHitAftermathState.");
 
-            var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
-            var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
-            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][Combat] Melee target ref={PlacedRefId(ref systemState, target)} is marked dead but still has positive health.");
-            if (vitals.CurrentHealth <= 0f || aftermath.Dead != 0)
+            if (ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, target))
                 return false;
 
             if (systemState.EntityManager.HasComponent<PlayerTag>(target))

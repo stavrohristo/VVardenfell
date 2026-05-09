@@ -390,11 +390,8 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (em.HasComponent<MaterialMeshInfo>(child))
                 {
-                    if (BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode)
-                        && em.IsComponentEnabled<MaterialMeshInfo>(child))
-                    {
+                    if (em.IsComponentEnabled<MaterialMeshInfo>(child))
                         enabledRenderChildren++;
-                    }
 
                     ecb.SetComponentEnabled<MaterialMeshInfo>(child, false);
                 }
@@ -402,7 +399,7 @@ namespace VVardenfell.Runtime.Streaming
                 RuntimeColliderAttachmentUtility.QueueDisablePhysics(em, ref ecb, child);
             }
 
-            if (enabledRenderChildren > 0 && BootstrapRuntimeModeUtility.IsSandboxMode(WorldResources.RuntimeMode))
+            if (enabledRenderChildren > 0)
             {
                 string key = $"{contentReference.Kind}:{contentReference.HandleValue}:{enabledRenderChildren}";
                 if (s_ActorPrefabVisualWarnings.Add(key))

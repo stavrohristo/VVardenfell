@@ -26,7 +26,7 @@ namespace VVardenfell.Runtime.Shell
 
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellState
             {
-                HudVisible = 1,
+                HudVisible = 0,
                 SelectedAction = (byte)RuntimeShellMenuActionId.Resume,
             });
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new RuntimeShellActionRequest());

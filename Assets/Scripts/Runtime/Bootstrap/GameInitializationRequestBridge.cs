@@ -121,6 +121,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var em = world.EntityManager;
             if (!EnsureInitializationPayload(em, out error))
                 return false;
+            WorldBootstrapStateUtility.PublishRuntimeMode(em, BootstrapController.CurrentRuntimeMode);
             RuntimeBootstrapRequestUtility.PublishAll(em);
             MorrowindCombatSettingsBridge.PublishPersisted(em);
 
@@ -154,6 +155,7 @@ namespace VVardenfell.Runtime.Bootstrap
             var em = world.EntityManager;
             if (!EnsureInitializationPayload(em, out error))
                 return false;
+            WorldBootstrapStateUtility.PublishRuntimeMode(em, BootstrapController.CurrentRuntimeMode);
             RuntimeBootstrapRequestUtility.PublishAll(em);
 
             EntityQuery requestQuery = LoadGameInitializationQueryCache.Get(em);
@@ -202,6 +204,7 @@ namespace VVardenfell.Runtime.Bootstrap
             EntityQuery payloadQuery = GameInitializationPayloadQueryCache.Get(em);
             if (!payloadQuery.IsEmptyIgnoreFilter)
             {
+                WorldBootstrapStateUtility.PublishRuntimeMode(em, BootstrapController.CurrentRuntimeMode);
                 MorrowindCombatSettingsBridge.PublishPersisted(em);
                 error = null;
                 return true;
@@ -232,6 +235,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 HasSerializedSavePayload = hasSerializedSavePayload,
                 SerializedSavePayloadStatus = RuntimeFixedStringUtility.ToFixed128OrDefault(hasSerializedSavePayload ? string.Empty : saveStatus ?? string.Empty),
             });
+            WorldBootstrapStateUtility.PublishRuntimeMode(em, BootstrapController.CurrentRuntimeMode);
             PopulateInitializationSpellbook(em.AddBuffer<ActorKnownSpell>(initEntity), knownSpells);
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
             MorrowindCombatSettingsBridge.PublishPersisted(em);
@@ -245,7 +249,7 @@ namespace VVardenfell.Runtime.Bootstrap
             if (!BootstrapRuntimeModeUtility.IsSandboxMode(mode))
                 return true;
 
-            var profile = SandboxWorldFixtures.Active;
+            var profile = SandboxWorldFixtures.Get(mode);
             return profile?.SpawnLocalPlayer ?? true;
         }
 

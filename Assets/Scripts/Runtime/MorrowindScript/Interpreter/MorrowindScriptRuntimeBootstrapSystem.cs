@@ -36,6 +36,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 RuntimeBootstrapUtility.EnsureBuffer<ActorAiPassiveGreetingSayRequest>(systemState.EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceResolveRequest>(systemState.EntityManager, runtimeEntity);
                 RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatHitVoiceSayRequest>(systemState.EntityManager, runtimeEntity);
+                RuntimeBootstrapUtility.EnsureBuffer<MorrowindCombatVoiceResolveRequest>(systemState.EntityManager, runtimeEntity);
                 ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(systemState.EntityManager, runtimeEntity);
                 ActiveExplicitRefLookupLifecycleUtility.CreateOrRepairForBootstrap(systemState.EntityManager);
                 RuntimeBootstrapRequestUtility.Consume<MorrowindScriptRuntimeBootstrapRequest>(systemState.EntityManager);
@@ -137,6 +138,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.EntityManager.AddBuffer<ActorAiPassiveGreetingSayRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindCombatHitVoiceResolveRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindCombatHitVoiceSayRequest>(runtime);
+            systemState.EntityManager.AddBuffer<MorrowindCombatVoiceResolveRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindScriptActorLocalSetRequest>(runtime);
             systemState.EntityManager.AddBuffer<MorrowindScriptFactionReactionRequest>(runtime);
             systemState.EntityManager.AddBuffer<ShellMessageBoxRequest>(runtime);

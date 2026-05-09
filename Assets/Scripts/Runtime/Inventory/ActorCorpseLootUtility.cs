@@ -19,11 +19,10 @@ namespace VVardenfell.Runtime.Inventory
                 return false;
             }
 
-            if (!entityManager.HasComponent<ActorHitAftermathState>(actor))
+            if (!entityManager.HasComponent<ActorDead>(actor))
                 return false;
 
-            var aftermath = entityManager.GetComponentData<ActorHitAftermathState>(actor);
-            if (aftermath.Dead == 0)
+            if (!entityManager.IsComponentEnabled<ActorDead>(actor))
                 return false;
 
             if (!entityManager.HasComponent<ActorVitalSet>(actor))

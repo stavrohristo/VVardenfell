@@ -112,6 +112,7 @@ namespace VVardenfell.Importer.Bake
         static readonly uint SctxTag = EsmFourCC.Make('S', 'C', 'T', 'X');
         static readonly uint ScvrTag = EsmFourCC.Make('S', 'C', 'V', 'R');
         static readonly uint ScriTag = EsmFourCC.Make('S', 'C', 'R', 'I');
+        static readonly uint SkdtTag = EsmFourCC.Make('S', 'K', 'D', 'T');
         static readonly uint SnamTag = EsmFourCC.Make('S', 'N', 'A', 'M');
         static readonly uint SpdtTag = EsmFourCC.Make('S', 'P', 'D', 'T');
         static readonly uint StrvTag = EsmFourCC.Make('S', 'T', 'R', 'V');

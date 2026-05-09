@@ -83,7 +83,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                     var aftermath = ActorHitAftermathStateUtility.Require(
                         systemState.EntityManager,
                         entities[i]);
-                    ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                    ActorHitAftermathStateUtility.MarkDead(systemState.EntityManager, entities[i], ref vitals, ref aftermath);
+                    systemState.EntityManager.SetComponentData(entities[i], vitals);
                     systemState.EntityManager.SetComponentData(entities[i], aftermath);
                 }
             }

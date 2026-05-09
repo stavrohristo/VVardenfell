@@ -70,8 +70,7 @@ namespace VVardenfell.Runtime.Combat
                     systemState.EntityManager.SetComponentData(entity, settings);
                 }
 
-                if (systemState.EntityManager.HasComponent<ActorCombatTargetState>(entity)
-                    && systemState.EntityManager.GetComponentData<ActorCombatTargetState>(entity).Active != 0)
+                if (MorrowindCombatTargetUtility.IsInCombat(systemState.EntityManager, entity))
                 {
                     if (!MorrowindCombatTargetUtility.TryStopCombat(systemState.EntityManager, entity))
                         throw new InvalidOperationException($"[VVardenfell][CrimeCleanup] Failed to stop paid-crime combat for actor ref={PlacedRefIdOrZero(ref systemState, entity)}.");

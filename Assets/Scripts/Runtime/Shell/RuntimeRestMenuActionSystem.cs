@@ -65,7 +65,7 @@ namespace VVardenfell.Runtime.Shell
             if (shell.RestMenuAdvancing == 0)
                 return;
 
-            if (IsPlayerDead())
+            if (IsPlayerDead(ref systemState))
             {
                 RuntimeShellStateUtility.CloseRestMenu(ref shell);
                 return;
@@ -172,10 +172,10 @@ namespace VVardenfell.Runtime.Shell
             return RuntimeRestUtility.ComputeUntilHealedHours(ref contentBlob, vitals, attributes, stuntedMagicka);
         }
 
-        bool IsPlayerDead()
+        bool IsPlayerDead(ref SystemState systemState)
         {
-            var vitals = _playerQuery.GetSingleton<ActorVitalSet>();
-            return vitals.CurrentHealth <= 0f;
+            Entity player = _playerQuery.GetSingletonEntity();
+            return ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, player);
         }
 
         void RestorePlayerVitalsForElapsedHours(ref SystemState systemState, bool sleeping, float gameHours)

@@ -6,6 +6,7 @@ using UnityEngine;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
+using VVardenfell.Runtime.Inventory;
 
 namespace VVardenfell.Runtime.Streaming
 {
@@ -15,6 +16,7 @@ namespace VVardenfell.Runtime.Streaming
         public quaternion PlayerStartRotation = quaternion.identity;
         public bool ClearVanillaStaticCollision = true;
         public bool QueueInitialExteriorCells = false;
+        public int PreloadExteriorCellRadius = 0;
         public bool SpawnLocalPlayer = true;
         public bool GenerateActorInspectionGrid = false;
         public bool IncludeCreaturesInInspectionGrid = true;
@@ -27,6 +29,17 @@ namespace VVardenfell.Runtime.Streaming
         public float2 ActorInspectionGridOrigin = new(5f, 5f);
         public bool GroundActorInspectionGrid = true;
         public float ActorInspectionGridHeight = 10f;
+        public bool GenerateCombatFactionTeams = false;
+        public string CombatFactionAId = string.Empty;
+        public string CombatFactionBId = string.Empty;
+        public int CombatTeamSize = 0;
+        public int2 CombatExteriorCell = new(-2, -9);
+        public float2 CombatTeamAOrigin = new(24f, 24f);
+        public float2 CombatTeamBOrigin = new(24f, 34f);
+        public int CombatTeamColumns = 1;
+        public float CombatTeamSpacing = 3f;
+        public bool GroundCombatTeams = true;
+        public float CombatTeamHeight = 10f;
         public SandboxSpawnSpec[] Spawns = Array.Empty<SandboxSpawnSpec>();
     }
 
@@ -78,26 +91,68 @@ namespace VVardenfell.Runtime.Streaming
 
     public static class SandboxWorldFixtures
     {
-        public static SandboxWorldProfile Active => new()
+        public static SandboxWorldProfile Active => Get(BootstrapRuntimeMode.Sandbox);
+
+        public static SandboxWorldProfile Get(BootstrapRuntimeMode mode)
         {
-            PlayerStartPosition = ExteriorCellPosition(new int2(-2, -9), 4f, 10f, 4f),
-            PlayerStartRotation = quaternion.identity,
-            ClearVanillaStaticCollision = true,
-            QueueInitialExteriorCells = false,
-            SpawnLocalPlayer = false,
-            GenerateActorInspectionGrid = true,
-            IncludeCreaturesInInspectionGrid = true,
-            IncludeNpcsInInspectionGrid = true,
-            ActorInspectionRepeatActorId = "chargen boat guard 2",
-            ActorInspectionRepeatActorCount = 3000,
-            ActorInspectionGridColumns = 60,
-            ActorInspectionGridSpacing = 1.75f,
-            ActorInspectionExteriorCell = new int2(-2, -9),
-            ActorInspectionGridOrigin = new float2(5f, 5f),
-            GroundActorInspectionGrid = true,
-            ActorInspectionGridHeight = 10f,
-            Spawns = Array.Empty<SandboxSpawnSpec>(),
-        };
+            return mode switch
+            {
+                BootstrapRuntimeMode.Sandbox => BuildActorInspectionSandbox(),
+                BootstrapRuntimeMode.CombatSandbox => BuildCombatSandbox(),
+                _ => null,
+            };
+        }
+
+        static SandboxWorldProfile BuildActorInspectionSandbox()
+        {
+            return new SandboxWorldProfile
+            {
+                PlayerStartPosition = ExteriorCellPosition(new int2(-2, -9), 4f, 10f, 4f),
+                PlayerStartRotation = quaternion.identity,
+                ClearVanillaStaticCollision = true,
+                QueueInitialExteriorCells = false,
+                SpawnLocalPlayer = false,
+                GenerateActorInspectionGrid = true,
+                IncludeCreaturesInInspectionGrid = true,
+                IncludeNpcsInInspectionGrid = true,
+                ActorInspectionRepeatActorId = "chargen boat guard 2",
+                ActorInspectionRepeatActorCount = 3000,
+                ActorInspectionGridColumns = 60,
+                ActorInspectionGridSpacing = 1.75f,
+                ActorInspectionExteriorCell = new int2(-2, -9),
+                ActorInspectionGridOrigin = new float2(5f, 5f),
+                GroundActorInspectionGrid = true,
+                ActorInspectionGridHeight = 10f,
+                Spawns = Array.Empty<SandboxSpawnSpec>(),
+            };
+        }
+
+        static SandboxWorldProfile BuildCombatSandbox()
+        {
+            var cell = new int2(-6, -1);
+            return new SandboxWorldProfile
+            {
+                PlayerStartPosition = ExteriorCellPosition(cell, 70f, 60f, 70f),
+                PlayerStartRotation = quaternion.LookRotationSafe(new float3(0f, 0f, 1f), math.up()),
+                ClearVanillaStaticCollision = true,
+                QueueInitialExteriorCells = true,
+                PreloadExteriorCellRadius = 1,
+                SpawnLocalPlayer = false,
+                GenerateActorInspectionGrid = false,
+                GenerateCombatFactionTeams = true,
+                CombatFactionAId = "Sixth House",
+                CombatFactionBId = "Temple",
+                CombatTeamSize = 250,
+                CombatExteriorCell = cell,
+                CombatTeamAOrigin = new float2(20f, 42f),
+                CombatTeamBOrigin = new float2(20f, 52f),
+                CombatTeamColumns = 50,
+                CombatTeamSpacing = 1.5f,
+                GroundCombatTeams = true,
+                CombatTeamHeight = 10f,
+                Spawns = Array.Empty<SandboxSpawnSpec>(),
+            };
+        }
 
         internal static float3 ExteriorCellPosition(int2 cell, float localX, float y, float localZ)
         {
@@ -188,11 +243,20 @@ namespace VVardenfell.Runtime.Streaming
             Dictionary<int2, CellData> exteriorCells)
         {
             var authored = profile.Spawns ?? Array.Empty<SandboxSpawnSpec>();
-            if (!profile.GenerateActorInspectionGrid)
+            if (!profile.GenerateActorInspectionGrid && !profile.GenerateCombatFactionTeams)
                 return authored;
 
-            var result = new List<SandboxSpawnSpec>(authored.Length + content.Actors.Length);
+            int generatedCapacity = content.Actors.Length;
+            if (profile.GenerateCombatFactionTeams)
+                generatedCapacity = Math.Max(generatedCapacity, profile.CombatTeamSize * 2);
+            var result = new List<SandboxSpawnSpec>(authored.Length + generatedCapacity);
             result.AddRange(authored);
+
+            if (profile.GenerateCombatFactionTeams)
+                AppendCombatFactionTeams(ref content, profile, exteriorCells, result);
+
+            if (!profile.GenerateActorInspectionGrid)
+                return result.ToArray();
 
             if (!string.IsNullOrWhiteSpace(profile.ActorInspectionRepeatActorId))
             {
@@ -211,7 +275,13 @@ namespace VVardenfell.Runtime.Streaming
                 int row = generated / Math.Max(1, profile.ActorInspectionGridColumns);
                 float localX = profile.ActorInspectionGridOrigin.x + column * profile.ActorInspectionGridSpacing;
                 float localZ = profile.ActorInspectionGridOrigin.y + row * profile.ActorInspectionGridSpacing;
-                float height = ResolveInspectionGridHeight(profile, exteriorCells, localX, localZ);
+                float height = ResolveGroundedExteriorHeight(
+                    exteriorCells,
+                    profile.ActorInspectionExteriorCell,
+                    localX,
+                    localZ,
+                    profile.GroundActorInspectionGrid,
+                    profile.ActorInspectionGridHeight);
                 var position = SandboxWorldFixtures.ExteriorCellPosition(
                     profile.ActorInspectionExteriorCell,
                     localX,
@@ -254,7 +324,13 @@ namespace VVardenfell.Runtime.Streaming
                 int row = generated / Math.Max(1, profile.ActorInspectionGridColumns);
                 float localX = profile.ActorInspectionGridOrigin.x + column * profile.ActorInspectionGridSpacing;
                 float localZ = profile.ActorInspectionGridOrigin.y + row * profile.ActorInspectionGridSpacing;
-                float height = ResolveInspectionGridHeight(profile, exteriorCells, localX, localZ);
+                float height = ResolveGroundedExteriorHeight(
+                    exteriorCells,
+                    profile.ActorInspectionExteriorCell,
+                    localX,
+                    localZ,
+                    profile.GroundActorInspectionGrid,
+                    profile.ActorInspectionGridHeight);
                 var position = SandboxWorldFixtures.ExteriorCellPosition(
                     profile.ActorInspectionExteriorCell,
                     localX,
@@ -274,21 +350,329 @@ namespace VVardenfell.Runtime.Streaming
 
         }
 
-        static float ResolveInspectionGridHeight(
+        static void AppendCombatFactionTeams(
+            ref RuntimeContentBlob content,
             SandboxWorldProfile profile,
             Dictionary<int2, CellData> exteriorCells,
-            float localX,
-            float localZ)
+            List<SandboxSpawnSpec> result)
         {
-            if (profile.GroundActorInspectionGrid
+            if (profile.CombatTeamSize <= 0)
+                throw new InvalidOperationException("[VVardenfell][CombatSandbox] combat team size must be positive.");
+            if (profile.CombatTeamColumns <= 0)
+                throw new InvalidOperationException("[VVardenfell][CombatSandbox] combat team columns must be positive.");
+
+            var factionA = ResolveFaction(ref content, profile.CombatFactionAId);
+            var factionB = ResolveFaction(ref content, profile.CombatFactionBId);
+            SelectMutuallyHostileCombatSandboxTeams(
+                ref content,
+                profile,
+                factionA.Index,
+                factionB.Index,
+                out var teamA,
+                out var teamB);
+            var rotationA = quaternion.LookRotationSafe(new float3(0f, 0f, 1f), math.up());
+            var rotationB = quaternion.LookRotationSafe(new float3(0f, 0f, -1f), math.up());
+
+            for (int i = 0; i < profile.CombatTeamSize; i++)
+            {
+                result.Add(BuildCombatTeamSpawn(
+                    profile,
+                    exteriorCells,
+                    teamA[i],
+                    profile.CombatTeamAOrigin,
+                    i,
+                    rotationA));
+                result.Add(BuildCombatTeamSpawn(
+                    profile,
+                    exteriorCells,
+                    teamB[i],
+                    profile.CombatTeamBOrigin,
+                    i,
+                    rotationB));
+            }
+        }
+
+        static GenericRecordDefHandle ResolveFaction(ref RuntimeContentBlob content, string factionId)
+        {
+            if (string.IsNullOrWhiteSpace(factionId))
+                throw new InvalidOperationException("[VVardenfell][CombatSandbox] combat faction id is empty.");
+
+            if (!RuntimeContentBlobUtility.TryGetFactionHandleByIdHash(ref content, RuntimeContentStableHash.HashId(factionId), out var handle) || !handle.IsValid)
+                throw new InvalidOperationException($"[VVardenfell][CombatSandbox] unknown faction '{factionId}'.");
+
+            return handle;
+        }
+
+        static void SelectMutuallyHostileCombatSandboxTeams(
+            ref RuntimeContentBlob content,
+            SandboxWorldProfile profile,
+            int factionAIndex,
+            int factionBIndex,
+            out string[] teamA,
+            out string[] teamB)
+        {
+            var candidatesA = CollectSpawnableNpcActorIdsForFaction(ref content, factionAIndex, profile.CombatFactionAId);
+            var candidatesB = CollectSpawnableNpcActorIdsForFaction(ref content, factionBIndex, profile.CombatFactionBId);
+
+            float distanceMw = ResolveNearestCombatFormationDistanceMw(profile);
+
+            var selectedA = new List<string>(Math.Min(candidatesA.Count, profile.CombatTeamSize));
+            var selectedB = new List<string>(Math.Min(candidatesB.Count, profile.CombatTeamSize));
+            var usedB = new bool[candidatesB.Count];
+            for (int i = 0; i < candidatesA.Count; i++)
+            {
+                ref RuntimeActorDefBlob actorA = ref ResolveActorById(ref content, candidatesA[i]);
+                for (int j = 0; j < candidatesB.Count; j++)
+                {
+                    if (usedB[j])
+                        continue;
+
+                    ref RuntimeActorDefBlob actorB = ref ResolveActorById(ref content, candidatesB[j]);
+                    if (!WouldVanillaAggress(ref content, ref actorA, factionAIndex, factionBIndex, distanceMw)
+                        || !WouldVanillaAggress(ref content, ref actorB, factionBIndex, factionAIndex, distanceMw))
+                    {
+                        continue;
+                    }
+
+                    selectedA.Add(candidatesA[i]);
+                    selectedB.Add(candidatesB[j]);
+                    usedB[j] = true;
+                    break;
+                }
+            }
+
+            if (selectedA.Count == 0)
+                throw new InvalidOperationException($"[VVardenfell][CombatSandbox] factions '{profile.CombatFactionAId}' and '{profile.CombatFactionBId}' yielded no mutually hostile spawnable NPC pairs.");
+
+            teamA = new string[profile.CombatTeamSize];
+            teamB = new string[profile.CombatTeamSize];
+            for (int i = 0; i < profile.CombatTeamSize; i++)
+            {
+                teamA[i] = selectedA[i % selectedA.Count];
+                teamB[i] = selectedB[i % selectedB.Count];
+            }
+        }
+
+        static List<string> CollectSpawnableNpcActorIdsForFaction(
+            ref RuntimeContentBlob content,
+            int factionIndex,
+            string factionId)
+        {
+            ref RuntimeFactionDefBlob faction = ref content.Factions[factionIndex];
+            var actorIds = new List<string>();
+            for (int i = 0; i < content.Actors.Length; i++)
+            {
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, ActorDefHandle.FromIndex(i));
+                if (actor.Kind != ActorDefKind.Npc || actor.FactionIdHash != faction.IdHash)
+                    continue;
+                if (actor.ScriptIdHash != 0UL)
+                    continue;
+                if (!CanSpawnCombatSandboxNpc(ref content, ref actor))
+                    continue;
+
+                string actorId = actor.Id.ToString();
+                if (!string.IsNullOrWhiteSpace(actorId))
+                    actorIds.Add(actorId);
+            }
+
+            if (actorIds.Count == 0)
+                throw new InvalidOperationException($"[VVardenfell][CombatSandbox] faction '{factionId}' has no spawnable NPCs.");
+
+            return actorIds;
+        }
+
+        static ref RuntimeActorDefBlob ResolveActorById(ref RuntimeContentBlob content, string actorId)
+        {
+            ulong idHash = RuntimeContentStableHash.HashId(actorId);
+            for (int i = 0; i < content.Actors.Length; i++)
+            {
+                ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, ActorDefHandle.FromIndex(i));
+                if (actor.IdHash == idHash)
+                    return ref actor;
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][CombatSandbox] selected actor '{actorId}' was not found.");
+        }
+
+        static bool WouldVanillaAggress(
+            ref RuntimeContentBlob content,
+            ref RuntimeActorDefBlob actor,
+            int sourceFactionIndex,
+            int targetFactionIndex,
+            float distanceMw)
+        {
+            int disposition = math.clamp(actor.Disposition + ResolveFactionReaction(ref content, sourceFactionIndex, targetFactionIndex), 0, 100);
+            float fightTerm = actor.AiData.Fight
+                              + RuntimeContentBlobUtility.RequireGameSettingIntByIdHash(ref content, RuntimeContentKnownHashes.iFightDistanceBase)
+                              - RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFightDistanceMultiplier) * distanceMw
+                              + (50f - disposition) * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fFightDispMult);
+            return fightTerm >= 100f;
+        }
+
+        static float ResolveNearestCombatFormationDistanceMw(SandboxWorldProfile profile)
+        {
+            int columns = Math.Max(1, profile.CombatTeamColumns);
+            int rows = Math.Max(1, (profile.CombatTeamSize + columns - 1) / columns);
+            float spacing = math.max(0.1f, profile.CombatTeamSpacing);
+
+            float2 teamAMin = profile.CombatTeamAOrigin;
+            float2 teamAMax = profile.CombatTeamAOrigin + new float2((columns - 1) * spacing, (rows - 1) * spacing);
+            float2 teamBMin = profile.CombatTeamBOrigin;
+            float2 teamBMax = profile.CombatTeamBOrigin + new float2((columns - 1) * spacing, (rows - 1) * spacing);
+
+            float dx = math.max(0f, math.max(teamAMin.x - teamBMax.x, teamBMin.x - teamAMax.x));
+            float dz = math.max(0f, math.max(teamAMin.y - teamBMax.y, teamBMin.y - teamAMax.y));
+            return math.length(new float2(dx, dz)) / WorldScale.MwUnitsToMeters;
+        }
+
+        static int ResolveFactionReaction(ref RuntimeContentBlob content, int sourceFactionIndex, int targetFactionIndex)
+        {
+            RuntimeContentBlobUtility.RequireRange(sourceFactionIndex, 1, content.Factions.Length, "source faction");
+            ref RuntimeFactionDefBlob source = ref content.Factions[sourceFactionIndex];
+            ulong targetFactionIdHash = content.Factions[targetFactionIndex].IdHash;
+            RuntimeContentBlobUtility.RequireRange(source.FirstReactionIndex, source.ReactionCount, content.FactionReactions.Length, "faction reaction");
+            for (int i = 0; i < source.ReactionCount; i++)
+            {
+                ref RuntimeFactionReactionDefBlob reaction = ref content.FactionReactions[source.FirstReactionIndex + i];
+                if (reaction.FactionIdHash == targetFactionIdHash)
+                    return reaction.Reaction;
+            }
+
+            return 0;
+        }
+
+        static bool CanSpawnCombatSandboxNpc(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
+        {
+            RuntimeContentBlobUtility.RequireRange(actor.FirstInventoryIndex, actor.InventoryCount, content.ActorInventoryItems.Length, "actor inventory");
+            bool isBeastNpc = IsBeastRace(ref content, actor.RaceIdHash);
+            for (int i = 0; i < actor.InventoryCount; i++)
+            {
+                ref RuntimeContainerItemDefBlob authored = ref content.ActorInventoryItems[actor.FirstInventoryIndex + i];
+                if (authored.Count == 0 || authored.ItemIdHash == 0UL)
+                    continue;
+                int visibleCount = math.abs(authored.Count);
+                if (!MorrowindLeveledItemResolverUtility.TryResolveDirectCarryableByIdHash(ref content, authored.ItemIdHash, out var itemContent))
+                {
+                    if (visibleCount != 1 && RuntimeContentBlobUtility.TryGetItemLeveledListHandleByIdHash(ref content, authored.ItemIdHash, out var leveledHandle) && leveledHandle.IsValid)
+                        return false;
+
+                    continue;
+                }
+                if (itemContent.Kind != ContentReferenceKind.Item)
+                    continue;
+
+                var itemHandle = new ItemDefHandle { Value = itemContent.HandleValue };
+                if (!RuntimeContentBlobUtility.TryGetItemEquipment(ref content, itemHandle, out var itemEquipment))
+                    continue;
+                if (!CanAutoEquipCombatSandboxItem(ref content, itemEquipment, isBeastNpc))
+                    continue;
+                if (itemEquipment.Health > 0 && visibleCount != 1)
+                    return false;
+            }
+
+            return true;
+        }
+
+        static bool CanAutoEquipCombatSandboxItem(ref RuntimeContentBlob content, in ItemEquipmentDef equipment, bool isBeastNpc)
+        {
+            if (equipment.Slot == ItemEquipmentSlot.None)
+                return false;
+            if (equipment.Kind == ItemEquipmentKind.Armor && equipment.Health == 0)
+                return false;
+            if (isBeastNpc && HasBeastForbiddenPart(ref content, equipment))
+                return false;
+
+            return equipment.Kind == ItemEquipmentKind.Weapon
+                   || equipment.Kind == ItemEquipmentKind.Armor
+                   || equipment.Kind == ItemEquipmentKind.Clothing;
+        }
+
+        static bool HasBeastForbiddenPart(ref RuntimeContentBlob content, in ItemEquipmentDef equipment)
+        {
+            RuntimeContentBlobUtility.RequireRange(equipment.FirstBodyPartIndex, equipment.BodyPartCount, content.ItemEquipmentBodyParts.Length, "item equipment body part");
+            for (int i = 0; i < equipment.BodyPartCount; i++)
+            {
+                var part = content.ItemEquipmentBodyParts[equipment.FirstBodyPartIndex + i].Part;
+                if (part == ItemEquipmentPartReference.Head
+                    || part == ItemEquipmentPartReference.LeftFoot
+                    || part == ItemEquipmentPartReference.RightFoot)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool IsBeastRace(ref RuntimeContentBlob content, ulong raceIdHash)
+        {
+            if (raceIdHash == 0UL)
+                return false;
+            if (!RuntimeContentBlobUtility.TryGetRaceHandleByIdHash(ref content, raceIdHash, out var raceHandle) || !raceHandle.IsValid)
+                return false;
+
+            ref RuntimeRaceDefBlob race = ref RuntimeContentBlobUtility.GetRace(ref content, raceHandle);
+            return ActorVisualContentRules.IsBeastRaceFlags(race.Flags);
+        }
+
+        static SandboxSpawnSpec BuildCombatTeamSpawn(
+            SandboxWorldProfile profile,
+            Dictionary<int2, CellData> exteriorCells,
+            string actorId,
+            float2 origin,
+            int index,
+            quaternion rotation)
+        {
+            int columns = Math.Max(1, profile.CombatTeamColumns);
+            int column = index % columns;
+            int row = index / columns;
+            float spacing = math.max(0.1f, profile.CombatTeamSpacing);
+            float localX = origin.x + column * spacing;
+            float localZ = origin.y + row * spacing;
+            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
+            float worldX = profile.CombatExteriorCell.x * cellMeters + localX;
+            float worldZ = profile.CombatExteriorCell.y * cellMeters + localZ;
+            var position = new float3(worldX, profile.CombatTeamHeight, worldZ);
+            int2 exteriorCell = WorldBootstrap.WorldPositionToCell(position);
+            float sampleLocalX = worldX - exteriorCell.x * cellMeters;
+            float sampleLocalZ = worldZ - exteriorCell.y * cellMeters;
+            float height = ResolveGroundedExteriorHeight(
+                exteriorCells,
+                exteriorCell,
+                sampleLocalX,
+                sampleLocalZ,
+                profile.GroundCombatTeams,
+                profile.CombatTeamHeight);
+            position.y = height;
+
+            return new SandboxSpawnSpec
+            {
+                ContentId = actorId,
+                Position = position,
+                Rotation = rotation,
+                Scale = 1f,
+                IsInterior = false,
+                ExteriorCell = exteriorCell,
+            };
+        }
+
+        static float ResolveGroundedExteriorHeight(
+            Dictionary<int2, CellData> exteriorCells,
+            int2 exteriorCell,
+            float localX,
+            float localZ,
+            bool ground,
+            float fallbackHeight)
+        {
+            if (ground
                 && exteriorCells != null
-                && exteriorCells.TryGetValue(profile.ActorInspectionExteriorCell, out var cell)
+                && exteriorCells.TryGetValue(exteriorCell, out var cell)
                 && WorldTerrainStaticSpawnUtility.TrySampleTerrainHeight(cell, localX, localZ, out float terrainHeight))
             {
                 return terrainHeight;
             }
 
-            return profile.ActorInspectionGridHeight;
+            return fallbackHeight;
         }
 
         static bool ShouldIncludeActor(SandboxWorldProfile profile, ref RuntimeActorDefBlob actor)

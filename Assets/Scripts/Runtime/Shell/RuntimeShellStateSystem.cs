@@ -17,7 +17,6 @@ namespace VVardenfell.Runtime.Shell
         public void OnUpdate(ref SystemState systemState)
         {
             ref var state = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
-            state.HudVisible = (byte)(BootstrapPresentationGate.BlocksGameplayInput ? 0 : 1);
 
             if (state.SelectedAction == 0)
                 state.SelectedAction = (byte)RuntimeShellMenuActionId.Resume;

@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Collections;
 using Unity.Physics;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
@@ -15,11 +16,20 @@ namespace VVardenfell.Runtime.Physics
             | DeferredPhysicsQueryKindMask.LineOfSight
             | DeferredPhysicsQueryKindMask.MeleeConfirmation;
 
+        DeferredPhysicsQueryResolveScratch _scratch;
+
         public void OnCreate(ref SystemState systemState)
         {
+            _scratch = new DeferredPhysicsQueryResolveScratch(64, Allocator.Persistent);
             systemState.RequireForUpdate<DeferredPhysicsQueryQueueTag>();
             systemState.RequireForUpdate<PhysicsWorldSingleton>();
             systemState.RequireForUpdate<MorrowindPhysicsFrameState>();
+        }
+
+        public void OnDestroy(ref SystemState systemState)
+        {
+            if (_scratch.IsCreated)
+                _scratch.Dispose();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -40,7 +50,8 @@ namespace VVardenfell.Runtime.Physics
                 frame.FixedTick,
                 frame.BuildSequence,
                 k_FrameOwnedKinds,
-                DeferredPhysicsQueryResolveDomain.Frame);
+                DeferredPhysicsQueryResolveDomain.Frame,
+                ref _scratch);
         }
     }
 }

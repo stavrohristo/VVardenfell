@@ -13,26 +13,39 @@ namespace VVardenfell.Runtime.Animation
     [UpdateBefore(typeof(ActorRigidEquipmentVisibilitySystem))]
     public partial struct ActorRigidEquipmentRenderOwnerSystem : ISystem
     {
-        EntityQuery _dirtyQuery;
+        EntityQuery _dirtyAttachmentQuery;
+        EntityQuery _dirtyActorQuery;
+        ComponentLookup<ActorRigidEquipmentRenderOwnerActorDirty> _dirtyActorLookup;
 
         public void OnCreate(ref SystemState systemState)
         {
-            _dirtyQuery = systemState.GetEntityQuery(
+            _dirtyAttachmentQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<ActorRigidEquipmentAttachment>(),
                 ComponentType.ReadOnly<ActorRigidEquipmentRenderOwnerDirty>());
-            systemState.RequireForUpdate(_dirtyQuery);
+            _dirtyActorQuery = systemState.GetEntityQuery(
+                ComponentType.ReadOnly<ActorRigidEquipmentRenderOwnerActorDirty>());
+            _dirtyActorLookup = systemState.GetComponentLookup<ActorRigidEquipmentRenderOwnerActorDirty>(isReadOnly: true);
         }
         [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
-
+            if (_dirtyAttachmentQuery.CalculateEntityCount() == 0 && _dirtyActorQuery.CalculateEntityCount() == 0)
+                return;
             
+            _dirtyActorLookup.Update(ref systemState);
             var ecb = new EntityCommandBuffer(Unity.Collections.Allocator.Temp);
             foreach (var (attachment, entity) in
                      SystemAPI.Query<RefRO<ActorRigidEquipmentAttachment>>()
-                         .WithAll<ActorRigidEquipmentRenderOwnerDirty>()
                          .WithEntityAccess())
             {
+                bool attachmentDirty = systemState.EntityManager.HasComponent<ActorRigidEquipmentRenderOwnerDirty>(entity)
+                                       && systemState.EntityManager.IsComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity);
+                bool actorDirty = attachment.ValueRO.Actor != Entity.Null
+                                  && _dirtyActorLookup.HasComponent(attachment.ValueRO.Actor)
+                                  && _dirtyActorLookup.IsComponentEnabled(attachment.ValueRO.Actor);
+                if (!attachmentDirty && !actorDirty)
+                    continue;
+
                 Entity renderOwner = ResolveRenderOwner(ref systemState, attachment.ValueRO);
                 AssignOwner(ref systemState, ref ecb, entity, renderOwner);
                 if (!systemState.EntityManager.HasBuffer<LinkedEntityGroup>(entity))
@@ -50,6 +63,13 @@ namespace VVardenfell.Runtime.Animation
                 }
 
                 ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerDirty>(entity, false);
+            }
+
+            foreach (var (_, entity) in
+                     SystemAPI.Query<RefRO<ActorRigidEquipmentRenderOwnerActorDirty>>()
+                         .WithEntityAccess())
+            {
+                ecb.SetComponentEnabled<ActorRigidEquipmentRenderOwnerActorDirty>(entity, false);
             }
 
             ecb.Playback(systemState.EntityManager);

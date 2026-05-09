@@ -61,7 +61,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                         var aftermath = ActorHitAftermathStateUtility.Require(
                             systemState.EntityManager,
                             target);
-                        ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                        ActorHitAftermathStateUtility.MarkDead(systemState.EntityManager, target, ref vitals, ref aftermath);
                         systemState.EntityManager.SetComponentData(target, aftermath);
                     }
                     break;
@@ -72,12 +72,10 @@ namespace VVardenfell.Runtime.MorrowindScript
                     vitals.CurrentFatigue = request.IsMod != 0 ? vitals.CurrentFatigue + request.Value : request.Value;
                     break;
                 case (byte)MorrowindScriptActorVitalRequestKind.Resurrect:
-                    if (vitals.CurrentHealth <= 0f)
-                        vitals.CurrentHealth = vitals.ModifiedHealthBase > 0f ? vitals.ModifiedHealthBase : 1f;
                     if (systemState.EntityManager.HasComponent<ActorHitAftermathState>(target))
                     {
                         var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
-                        ActorHitAftermathStateUtility.Resurrect(ref aftermath);
+                        ActorHitAftermathStateUtility.Resurrect(systemState.EntityManager, target, ref vitals, ref aftermath);
                         systemState.EntityManager.SetComponentData(target, aftermath);
                     }
                     if (systemState.EntityManager.HasBuffer<ActorAnimationOverlayState>(target))

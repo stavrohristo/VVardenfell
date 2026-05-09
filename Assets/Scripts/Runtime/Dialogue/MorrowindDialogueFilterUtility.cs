@@ -206,6 +206,64 @@ namespace VVardenfell.Runtime.MorrowindScript
             return TryFindRandomActorVoiceGroupInfo(ref contentBlob, ref actor, dialogueIndex, ref randomState, isVoiceAvailable, out infoIndex);
         }
 
+        public static bool TryFindRandomMatchingVoicedInfoNoAlloc(
+            ref RuntimeContentBlob contentBlob,
+            EntityManager entityManager,
+            Entity speakerEntity,
+            ActorDefHandle speakerHandle,
+            int dialogueIndex,
+            int choice,
+            ref uint randomState,
+            out int infoIndex,
+            out byte unsupportedFunction)
+        {
+            infoIndex = -1;
+            unsupportedFunction = 0;
+            if (!speakerHandle.IsValid
+                || (uint)dialogueIndex >= (uint)contentBlob.Dialogues.Length)
+            {
+                return false;
+            }
+
+            ref var actor = ref RuntimeContentBlobUtility.Get(ref contentBlob, speakerHandle);
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            var worldCellBlob = RequireWorldCellBlob(entityManager);
+            ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            QueryContext queryContext = CreateQueryContext(entityManager);
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            int firstMatchingVoiceIndex = -1;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref var info = ref contentBlob.DialogueInfos[i];
+                if (!MatchesStaticFilters(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, ref queryContext))
+                    continue;
+
+                if (!MatchesSelectRules(ref contentBlob, ref worldCells, entityManager, speakerEntity, ref actor, ref info, choice, ref queryContext, out unsupportedFunction))
+                    continue;
+
+                if (!IsVoiceCandidateAvailableNoAlloc(ref info))
+                    continue;
+
+                matchingVoiceCount++;
+                if (firstMatchingVoiceIndex < 0)
+                    firstMatchingVoiceIndex = i;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            if (matchingVoiceCount > 1)
+                return true;
+
+            if (firstMatchingVoiceIndex >= 0
+                && TryFindRandomSiblingVoiceInfoNoAlloc(ref contentBlob, dialogueIndex, firstMatchingVoiceIndex, ref randomState, out infoIndex))
+            {
+                return true;
+            }
+
+            return TryFindRandomActorVoiceGroupInfoNoAlloc(ref contentBlob, ref actor, dialogueIndex, ref randomState, out infoIndex);
+        }
+
         static bool TryFindRandomSiblingVoiceInfo(
             ref RuntimeContentBlob contentBlob,
             int dialogueIndex,
@@ -236,6 +294,40 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     continue;
                 }
+
+                matchingVoiceCount++;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            return matchingVoiceCount > 1;
+        }
+
+        static bool TryFindRandomSiblingVoiceInfoNoAlloc(
+            ref RuntimeContentBlob contentBlob,
+            int dialogueIndex,
+            int selectedInfoIndex,
+            ref uint randomState,
+            out int infoIndex)
+        {
+            infoIndex = selectedInfoIndex;
+            ref var selected = ref contentBlob.DialogueInfos[selectedInfoIndex];
+            FixedString512Bytes selectedSoundFile = RuntimeFixedStringUtility.ToFixed512OrDefault(ref selected.SoundFile);
+            if (!TryGetVoiceVariationKeyBounds(selectedSoundFile, out var selectedKey))
+                return false;
+
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref var info = ref contentBlob.DialogueInfos[i];
+                if (!IsVoiceCandidateAvailableNoAlloc(ref info))
+                    continue;
+
+                FixedString512Bytes soundFile = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.SoundFile);
+                if (!VoiceVariationKeyEquals(selectedSoundFile, selectedKey, soundFile))
+                    continue;
 
                 matchingVoiceCount++;
                 if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
@@ -285,9 +377,205 @@ namespace VVardenfell.Runtime.MorrowindScript
             return infoIndex >= 0;
         }
 
+        static bool TryFindRandomActorVoiceGroupInfoNoAlloc(
+            ref RuntimeContentBlob contentBlob,
+            ref RuntimeActorDefBlob actor,
+            int dialogueIndex,
+            ref uint randomState,
+            out int infoIndex)
+        {
+            infoIndex = -1;
+            if (actor.Kind != ActorDefKind.Npc || !TryResolveVoiceRaceFolderNoAlloc(ref actor, out byte raceFolder))
+                return false;
+
+            byte genderFolder = (actor.Flags & 0x1u) != 0u ? (byte)'f' : (byte)'m';
+            ref var dialogue = ref contentBlob.Dialogues[dialogueIndex];
+            int end = Math.Min(contentBlob.DialogueInfos.Length, dialogue.FirstInfoIndex + dialogue.InfoCount);
+            int matchingVoiceCount = 0;
+            for (int i = dialogue.FirstInfoIndex; i < end; i++)
+            {
+                ref var info = ref contentBlob.DialogueInfos[i];
+                if (!IsVoiceCandidateAvailableNoAlloc(ref info))
+                    continue;
+
+                FixedString512Bytes soundFile = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.SoundFile);
+                if (!MatchesVoiceRaceGenderHit(soundFile, raceFolder, genderFolder))
+                    continue;
+
+                matchingVoiceCount++;
+                if ((NextRandom(ref randomState) % (uint)matchingVoiceCount) == 0u)
+                    infoIndex = i;
+            }
+
+            return infoIndex >= 0;
+        }
+
         static bool IsVoiceCandidateAvailable(string soundFile, Func<string, bool> isVoiceAvailable)
             => !string.IsNullOrWhiteSpace(soundFile)
                && (isVoiceAvailable == null || isVoiceAvailable(soundFile));
+
+        static bool IsVoiceCandidateAvailableNoAlloc(ref RuntimeDialogueInfoDefBlob info)
+        {
+            FixedString512Bytes soundFile = RuntimeFixedStringUtility.ToFixed512OrDefault(ref info.SoundFile);
+            return !IsWhiteSpace(soundFile);
+        }
+
+        struct VoiceVariationKeyBounds
+        {
+            public int DirectoryStart;
+            public int DirectoryLength;
+            public int StemStart;
+            public int StemLength;
+        }
+
+        static bool VoiceVariationKeyEquals(
+            FixedString512Bytes a,
+            in VoiceVariationKeyBounds aKey,
+            FixedString512Bytes b)
+        {
+            if (!TryGetVoiceVariationKeyBounds(b, out var bKey))
+                return false;
+
+            return RangeEqualsIgnoreCaseAndSlash(a, aKey.DirectoryStart, aKey.DirectoryLength, b, bKey.DirectoryStart, bKey.DirectoryLength)
+                   && RangeEqualsIgnoreCaseAndSlash(a, aKey.StemStart, aKey.StemLength, b, bKey.StemStart, bKey.StemLength);
+        }
+
+        static bool TryGetVoiceVariationKeyBounds(FixedString512Bytes soundFile, out VoiceVariationKeyBounds key)
+        {
+            key = default;
+            if (IsWhiteSpace(soundFile))
+                return false;
+
+            int start = 0;
+            int end = soundFile.Length - 1;
+            while (start <= end && (IsAsciiWhiteSpace(soundFile[start]) || soundFile[start] == (byte)'"'))
+                start++;
+            while (end >= start && (IsAsciiWhiteSpace(soundFile[end]) || soundFile[end] == (byte)'"'))
+                end--;
+            if (start > end)
+                return false;
+
+            int slashIndex = -1;
+            for (int i = start; i <= end; i++)
+            {
+                byte value = soundFile[i];
+                if (value == (byte)'/' || value == (byte)'\\')
+                    slashIndex = i;
+            }
+
+            int fileStart = slashIndex >= 0 ? slashIndex + 1 : start;
+            int dotIndex = -1;
+            for (int i = fileStart; i <= end; i++)
+            {
+                if (soundFile[i] == (byte)'.')
+                    dotIndex = i;
+            }
+
+            int stemEnd = dotIndex >= 0 ? dotIndex - 1 : end;
+            while (stemEnd >= fileStart && IsAsciiDigit(soundFile[stemEnd]))
+                stemEnd--;
+            if (stemEnd < fileStart)
+                return false;
+
+            key.DirectoryStart = start;
+            key.DirectoryLength = slashIndex >= 0 ? slashIndex - start : 0;
+            key.StemStart = fileStart;
+            key.StemLength = stemEnd - fileStart + 1;
+            return key.StemLength > 0;
+        }
+
+        static bool MatchesVoiceRaceGenderHit(FixedString512Bytes soundFile, byte raceFolder, byte genderFolder)
+        {
+            if (!TryGetVoiceVariationKeyBounds(soundFile, out var key))
+                return false;
+
+            if (!DirectoryEqualsVoiceRaceGender(soundFile, key.DirectoryStart, key.DirectoryLength, raceFolder, genderFolder))
+                return false;
+
+            return key.StemLength >= 4
+                   && ToLowerAscii(soundFile[key.StemStart]) == (byte)'h'
+                   && ToLowerAscii(soundFile[key.StemStart + 1]) == (byte)'i'
+                   && ToLowerAscii(soundFile[key.StemStart + 2]) == (byte)'t'
+                   && soundFile[key.StemStart + 3] == (byte)'_';
+        }
+
+        static bool DirectoryEqualsVoiceRaceGender(FixedString512Bytes value, int start, int length, byte raceFolder, byte genderFolder)
+        {
+            if (length != 6)
+                return false;
+
+            return ToLowerAscii(value[start]) == (byte)'v'
+                   && ToLowerAscii(value[start + 1]) == (byte)'o'
+                   && IsSlash(value[start + 2])
+                   && ToLowerAscii(value[start + 3]) == raceFolder
+                   && IsSlash(value[start + 4])
+                   && ToLowerAscii(value[start + 5]) == genderFolder;
+        }
+
+        static bool TryResolveVoiceRaceFolderNoAlloc(ref RuntimeActorDefBlob actor, out byte folder)
+        {
+            FixedString64Bytes raceId = RuntimeFixedStringUtility.ToFixed64OrDefault(ref actor.RaceId);
+            if (EqualsIgnoreCase(raceId, "argonian")) { folder = (byte)'a'; return true; }
+            if (EqualsIgnoreCase(raceId, "breton")) { folder = (byte)'b'; return true; }
+            if (EqualsIgnoreCase(raceId, "dark elf")) { folder = (byte)'d'; return true; }
+            if (EqualsIgnoreCase(raceId, "high elf")) { folder = (byte)'h'; return true; }
+            if (EqualsIgnoreCase(raceId, "imperial")) { folder = (byte)'i'; return true; }
+            if (EqualsIgnoreCase(raceId, "khajiit")) { folder = (byte)'k'; return true; }
+            if (EqualsIgnoreCase(raceId, "nord")) { folder = (byte)'n'; return true; }
+            if (EqualsIgnoreCase(raceId, "orc")) { folder = (byte)'o'; return true; }
+            if (EqualsIgnoreCase(raceId, "redguard")) { folder = (byte)'r'; return true; }
+            if (EqualsIgnoreCase(raceId, "wood elf")) { folder = (byte)'w'; return true; }
+
+            folder = 0;
+            return false;
+        }
+
+        static bool RangeEqualsIgnoreCaseAndSlash(FixedString512Bytes a, int aStart, int aLength, FixedString512Bytes b, int bStart, int bLength)
+        {
+            if (aLength != bLength)
+                return false;
+
+            for (int i = 0; i < aLength; i++)
+            {
+                byte av = a[aStart + i];
+                byte bv = b[bStart + i];
+                if (IsSlash(av) && IsSlash(bv))
+                    continue;
+                if (ToLowerAscii(av) != ToLowerAscii(bv))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static bool EqualsIgnoreCase(FixedString64Bytes value, string expected)
+        {
+            if (value.Length != expected.Length)
+                return false;
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                if (ToLowerAscii(value[i]) != (byte)expected[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        static bool IsWhiteSpace(FixedString512Bytes value)
+        {
+            for (int i = 0; i < value.Length; i++)
+                if (!IsAsciiWhiteSpace(value[i]))
+                    return false;
+
+            return true;
+        }
+
+        static bool IsSlash(byte value)
+            => value == (byte)'/' || value == (byte)'\\';
+
+        static bool IsAsciiDigit(byte value)
+            => value >= (byte)'0' && value <= (byte)'9';
 
         static bool TrySplitVoiceVariationKey(string soundFile, out string directory, out string stem)
         {
@@ -993,14 +1281,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return 0;
 
             if (TryReadPlayerEntity(entityManager, ref queryContext, out Entity player)
-                && entityManager.HasComponent<ActorCombatTargetState>(speakerEntity))
+                && MorrowindCombatTargetUtility.IsInCombatWith(entityManager, speakerEntity, player))
             {
-                var combat = entityManager.GetComponentData<ActorCombatTargetState>(speakerEntity);
-                uint playerRef = player != Entity.Null && entityManager.HasComponent<PlacedRefIdentity>(player)
-                    ? entityManager.GetComponentData<PlacedRefIdentity>(player).Value
-                    : 0u;
-                if (combat.Active != 0 && (combat.TargetEntity == player || (playerRef != 0u && combat.TargetPlacedRefId == playerRef)))
-                    return 1;
+                return 1;
             }
 
             if (!entityManager.HasComponent<ActorAiSettingsState>(speakerEntity))

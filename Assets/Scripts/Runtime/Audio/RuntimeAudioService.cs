@@ -521,6 +521,9 @@ namespace VVardenfell.Runtime.Audio
                 : ResolveDirectSoundPath(request.DirectPath.ToString());
             if (string.IsNullOrWhiteSpace(path))
             {
+                if (directPath && request.AllowMissingDirectPath != 0)
+                    return;
+
                 if (directPath)
                     throw new InvalidOperationException($"[VVardenfell][Audio] Missing direct say audio file '{request.DirectPath}'.");
 

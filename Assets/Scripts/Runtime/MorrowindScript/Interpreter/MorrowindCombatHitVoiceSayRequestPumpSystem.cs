@@ -35,6 +35,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     TargetPlacedRefId = request.TargetPlacedRefId,
                     VoicePath = request.VoicePath,
                     Subtitle = request.Subtitle,
+                    AllowMissingVoicePath = 1,
                 });
             }
 

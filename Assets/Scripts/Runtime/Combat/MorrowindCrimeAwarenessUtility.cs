@@ -30,8 +30,7 @@ namespace VVardenfell.Runtime.Combat
             RequireAwarenessComposition(entityManager, target, "target");
             RequireAwarenessComposition(entityManager, observer, "observer");
 
-            var observerVitals = entityManager.GetComponentData<ActorVitalSet>(observer);
-            if (observerVitals.CurrentHealth <= 0f)
+            if (ActorHitAftermathStateUtility.IsDead(entityManager, observer))
                 return false;
             if (entityManager.HasComponent<PlacedRefRuntimeState>(observer)
                 && entityManager.GetComponentData<PlacedRefRuntimeState>(observer).Disabled != 0)

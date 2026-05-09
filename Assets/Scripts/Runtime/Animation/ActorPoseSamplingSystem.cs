@@ -104,10 +104,7 @@ namespace VVardenfell.Runtime.Animation
                 EnsureSampledLength(sampled, bones.Length);
                 ResetToBindPose(ref catalog, skeleton, bones);
 
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LowerBody);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.Torso);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LeftArm);
-                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.RightArm);
+                SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.All);
 
                 ComposeHierarchy(ref catalog, skeleton, bones);
             }
@@ -135,14 +132,8 @@ namespace VVardenfell.Runtime.Animation
             EnsureSampledLength(sampled, bones.Length);
             ResetToBindPose(ref catalog, skeleton, bones);
 
-            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LowerBody);
-            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.Torso);
-            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.LeftArm);
-            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.RightArm);
-            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LowerBody, moving);
-            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.Torso, moving);
-            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.LeftArm, moving);
-            SampleBestOverlayForMask(ref catalog, skeleton, bones, sampled, overlays, ActorAnimationBlendMask.RightArm, moving);
+            SampleMainForMask(ref catalog, skeleton, bones, sampled, animation, ActorAnimationBlendMask.All);
+            SampleBestOverlays(ref catalog, skeleton, bones, sampled, overlays, moving);
 
             ComposeHierarchy(ref catalog, skeleton, bones);
         }
@@ -198,20 +189,107 @@ namespace VVardenfell.Runtime.Animation
                 hasPreviousLayer: false);
         }
 
-        static void SampleBestOverlayForMask(
+        static void SampleBestOverlays(
             ref ActorAnimationCatalogBlob catalog,
             in ActorSkeleton skeleton,
             DynamicBuffer<ActorBone> bones,
             DynamicBuffer<ActorSampledBonePose> sampled,
             DynamicBuffer<ActorAnimationOverlayState> overlays,
-            ActorAnimationBlendMask mask,
             bool moving)
         {
-            int selectedOverlayIndex = SelectBestOverlay(overlays, mask, moving);
-            if (selectedOverlayIndex < 0)
+            int overlay0 = -1;
+            int overlay1 = -1;
+            int overlay2 = -1;
+            int overlay3 = -1;
+            ActorAnimationBlendMask mask0 = 0;
+            ActorAnimationBlendMask mask1 = 0;
+            ActorAnimationBlendMask mask2 = 0;
+            ActorAnimationBlendMask mask3 = 0;
+            int count = 0;
+
+            AddOverlayMask(SelectBestOverlay(overlays, ActorAnimationBlendMask.LowerBody, moving), ActorAnimationBlendMask.LowerBody, ref overlay0, ref mask0, ref overlay1, ref mask1, ref overlay2, ref mask2, ref overlay3, ref mask3, ref count);
+            AddOverlayMask(SelectBestOverlay(overlays, ActorAnimationBlendMask.Torso, moving), ActorAnimationBlendMask.Torso, ref overlay0, ref mask0, ref overlay1, ref mask1, ref overlay2, ref mask2, ref overlay3, ref mask3, ref count);
+            AddOverlayMask(SelectBestOverlay(overlays, ActorAnimationBlendMask.LeftArm, moving), ActorAnimationBlendMask.LeftArm, ref overlay0, ref mask0, ref overlay1, ref mask1, ref overlay2, ref mask2, ref overlay3, ref mask3, ref count);
+            AddOverlayMask(SelectBestOverlay(overlays, ActorAnimationBlendMask.RightArm, moving), ActorAnimationBlendMask.RightArm, ref overlay0, ref mask0, ref overlay1, ref mask1, ref overlay2, ref mask2, ref overlay3, ref mask3, ref count);
+
+            SampleOverlayIfSelected(ref catalog, skeleton, bones, sampled, overlays, overlay0, mask0);
+            SampleOverlayIfSelected(ref catalog, skeleton, bones, sampled, overlays, overlay1, mask1);
+            SampleOverlayIfSelected(ref catalog, skeleton, bones, sampled, overlays, overlay2, mask2);
+            SampleOverlayIfSelected(ref catalog, skeleton, bones, sampled, overlays, overlay3, mask3);
+        }
+
+        static void AddOverlayMask(
+            int overlayIndex,
+            ActorAnimationBlendMask mask,
+            ref int overlay0,
+            ref ActorAnimationBlendMask mask0,
+            ref int overlay1,
+            ref ActorAnimationBlendMask mask1,
+            ref int overlay2,
+            ref ActorAnimationBlendMask mask2,
+            ref int overlay3,
+            ref ActorAnimationBlendMask mask3,
+            ref int count)
+        {
+            if (overlayIndex < 0)
                 return;
 
-            var overlay = overlays[selectedOverlayIndex];
+            if (count > 0 && overlay0 == overlayIndex)
+            {
+                mask0 |= mask;
+                return;
+            }
+            if (count > 1 && overlay1 == overlayIndex)
+            {
+                mask1 |= mask;
+                return;
+            }
+            if (count > 2 && overlay2 == overlayIndex)
+            {
+                mask2 |= mask;
+                return;
+            }
+            if (count > 3 && overlay3 == overlayIndex)
+            {
+                mask3 |= mask;
+                return;
+            }
+
+            switch (count)
+            {
+                case 0:
+                    overlay0 = overlayIndex;
+                    mask0 = mask;
+                    break;
+                case 1:
+                    overlay1 = overlayIndex;
+                    mask1 = mask;
+                    break;
+                case 2:
+                    overlay2 = overlayIndex;
+                    mask2 = mask;
+                    break;
+                default:
+                    overlay3 = overlayIndex;
+                    mask3 = mask;
+                    break;
+            }
+            count++;
+        }
+
+        static void SampleOverlayIfSelected(
+            ref ActorAnimationCatalogBlob catalog,
+            in ActorSkeleton skeleton,
+            DynamicBuffer<ActorBone> bones,
+            DynamicBuffer<ActorSampledBonePose> sampled,
+            DynamicBuffer<ActorAnimationOverlayState> overlays,
+            int overlayIndex,
+            ActorAnimationBlendMask mask)
+        {
+            if ((uint)overlayIndex >= (uint)overlays.Length || mask == 0)
+                return;
+
+            var overlay = overlays[overlayIndex];
             float weight = math.clamp(overlay.Weight, 0f, 1f);
             if (weight <= 0f)
                 return;
@@ -237,9 +315,8 @@ namespace VVardenfell.Runtime.Animation
             if (clip.TrackCount <= 0 || clip.FirstTrackIndex < 0)
                 return;
 
-            CopyBindPose(ref catalog, skeleton, bones, sampled);
+            ClearSampledTracks(sampled);
             SampleClipTracks(ref catalog, skeleton, clip, time, sampled, bones, mask);
-            ApplyXyzRotations(sampled);
             BlendLayerIntoBones(ref catalog, skeleton, bones, sampled, weight, hasPreviousLayer);
         }
 
@@ -291,29 +368,30 @@ namespace VVardenfell.Runtime.Animation
             }
         }
 
-        static void CopyBindPose(
-            ref ActorAnimationCatalogBlob catalog,
-            in ActorSkeleton skeleton,
-            DynamicBuffer<ActorBone> bones,
-            DynamicBuffer<ActorSampledBonePose> sampled)
+        static void ClearSampledTracks(DynamicBuffer<ActorSampledBonePose> sampled)
         {
-            for (int i = 0; i < bones.Length; i++)
+            for (int i = 0; i < sampled.Length; i++)
             {
-                if (!ActorAnimationCatalogRuntimeUtility.TryGetBoneBlob(ref catalog, skeleton, i, out var bindBone))
-                    continue;
-
-                sampled[i] = new ActorSampledBonePose
-                {
-                    Position = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone),
-                    Rotation = SafeNormalize(ActorAnimationCatalogRuntimeUtility.RuntimeBindRotation(bindBone)),
-                    Scale = ActorAnimationCatalogRuntimeUtility.RuntimeBindScale(bindBone),
-                    AxisRotation = float3.zero,
-                    AxisFlags = 0,
-                    HasTrack = 0,
-                    AxisOrder = 0,
-                };
+                var pose = sampled[i];
+                pose.AxisRotation = float3.zero;
+                pose.AxisFlags = 0;
+                pose.HasTrack = 0;
+                pose.AxisOrder = 0;
+                sampled[i] = pose;
             }
         }
+
+        static ActorSampledBonePose BuildBindSample(ActorSkeletonBoneBlob bindBone)
+            => new ActorSampledBonePose
+            {
+                Position = ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone),
+                Rotation = SafeNormalize(ActorAnimationCatalogRuntimeUtility.RuntimeBindRotation(bindBone)),
+                Scale = ActorAnimationCatalogRuntimeUtility.RuntimeBindScale(bindBone),
+                AxisRotation = float3.zero,
+                AxisFlags = 0,
+                HasTrack = 1,
+                AxisOrder = 0,
+            };
 
         static void SampleClipTracks(
             ref ActorAnimationCatalogBlob catalog,
@@ -338,8 +416,16 @@ namespace VVardenfell.Runtime.Animation
                     continue;
                 }
 
-                float trackTime = MapTrackTime(layerTime, track);
                 var pose = sampled[boneIndex];
+                if (pose.HasTrack == 0)
+                {
+                    if (!ActorAnimationCatalogRuntimeUtility.TryGetBoneBlob(ref catalog, skeleton, boneIndex, out var bindBone))
+                        continue;
+
+                    pose = BuildBindSample(bindBone);
+                }
+
+                float trackTime = MapTrackTime(layerTime, track);
                 pose.HasTrack = 1;
                 switch (track.Kind)
                 {
@@ -508,19 +594,6 @@ namespace VVardenfell.Runtime.Animation
                    + (t3 - t2) * m1;
         }
 
-        static void ApplyXyzRotations(DynamicBuffer<ActorSampledBonePose> sampled)
-        {
-            for (int i = 0; i < sampled.Length; i++)
-            {
-                var pose = sampled[i];
-                if (pose.AxisFlags == 0)
-                    continue;
-
-                pose.Rotation = ComposeSourceXyzRotation(pose.AxisRotation, pose.AxisOrder);
-                sampled[i] = pose;
-            }
-        }
-
         static quaternion ComposeSourceXyzRotation(float3 angles, int axisOrder)
         {
             quaternion x = quaternion.AxisAngle(new float3(1f, 0f, 0f), angles.x);
@@ -558,9 +631,12 @@ namespace VVardenfell.Runtime.Animation
                 float3 basePosition = hasPreviousLayer ? bone.LocalPosition : ActorAnimationCatalogRuntimeUtility.RuntimeBindPosition(bindBone);
                 quaternion baseRotation = hasPreviousLayer ? SafeNormalize(bone.LocalRotation) : SafeNormalize(ActorAnimationCatalogRuntimeUtility.RuntimeBindRotation(bindBone));
                 float baseScale = hasPreviousLayer ? bone.LocalScale : ActorAnimationCatalogRuntimeUtility.RuntimeBindScale(bindBone);
+                quaternion targetRotation = pose.AxisFlags == 0
+                    ? pose.Rotation
+                    : ComposeSourceXyzRotation(pose.AxisRotation, pose.AxisOrder);
 
                 bone.LocalPosition = math.lerp(basePosition, pose.Position, weight);
-                bone.LocalRotation = SafeNormalize(math.slerp(baseRotation, SafeNormalize(pose.Rotation), weight));
+                bone.LocalRotation = SafeNormalize(math.slerp(baseRotation, SafeNormalize(targetRotation), weight));
                 bone.LocalScale = math.lerp(baseScale, pose.Scale, weight);
                 bone.LocalPoseAnimated = 1;
                 bones[i] = bone;

@@ -601,9 +601,9 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private static WorldBootstrapOptions BuildBootstrapOptions(BootstrapRuntimeMode mode)
         {
-            if (mode == BootstrapRuntimeMode.Sandbox)
+            if (BootstrapRuntimeModeUtility.IsSandboxMode(mode))
             {
-                var profile = SandboxWorldFixtures.Active;
+                var profile = SandboxWorldFixtures.Get(mode);
                 if (profile != null)
                     return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
             }

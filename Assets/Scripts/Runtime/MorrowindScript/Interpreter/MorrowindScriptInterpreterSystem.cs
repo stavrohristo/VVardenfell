@@ -38,6 +38,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         ComponentLookup<PlacedRefInitialTransform> _initialTransformLookup;
         ComponentLookup<ActorVitalSet> _actorVitalLookup;
         ComponentLookup<ActorHitAftermathState> _actorHitAftermathLookup;
+        ComponentLookup<ActorDead> _actorDeadLookup;
         ComponentLookup<MorrowindActorDeathCounted> _actorDeathCountedLookup;
         ComponentLookup<MorrowindActorOnDeathConsumed> _actorOnDeathConsumedLookup;
         byte _hasLastCellContext;
@@ -98,6 +99,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             _initialTransformLookup = state.GetComponentLookup<PlacedRefInitialTransform>(true);
             _actorVitalLookup = state.GetComponentLookup<ActorVitalSet>(true);
             _actorHitAftermathLookup = state.GetComponentLookup<ActorHitAftermathState>(true);
+            _actorDeadLookup = state.GetComponentLookup<ActorDead>(true);
             _actorDeathCountedLookup = state.GetComponentLookup<MorrowindActorDeathCounted>(true);
             _actorOnDeathConsumedLookup = state.GetComponentLookup<MorrowindActorOnDeathConsumed>(true);
             state.RequireForUpdate<MorrowindScriptRuntimeState>();
@@ -187,6 +189,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             _initialTransformLookup.Update(ref state);
             _actorVitalLookup.Update(ref state);
             _actorHitAftermathLookup.Update(ref state);
+            _actorDeadLookup.Update(ref state);
             _actorDeathCountedLookup.Update(ref state);
             _actorOnDeathConsumedLookup.Update(ref state);
             var activeSources = state.EntityManager.GetBuffer<MorrowindScriptActiveSource>(runtimeEntity);
@@ -465,6 +468,16 @@ namespace VVardenfell.Runtime.MorrowindScript
                         ? (byte)1
                         : (byte)0;
             }
+            else if (SystemAPI.TryGetSingleton<StreamingConfig>(out var streaming))
+            {
+                currentExteriorCell = streaming.CameraCell;
+                hasCellChanged = 1;
+                cellChanged = _hasLastCellContext == 0
+                    || _lastInteriorActive != 0
+                    || math.any(currentExteriorCell != _lastExteriorCell)
+                        ? (byte)1
+                        : (byte)0;
+            }
 
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
             var scriptRandomState = new NativeReference<uint>(runtimeState.RandomState == 0u ? 0x6E624EB7u : runtimeState.RandomState, Allocator.TempJob);
@@ -490,6 +503,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ContainerSessionItems = _containerSessionItemLookup,
                 ActorVitalsLookup = _actorVitalLookup,
                 ActorHitAftermathStates = _actorHitAftermathLookup,
+                ActorDeadStates = _actorDeadLookup,
                 ActorDeathCountedStates = _actorDeathCountedLookup,
                 ActorOnDeathConsumedStates = _actorOnDeathConsumedLookup,
                 RuntimeEntity = runtimeEntity,
@@ -773,13 +787,16 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             using var profileScope = k_ActorCombatTargetSnapshot.Auto();
             snapshots.Clear();
-            foreach (var (stateRef, entity) in SystemAPI.Query<RefRO<ActorCombatTargetState>>().WithAll<ActorSpawnSource>().WithEntityAccess())
+            foreach (var (activeRef, entity) in SystemAPI.Query<RefRO<ActorActiveCombatTarget>>().WithAll<ActorSpawnSource>().WithEntityAccess())
             {
+                if (!SystemAPI.IsComponentEnabled<ActorActiveCombatTarget>(entity))
+                    continue;
+
                 uint actorPlacedRefId = entityManager.HasComponent<PlacedRefIdentity>(entity)
                     ? entityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                     : 0u;
 
-                var targetState = stateRef.ValueRO;
+                var targetState = activeRef.ValueRO;
                 uint targetPlacedRefId = targetState.TargetPlacedRefId;
                 if (targetPlacedRefId == 0u
                     && targetState.TargetEntity != Entity.Null
@@ -795,7 +812,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     ActorPlacedRefId = actorPlacedRefId,
                     TargetEntity = targetState.TargetEntity,
                     TargetPlacedRefId = targetPlacedRefId,
-                    Active = targetState.Active,
+                    Active = 1,
                 });
             }
 
@@ -1777,6 +1794,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             [ReadOnly] public ComponentLookup<PlacedRefInitialTransform> InitialTransformLookup;
             [ReadOnly] public ComponentLookup<ActorVitalSet> ActorVitalsLookup;
             [ReadOnly] public ComponentLookup<ActorHitAftermathState> ActorHitAftermathStates;
+            [ReadOnly] public ComponentLookup<ActorDead> ActorDeadStates;
             [ReadOnly] public ComponentLookup<MorrowindActorDeathCounted> ActorDeathCountedStates;
             [ReadOnly] public ComponentLookup<MorrowindActorOnDeathConsumed> ActorOnDeathConsumedStates;
             public Entity RuntimeEntity;
@@ -1917,6 +1935,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                     ContainerSessionItems = ContainerSessionItems,
                     ActorVitalsLookup = ActorVitalsLookup,
                     ActorHitAftermathStates = ActorHitAftermathStates,
+                    ActorDeadStates = ActorDeadStates,
                     ActorDeathCountedStates = ActorDeathCountedStates,
                     ActorOnDeathConsumedStates = ActorOnDeathConsumedStates,
                     Position = position,

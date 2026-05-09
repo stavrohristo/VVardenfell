@@ -61,11 +61,8 @@ namespace VVardenfell.Runtime.Combat
             var vitals = systemState.EntityManager.GetComponentData<ActorVitalSet>(target);
             var aftermath = systemState.EntityManager.GetComponentData<ActorHitAftermathState>(target);
 
-            if (aftermath.Dead != 0 && vitals.CurrentHealth > 0f)
-                throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} is marked dead but still has positive health.");
-
             bool changed = false;
-            if (aftermath.Dead == 0 && damage.Amount > 0f && damage.Attacker != Entity.Null)
+            if (!ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, target) && damage.Amount > 0f && damage.Attacker != Entity.Null)
             {
                 if (damage.TargetVital == MorrowindDamageTargetVital.Fatigue
                     && aftermath.KnockedOut == 0
@@ -105,9 +102,9 @@ namespace VVardenfell.Runtime.Combat
             }
 
             bool markedDead = false;
-            if (vitals.CurrentHealth <= 0f && aftermath.Dead == 0)
+            if (vitals.CurrentHealth <= 0f && !ActorHitAftermathStateUtility.IsDead(systemState.EntityManager, target))
             {
-                ActorHitAftermathStateUtility.MarkDead(ref aftermath);
+                ActorHitAftermathStateUtility.MarkDead(systemState.EntityManager, target, ref vitals, ref aftermath);
                 markedDead = true;
                 changed = true;
                 StopCombatIfPresent(ref systemState, target);
@@ -117,7 +114,11 @@ namespace VVardenfell.Runtime.Combat
             {
                 if (!markedDead)
                     ActorHitAftermathStateUtility.BumpSequence(ref aftermath);
+                systemState.EntityManager.SetComponentData(target, vitals);
                 systemState.EntityManager.SetComponentData(target, aftermath);
+                if (!systemState.EntityManager.HasComponent<ActorHitAftermathAnimationActive>(target))
+                    throw new InvalidOperationException($"[VVardenfell][Aftermath] Actor ref={PlacedRefId(ref systemState, target)} has no ActorHitAftermathAnimationActive.");
+                systemState.EntityManager.SetComponentEnabled<ActorHitAftermathAnimationActive>(target, true);
             }
         }
 
@@ -137,15 +138,6 @@ namespace VVardenfell.Runtime.Combat
 
         void StopCombatIfPresent(ref SystemState systemState, Entity actor)
         {
-            if (systemState.EntityManager.HasComponent<ActorCombatTargetState>(actor))
-            {
-                var combat = systemState.EntityManager.GetComponentData<ActorCombatTargetState>(actor);
-                combat.Active = 0;
-                combat.TargetEntity = Entity.Null;
-                combat.TargetPlacedRefId = 0u;
-                systemState.EntityManager.SetComponentData(actor, combat);
-            }
-
             MorrowindCombatTargetUtility.TryStopCombat(systemState.EntityManager, actor);
         }
         uint PlacedRefId(ref SystemState systemState, Entity entity)

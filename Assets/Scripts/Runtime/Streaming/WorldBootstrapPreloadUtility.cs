@@ -158,9 +158,14 @@ namespace VVardenfell.Runtime.Streaming
 
             if (profile != null)
             {
-                requiredExterior.Add(WorldBootstrap.WorldPositionToCell(profile.PlayerStartPosition));
+                AddExteriorCellNeighborhood(
+                    requiredExterior,
+                    WorldBootstrap.WorldPositionToCell(profile.PlayerStartPosition),
+                    profile.PreloadExteriorCellRadius);
                 if (profile.GenerateActorInspectionGrid)
-                    requiredExterior.Add(profile.ActorInspectionExteriorCell);
+                    AddExteriorCellNeighborhood(requiredExterior, profile.ActorInspectionExteriorCell, profile.PreloadExteriorCellRadius);
+                if (profile.GenerateCombatFactionTeams)
+                    AddExteriorCellNeighborhood(requiredExterior, profile.CombatExteriorCell, profile.PreloadExteriorCellRadius);
 
                 var spawns = profile.Spawns ?? System.Array.Empty<SandboxSpawnSpec>();
                 for (int i = 0; i < spawns.Length; i++)
@@ -268,6 +273,16 @@ namespace VVardenfell.Runtime.Streaming
                 InteriorCells = loadedInteriors,
                 InteriorFailures = interiorFailures,
             };
+        }
+
+        static void AddExteriorCellNeighborhood(HashSet<int2> cells, int2 center, int radius)
+        {
+            int clampedRadius = math.max(0, radius);
+            for (int y = -clampedRadius; y <= clampedRadius; y++)
+            {
+                for (int x = -clampedRadius; x <= clampedRadius; x++)
+                    cells.Add(new int2(center.x + x, center.y + y));
+            }
         }
 
         public static WorldBootstrapPreloadFailureInfo GetFirstPreloadFailure(WorldBootstrapPreloadResult result)

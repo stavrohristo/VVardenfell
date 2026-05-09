@@ -40,6 +40,7 @@ namespace VVardenfell.Runtime.MorrowindScript
         public BufferLookup<ContainerSessionItem> ContainerSessionItems;
         public ComponentLookup<ActorVitalSet> ActorVitalsLookup;
         public ComponentLookup<ActorHitAftermathState> ActorHitAftermathStates;
+        public ComponentLookup<ActorDead> ActorDeadStates;
         public ComponentLookup<MorrowindActorDeathCounted> ActorDeathCountedStates;
         public ComponentLookup<MorrowindActorOnDeathConsumed> ActorOnDeathConsumedStates;
         public float SecondsPassed;
@@ -3176,9 +3177,9 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             byte diedState = context->ActorDeathCountedStates.HasComponent(targetEntity) ? (byte)1 : (byte)0;
-            if (context->ActorHitAftermathStates.HasComponent(targetEntity))
+            if (context->ActorDeadStates.HasComponent(targetEntity))
             {
-                if (context->ActorHitAftermathStates[targetEntity].Dead != 0)
+                if (context->ActorDeadStates.IsComponentEnabled(targetEntity))
                     diedState = 1;
             }
             else if (context->ActorVitalsLookup[targetEntity].CurrentHealth <= 0f)
