@@ -10,6 +10,7 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.MorrowindScript;
+using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Combat
@@ -30,6 +31,7 @@ namespace VVardenfell.Runtime.Combat
         ComponentTypeHandle<ActorDead> _deadHandle;
         ComponentTypeHandle<ActorActiveCombatTarget> _activeTargetHandle;
         ComponentTypeHandle<LocalTransform> _transformHandle;
+        ComponentTypeHandle<ActorLocalBounds> _boundsHandle;
         ComponentTypeHandle<ActorAiState> _aiStateHandle;
         BufferTypeHandle<ActorCombatTarget> _combatTargetHandle;
         BufferTypeHandle<ActorAiPackageRuntime> _packageHandle;
@@ -37,6 +39,8 @@ namespace VVardenfell.Runtime.Combat
         ComponentLookup<PlacedRefRuntimeState> _placedRefStateLookup;
         ComponentLookup<PlacedRefIdentity> _placedRefLookup;
         ComponentLookup<LocalTransform> _transformLookup;
+        ComponentLookup<ActorLocalBounds> _boundsLookup;
+        ComponentLookup<PlayerCharacterComponent> _playerLookup;
         BufferLookup<ActorEquipmentSlot> _equipmentLookup;
 
         public void OnCreate(ref SystemState systemState)
@@ -49,6 +53,7 @@ namespace VVardenfell.Runtime.Combat
                     ComponentType.ReadOnly<ActorDead>(),
                     ComponentType.ReadWrite<ActorActiveCombatTarget>(),
                     ComponentType.ReadOnly<LocalTransform>(),
+                    ComponentType.ReadOnly<ActorLocalBounds>(),
                     ComponentType.ReadOnly<ActorAiState>(),
                     ComponentType.ReadWrite<ActorCombatTarget>(),
                     ComponentType.ReadOnly<ActorAiPackageRuntime>(),
@@ -64,6 +69,7 @@ namespace VVardenfell.Runtime.Combat
             _deadHandle = systemState.GetComponentTypeHandle<ActorDead>(isReadOnly: true);
             _activeTargetHandle = systemState.GetComponentTypeHandle<ActorActiveCombatTarget>(isReadOnly: false);
             _transformHandle = systemState.GetComponentTypeHandle<LocalTransform>(isReadOnly: true);
+            _boundsHandle = systemState.GetComponentTypeHandle<ActorLocalBounds>(isReadOnly: true);
             _aiStateHandle = systemState.GetComponentTypeHandle<ActorAiState>(isReadOnly: true);
             _combatTargetHandle = systemState.GetBufferTypeHandle<ActorCombatTarget>(isReadOnly: false);
             _packageHandle = systemState.GetBufferTypeHandle<ActorAiPackageRuntime>(isReadOnly: true);
@@ -71,6 +77,8 @@ namespace VVardenfell.Runtime.Combat
             _placedRefStateLookup = systemState.GetComponentLookup<PlacedRefRuntimeState>(isReadOnly: true);
             _placedRefLookup = systemState.GetComponentLookup<PlacedRefIdentity>(isReadOnly: true);
             _transformLookup = systemState.GetComponentLookup<LocalTransform>(isReadOnly: true);
+            _boundsLookup = systemState.GetComponentLookup<ActorLocalBounds>(isReadOnly: true);
+            _playerLookup = systemState.GetComponentLookup<PlayerCharacterComponent>(isReadOnly: true);
             _equipmentLookup = systemState.GetBufferLookup<ActorEquipmentSlot>(isReadOnly: true);
 
             systemState.RequireForUpdate(_query);
@@ -121,6 +129,7 @@ namespace VVardenfell.Runtime.Combat
             _deadHandle.Update(ref systemState);
             _activeTargetHandle.Update(ref systemState);
             _transformHandle.Update(ref systemState);
+            _boundsHandle.Update(ref systemState);
             _aiStateHandle.Update(ref systemState);
             _combatTargetHandle.Update(ref systemState);
             _packageHandle.Update(ref systemState);
@@ -128,6 +137,8 @@ namespace VVardenfell.Runtime.Combat
             _placedRefStateLookup.Update(ref systemState);
             _placedRefLookup.Update(ref systemState);
             _transformLookup.Update(ref systemState);
+            _boundsLookup.Update(ref systemState);
+            _playerLookup.Update(ref systemState);
             _equipmentLookup.Update(ref systemState);
 
             systemState.Dependency = new CombatTargetSelectionJob
@@ -139,6 +150,7 @@ namespace VVardenfell.Runtime.Combat
                 DeadHandle = _deadHandle,
                 ActiveTargetHandle = _activeTargetHandle,
                 TransformHandle = _transformHandle,
+                BoundsHandle = _boundsHandle,
                 AiStateHandle = _aiStateHandle,
                 CombatTargetHandle = _combatTargetHandle,
                 PackageHandle = _packageHandle,
@@ -146,6 +158,8 @@ namespace VVardenfell.Runtime.Combat
                 PlacedRefStateLookup = _placedRefStateLookup,
                 PlacedRefLookup = _placedRefLookup,
                 TransformLookup = _transformLookup,
+                BoundsLookup = _boundsLookup,
+                PlayerLookup = _playerLookup,
                 EquipmentLookup = _equipmentLookup,
                 ApplyRequests = _applyRequests.AsParallelWriter(),
                 ClearRequests = _clearRequests.AsParallelWriter(),
@@ -268,6 +282,7 @@ namespace VVardenfell.Runtime.Combat
             [ReadOnly] public ComponentTypeHandle<ActorDead> DeadHandle;
             public ComponentTypeHandle<ActorActiveCombatTarget> ActiveTargetHandle;
             [ReadOnly] public ComponentTypeHandle<LocalTransform> TransformHandle;
+            [ReadOnly] public ComponentTypeHandle<ActorLocalBounds> BoundsHandle;
             [ReadOnly] public ComponentTypeHandle<ActorAiState> AiStateHandle;
             public BufferTypeHandle<ActorCombatTarget> CombatTargetHandle;
             [ReadOnly] public BufferTypeHandle<ActorAiPackageRuntime> PackageHandle;
@@ -275,6 +290,8 @@ namespace VVardenfell.Runtime.Combat
             [ReadOnly] public ComponentLookup<PlacedRefRuntimeState> PlacedRefStateLookup;
             [ReadOnly] public ComponentLookup<PlacedRefIdentity> PlacedRefLookup;
             [ReadOnly] public ComponentLookup<LocalTransform> TransformLookup;
+            [ReadOnly] public ComponentLookup<ActorLocalBounds> BoundsLookup;
+            [ReadOnly] public ComponentLookup<PlayerCharacterComponent> PlayerLookup;
             [ReadOnly] public BufferLookup<ActorEquipmentSlot> EquipmentLookup;
             public NativeList<CombatPackageApplyRequest>.ParallelWriter ApplyRequests;
             public NativeList<CombatPackageClearRequest>.ParallelWriter ClearRequests;
@@ -286,6 +303,7 @@ namespace VVardenfell.Runtime.Combat
                 var sources = chunk.GetNativeArray(ref SourceHandle);
                 var activeTargets = chunk.GetNativeArray(ref ActiveTargetHandle);
                 var transforms = chunk.GetNativeArray(ref TransformHandle);
+                var bounds = chunk.GetNativeArray(ref BoundsHandle);
                 var aiStates = chunk.GetNativeArray(ref AiStateHandle);
                 var targets = chunk.GetBufferAccessor(ref CombatTargetHandle);
                 var packages = chunk.GetBufferAccessor(ref PackageHandle);
@@ -333,7 +351,7 @@ namespace VVardenfell.Runtime.Combat
                     if (!wasInCombat)
                         TryQueueAttackVoice(actor, sources[i], selected.Sequence);
 
-                    float followDistance = ResolveCombatFollowDistance(actor, sources[i]);
+                    float followDistance = ResolveCombatFollowDistance(actor, sources[i], bounds[i], transforms[i], selected.TargetEntity);
                     if (changed || !HasCurrentCombatPackage(packages[i], aiStates[i], selected, followDistance))
                     {
                         ApplyRequests.AddNoResize(new CombatPackageApplyRequest
@@ -414,8 +432,14 @@ namespace VVardenfell.Runtime.Combat
                        && math.abs(package.FollowDistance - followDistance) <= 0.01f;
             }
 
-            float ResolveCombatFollowDistance(Entity actor, in ActorSpawnSource source)
+            float ResolveCombatFollowDistance(
+                Entity actor,
+                in ActorSpawnSource source,
+                in ActorLocalBounds actorBounds,
+                in LocalTransform actorTransform,
+                Entity target)
             {
+                float reach;
                 if (EquipmentLookup.HasBuffer(actor))
                 {
                     var equipment = EquipmentLookup[actor];
@@ -431,16 +455,36 @@ namespace VVardenfell.Runtime.Combat
                         out _,
                         out var weapon,
                         out _);
-                    return math.max(0.5f, MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon));
+                    reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
+                    return math.max(0.5f, reach + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
                 }
 
                 if (ResolveActorKind(source) == ActorDefKind.Creature)
                 {
                     ref RuntimeContentBlob content = ref Content.Value;
-                    return math.max(0.5f, MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, false, default));
+                    reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, false, default);
+                    return math.max(0.5f, reach + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
                 }
 
                 throw new InvalidOperationException($"[VVardenfell][CombatTarget] NPC ref=0x{PlacedRefId(actor):X8} has no ActorEquipmentSlot buffer.");
+            }
+
+            static float ResolveActorRadius(in ActorLocalBounds bounds, in LocalTransform transform)
+                => math.max(bounds.Extents.x, bounds.Extents.z) * math.max(0.01f, transform.Scale);
+
+            float ResolveTargetRadius(Entity target)
+            {
+                if (BoundsLookup.HasComponent(target))
+                {
+                    ActorLocalBounds bounds = BoundsLookup[target];
+                    LocalTransform transform = TransformLookup[target];
+                    return math.max(bounds.Extents.x, bounds.Extents.z) * math.max(0.01f, transform.Scale);
+                }
+
+                if (PlayerLookup.HasComponent(target))
+                    return math.max(0.01f, PlayerLookup[target].Radius);
+
+                throw new InvalidOperationException($"[VVardenfell][CombatTarget] Target entity={target.Index}:{target.Version} has no ActorLocalBounds or PlayerCharacterComponent.");
             }
 
             void TryQueueAttackVoice(Entity actor, in ActorSpawnSource source, uint targetSequence)

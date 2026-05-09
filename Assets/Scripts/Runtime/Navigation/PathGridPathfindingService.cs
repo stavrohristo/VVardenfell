@@ -26,12 +26,12 @@ namespace VVardenfell.Runtime.Pathfinding
         public static PathGridPathfindingState Defaults => new PathGridPathfindingState
         {
             NextRequestId = 1,
-            BatchSize = 8,
+            BatchSize = 32,
             MaxActiveBatches = 2,
             DefaultMaxFineIterations = 4096,
             DefaultMaxAbstractIterations = 4096,
             CompletedRetentionSeconds = 5f,
-            MaxCompletedResults = 256,
+            MaxCompletedResults = 2048,
         };
     }
 
@@ -148,13 +148,17 @@ namespace VVardenfell.Runtime.Pathfinding
 
             int batchSize = math.max(1, state.BatchSize);
             int maxActiveEntries = batchSize * math.max(1, state.MaxActiveBatches);
+            bool scheduledJobs = false;
             if (pending.Length > 0 && _activeEntries.Length < maxActiveEntries)
             {
                 if (!WorldResources.PathGridNavigation.IsCreated)
                     FailPendingWithoutGraph(ref state, pending, completed, now);
                 else
-                    SchedulePendingBatch(ref state, pending, batchSize, maxActiveEntries);
+                    scheduledJobs = SchedulePendingBatch(ref state, pending, batchSize, maxActiveEntries);
             }
+
+            if (scheduledJobs)
+                JobHandle.ScheduleBatchedJobs();
 
             state.ActiveBatchCount = (_activeEntries.Length + batchSize - 1) / batchSize;
             systemState.EntityManager.SetComponentData(_singleton, state);
@@ -199,7 +203,7 @@ namespace VVardenfell.Runtime.Pathfinding
             }
         }
 
-        void SchedulePendingBatch(
+        bool SchedulePendingBatch(
             ref PathGridPathfindingState state,
             DynamicBuffer<PendingPathGridPathRequest> pending,
             int batchSize,
@@ -207,6 +211,8 @@ namespace VVardenfell.Runtime.Pathfinding
         {
             int capacity = math.max(0, maxActiveEntries - _activeEntries.Length);
             int count = math.min(math.min(batchSize, pending.Length), capacity);
+            if (count <= 0)
+                return false;
 
             for (int i = 0; i < count; i++)
             {
@@ -242,6 +248,8 @@ namespace VVardenfell.Runtime.Pathfinding
                 entry.Handle = job.Schedule();
                 _activeEntries.Add(entry);
             }
+
+            return true;
         }
 
         void FailPendingWithoutGraph(

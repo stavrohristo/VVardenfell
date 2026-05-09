@@ -751,6 +751,7 @@ namespace VVardenfell.Runtime.AI
                 return false;
 
             float3 targetPosition = TargetTransforms[package.FollowTargetEntity].Position;
+            byte previousUseFinalTargetPosition = traversalState.UseFinalTargetPosition;
             traversalState.FinalTargetPosition = targetPosition;
             traversalState.UseFinalTargetPosition = 1;
 
@@ -776,10 +777,13 @@ namespace VVardenfell.Runtime.AI
             if (!TryResolveNearestNode(pathGridIndex, targetPosition, out int goalNode))
                 return false;
 
-            if (goalNode == traversalState.LastGoalNodeIndex)
+            bool hasUsableTraversal = traversalState.PathNodeCount > 0 || previousUseFinalTargetPosition != 0;
+            if (goalNode == traversalState.LastGoalNodeIndex
+                && startNode == traversalState.LastStartNodeIndex
+                && hasUsableTraversal)
             {
                 aiState.Status = (byte)ActorAiPlannerStatus.Traversing;
-                return false;
+                return true;
             }
 
             WriteTraversalRequest(startNode, goalNode, package.AllowPartial, ref traversalRequest, run: true, targetPosition, useFinalTargetPosition: true);
