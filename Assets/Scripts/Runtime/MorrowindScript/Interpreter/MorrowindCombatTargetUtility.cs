@@ -4,6 +4,7 @@ using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.AI;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -38,6 +39,18 @@ namespace VVardenfell.Runtime.MorrowindScript
                 || ActorHitAftermathStateUtility.IsDead(entityManager, actor)
                 || ActorHitAftermathStateUtility.IsDead(entityManager, target))
                 return false;
+
+            if (entityManager.HasComponent<BattleSimulatorTeam>(actor)
+                && entityManager.HasComponent<BattleSimulatorTeam>(target))
+            {
+                byte actorTeam = entityManager.GetComponentData<BattleSimulatorTeam>(actor).Value;
+                byte targetTeam = entityManager.GetComponentData<BattleSimulatorTeam>(target).Value;
+                if (actorTeam != (byte)BattleSimulatorTeamId.None
+                    && actorTeam == targetTeam)
+                {
+                    return true;
+                }
+            }
 
             var targets = entityManager.GetBuffer<ActorCombatTarget>(actor);
             for (int i = 0; i < targets.Length; i++)

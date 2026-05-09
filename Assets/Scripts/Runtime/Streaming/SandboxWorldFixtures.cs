@@ -98,7 +98,17 @@ namespace VVardenfell.Runtime.Streaming
             return mode switch
             {
                 BootstrapRuntimeMode.Sandbox => BuildActorInspectionSandbox(),
-                BootstrapRuntimeMode.CombatSandbox => BuildCombatSandbox(),
+                BootstrapRuntimeMode.CombatSandbox => BuildCombatSandbox(new BattleSimulatorBootSelection(new int2(-6, -1))),
+                _ => null,
+            };
+        }
+
+        public static SandboxWorldProfile Get(BootstrapRuntimeMode mode, BattleSimulatorBootSelection selection)
+        {
+            return mode switch
+            {
+                BootstrapRuntimeMode.Sandbox => BuildActorInspectionSandbox(),
+                BootstrapRuntimeMode.CombatSandbox => BuildCombatSandbox(selection),
                 _ => null,
             };
         }
@@ -127,29 +137,20 @@ namespace VVardenfell.Runtime.Streaming
             };
         }
 
-        static SandboxWorldProfile BuildCombatSandbox()
+        static SandboxWorldProfile BuildCombatSandbox(BattleSimulatorBootSelection selection)
         {
-            var cell = new int2(-6, -1);
+            var cell = selection.ExteriorCell;
             return new SandboxWorldProfile
             {
-                PlayerStartPosition = ExteriorCellPosition(cell, 70f, 60f, 70f),
+                PlayerStartPosition = ExteriorCellPosition(cell, 40f, 58f, 62f),
                 PlayerStartRotation = quaternion.LookRotationSafe(new float3(0f, 0f, 1f), math.up()),
                 ClearVanillaStaticCollision = true,
                 QueueInitialExteriorCells = true,
                 PreloadExteriorCellRadius = 1,
                 SpawnLocalPlayer = false,
                 GenerateActorInspectionGrid = false,
-                GenerateCombatFactionTeams = true,
-                CombatFactionAId = "Sixth House",
-                CombatFactionBId = "Temple",
-                CombatTeamSize = 250,
+                GenerateCombatFactionTeams = false,
                 CombatExteriorCell = cell,
-                CombatTeamAOrigin = new float2(20f, 42f),
-                CombatTeamBOrigin = new float2(20f, 52f),
-                CombatTeamColumns = 50,
-                CombatTeamSpacing = 1.5f,
-                GroundCombatTeams = true,
-                CombatTeamHeight = 10f,
                 Spawns = Array.Empty<SandboxSpawnSpec>(),
             };
         }
@@ -161,6 +162,16 @@ namespace VVardenfell.Runtime.Streaming
                 cell.x * cellMeters + localX,
                 y,
                 cell.y * cellMeters + localZ);
+        }
+
+        internal static bool CanSpawnBattleSimulatorActor(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
+        {
+            if (actor.ScriptIdHash != 0UL)
+                return false;
+            if (actor.Kind == ActorDefKind.Creature)
+                return true;
+            return actor.Kind == ActorDefKind.Npc
+                   && SandboxWorldFixtureApplier.CanSpawnCombatSandboxNpc(ref content, ref actor);
         }
     }
 
@@ -541,7 +552,7 @@ namespace VVardenfell.Runtime.Streaming
             return 0;
         }
 
-        static bool CanSpawnCombatSandboxNpc(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
+        internal static bool CanSpawnCombatSandboxNpc(ref RuntimeContentBlob content, ref RuntimeActorDefBlob actor)
         {
             RuntimeContentBlobUtility.RequireRange(actor.FirstInventoryIndex, actor.InventoryCount, content.ActorInventoryItems.Length, "actor inventory");
             bool isBeastNpc = IsBeastRace(ref content, actor.RaceIdHash);

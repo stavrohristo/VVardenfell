@@ -143,12 +143,16 @@ namespace VVardenfell.Runtime.Streaming
 
                 if (options.QueueInitialExteriorCells)
                 {
+                    int queueRadius = options.SandboxProfile != null
+                        ? math.max(0, options.SandboxProfile.PreloadExteriorCellRadius)
+                        : DefaultViewRadius;
+                    int maxQueuedCells = math.max(1, (queueRadius * 2 + 1) * (queueRadius * 2 + 1));
                     WorldBootstrapStateUtility.QueueInitialExteriorCells(
                         loadQueue,
                         available,
                         defaultCameraCell,
-                        DefaultViewRadius,
-                        DefaultMaxLoadsPerFrame);
+                        queueRadius,
+                        maxQueuedCells);
                 }
 
                 progress?.BeginStage("Create singleton state", "Publishing streaming singletons", 1);

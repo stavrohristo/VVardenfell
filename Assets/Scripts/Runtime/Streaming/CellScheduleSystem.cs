@@ -39,7 +39,6 @@ namespace VVardenfell.Runtime.Streaming
 
             if (cfg.ExteriorStreamingPaused)
             {
-                queue.Queue.Clear();
                 unload.PendingEntityDestroy.Clear();
                 return;
             }

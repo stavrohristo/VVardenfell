@@ -163,6 +163,7 @@ namespace VVardenfell.Runtime.Streaming
         public static void PublishGameInitialization(EntityManager em, WorldBootstrapOptions options)
         {
             PublishRuntimeMode(em, options.Mode);
+            PublishBattleSimulatorBootState(em, options);
             RuntimeBootstrapRequestUtility.PublishAll(em);
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
             var contentBlob = RequireRuntimeContentBlob();
@@ -193,6 +194,53 @@ namespace VVardenfell.Runtime.Streaming
             PopulateInitializationInventory(em.AddBuffer<PlayerInitialInventoryItem>(initEntity), initialInventory);
             em.AddBuffer<ActorActiveMagicEffect>(initEntity);
             MorrowindCombatSettingsBridge.PublishPersisted(em);
+        }
+
+        static void PublishBattleSimulatorBootState(EntityManager em, WorldBootstrapOptions options)
+        {
+            EntityQuery query = BattleSimulatorBootStateQueryCache.Get(em);
+            if (options.Mode != BootstrapRuntimeMode.CombatSandbox)
+            {
+                if (!query.IsEmptyIgnoreFilter)
+                    em.DestroyEntity(query);
+                return;
+            }
+
+            var profile = options.SandboxProfile;
+            if (profile == null)
+                throw new System.InvalidOperationException("[VVardenfell][CombatSandbox] missing sandbox profile for battle simulator boot state.");
+
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+            em.SetName(entity, "VVardenfell.BattleSimulatorBoot");
+            var state = new BattleSimulatorBootState
+            {
+                BattlegroundCell = profile.CombatExteriorCell,
+            };
+            if (em.HasComponent<BattleSimulatorBootState>(entity))
+                em.SetComponentData(entity, state);
+            else
+                em.AddComponentData(entity, state);
+
+            var simulatorState = new BattleSimulatorState
+            {
+                BattlegroundCell = profile.CombatExteriorCell,
+                Phase = (byte)BattleSimulatorPhase.Setup,
+                Status = new FixedString128Bytes("Build two battle groups, then press Ready."),
+            };
+            if (em.HasComponent<BattleSimulatorState>(entity))
+                em.SetComponentData(entity, simulatorState);
+            else
+                em.AddComponentData(entity, simulatorState);
+
+            if (!em.HasBuffer<BattleSimulatorSpawnRequest>(entity))
+                em.AddBuffer<BattleSimulatorSpawnRequest>(entity);
+            if (!em.HasComponent<BattleSimulatorResetRequest>(entity))
+            {
+                em.AddComponent<BattleSimulatorResetRequest>(entity);
+                em.SetComponentEnabled<BattleSimulatorResetRequest>(entity, false);
+            }
         }
 
         public static void PublishSandboxStartRequest(EntityManager em)
@@ -605,6 +653,16 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadWrite<RuntimeBootstrapModeState>());
+        }
+
+        static class BattleSimulatorBootStateQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadWrite<BattleSimulatorBootState>());
         }
 
         static class RuntimePresentationEnabledQueryCache

@@ -1,6 +1,7 @@
 using Unity.Entities;
 using UnityEngine;
 using VVardenfell.Runtime.Bootstrap;
+using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
 
@@ -32,6 +33,7 @@ namespace VVardenfell.Runtime.Shell
 
             bool blocked = IsShellUiBlocking(shell)
                 || characterGenerationBlocking
+                || SystemAPI.HasSingleton<BattleSimulatorSetupUiActive>()
                 || (SystemAPI.TryGetSingleton<BookReaderState>(out var bookReader) && bookReader.Visible != 0);
 
             SetBlocker(ref systemState, blocked);

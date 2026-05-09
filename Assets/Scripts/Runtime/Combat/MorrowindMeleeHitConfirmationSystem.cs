@@ -2,6 +2,7 @@ using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Transforms;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
@@ -123,11 +124,12 @@ namespace VVardenfell.Runtime.Combat
                 return false;
             if (request.Reach <= 0f)
                 return false;
+            if (!TryResolveCurrentMeleeContact(ref systemState, request.Attacker, logicalEntity, request.Reach, out hitPosition))
+                return false;
 
             target = logicalEntity;
             targetPlacedRefId = placedRefId;
-            hitPosition = request.HitPosition;
-            hasHitPosition = request.HasHitPosition;
+            hasHitPosition = 1;
             return true;
         }
 
@@ -136,6 +138,11 @@ namespace VVardenfell.Runtime.Combat
             placedRefId = 0u;
             if (attacker == Entity.Null || !systemState.EntityManager.Exists(attacker))
                 return false;
+            if (systemState.EntityManager.HasComponent<ActorDead>(attacker)
+                && systemState.EntityManager.IsComponentEnabled<ActorDead>(attacker))
+            {
+                return false;
+            }
             if (target == Entity.Null || !systemState.EntityManager.Exists(target))
                 return false;
             if (target == attacker)
@@ -177,6 +184,58 @@ namespace VVardenfell.Runtime.Combat
             return true;
         }
 
+        bool TryResolveCurrentMeleeContact(ref SystemState systemState, Entity attacker, Entity target, float reach, out float3 hitPosition)
+        {
+            hitPosition = default;
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][Combat] Melee attacker entity={attacker.Index}:{attacker.Version} has no LocalTransform.");
+            if (!systemState.EntityManager.HasComponent<ActorLocalBounds>(attacker))
+                throw new InvalidOperationException($"[VVardenfell][Combat] Melee attacker entity={attacker.Index}:{attacker.Version} has no ActorLocalBounds.");
+            if (!systemState.EntityManager.HasComponent<LocalTransform>(target))
+                throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no LocalTransform.");
+
+            var attackerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(attacker);
+            var attackerBounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(attacker);
+            float attackerRadius = math.max(attackerBounds.Extents.x, attackerBounds.Extents.z) * math.max(0.01f, attackerTransform.Scale);
+
+            if (!TryResolveCurrentTargetContact(ref systemState, target, out float3 targetBase, out float targetRadius, out float targetHeight))
+                return false;
+
+            if (!MorrowindMeleeCombatMechanics.IsInMeleeReach(attackerTransform.Position, attackerRadius, targetBase, targetRadius, reach))
+                return false;
+
+            hitPosition = ComputeHitPosition(attackerTransform.Position, targetBase, targetRadius, targetHeight);
+            return true;
+        }
+
+        bool TryResolveCurrentTargetContact(ref SystemState systemState, Entity target, out float3 targetBase, out float targetRadius, out float targetHeight)
+        {
+            targetBase = default;
+            targetRadius = 0f;
+            targetHeight = 0f;
+
+            var targetTransform = systemState.EntityManager.GetComponentData<LocalTransform>(target);
+            targetBase = targetTransform.Position;
+            if (systemState.EntityManager.HasComponent<ActorLocalBounds>(target))
+            {
+                var bounds = systemState.EntityManager.GetComponentData<ActorLocalBounds>(target);
+                float scale = math.max(0.01f, targetTransform.Scale);
+                targetRadius = math.max(bounds.Extents.x, bounds.Extents.z) * scale;
+                targetHeight = math.max(0.01f, bounds.Extents.y * 2f * scale);
+                return true;
+            }
+
+            if (systemState.EntityManager.HasComponent<PlayerCharacterComponent>(target))
+            {
+                var player = systemState.EntityManager.GetComponentData<PlayerCharacterComponent>(target);
+                targetRadius = math.max(0.01f, player.Radius);
+                targetHeight = math.max(0.01f, player.StandingHeight);
+                return true;
+            }
+
+            throw new InvalidOperationException($"[VVardenfell][Combat] Melee target entity={target.Index}:{target.Version} has no ActorLocalBounds or PlayerCharacterComponent.");
+        }
+
         void MarkAttackContact(ref SystemState systemState, Entity target, uint targetPlacedRefId)
         {
             if (!systemState.EntityManager.HasComponent<ActorScriptEventState>(target))
@@ -213,5 +272,16 @@ namespace VVardenfell.Runtime.Combat
                && systemState.EntityManager.HasComponent<PlacedRefIdentity>(entity)
                 ? systemState.EntityManager.GetComponentData<PlacedRefIdentity>(entity).Value
                 : 0u;
+
+        static float3 ComputeHitPosition(float3 attackerPosition, float3 targetBase, float targetRadius, float targetHeight)
+        {
+            float3 directionToAttacker = math.normalizesafe(ToHorizontal(attackerPosition - targetBase), new float3(0f, 0f, 1f));
+            return targetBase
+                   + directionToAttacker * math.max(0.01f, targetRadius)
+                   + new float3(0f, targetHeight * 0.6f, 0f);
+        }
+
+        static float3 ToHorizontal(float3 value)
+            => new(value.x, 0f, value.z);
     }
 }

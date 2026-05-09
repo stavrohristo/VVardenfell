@@ -164,7 +164,7 @@ namespace VVardenfell.Runtime.Streaming
                     profile.PreloadExteriorCellRadius);
                 if (profile.GenerateActorInspectionGrid)
                     AddExteriorCellNeighborhood(requiredExterior, profile.ActorInspectionExteriorCell, profile.PreloadExteriorCellRadius);
-                if (profile.GenerateCombatFactionTeams)
+                if (profile.GenerateCombatFactionTeams || profile.QueueInitialExteriorCells)
                     AddExteriorCellNeighborhood(requiredExterior, profile.CombatExteriorCell, profile.PreloadExteriorCellRadius);
 
                 var spawns = profile.Spawns ?? System.Array.Empty<SandboxSpawnSpec>();

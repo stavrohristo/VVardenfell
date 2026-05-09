@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -74,7 +75,7 @@ namespace VVardenfell.Runtime.Bootstrap
             }
         }
 
-        private enum Stage { PickPath, PickMode, Baking, Loading, Ready, Failed }
+        private enum Stage { PickPath, PickMode, PickBattleground, Baking, Loading, Ready, Failed }
         public static BootstrapController Active { get; private set; }
 
         [Header("Player Movement")]
@@ -95,6 +96,9 @@ namespace VVardenfell.Runtime.Bootstrap
         private bool _loadStartRequested;
         private BootstrapRuntimeMode _selectedRuntimeMode = BootstrapRuntimeMode.Vanilla;
         private WorldBootstrapOptions _bootstrapOptions = WorldBootstrapOptions.Vanilla;
+        private bool _pendingCombatBattlegroundSelection;
+        private string _combatBattlegroundFilter = string.Empty;
+        private (int X, int Y)[] _combatBattlegroundCells = Array.Empty<(int X, int Y)>();
         private World _runtimeLifecycleWorld;
         private EntityQuery _runtimeActiveQuery;
         private EntityQuery _runtimePausedQuery;
@@ -214,7 +218,10 @@ namespace VVardenfell.Runtime.Bootstrap
         private void BeginCacheFlow(BootstrapRuntimeMode mode)
         {
             _selectedRuntimeMode = mode;
-            _bootstrapOptions = BuildBootstrapOptions(mode);
+            _pendingCombatBattlegroundSelection = mode == BootstrapRuntimeMode.CombatSandbox;
+            if (!_pendingCombatBattlegroundSelection)
+                _bootstrapOptions = BuildBootstrapOptions(mode);
+
             _progress.Stage = "";
             _progress.Label = "";
             _progress.Current = 0;
@@ -241,7 +248,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
             if (worldCacheValid && uiCacheValid && gameplayCacheValid)
             {
-                BeginLoading();
+                ContinueAfterCacheReady();
             }
             else if (worldCacheValid && uiCacheValid)
             {
@@ -292,7 +299,7 @@ namespace VVardenfell.Runtime.Bootstrap
                     return;
                 }
 
-                BeginLoading();
+                ContinueAfterCacheReady();
             }
 
             if ((_stage == Stage.Loading || _stage == Stage.Ready) && _presentation != null && _presentation.IsDismissed)
@@ -323,6 +330,63 @@ namespace VVardenfell.Runtime.Bootstrap
             _loadProgress.BeginStage("Boot Sequence", "Waiting for intro sequence", 1);
             _loadProgress.Report("Waiting for intro sequence", 0, 1);
             _loadStartRequested = true;
+        }
+
+        private void ContinueAfterCacheReady()
+        {
+            if (_pendingCombatBattlegroundSelection)
+            {
+                ShowCombatBattlegroundSelection();
+                return;
+            }
+
+            BeginLoading();
+        }
+
+        private void ShowCombatBattlegroundSelection()
+        {
+            if (!BakeManifest.TryRead(CachePaths.Manifest, out var manifest)
+                || manifest.CellGrid == null
+                || manifest.CellGrid.Length == 0)
+            {
+                SetFatalError("[VVardenfell][CombatSandbox] baked exterior cell grid is unavailable; rebuild world caches before selecting a battleground.");
+                _stage = Stage.Failed;
+                return;
+            }
+
+            var contentBlob = RuntimeContentBlobFile.Read(CachePaths.RuntimeContentBlob);
+            try
+            {
+                if (!contentBlob.IsCreated)
+                    throw new InvalidDataException("runtime content blob unreadable");
+
+                ref RuntimeContentBlob content = ref contentBlob.Value;
+                var pathGridCells = new List<(int X, int Y)>(manifest.CellGrid.Length);
+                for (int i = 0; i < manifest.CellGrid.Length; i++)
+                {
+                    var cell = manifest.CellGrid[i];
+                    if (RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, cell.X, cell.Y, out var handle) && handle.IsValid)
+                        pathGridCells.Add(cell);
+                }
+
+                if (pathGridCells.Count == 0)
+                {
+                    SetFatalError("[VVardenfell][CombatSandbox] no baked exterior cells have pathgrids; combat movement cannot run without pathgrid-backed battlegrounds.");
+                    _stage = Stage.Failed;
+                    return;
+                }
+
+                _combatBattlegroundCells = pathGridCells.ToArray();
+            }
+            finally
+            {
+                if (contentBlob.IsCreated)
+                    contentBlob.Dispose();
+            }
+
+            _combatBattlegroundFilter ??= string.Empty;
+            _stage = Stage.PickBattleground;
+            RefreshFallbackView();
         }
 
         private void OnPresentationLoadingPhaseReady()
@@ -535,6 +599,13 @@ namespace VVardenfell.Runtime.Bootstrap
                 case Stage.PickMode:
                     _fallbackView.ShowModePicker(_config?.InstallPath, OnFallbackModeSelected);
                     break;
+                case Stage.PickBattleground:
+                    _fallbackView.ShowCombatBattlegroundPicker(
+                        _combatBattlegroundCells,
+                        _combatBattlegroundFilter,
+                        OnFallbackBattlegroundFilterChanged,
+                        OnFallbackBattlegroundSelected);
+                    break;
                 case Stage.Baking:
                     _fallbackView.ShowProgress(
                         "Optimizing",
@@ -599,11 +670,32 @@ namespace VVardenfell.Runtime.Bootstrap
             BeginCacheFlow(mode);
         }
 
+        private void OnFallbackBattlegroundFilterChanged(string value)
+        {
+            _combatBattlegroundFilter = value ?? string.Empty;
+        }
+
+        private void OnFallbackBattlegroundSelected(int2 cell)
+        {
+            _pendingCombatBattlegroundSelection = false;
+            _bootstrapOptions = BuildBootstrapOptions(
+                BootstrapRuntimeMode.CombatSandbox,
+                new BattleSimulatorBootSelection(cell));
+            BeginLoading();
+        }
+
         private static WorldBootstrapOptions BuildBootstrapOptions(BootstrapRuntimeMode mode)
+        {
+            return BuildBootstrapOptions(mode, null);
+        }
+
+        private static WorldBootstrapOptions BuildBootstrapOptions(BootstrapRuntimeMode mode, BattleSimulatorBootSelection? selection)
         {
             if (BootstrapRuntimeModeUtility.IsSandboxMode(mode))
             {
-                var profile = SandboxWorldFixtures.Get(mode);
+                var profile = selection.HasValue
+                    ? SandboxWorldFixtures.Get(mode, selection.Value)
+                    : SandboxWorldFixtures.Get(mode);
                 if (profile != null)
                     return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
             }

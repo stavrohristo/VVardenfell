@@ -559,8 +559,7 @@ namespace VVardenfell.Runtime.Combat
                     out _);
                 float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
                 float actorRadius = math.max(actorBounds.Extents.x, actorBounds.Extents.z) * math.max(0.01f, actorTransform.Scale);
-                float distanceToBounds = math.max(0f, math.distance(ToHorizontal(actorTransform.Position), ToHorizontal(targetBase)) - actorRadius - targetRadius);
-                return distanceToBounds <= reach;
+                return MorrowindMeleeCombatMechanics.IsInMeleeReach(actorTransform.Position, actorRadius, targetBase, targetRadius, reach);
             }
 
             bool TryResolveTargetBounds(

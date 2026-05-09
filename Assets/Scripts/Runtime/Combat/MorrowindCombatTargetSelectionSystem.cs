@@ -10,6 +10,7 @@ using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.MorrowindScript;
+using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Player;
 using VVardenfell.Runtime.Systems;
 
@@ -42,6 +43,7 @@ namespace VVardenfell.Runtime.Combat
         ComponentLookup<ActorLocalBounds> _boundsLookup;
         ComponentLookup<PlayerCharacterComponent> _playerLookup;
         BufferLookup<ActorEquipmentSlot> _equipmentLookup;
+        float _meleeFollowInset;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -85,6 +87,7 @@ namespace VVardenfell.Runtime.Combat
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
             systemState.RequireForUpdate<MorrowindScriptRuntimeState>();
             systemState.RequireForUpdate<MorrowindCombatRuntimeState>();
+            systemState.RequireForUpdate<PathGridTraversalSettings>();
         }
 
         public void OnDestroy(ref SystemState systemState)
@@ -112,6 +115,7 @@ namespace VVardenfell.Runtime.Combat
                 throw new InvalidOperationException("[VVardenfell][CombatTarget] Script runtime has no MorrowindScriptActiveSay buffer.");
 
             ref var combatState = ref SystemAPI.GetSingletonRW<MorrowindCombatRuntimeState>().ValueRW;
+            _meleeFollowInset = math.max(0f, SystemAPI.GetSingleton<PathGridTraversalSettings>().FinalArrivalDistance);
             var random = new Unity.Mathematics.Random(combatState.RandomState == 0u ? 0x6E624EB7u : combatState.RandomState);
             uint voiceSeed = random.NextUInt();
             combatState.RandomState = random.state == 0u ? 0x6E624EB7u : random.state;
@@ -161,6 +165,7 @@ namespace VVardenfell.Runtime.Combat
                 BoundsLookup = _boundsLookup,
                 PlayerLookup = _playerLookup,
                 EquipmentLookup = _equipmentLookup,
+                MeleeFollowInset = _meleeFollowInset,
                 ApplyRequests = _applyRequests.AsParallelWriter(),
                 ClearRequests = _clearRequests.AsParallelWriter(),
                 VoiceRequests = _voiceRequests.AsParallelWriter(),
@@ -293,6 +298,7 @@ namespace VVardenfell.Runtime.Combat
             [ReadOnly] public ComponentLookup<ActorLocalBounds> BoundsLookup;
             [ReadOnly] public ComponentLookup<PlayerCharacterComponent> PlayerLookup;
             [ReadOnly] public BufferLookup<ActorEquipmentSlot> EquipmentLookup;
+            public float MeleeFollowInset;
             public NativeList<CombatPackageApplyRequest>.ParallelWriter ApplyRequests;
             public NativeList<CombatPackageClearRequest>.ParallelWriter ClearRequests;
             public NativeList<CombatVoiceQueueRequest>.ParallelWriter VoiceRequests;
@@ -456,14 +462,14 @@ namespace VVardenfell.Runtime.Combat
                         out var weapon,
                         out _);
                     reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
-                    return math.max(0.5f, reach + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
+                    return math.max(0.5f, MorrowindMeleeCombatMechanics.ComputeMeleeApproachReach(reach, MeleeFollowInset) + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
                 }
 
                 if (ResolveActorKind(source) == ActorDefKind.Creature)
                 {
                     ref RuntimeContentBlob content = ref Content.Value;
                     reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, false, default);
-                    return math.max(0.5f, reach + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
+                    return math.max(0.5f, MorrowindMeleeCombatMechanics.ComputeMeleeApproachReach(reach, MeleeFollowInset) + ResolveActorRadius(actorBounds, actorTransform) + ResolveTargetRadius(target));
                 }
 
                 throw new InvalidOperationException($"[VVardenfell][CombatTarget] NPC ref=0x{PlacedRefId(actor):X8} has no ActorEquipmentSlot buffer.");

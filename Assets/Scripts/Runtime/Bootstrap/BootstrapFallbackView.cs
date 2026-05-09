@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using VVardenfell.Runtime.UI.Framework;
@@ -13,9 +15,11 @@ namespace VVardenfell.Runtime.Bootstrap
         const float WindowWidth = 720f;
         const float PickerHeight = 232f;
         const float ModePickerHeight = 344f;
+        const float BattlegroundPickerHeight = 520f;
         const float ProgressHeight = 232f;
         const float ErrorHeight = 204f;
         const float DialogVisualScale = 1.5f;
+        const int BattlegroundVisibleRows = 10;
 
         // Text pixel heights — sourced from the canonical OpenMW-faithful
         // table so the pre-bake chrome reads the same as the post-bake
@@ -45,18 +49,25 @@ namespace VVardenfell.Runtime.Bootstrap
         Text _windowTitleText;
         RectTransform _pickerRoot;
         RectTransform _modeRoot;
+        RectTransform _battlegroundRoot;
         RectTransform _progressRoot;
         RectTransform _errorRoot;
         RuntimeUiTextInputView _pathInput;
+        RuntimeUiTextInputView _battlegroundFilterInput;
         MorrowindButtonView _continueButton;
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
         MorrowindButtonView _sandboxButton;
         MorrowindButtonView _combatSandboxButton;
+        MorrowindButtonView _battlegroundPrevButton;
+        MorrowindButtonView _battlegroundNextButton;
         Text _pathPromptText;
         Text _pathErrorText;
         Text _modePromptText;
         Text _modeInstallPathText;
+        Text _battlegroundPromptText;
+        Text _battlegroundCountText;
+        Text _battlegroundErrorText;
         Text _progressDescriptionText;
         Text _progressStageText;
         Text _progressDetailText;
@@ -67,6 +78,23 @@ namespace VVardenfell.Runtime.Bootstrap
         Action _onContinue;
         Action _onBrowse;
         Action<BootstrapRuntimeMode> _onModeSelected;
+        Action<string> _onBattlegroundFilterChanged;
+        Action<int2> _onBattlegroundSelected;
+        (int X, int Y)[] _battlegroundCells = Array.Empty<(int X, int Y)>();
+        string _battlegroundFilter = string.Empty;
+        int _battlegroundPage;
+        bool _showBattlegroundImgui;
+        Vector2 _battlegroundImguiScroll;
+        GUIStyle _imguiWindowStyle;
+        GUIStyle _imguiHeaderStyle;
+        GUIStyle _imguiLabelStyle;
+        GUIStyle _imguiDimStyle;
+        GUIStyle _imguiButtonStyle;
+        GUIStyle _imguiTextFieldStyle;
+        GUIStyle _imguiErrorStyle;
+        readonly List<MorrowindButtonView> _battlegroundButtons = new();
+        readonly List<Text> _battlegroundButtonLabels = new();
+        readonly int2[] _visibleBattlegroundCells = new int2[BattlegroundVisibleRows];
 
         public void Initialize(Action<string> onPathChanged, Action onContinue, Action onBrowse)
         {
@@ -123,6 +151,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
             BuildPickerView();
             BuildModePickerView();
+            BuildBattlegroundPickerView();
             BuildProgressView();
             BuildErrorView();
             Hide();
@@ -131,9 +160,11 @@ namespace VVardenfell.Runtime.Bootstrap
         public void ShowPathPicker(string path, string error)
         {
             EnsureInitialized();
+            _showBattlegroundImgui = false;
             ShowRoot("VVardenfell - Locate Morrowind Installation", PickerHeight);
             _pickerRoot.gameObject.SetActive(true);
             _modeRoot.gameObject.SetActive(false);
+            _battlegroundRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(false);
             SetInputDisplay(path ?? string.Empty, "Path to Morrowind");
@@ -145,10 +176,12 @@ namespace VVardenfell.Runtime.Bootstrap
         public void ShowModePicker(string installPath, Action<BootstrapRuntimeMode> onModeSelected)
         {
             EnsureInitialized();
+            _showBattlegroundImgui = false;
             _onModeSelected = onModeSelected;
             ShowRoot("VVardenfell - Select Startup Mode", ModePickerHeight);
             _pickerRoot.gameObject.SetActive(false);
             _modeRoot.gameObject.SetActive(true);
+            _battlegroundRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(false);
             _modeInstallPathText.text = string.IsNullOrWhiteSpace(installPath)
@@ -156,12 +189,30 @@ namespace VVardenfell.Runtime.Bootstrap
                 : $"Install: {installPath.Trim()}";
         }
 
+        public void ShowCombatBattlegroundPicker(
+            (int X, int Y)[] cells,
+            string filter,
+            Action<string> onFilterChanged,
+            Action<int2> onBattlegroundSelected)
+        {
+            EnsureInitialized();
+            _onBattlegroundFilterChanged = onFilterChanged;
+            _onBattlegroundSelected = onBattlegroundSelected;
+            _battlegroundCells = cells ?? Array.Empty<(int X, int Y)>();
+            _battlegroundFilter = filter ?? string.Empty;
+            _showBattlegroundImgui = true;
+            if (_rootRect != null)
+                _rootRect.gameObject.SetActive(false);
+        }
+
         public void ShowProgress(string title, string stage, string detail, int current, int total, float fraction, string footer)
         {
             EnsureInitialized();
+            _showBattlegroundImgui = false;
             ShowRoot(title, ProgressHeight);
             _pickerRoot.gameObject.SetActive(false);
             _modeRoot.gameObject.SetActive(false);
+            _battlegroundRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(true);
             _errorRoot.gameObject.SetActive(false);
 
@@ -176,9 +227,11 @@ namespace VVardenfell.Runtime.Bootstrap
         public void ShowError(string title, string body)
         {
             EnsureInitialized();
+            _showBattlegroundImgui = false;
             ShowRoot(title, ErrorHeight);
             _pickerRoot.gameObject.SetActive(false);
             _modeRoot.gameObject.SetActive(false);
+            _battlegroundRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(true);
             _errorBodyText.text = string.IsNullOrWhiteSpace(body) ? string.Empty : body.Trim();
@@ -186,6 +239,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
         public void Hide()
         {
+            _showBattlegroundImgui = false;
             if (_rootRect != null)
                 _rootRect.gameObject.SetActive(false);
         }
@@ -391,6 +445,166 @@ namespace VVardenfell.Runtime.Bootstrap
 
         }
 
+        void BuildBattlegroundPickerView()
+        {
+            _battlegroundRoot = RuntimeUiFactory.CreateStretchRect("BattlegroundPickerRoot", _window.Client);
+            _battlegroundRoot.gameObject.SetActive(false);
+
+            _battlegroundPromptText = CreateUnityText(
+                "BattlegroundPromptText",
+                _battlegroundRoot,
+                "Choose an exterior cell for the battle simulator.",
+                RuntimeUiScaleSettings.ScaleFontSize((int)StagePixelHeight),
+                BodyTextColor,
+                TextAnchor.UpperLeft);
+            _battlegroundPromptText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _battlegroundPromptText.verticalOverflow = VerticalWrapMode.Truncate;
+            _battlegroundPromptText.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _battlegroundPromptText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _battlegroundPromptText.rectTransform.pivot = new Vector2(0f, 1f);
+            _battlegroundPromptText.rectTransform.anchoredPosition = Vector2.zero;
+            _battlegroundPromptText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(30f));
+
+            var filterRect = RuntimeUiFactory.CreateAnchoredRect(
+                "BattlegroundFilterRoot",
+                _battlegroundRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(42f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(28f)));
+            filterRect.pivot = new Vector2(0f, 1f);
+
+            _battlegroundFilterInput = RuntimeUiFactory.CreateBitmapInputField(
+                "BattlegroundFilterInput",
+                filterRect,
+                _theme,
+                1f,
+                BodyTextColor,
+                new Color(0f, 0f, 0f, 0.74f),
+                "Search cells, e.g. -2,-9");
+            RuntimeUiFactory.Stretch(_battlegroundFilterInput.Root);
+            _battlegroundFilterInput.OverlayText.gameObject.SetActive(false);
+            _battlegroundFilterInput.HiddenText.color = new Color(0.94f, 0.88f, 0.76f);
+            _battlegroundFilterInput.HiddenText.fontSize = RuntimeUiScaleSettings.ScaleFontSize((int)BodyPixelHeight);
+            _battlegroundFilterInput.HiddenPlaceholder.color = new Color(0.62f, 0.58f, 0.52f);
+            _battlegroundFilterInput.HiddenPlaceholder.fontSize = RuntimeUiScaleSettings.ScaleFontSize((int)BodyPixelHeight);
+            _battlegroundFilterInput.InputField.onValueChanged.AddListener(OnBattlegroundFilterChanged);
+
+            _battlegroundCountText = CreateUnityText(
+                "BattlegroundCountText",
+                _battlegroundRoot,
+                string.Empty,
+                RuntimeUiScaleSettings.ScaleFontSize((int)FooterPixelHeight),
+                SubtleTextColor,
+                TextAnchor.UpperLeft);
+            _battlegroundCountText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _battlegroundCountText.verticalOverflow = VerticalWrapMode.Truncate;
+            _battlegroundCountText.rectTransform.anchorMin = new Vector2(0f, 1f);
+            _battlegroundCountText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            _battlegroundCountText.rectTransform.pivot = new Vector2(0f, 1f);
+            _battlegroundCountText.rectTransform.anchoredPosition = new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(76f));
+            _battlegroundCountText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(22f));
+
+            var rowsRoot = RuntimeUiFactory.CreateAnchoredRect(
+                "BattlegroundRows",
+                _battlegroundRoot,
+                new Vector2(0f, 0f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(36f)),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(108f)));
+            rowsRoot.pivot = new Vector2(0f, 1f);
+
+            float rowHeight = RuntimeUiScaleSettings.ScalePixels(30f);
+            float rowGap = RuntimeUiScaleSettings.ScalePixels(7f);
+            for (int i = 0; i < BattlegroundVisibleRows; i++)
+            {
+                var rowRect = RuntimeUiFactory.CreateAnchoredRect(
+                    $"BattlegroundRow{i}",
+                    rowsRoot,
+                    new Vector2(0f, 1f),
+                    new Vector2(1f, 1f),
+                    new Vector2(0f, -(rowHeight + rowGap) * i),
+                    new Vector2(0f, rowHeight));
+                rowRect.pivot = new Vector2(0f, 1f);
+
+                var button = RuntimeUiFactory.CreateMorrowindButton(
+                    $"BattlegroundButton{i}",
+                    rowRect,
+                    _theme,
+                    string.Empty,
+                    1f,
+                    BodyTextColor,
+                    ButtonCenterColor);
+                RuntimeUiFactory.Stretch(button.Root);
+                if (button.Label != null)
+                    button.Label.gameObject.SetActive(false);
+
+                int rowIndex = i;
+                button.Button.onClick.AddListener(() => OnBattlegroundRowPressed(rowIndex));
+                _battlegroundButtons.Add(button);
+
+                var label = CreateUnityText(
+                    $"BattlegroundLabel{i}",
+                    button.Root,
+                    string.Empty,
+                    RuntimeUiScaleSettings.ScaleFontSize((int)BodyPixelHeight),
+                    BodyTextColor,
+                    TextAnchor.MiddleLeft);
+                RuntimeUiFactory.Stretch(label.rectTransform);
+                label.rectTransform.offsetMin = RuntimeUiScaleSettings.ScalePixels(new Vector2(12f, 0f));
+                label.rectTransform.offsetMax = RuntimeUiScaleSettings.ScalePixels(new Vector2(-12f, 0f));
+                _battlegroundButtonLabels.Add(label);
+            }
+
+            _battlegroundPrevButton = RuntimeUiFactory.CreateMorrowindButton(
+                "BattlegroundPrevPage",
+                _battlegroundRoot,
+                _theme,
+                "Previous",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            _battlegroundPrevButton.Root.anchorMin = new Vector2(0f, 0f);
+            _battlegroundPrevButton.Root.anchorMax = new Vector2(0f, 0f);
+            _battlegroundPrevButton.Root.pivot = new Vector2(0f, 0f);
+            _battlegroundPrevButton.Root.anchoredPosition = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(34f));
+            _battlegroundPrevButton.Root.sizeDelta = RuntimeUiScaleSettings.ScalePixels(new Vector2(128f, 28f));
+            ReplaceButtonLabel(_battlegroundPrevButton, "Previous");
+            _battlegroundPrevButton.Button.onClick.AddListener(OnBattlegroundPreviousPagePressed);
+
+            _battlegroundNextButton = RuntimeUiFactory.CreateMorrowindButton(
+                "BattlegroundNextPage",
+                _battlegroundRoot,
+                _theme,
+                "Next",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            _battlegroundNextButton.Root.anchorMin = new Vector2(1f, 0f);
+            _battlegroundNextButton.Root.anchorMax = new Vector2(1f, 0f);
+            _battlegroundNextButton.Root.pivot = new Vector2(1f, 0f);
+            _battlegroundNextButton.Root.anchoredPosition = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(34f));
+            _battlegroundNextButton.Root.sizeDelta = RuntimeUiScaleSettings.ScalePixels(new Vector2(128f, 28f));
+            ReplaceButtonLabel(_battlegroundNextButton, "Next");
+            _battlegroundNextButton.Button.onClick.AddListener(OnBattlegroundNextPagePressed);
+
+            _battlegroundErrorText = CreateUnityText(
+                "BattlegroundErrorText",
+                _battlegroundRoot,
+                string.Empty,
+                RuntimeUiScaleSettings.ScaleFontSize((int)BodyPixelHeight),
+                ErrorTextColor,
+                TextAnchor.LowerLeft);
+            _battlegroundErrorText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _battlegroundErrorText.verticalOverflow = VerticalWrapMode.Truncate;
+            _battlegroundErrorText.rectTransform.anchorMin = new Vector2(0f, 0f);
+            _battlegroundErrorText.rectTransform.anchorMax = new Vector2(1f, 0f);
+            _battlegroundErrorText.rectTransform.pivot = new Vector2(0f, 0f);
+            _battlegroundErrorText.rectTransform.anchoredPosition = Vector2.zero;
+            _battlegroundErrorText.rectTransform.sizeDelta = new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(30f));
+            _battlegroundErrorText.gameObject.SetActive(false);
+        }
+
         void BuildProgressView()
         {
             _progressRoot = RuntimeUiFactory.CreateStretchRect("ProgressRoot", _window.Client);
@@ -507,9 +721,15 @@ namespace VVardenfell.Runtime.Bootstrap
         {
             _rootRect.gameObject.SetActive(true);
             _windowTitleText.text = string.IsNullOrWhiteSpace(title) ? "VVardenfell" : title.Trim();
-            _window.Root.sizeDelta = RuntimeUiScaleSettings.ScalePixels(new Vector2(WindowWidth, height));
+            Vector2 scaledSize = RuntimeUiScaleSettings.ScalePixels(new Vector2(WindowWidth, height));
+            _window.Root.sizeDelta = scaledSize;
             _window.Root.anchoredPosition = Vector2.zero;
-            _window.Root.localScale = Vector3.one * DialogVisualScale;
+            float screenWidth = Mathf.Max(1f, Screen.width);
+            float screenHeight = Mathf.Max(1f, Screen.height);
+            float maxScaleX = (screenWidth - 48f) / Mathf.Max(1f, scaledSize.x);
+            float maxScaleY = (screenHeight - 48f) / Mathf.Max(1f, scaledSize.y);
+            float resolvedScale = Mathf.Min(DialogVisualScale, Mathf.Max(0.5f, Mathf.Min(maxScaleX, maxScaleY)));
+            _window.Root.localScale = Vector3.one * resolvedScale;
         }
 
         Text CreateUnityText(string name, Transform parent, string text, int fontSize, Color color, TextAnchor alignment)
@@ -554,9 +774,128 @@ namespace VVardenfell.Runtime.Bootstrap
                 _pathInput.HiddenPlaceholder.text = placeholder ?? string.Empty;
         }
 
+        void SetBattlegroundFilterDisplay(string value)
+        {
+            if (_battlegroundFilterInput == null)
+                return;
+
+            value ??= string.Empty;
+            if (_battlegroundFilterInput.InputField != null && _battlegroundFilterInput.InputField.text != value)
+                _battlegroundFilterInput.InputField.SetTextWithoutNotify(value);
+
+            if (_battlegroundFilterInput.HiddenPlaceholder != null)
+                _battlegroundFilterInput.HiddenPlaceholder.text = "Search cells, e.g. -2,-9";
+        }
+
+        void SyncBattlegroundRows()
+        {
+            string filter = (_battlegroundFilter ?? string.Empty).Trim();
+            int matched = 0;
+            int shown = 0;
+            int pageStart = Mathf.Max(0, _battlegroundPage) * BattlegroundVisibleRows;
+
+            for (int i = 0; i < _battlegroundCells.Length; i++)
+            {
+                var cell = _battlegroundCells[i];
+                if (!MatchesBattlegroundFilter(cell, filter))
+                    continue;
+
+                int matchIndex = matched;
+                matched++;
+                if (matchIndex < pageStart)
+                    continue;
+
+                if (shown >= BattlegroundVisibleRows)
+                    continue;
+
+                _visibleBattlegroundCells[shown] = new int2(cell.X, cell.Y);
+                _battlegroundButtons[shown].Root.gameObject.SetActive(true);
+                _battlegroundButtonLabels[shown].text = $"Exterior Cell ({cell.X}, {cell.Y})";
+                shown++;
+            }
+
+            for (int i = shown; i < BattlegroundVisibleRows; i++)
+            {
+                _visibleBattlegroundCells[i] = default;
+                _battlegroundButtons[i].Root.gameObject.SetActive(false);
+                _battlegroundButtonLabels[i].text = string.Empty;
+            }
+
+            _battlegroundCountText.text = matched == _battlegroundCells.Length
+                ? $"{matched} exterior cells baked - page {ResolveBattlegroundDisplayPage(matched)}"
+                : $"{matched} matching exterior cells - page {ResolveBattlegroundDisplayPage(matched)}";
+
+            bool hasMatches = matched > 0;
+            int maxPage = ResolveBattlegroundMaxPage(matched);
+            if (_battlegroundPage > maxPage)
+            {
+                _battlegroundPage = maxPage;
+                SyncBattlegroundRows();
+                return;
+            }
+
+            _battlegroundPrevButton.Root.gameObject.SetActive(hasMatches && _battlegroundPage > 0);
+            _battlegroundNextButton.Root.gameObject.SetActive(hasMatches && _battlegroundPage < maxPage);
+            _battlegroundErrorText.text = hasMatches ? string.Empty : "No baked exterior cells match that search.";
+            _battlegroundErrorText.gameObject.SetActive(!hasMatches);
+        }
+
+        string ResolveBattlegroundDisplayPage(int matched)
+        {
+            int maxPage = ResolveBattlegroundMaxPage(matched);
+            return $"{Mathf.Min(_battlegroundPage, maxPage) + 1}/{maxPage + 1}";
+        }
+
+        static int ResolveBattlegroundMaxPage(int matched)
+        {
+            return Mathf.Max(0, (matched - 1) / BattlegroundVisibleRows);
+        }
+
+        static bool MatchesBattlegroundFilter((int X, int Y) cell, string filter)
+        {
+            if (string.IsNullOrWhiteSpace(filter))
+                return true;
+
+            string compact = filter.Replace(" ", string.Empty);
+            string cellCompact = $"{cell.X},{cell.Y}";
+            string cellWithParens = $"({cell.X},{cell.Y})";
+            string cellSpaced = $"{cell.X}, {cell.Y}";
+            return cellCompact.IndexOf(compact, StringComparison.OrdinalIgnoreCase) >= 0
+                   || cellWithParens.IndexOf(compact, StringComparison.OrdinalIgnoreCase) >= 0
+                   || cellSpaced.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         void OnPathChanged(string value)
         {
             _onPathChanged?.Invoke(value ?? string.Empty);
+        }
+
+        void OnBattlegroundFilterChanged(string value)
+        {
+            _battlegroundFilter = value ?? string.Empty;
+            _battlegroundPage = 0;
+            _onBattlegroundFilterChanged?.Invoke(_battlegroundFilter);
+            SyncBattlegroundRows();
+        }
+
+        void OnBattlegroundPreviousPagePressed()
+        {
+            _battlegroundPage = Mathf.Max(0, _battlegroundPage - 1);
+            SyncBattlegroundRows();
+        }
+
+        void OnBattlegroundNextPagePressed()
+        {
+            _battlegroundPage++;
+            SyncBattlegroundRows();
+        }
+
+        void OnBattlegroundRowPressed(int index)
+        {
+            if ((uint)index >= (uint)BattlegroundVisibleRows)
+                return;
+
+            _onBattlegroundSelected?.Invoke(_visibleBattlegroundCells[index]);
         }
 
         void OnContinuePressed()
@@ -582,6 +921,127 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnCombatSandboxPressed()
         {
             _onModeSelected?.Invoke(BootstrapRuntimeMode.CombatSandbox);
+        }
+
+        void OnGUI()
+        {
+            if (!_showBattlegroundImgui)
+                return;
+
+            EnsureBattlegroundImguiStyles();
+            DrawBattlegroundImgui();
+        }
+
+        void DrawBattlegroundImgui()
+        {
+            Color previousColor = GUI.color;
+            GUI.color = Color.black;
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = previousColor;
+
+            float width = Mathf.Min(760f, Mathf.Max(320f, Screen.width - 32f));
+            float height = Mathf.Min(620f, Mathf.Max(320f, Screen.height - 32f));
+            var rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+
+            GUILayout.BeginArea(rect, _imguiWindowStyle);
+            GUILayout.Label("Combat Sandbox - Battleground", _imguiHeaderStyle);
+            GUILayout.Label("Choose an exterior cell for the battle simulator.", _imguiLabelStyle);
+            GUILayout.Space(8f);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Search", _imguiLabelStyle, GUILayout.Width(56f));
+            string nextFilter = GUILayout.TextField(_battlegroundFilter ?? string.Empty, _imguiTextFieldStyle, GUILayout.Height(26f));
+            if (!string.Equals(nextFilter, _battlegroundFilter, StringComparison.Ordinal))
+            {
+                _battlegroundFilter = nextFilter ?? string.Empty;
+                _battlegroundImguiScroll = Vector2.zero;
+                _onBattlegroundFilterChanged?.Invoke(_battlegroundFilter);
+            }
+            GUILayout.EndHorizontal();
+
+            string filter = (_battlegroundFilter ?? string.Empty).Trim();
+            int matched = CountBattlegroundMatches(filter);
+            GUILayout.Label($"{matched} matching exterior cells", _imguiDimStyle);
+
+            if (matched == 0)
+            {
+                GUILayout.Label("No baked exterior cells match that search.", _imguiErrorStyle);
+                GUILayout.EndArea();
+                return;
+            }
+
+            _battlegroundImguiScroll = GUILayout.BeginScrollView(_battlegroundImguiScroll, false, true, GUILayout.Height(height - 140f));
+            for (int i = 0; i < _battlegroundCells.Length; i++)
+            {
+                var cell = _battlegroundCells[i];
+                if (!MatchesBattlegroundFilter(cell, filter))
+                    continue;
+
+                if (GUILayout.Button($"Exterior Cell ({cell.X}, {cell.Y})", _imguiButtonStyle, GUILayout.Height(28f)))
+                    _onBattlegroundSelected?.Invoke(new int2(cell.X, cell.Y));
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        int CountBattlegroundMatches(string filter)
+        {
+            int matched = 0;
+            for (int i = 0; i < _battlegroundCells.Length; i++)
+            {
+                if (MatchesBattlegroundFilter(_battlegroundCells[i], filter))
+                    matched++;
+            }
+
+            return matched;
+        }
+
+        void EnsureBattlegroundImguiStyles()
+        {
+            if (_imguiWindowStyle != null)
+                return;
+
+            Texture2D windowTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            windowTexture.SetPixel(0, 0, new Color(0.11f, 0.09f, 0.07f, 0.98f));
+            windowTexture.Apply();
+
+            _imguiWindowStyle = new GUIStyle(GUI.skin.box)
+            {
+                padding = new RectOffset(16, 16, 14, 16),
+                normal = { background = windowTexture },
+            };
+            _imguiHeaderStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 20,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = BodyTextColor },
+            };
+            _imguiLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 14,
+                normal = { textColor = BodyTextColor },
+            };
+            _imguiDimStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                normal = { textColor = SubtleTextColor },
+            };
+            _imguiErrorStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 13,
+                normal = { textColor = ErrorTextColor },
+            };
+            _imguiButtonStyle = new GUIStyle(GUI.skin.button)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                fontSize = 13,
+                normal = { textColor = BodyTextColor },
+            };
+            _imguiTextFieldStyle = new GUIStyle(GUI.skin.textField)
+            {
+                fontSize = 13,
+                normal = { textColor = BodyTextColor },
+            };
         }
 
         void OnDestroy()

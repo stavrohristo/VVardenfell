@@ -308,7 +308,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return (byte)ActorAiRuntimePackageType.Wander;
         }
 
-        static void EnsureActorAiComponents(
+        public static void EnsureActorAiComponents(
             ref RuntimeContentBlob content,
             EntityManager entityManager,
             Entity actor,

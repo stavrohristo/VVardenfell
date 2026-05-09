@@ -22,6 +22,12 @@ namespace VVardenfell.Runtime.Pathfinding
         public int TotalCompleted;
         public int TotalCanceled;
         public int ActiveBatchCount;
+        public int PendingAtFrameStart;
+        public int SubmittedThisFrame;
+        public int ActiveJobs;
+        public int CompletedThisFrame;
+        public int CanceledThisFrame;
+        public float OldestPendingAgeSeconds;
 
         public static PathGridPathfindingState Defaults => new PathGridPathfindingState
         {
@@ -90,21 +96,16 @@ namespace VVardenfell.Runtime.Pathfinding
                 if (Result.IsCreated)
                     Result.Dispose();
             }
-
-            public void DisposeResult()
-            {
-                if (Result.IsCreated)
-                    Result.Dispose();
-                Result = default;
-            }
         }
 
         NativeList<JobEntry> _activeEntries;
+        NativeList<JobEntry> _pooledEntries;
         Entity _singleton;
 
         public void OnCreate(ref SystemState state)
         {
             _activeEntries = new NativeList<JobEntry>(Allocator.Persistent);
+            _pooledEntries = new NativeList<JobEntry>(Allocator.Persistent);
             _singleton = state.EntityManager.CreateEntity();
             state.EntityManager.SetName(_singleton, "VVardenfell.PathGridPathfinding");
             state.EntityManager.AddComponentData(_singleton, PathGridPathfindingState.Defaults);
@@ -128,6 +129,14 @@ namespace VVardenfell.Runtime.Pathfinding
 
             _activeEntries.Dispose();
             _activeEntries = default;
+            for (int i = 0; i < _pooledEntries.Length; i++)
+            {
+                var entry = _pooledEntries[i];
+                entry.Dispose();
+            }
+
+            _pooledEntries.Dispose();
+            _pooledEntries = default;
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -142,25 +151,30 @@ namespace VVardenfell.Runtime.Pathfinding
             var completedNodes = systemState.EntityManager.GetBuffer<CompletedPathGridPathNode>(_singleton);
             var canceled = systemState.EntityManager.GetBuffer<CanceledPathGridPathRequest>(_singleton);
 
+            state.PendingAtFrameStart = pending.Length;
+            state.SubmittedThisFrame = 0;
+            state.CompletedThisFrame = 0;
+            state.CanceledThisFrame = 0;
+            state.OldestPendingAgeSeconds = ComputeOldestPendingAge(pending, now);
+
             CompleteFinishedBatches(ref state, completed, completedNodes, canceled, now);
-            RetireCompleted(completed, completedNodes, now, math.max(0f, state.CompletedRetentionSeconds), math.max(1, state.MaxCompletedResults));
+            RetireCompleted(systemState.EntityManager, completed, completedNodes, now, math.max(0f, state.CompletedRetentionSeconds));
             RetireStaleCanceledIds(canceled);
 
-            int batchSize = math.max(1, state.BatchSize);
-            int maxActiveEntries = batchSize * math.max(1, state.MaxActiveBatches);
             bool scheduledJobs = false;
-            if (pending.Length > 0 && _activeEntries.Length < maxActiveEntries)
+            if (pending.Length > 0)
             {
                 if (!WorldResources.PathGridNavigation.IsCreated)
                     FailPendingWithoutGraph(ref state, pending, completed, now);
                 else
-                    scheduledJobs = SchedulePendingBatch(ref state, pending, batchSize, maxActiveEntries);
+                    scheduledJobs = ScheduleAllPending(ref state, pending);
             }
 
             if (scheduledJobs)
                 JobHandle.ScheduleBatchedJobs();
 
-            state.ActiveBatchCount = (_activeEntries.Length + batchSize - 1) / batchSize;
+            state.ActiveBatchCount = _activeEntries.Length > 0 ? 1 : 0;
+            state.ActiveJobs = _activeEntries.Length;
             systemState.EntityManager.SetComponentData(_singleton, state);
         }
 
@@ -181,7 +195,8 @@ namespace VVardenfell.Runtime.Pathfinding
                 if (IsCanceled(canceled, entry.RequestId))
                 {
                     state.TotalCanceled++;
-                    entry.Dispose();
+                    state.CanceledThisFrame++;
+                    ReturnEntryToPool(entry);
                     _activeEntries.RemoveAtSwapBack(entryIndex);
                     continue;
                 }
@@ -198,35 +213,24 @@ namespace VVardenfell.Runtime.Pathfinding
                     entry.OutputPath,
                     now);
                 state.TotalCompleted++;
-                entry.Dispose();
+                state.CompletedThisFrame++;
+                ReturnEntryToPool(entry);
                 _activeEntries.RemoveAtSwapBack(entryIndex);
             }
         }
 
-        bool SchedulePendingBatch(
+        bool ScheduleAllPending(
             ref PathGridPathfindingState state,
-            DynamicBuffer<PendingPathGridPathRequest> pending,
-            int batchSize,
-            int maxActiveEntries)
+            DynamicBuffer<PendingPathGridPathRequest> pending)
         {
-            int capacity = math.max(0, maxActiveEntries - _activeEntries.Length);
-            int count = math.min(math.min(batchSize, pending.Length), capacity);
+            int count = pending.Length;
             if (count <= 0)
                 return false;
 
             for (int i = 0; i < count; i++)
             {
-                var pendingRequest = pending[0];
-                pending.RemoveAt(0);
-
-                var entry = new JobEntry
-                {
-                    RequestId = pendingRequest.RequestId,
-                    Owner = pendingRequest.Owner,
-                    WorkingSet = WorldResources.PathGridNavigation.CreateWorkingSet(Allocator.Persistent),
-                    OutputPath = new NativeList<int>(Allocator.Persistent),
-                    Result = new NativeArray<PathGridPathResult>(1, Allocator.Persistent),
-                };
+                var pendingRequest = pending[i];
+                var entry = RentEntry(pendingRequest.RequestId, pendingRequest.Owner);
 
                 var job = new PathGridPathfindingJob
                 {
@@ -247,8 +251,10 @@ namespace VVardenfell.Runtime.Pathfinding
 
                 entry.Handle = job.Schedule();
                 _activeEntries.Add(entry);
+                state.SubmittedThisFrame++;
             }
 
+            pending.Clear();
             return true;
         }
 
@@ -258,10 +264,9 @@ namespace VVardenfell.Runtime.Pathfinding
             DynamicBuffer<CompletedPathGridPath> completed,
             double now)
         {
-            while (pending.Length > 0)
+            for (int i = 0; i < pending.Length; i++)
             {
-                var request = pending[0];
-                pending.RemoveAt(0);
+                var request = pending[i];
                 completed.Add(new CompletedPathGridPath
                 {
                     RequestId = request.RequestId,
@@ -273,7 +278,10 @@ namespace VVardenfell.Runtime.Pathfinding
                     CompletedAt = now,
                 });
                 state.TotalCompleted++;
+                state.CompletedThisFrame++;
             }
+
+            pending.Clear();
         }
 
         static void PublishResult(
@@ -305,25 +313,31 @@ namespace VVardenfell.Runtime.Pathfinding
         }
 
         static void RetireCompleted(
+            EntityManager entityManager,
             DynamicBuffer<CompletedPathGridPath> completed,
             DynamicBuffer<CompletedPathGridPathNode> completedNodes,
             double now,
-            float retentionSeconds,
-            int maxCompletedResults)
+            float retentionSeconds)
         {
-            if (retentionSeconds > 0f)
+            for (int i = completed.Length - 1; i >= 0; i--)
             {
-                for (int i = completed.Length - 1; i >= 0; i--)
-                {
-                    if (now - completed[i].CompletedAt <= retentionSeconds)
-                        continue;
+                if (!IsOrphanedCompletedResult(entityManager, completed[i], now, retentionSeconds))
+                    continue;
 
-                    RemoveCompletedAt(completed, completedNodes, i);
-                }
+                RemoveCompletedAt(completed, completedNodes, i);
             }
+        }
 
-            while (completed.Length > maxCompletedResults)
-                RemoveCompletedAt(completed, completedNodes, 0);
+        static bool IsOrphanedCompletedResult(EntityManager entityManager, in CompletedPathGridPath result, double now, float retentionSeconds)
+        {
+            if (result.Owner == Entity.Null)
+                return retentionSeconds > 0f && now - result.CompletedAt > retentionSeconds;
+            if (!entityManager.Exists(result.Owner))
+                return true;
+            if (!entityManager.HasComponent<PathGridTraversalState>(result.Owner))
+                return true;
+            var traversal = entityManager.GetComponentData<PathGridTraversalState>(result.Owner);
+            return traversal.ActivePathRequestId != result.RequestId;
         }
 
         internal static void RemoveCompletedAt(
@@ -386,6 +400,73 @@ namespace VVardenfell.Runtime.Pathfinding
             }
 
             return false;
+        }
+
+        JobEntry RentEntry(int requestId, Entity owner)
+        {
+            JobEntry entry;
+            if (_pooledEntries.Length > 0)
+            {
+                int index = _pooledEntries.Length - 1;
+                entry = _pooledEntries[index];
+                _pooledEntries.RemoveAt(index);
+                if (!IsEntryCompatible(entry, WorldResources.PathGridNavigation))
+                {
+                    entry.Dispose();
+                    entry = CreateEntry();
+                }
+            }
+            else
+            {
+                entry = CreateEntry();
+            }
+
+            entry.RequestId = requestId;
+            entry.Owner = owner;
+            entry.Handle = default;
+            entry.OutputPath.Clear();
+            entry.Result[0] = default;
+            return entry;
+        }
+
+        JobEntry CreateEntry() => new JobEntry
+        {
+            WorkingSet = WorldResources.PathGridNavigation.CreateWorkingSet(Allocator.Persistent),
+            OutputPath = new NativeList<int>(Allocator.Persistent),
+            Result = new NativeArray<PathGridPathResult>(1, Allocator.Persistent),
+        };
+
+        static bool IsEntryCompatible(in JobEntry entry, in PathGridNavigationWorld navigation)
+            => entry.WorkingSet.NodeG.IsCreated &&
+               entry.WorkingSet.NodeG.Length == math.max(1, navigation.NodeCount) &&
+               entry.WorkingSet.PortalG.IsCreated &&
+               entry.WorkingSet.PortalG.Length == math.max(1, navigation.PortalCount) &&
+               entry.OutputPath.IsCreated &&
+               entry.Result.IsCreated &&
+               entry.Result.Length == 1;
+
+        void ReturnEntryToPool(JobEntry entry)
+        {
+            entry.RequestId = 0;
+            entry.Owner = Entity.Null;
+            entry.Handle = default;
+            entry.WorkingSet.Clear();
+            entry.OutputPath.Clear();
+            entry.Result[0] = default;
+            _pooledEntries.Add(entry);
+        }
+
+        static float ComputeOldestPendingAge(DynamicBuffer<PendingPathGridPathRequest> pending, double now)
+        {
+            double oldest = 0d;
+            for (int i = 0; i < pending.Length; i++)
+            {
+                double age = now - pending[i].RequestedAt;
+                if (age > oldest)
+                    oldest = age;
+            }
+
+            return (float)math.max(0d, oldest);
         }
     }
 

@@ -47,6 +47,7 @@ namespace VVardenfell.Runtime.Combat
         ComponentLookup<ActorDerivedMovementStats> _derivedMovementLookup;
         ComponentLookup<MorrowindMovementState> _movementStateLookup;
         ComponentLookup<PlayerTag> _playerLookup;
+        ComponentLookup<BattleSimulatorTeam> _battleTeamLookup;
 
         BufferLookup<ActorCombatTarget> _combatTargetLookup;
         BufferLookup<ActorFactionMembership> _actorFactionLookup;
@@ -100,6 +101,7 @@ namespace VVardenfell.Runtime.Combat
             _derivedMovementLookup = state.GetComponentLookup<ActorDerivedMovementStats>(isReadOnly: true);
             _movementStateLookup = state.GetComponentLookup<MorrowindMovementState>(isReadOnly: true);
             _playerLookup = state.GetComponentLookup<PlayerTag>(isReadOnly: true);
+            _battleTeamLookup = state.GetComponentLookup<BattleSimulatorTeam>(isReadOnly: true);
 
             _combatTargetLookup = state.GetBufferLookup<ActorCombatTarget>(isReadOnly: true);
             _actorFactionLookup = state.GetBufferLookup<ActorFactionMembership>(isReadOnly: true);
@@ -163,6 +165,7 @@ namespace VVardenfell.Runtime.Combat
             _derivedMovementLookup.Update(ref state);
             _movementStateLookup.Update(ref state);
             _playerLookup.Update(ref state);
+            _battleTeamLookup.Update(ref state);
 
             _combatTargetLookup.Update(ref state);
             _actorFactionLookup.Update(ref state);
@@ -195,6 +198,7 @@ namespace VVardenfell.Runtime.Combat
                 DerivedMovementLookup = _derivedMovementLookup,
                 MovementStateLookup = _movementStateLookup,
                 PlayerLookup = _playerLookup,
+                BattleTeamLookup = _battleTeamLookup,
                 CombatTargetLookup = _combatTargetLookup,
                 ActorFactionLookup = _actorFactionLookup,
                 PlayerFactionLookup = _playerFactionLookup,
@@ -311,6 +315,7 @@ namespace VVardenfell.Runtime.Combat
             [ReadOnly] public ComponentLookup<ActorDerivedMovementStats> DerivedMovementLookup;
             [ReadOnly] public ComponentLookup<MorrowindMovementState> MovementStateLookup;
             [ReadOnly] public ComponentLookup<PlayerTag> PlayerLookup;
+            [ReadOnly] public ComponentLookup<BattleSimulatorTeam> BattleTeamLookup;
             [ReadOnly] public BufferLookup<ActorCombatTarget> CombatTargetLookup;
             [ReadOnly] public BufferLookup<ActorFactionMembership> ActorFactionLookup;
             [ReadOnly] public BufferLookup<PlayerFactionMembership> PlayerFactionLookup;
@@ -414,6 +419,7 @@ namespace VVardenfell.Runtime.Combat
                     PlacedRefLookup = PlacedRefLookup,
                     AiSettingsLookup = AiSettingsLookup,
                     DispositionLookup = DispositionLookup,
+                    BattleTeamLookup = BattleTeamLookup,
                     CombatTargetLookup = CombatTargetLookup,
                     ActorFactionLookup = ActorFactionLookup,
                     PlayerFactionLookup = PlayerFactionLookup,
@@ -597,6 +603,7 @@ namespace VVardenfell.Runtime.Combat
             [ReadOnly] public ComponentLookup<PlacedRefIdentity> PlacedRefLookup;
             [ReadOnly] public ComponentLookup<ActorAiSettingsState> AiSettingsLookup;
             [ReadOnly] public ComponentLookup<ActorDispositionState> DispositionLookup;
+            [ReadOnly] public ComponentLookup<BattleSimulatorTeam> BattleTeamLookup;
             [ReadOnly] public BufferLookup<ActorCombatTarget> CombatTargetLookup;
             [ReadOnly] public BufferLookup<ActorFactionMembership> ActorFactionLookup;
             [ReadOnly] public BufferLookup<PlayerFactionMembership> PlayerFactionLookup;
@@ -624,9 +631,13 @@ namespace VVardenfell.Runtime.Combat
                 if (distanceSq > maxDistanceSq)
                     return false;
 
+                bool battleRelation = TryResolveBattleRelation(Source, target, out bool sameBattleTeam, out bool opposingBattleTeam);
+                if (sameBattleTeam)
+                    return false;
+
                 if (IsAlreadyInCombatWith(target)
-                    || ShareJoinedFaction(Source, target)
-                    || !IsAggressive(Source, target, SourcePosition, targetPosition))
+                    || (!battleRelation && ShareJoinedFaction(Source, target))
+                    || (!opposingBattleTeam && !IsAggressive(Source, target, SourcePosition, targetPosition)))
                 {
                     return false;
                 }
@@ -674,6 +685,23 @@ namespace VVardenfell.Runtime.Combat
                 }
 
                 return false;
+            }
+
+            bool TryResolveBattleRelation(Entity actor, Entity target, out bool sameTeam, out bool opposingTeam)
+            {
+                sameTeam = false;
+                opposingTeam = false;
+                if (!BattleTeamLookup.HasComponent(actor) || !BattleTeamLookup.HasComponent(target))
+                    return false;
+
+                byte actorTeam = BattleTeamLookup[actor].Value;
+                byte targetTeam = BattleTeamLookup[target].Value;
+                if (actorTeam == (byte)BattleSimulatorTeamId.None || targetTeam == (byte)BattleSimulatorTeamId.None)
+                    return false;
+
+                sameTeam = actorTeam == targetTeam;
+                opposingTeam = actorTeam != targetTeam;
+                return true;
             }
 
             bool ShareJoinedFaction(Entity actor, Entity target)

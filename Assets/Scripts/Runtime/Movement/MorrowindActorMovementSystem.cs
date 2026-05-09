@@ -29,6 +29,7 @@ namespace VVardenfell.Runtime.Movement
         ComponentTypeHandle<MorrowindMovementState> _movementStateHandle;
         ComponentTypeHandle<PhysicsCollider> _colliderHandle;
         ComponentTypeHandle<MorrowindMovementSpeed> _speedHandle;
+        ComponentTypeHandle<ActorDead> _deadHandle;
 
         ComponentLookup<LocalTransform> _transformLookup;
         ComponentLookup<LocalToWorld> _localToWorldLookup;
@@ -79,11 +80,13 @@ namespace VVardenfell.Runtime.Movement
                     ComponentType.ReadWrite<MorrowindMovementInput>(),
                     ComponentType.ReadWrite<MorrowindMovementState>(),
                     ComponentType.ReadOnly<MorrowindMovementSpeed>(),
+                    ComponentType.ReadOnly<ActorDead>(),
                 },
                 None = new ComponentType[]
                 {
                     ComponentType.ReadOnly<PlayerTag>(),
                 },
+                Options = EntityQueryOptions.IgnoreComponentEnabledState,
             });
             _mutationQueueQuery = state.GetEntityQuery(
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
@@ -96,6 +99,7 @@ namespace VVardenfell.Runtime.Movement
             _movementStateHandle = state.GetComponentTypeHandle<MorrowindMovementState>(isReadOnly: false);
             _colliderHandle = state.GetComponentTypeHandle<PhysicsCollider>(isReadOnly: true);
             _speedHandle = state.GetComponentTypeHandle<MorrowindMovementSpeed>(isReadOnly: true);
+            _deadHandle = state.GetComponentTypeHandle<ActorDead>(isReadOnly: true);
 
             _transformLookup = state.GetComponentLookup<LocalTransform>(isReadOnly: false);
             _localToWorldLookup = state.GetComponentLookup<LocalToWorld>(isReadOnly: false);
@@ -200,6 +204,7 @@ namespace VVardenfell.Runtime.Movement
             _movementStateHandle.Update(ref state);
             _colliderHandle.Update(ref state);
             _speedHandle.Update(ref state);
+            _deadHandle.Update(ref state);
 
             var nonPlayerJob = new NonPlayerActorMovementJob
             {
@@ -212,6 +217,7 @@ namespace VVardenfell.Runtime.Movement
                 MovementStateHandle = _movementStateHandle,
                 ColliderHandle = _colliderHandle,
                 SpeedHandle = _speedHandle,
+                DeadHandle = _deadHandle,
                 PlayerTagLookup = _playerTagLookup,
                 PassiveActorLookup = _passiveActorLookup,
             };
@@ -413,6 +419,7 @@ namespace VVardenfell.Runtime.Movement
             public ComponentTypeHandle<MorrowindMovementState> MovementStateHandle;
             [ReadOnly] public ComponentTypeHandle<PhysicsCollider> ColliderHandle;
             [ReadOnly] public ComponentTypeHandle<MorrowindMovementSpeed> SpeedHandle;
+            [ReadOnly] public ComponentTypeHandle<ActorDead> DeadHandle;
             [ReadOnly] public ComponentLookup<PlayerTag> PlayerTagLookup;
             [ReadOnly] public ComponentLookup<PassiveActorPresence> PassiveActorLookup;
 
@@ -429,6 +436,22 @@ namespace VVardenfell.Runtime.Movement
                 int count = chunk.Count;
                 for (int i = 0; i < count; i++)
                 {
+                    if (chunk.IsComponentEnabled(ref DeadHandle, i))
+                    {
+                        inputs[i] = default;
+                        var deadMovementState = movementStates[i];
+                        deadMovementState.Inertia = float3.zero;
+                        deadMovementState.LastVelocity = float3.zero;
+                        deadMovementState.LocalMove = float2.zero;
+                        deadMovementState.SpeedFactor = 0f;
+                        deadMovementState.JumpAccepted = false;
+                        deadMovementState.RunHeld = false;
+                        deadMovementState.SneakHeld = false;
+                        deadMovementState.IsStrafing = false;
+                        movementStates[i] = deadMovementState;
+                        continue;
+                    }
+
                     var transform = transforms[i];
                     var input = inputs[i];
                     var movementState = movementStates[i];

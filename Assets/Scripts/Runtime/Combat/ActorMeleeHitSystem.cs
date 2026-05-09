@@ -151,8 +151,7 @@ namespace VVardenfell.Runtime.Combat
                 out _);
             float reach = MorrowindMeleeCombatMechanics.ComputeMeleeReach(ref content, hasWeapon, weapon);
             float attackerRadius = math.max(attackerBounds.Extents.x, attackerBounds.Extents.z) * math.max(0.01f, attackerTransform.Scale);
-            float distanceToBounds = math.max(0f, math.distance(ToHorizontal(attackerTransform.Position), ToHorizontal(targetBase)) - attackerRadius - targetRadius);
-            if (distanceToBounds > reach)
+            if (!MorrowindMeleeCombatMechanics.IsInMeleeReach(attackerTransform.Position, attackerRadius, targetBase, targetRadius, reach))
                 return false;
             if (!PassesCombatCone(ref content, attackerTransform, targetBase, targetHeight))
                 return false;

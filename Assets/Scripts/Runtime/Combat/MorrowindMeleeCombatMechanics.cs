@@ -58,6 +58,28 @@ namespace VVardenfell.Runtime.Combat
             return combatDistance * RuntimeContentBlobUtility.RequireGameSettingFloatByIdHash(ref content, RuntimeContentKnownHashes.fHandToHandReach) * WorldScale.MwUnitsToMeters;
         }
 
+        public static float ComputeMeleeApproachReach(float reach, float arrivalInset)
+        {
+            if (reach <= 0f)
+                return 0f;
+
+            return math.max(reach * 0.5f, reach - math.max(0f, arrivalInset));
+        }
+
+        public static float ComputeMeleeDistanceToBounds(float3 actorPosition, float actorRadius, float3 targetBase, float targetRadius)
+        {
+            float3 delta = targetBase - actorPosition;
+            delta.y = 0f;
+            return math.max(0f, math.length(delta) - math.max(0f, actorRadius) - math.max(0f, targetRadius));
+        }
+
+        public static bool IsInMeleeReach(float3 actorPosition, float actorRadius, float3 targetBase, float targetRadius, float reach)
+        {
+            return reach > 0f
+                   && math.abs(actorPosition.y - targetBase.y) < reach
+                   && ComputeMeleeDistanceToBounds(actorPosition, actorRadius, targetBase, targetRadius) < reach;
+        }
+
         public static float ComputeFatigueTerm(ref RuntimeContentBlob content, in ActorVitalSet vitals)
         {
             float max = vitals.ModifiedFatigueBase;
