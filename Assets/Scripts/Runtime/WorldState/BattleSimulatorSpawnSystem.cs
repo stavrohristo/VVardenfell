@@ -19,7 +19,7 @@ namespace VVardenfell.Runtime.WorldState
     {
         const float FormationSpacingMeters = 1.2f;
         const float FormationStandoffMeters = 8f;
-        const int FormationColumns = 32;
+        const int FormationColumns = 64;
         const int PreloadedRadius = 1;
 
         EntityQuery _unitQuery;
@@ -81,88 +81,93 @@ namespace VVardenfell.Runtime.WorldState
             NativeArray<BattleSimulatorSpawnRequest> requests = new(requestBuffer.Length, Allocator.Temp);
             for (int i = 0; i < requestBuffer.Length; i++)
                 requests[i] = requestBuffer[i];
-            requestBuffer.Clear();
+            try
+            {
+                var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
+                if (!contentBlobReference.Blob.IsCreated)
+                    throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] runtime content blob is unavailable.");
 
-            var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
-            if (!contentBlobReference.Blob.IsCreated)
-                throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] runtime content blob is unavailable.");
+                ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+                for (int i = 0; i < requests.Length; i++)
+                    ValidateRosterEntry(ref content, requests[i]);
+                int totalA = CountTeamRequests(ref content, requests, (byte)BattleSimulatorTeamId.GroupA);
+                int totalB = CountTeamRequests(ref content, requests, (byte)BattleSimulatorTeamId.GroupB);
+                if (totalA <= 0 || totalB <= 0)
+                    throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] both battle groups must contain at least one spawnable actor.");
 
-            ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
-            for (int i = 0; i < requests.Length; i++)
-                ValidateRosterEntry(ref content, requests[i]);
-            int totalA = CountTeamRequests(ref content, requests, (byte)BattleSimulatorTeamId.GroupA);
-            int totalB = CountTeamRequests(ref content, requests, (byte)BattleSimulatorTeamId.GroupB);
-            if (totalA <= 0 || totalB <= 0)
-                throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] both battle groups must contain at least one spawnable actor.");
+                var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
+                var spawnState = SystemAPI.GetSingleton<RuntimeSpawnState>();
+                Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
+                var logicalLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
+                Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
+                Entity loadedEntity = SystemAPI.GetSingletonEntity<LoadedCellsMap>();
+                var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
+                var available = SystemAPI.GetSingleton<AvailableCells>();
+                var config = SystemAPI.GetSingleton<StreamingConfig>();
 
-            var spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
-            var spawnState = SystemAPI.GetSingleton<RuntimeSpawnState>();
-            Entity lookupEntity = SystemAPI.GetSingletonEntity<LogicalRefLookup>();
-            var logicalLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
-            Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
-            Entity loadedEntity = SystemAPI.GetSingletonEntity<LoadedCellsMap>();
-            var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
-            var available = SystemAPI.GetSingleton<AvailableCells>();
-            var config = SystemAPI.GetSingleton<StreamingConfig>();
+                DestroyExistingUnits(ref systemState, ref logicalLookup);
 
-            DestroyExistingUnits(ref systemState, ref logicalLookup);
+                var cell = simulatorState.BattlegroundCell;
+                ValidateFormationFootprint(totalA, totalB, cell);
+                ValidateFormationPathGrids(ref content, totalA, totalB, cell);
 
-            var cell = simulatorState.BattlegroundCell;
-            ValidateFormationFootprint(totalA, totalB, cell);
-            ValidateFormationPathGrids(ref content, totalA, totalB, cell);
+                int spawnedA = SpawnTeam(
+                    ref systemState,
+                    ref content,
+                    requests,
+                    (byte)BattleSimulatorTeamId.GroupA,
+                    totalA,
+                    totalB,
+                    cell,
+                    ref spawnState,
+                    spawnEntity,
+                    ref logicalLookup,
+                    transitionEntity,
+                    ref loaded,
+                    ref available,
+                    config);
 
-            int spawnedA = SpawnTeam(
-                ref systemState,
-                ref content,
-                requests,
-                (byte)BattleSimulatorTeamId.GroupA,
-                totalA,
-                totalB,
-                cell,
-                ref spawnState,
-                spawnEntity,
-                ref logicalLookup,
-                transitionEntity,
-                ref loaded,
-                ref available,
-                config);
+                int spawnedB = SpawnTeam(
+                    ref systemState,
+                    ref content,
+                    requests,
+                    (byte)BattleSimulatorTeamId.GroupB,
+                    totalB,
+                    totalA,
+                    cell,
+                    ref spawnState,
+                    spawnEntity,
+                    ref logicalLookup,
+                    transitionEntity,
+                    ref loaded,
+                    ref available,
+                    config);
 
-            int spawnedB = SpawnTeam(
-                ref systemState,
-                ref content,
-                requests,
-                (byte)BattleSimulatorTeamId.GroupB,
-                totalB,
-                totalA,
-                cell,
-                ref spawnState,
-                spawnEntity,
-                ref logicalLookup,
-                transitionEntity,
-                ref loaded,
-                ref available,
-                config);
+                if (spawnedA != totalA || spawnedB != totalB)
+                    throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] roster expansion did not spawn the expected unit counts.");
 
-            if (spawnedA != totalA || spawnedB != totalB)
-                throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] roster expansion did not spawn the expected unit counts.");
+                systemState.EntityManager.SetComponentData(spawnEntity, spawnState);
+                systemState.EntityManager.SetComponentData(lookupEntity, logicalLookup);
+                systemState.EntityManager.SetComponentData(loadedEntity, loaded);
+                systemState.EntityManager.SetComponentData(SystemAPI.GetSingletonEntity<AvailableCells>(), available);
+                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
 
-            systemState.EntityManager.SetComponentData(spawnEntity, spawnState);
-            systemState.EntityManager.SetComponentData(lookupEntity, logicalLookup);
-            systemState.EntityManager.SetComponentData(loadedEntity, loaded);
-            systemState.EntityManager.SetComponentData(SystemAPI.GetSingletonEntity<AvailableCells>(), available);
-            ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
-
-            simulatorState.Phase = (byte)BattleSimulatorPhase.Running;
-            simulatorState.StartedAt = (float)SystemAPI.Time.ElapsedTime;
-            simulatorState.CompletedAt = 0f;
-            simulatorState.WinningTeam = (byte)BattleSimulatorTeamId.None;
-            simulatorState.GroupATotal = totalA;
-            simulatorState.GroupBTotal = totalB;
-            simulatorState.GroupAAlive = totalA;
-            simulatorState.GroupBAlive = totalB;
-            simulatorState.Status = new FixedString128Bytes("Battle running.");
-            systemState.EntityManager.SetComponentData(stateEntity, simulatorState);
-            requests.Dispose();
+                requestBuffer.Clear();
+                simulatorState.Phase = (byte)BattleSimulatorPhase.Running;
+                simulatorState.StartedAt = (float)SystemAPI.Time.ElapsedTime;
+                simulatorState.CompletedAt = 0f;
+                simulatorState.WinningTeam = (byte)BattleSimulatorTeamId.None;
+                simulatorState.GroupATotal = totalA;
+                simulatorState.GroupBTotal = totalB;
+                simulatorState.GroupAAlive = totalA;
+                simulatorState.GroupBAlive = totalB;
+                simulatorState.Status = new FixedString128Bytes("Battle running.");
+                systemState.EntityManager.SetComponentData(stateEntity, simulatorState);
+            }
+            finally
+            {
+                requests.Dispose();
+            }
         }
 
         void DestroyExistingUnits(ref SystemState systemState, ref LogicalRefLookup logicalLookup)
@@ -427,7 +432,12 @@ namespace VVardenfell.Runtime.WorldState
                     continue;
 
                 if (!RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, cell.x, cell.y, out var handle) || !handle.IsValid)
-                    throw new System.InvalidOperationException($"[VVardenfell][BattleSimulator] formation cell {cell.x},{cell.y} has no exterior pathgrid; choose a pathgrid-backed battleground.");
+                {
+                    string teamLabel = team == (byte)BattleSimulatorTeamId.GroupA ? "A" : "B";
+                    int columns = ResolveFormationColumns(teamTotal);
+                    int rows = ResolveFormationRows(teamTotal, columns);
+                    throw new System.InvalidOperationException($"[VVardenfell][BattleSimulator] battleground {battlegroundCell.x},{battlegroundCell.y} team {teamLabel} formation ({teamTotal} units, {columns} columns, {rows} rows) touches exterior cell {cell.x},{cell.y}, which has no exterior pathgrid; choose a smaller roster or a battleground whose occupied formation cells are pathgrid-backed.");
+                }
 
                 lastX = cell.x;
                 lastY = cell.y;
