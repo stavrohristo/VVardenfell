@@ -14,8 +14,6 @@ namespace VVardenfell.Runtime.Bootstrap
                 return entity;
 
             entity = entityManager.CreateEntity();
-            if (!string.IsNullOrEmpty(entityName))
-                entityManager.SetName(entity, entityName);
             return entity;
         }
 
@@ -32,8 +30,6 @@ namespace VVardenfell.Runtime.Bootstrap
             }
 
             entity = entityManager.CreateEntity();
-            if (!string.IsNullOrEmpty(entityName))
-                entityManager.SetName(entity, entityName);
             return entity;
         }
 
@@ -52,8 +48,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
             created = true;
             entity = ecb.CreateEntity();
-            if (!entityName.IsEmpty)
-                ecb.SetName(entity, entityName);
             return entity;
         }
 
@@ -74,8 +68,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
             created = true;
             entity = ecb.CreateEntity();
-            if (!entityName.IsEmpty)
-                ecb.SetName(entity, entityName);
             return entity;
         }
 

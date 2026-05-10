@@ -810,7 +810,6 @@ namespace VVardenfell.Runtime.Magic
 
             LogicalRefLocation location = ResolveMagicSpawnLocation(ref systemState, caster, casterTransform.Position, "projectile caster");
             Entity launchEntity = ecb.CreateEntity();
-            ecb.SetName(launchEntity, new FixedString64Bytes("VVardenfell.MagicProjectileLaunch"));
             ecb.AddComponent(launchEntity, new MorrowindProjectileLaunchRequest
             {
                 Caster = caster,

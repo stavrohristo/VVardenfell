@@ -9,7 +9,7 @@ namespace VVardenfell.Importer.Esm
     /// </summary>
     public static class CellIndex
     {
-        public static IEnumerable<CellHeader> Enumerate(EsmReader esm)
+        public static IEnumerable<CellHeader> Enumerate(EsmReader esm, int contentFileIndex = 0)
         {
             esm.Seek(0);
             while (true)
@@ -85,7 +85,7 @@ namespace VVardenfell.Importer.Esm
                     // Reference stream starts at FRMR; the remaining record is intentionally skipped.
                 }
 
-                yield return new CellHeader(name, flags, gridX, gridY, environment, recordStart);
+                yield return new CellHeader(name, flags, gridX, gridY, environment, recordStart, esm.FilePath, contentFileIndex);
             }
         }
     }

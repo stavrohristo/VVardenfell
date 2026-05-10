@@ -50,7 +50,7 @@ namespace VVardenfell.Runtime.Streaming
             var unloadList = default(UnloadList);
             var pendingPhysicsLoad = default(PendingCellPhysicsLoad);
             var pendingPhysicsUnload = default(PendingCellPhysicsUnload);
-            Task<WorldBootstrapPreloadResult> preloadTask = null;
+            WorldBootstrapPreloadResult preload = null;
             Task<WorldBootstrapCollisionLoadResult> collisionTask = null;
             bool singletonInstalled = false;
 
@@ -65,20 +65,23 @@ namespace VVardenfell.Runtime.Streaming
                 foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
                     yield return step;
 
-                preloadTask = Task.Run(() => options.RequiresFullCellPreload
-                    ? WorldBootstrapPreloadUtility.PreloadCells(cache)
-                    : WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active));
                 collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
 
-                progress?.BeginStage("Background preload", "Waiting for cell preload and collider load", 2);
-                while (!preloadTask.IsCompleted || !collisionTask.IsCompleted)
+                progress?.BeginStage("Cell section validation", "Validating DOTS cell section cache", 1);
+                preload = options.RequiresFullCellPreload
+                    ? WorldBootstrapPreloadUtility.PreloadCells(cache)
+                    : WorldBootstrapPreloadUtility.PreloadSandboxCells(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active);
+                progress?.Report("Cell sections validated", 1, 1);
+                progress?.CompleteStage();
+                yield return null;
+
+                progress?.BeginStage("Background preload", "Waiting for collider load", 1);
+                while (!collisionTask.IsCompleted)
                 {
-                    int completed = (preloadTask.IsCompleted ? 1 : 0) + (collisionTask.IsCompleted ? 1 : 0);
-                    progress?.Report("Waiting for background cache reads", completed, 2);
+                    progress?.Report("Waiting for background cache reads", 0, 1);
                     yield return null;
                 }
 
-                var preload = preloadTask.GetAwaiter().GetResult();
                 var collisionLoad = collisionTask.GetAwaiter().GetResult();
 
                 var firstPreloadFailure = WorldBootstrapPreloadUtility.GetFirstPreloadFailure(preload);
@@ -92,9 +95,9 @@ namespace VVardenfell.Runtime.Streaming
                     throw new System.IO.InvalidDataException($"collisions.bin: {collisionLoad.Error}");
 
                 if (options.IsSandbox)
-                    SandboxWorldFixtureApplier.Apply(cache, preload, options.SandboxProfile ?? SandboxWorldFixtures.Active);
+                    SandboxWorldFixtureApplier.Apply(cache, options.SandboxProfile ?? SandboxWorldFixtures.Active);
 
-                progress?.Report("Background cache reads complete", 2, 2);
+                progress?.Report("Background cache reads complete", 1, 1);
                 progress?.CompleteStage();
                 yield return null;
 
@@ -109,15 +112,17 @@ namespace VVardenfell.Runtime.Streaming
                     out pendingPhysicsLoad,
                     out pendingPhysicsUnload);
 
-                foreach (var step in WorldBootstrapResourceSetup.InstallPreloadedCells(cache, preload, available, progress))
+                foreach (var step in WorldBootstrapResourceSetup.InstallAvailableCells(cache, available, progress))
                     yield return step;
-
-                var modelDefs = cache.ModelPrefabCatalog?.Records ?? System.Array.Empty<ModelPrefabDef>();
-                WorldResources.ModelPrefabs = new Entity[modelDefs.Length];
-                WorldModelPrefabUtility.BuildRuntimeSpawnPrefabLookups(cache);
 
                 foreach (var step in WorldBootstrapResourceSetup.InstallColliderBlobs(collisionLoad, progress))
                     yield return step;
+
+                progress?.BeginStage("Spawn prefabs", "Loading runtime spawn prefab cache", 1);
+                RuntimeSpawnPrefabMaterializer.LoadAndMaterialize(em, cache);
+                progress?.Report("Runtime spawn prefabs ready", 1, 1);
+                progress?.CompleteStage();
+                yield return null;
 
                 EnsurePhysicsMutationQueueReadyForDirectCellSpawn(world, em);
 
@@ -233,11 +238,6 @@ namespace VVardenfell.Runtime.Streaming
         public static void Uninstall()
         {
             WorldBootstrapStateUtility.Uninstall();
-        }
-
-        internal static bool EnsureModelPrefabBuilt(EntityManager em, int modelPrefabIndex)
-        {
-            return WorldModelPrefabUtility.EnsureModelPrefabBuilt(em, WorldResources.Cache, modelPrefabIndex);
         }
 
         static class PhysicsMutationQueueQueryCache

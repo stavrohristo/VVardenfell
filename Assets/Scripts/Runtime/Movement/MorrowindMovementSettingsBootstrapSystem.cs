@@ -21,7 +21,6 @@ namespace VVardenfell.Runtime.Movement
             }
 
             Entity entity = state.EntityManager.CreateEntity();
-            state.EntityManager.SetName(entity, "VVardenfell.MovementSettings");
             state.EntityManager.AddComponentData(entity, MorrowindMovementSettings.OpenMwDefaults());
             RuntimeBootstrapRequestUtility.Consume<MorrowindMovementSettingsBootstrapRequest>(state.EntityManager);
         }

@@ -105,7 +105,6 @@ namespace VVardenfell.Runtime.Player
             bool hasAppearance)
         {
             Entity visual = ecb.CreateEntity();
-            ecb.SetName(visual, new FixedString64Bytes("VVardenfell.PlayerVisual"));
             ecb.AddComponent(visual, new ActorSpawnSource
             {
                 Definition = actorHandle,

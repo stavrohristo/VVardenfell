@@ -33,7 +33,6 @@ namespace VVardenfell.Runtime.Rendering
             }
 
             Entity entity = entityManager.CreateEntity(typeof(MainCameraSingleton));
-            entityManager.SetName(entity, "VVardenfell.MainCamera");
             entityManager.SetComponentData(entity, new MainCameraSingleton
             {
                 Ref = camera,

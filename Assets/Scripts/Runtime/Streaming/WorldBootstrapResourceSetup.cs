@@ -37,9 +37,7 @@ namespace VVardenfell.Runtime.Streaming
 
         static readonly ProfilerMarker k_Managed = new("VV.Install.ManagedResources");
         static readonly ProfilerMarker k_TerrainAssets = new("VV.Install.TerrainAssetResolve");
-        static readonly ProfilerMarker k_CellPreload = new("VV.Install.CellPreload");
         static readonly ProfilerMarker k_InteractableBlobs = new("VV.Install.InteractableColliderLoad");
-        static readonly ProfilerMarker k_StatCellBlobs = new("VV.Install.CellColliderTransfer");
 
         public static IEnumerable<object> InstallManagedResources(CacheLoader cache, RuntimeLoadProgress progress)
         {
@@ -129,132 +127,39 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        public static IEnumerable<object> InstallPreloadedCells(
+        public static IEnumerable<object> InstallAvailableCells(
             CacheLoader cache,
-            WorldBootstrapPreloadResult preload,
             NativeHashSet<int2> available,
             RuntimeLoadProgress progress)
         {
-            int totalPreloadedCells = CountPreloadedCells(preload);
-            progress?.BeginStage("Cell preload merge", "Installing preloaded cells", totalPreloadedCells);
-            WorldResources.ClearPreloadedCells();
-            WorldResources.EnsurePreloadedCellCapacity(totalPreloadedCells);
-            int installed = 0;
+            int totalCells = cache.Manifest.CellGrid?.Length ?? 0;
+            progress?.BeginStage("Cell section manifest", "Publishing available cells", totalCells);
             for (int i = 0; i < cache.Manifest.CellGrid.Length; i++)
             {
-                k_CellPreload.Begin();
-                try
+                var g = cache.Manifest.CellGrid[i];
+                available.Add(new int2(g.Item1, g.Item2));
+                if (i + 1 == totalCells || ((i + 1) % MergeBatchSize) == 0)
                 {
-                    var data = preload.ExteriorCells[i];
-                    if (data == null)
-                        continue;
-
-                    var g = cache.Manifest.CellGrid[i];
-                    var coord = new int2(g.Item1, g.Item2);
-                    available.Add(coord);
-                    WorldResources.RegisterExteriorCell(coord, data);
-                    installed++;
-                }
-                finally
-                {
-                    k_CellPreload.End();
-                }
-
-                if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
-                {
-                    progress?.Report($"Installing preloaded cells {installed}/{totalPreloadedCells}", installed, totalPreloadedCells);
+                    progress?.Report($"Publishing available cells {i + 1}/{totalCells}", i + 1, totalCells);
                     yield return null;
                 }
             }
+
             for (int i = 0; i < cache.Manifest.InteriorCellCount; i++)
             {
-                var data = preload.InteriorCells[i];
-                if (data == null)
-                    continue;
-
                 string cellId = cache.Manifest.InteriorCellIds[i] ?? string.Empty;
-                if (!WorldResources.TryRegisterInteriorCell(cellId, data, out string existingId))
-                {
-                    Debug.LogWarning($"[VVardenfell][Streaming] interior cell hash collision between '{existingId}' and '{cellId}'; keeping the first hash mapping.");
-                }
-                installed++;
-                if (installed == totalPreloadedCells || (installed % MergeBatchSize) == 0)
-                {
-                    progress?.Report($"Installing preloaded cells {installed}/{totalPreloadedCells}", installed, totalPreloadedCells);
-                    yield return null;
-                }
+                WorldResources.RegisterInteriorCellId(cellId);
             }
-            if (installed != totalPreloadedCells)
-                throw new System.InvalidOperationException($"[VVardenfell][Streaming] installed {installed} preloaded cells, expected {totalPreloadedCells}.");
-
-            WorldResources.MarkPreloadedCellsComplete();
-            progress?.CompleteStage("Preloaded cells installed");
-        }
-
-        static int CountPreloadedCells(WorldBootstrapPreloadResult preload)
-        {
-            int count = 0;
-            var exterior = preload?.ExteriorCells ?? System.Array.Empty<CellData>();
-            for (int i = 0; i < exterior.Length; i++)
-                if (exterior[i] != null)
-                    count++;
-
-            var interior = preload?.InteriorCells ?? System.Array.Empty<CellData>();
-            for (int i = 0; i < interior.Length; i++)
-                if (interior[i] != null)
-                    count++;
-
-            return count;
+            progress?.CompleteStage("Cell section manifest ready");
         }
 
         public static IEnumerable<object> InstallColliderBlobs(WorldBootstrapCollisionLoadResult collisionLoad, RuntimeLoadProgress progress)
         {
-            int exteriorCellCount = WorldResources.ExteriorCellCount;
-            progress?.BeginStage("Cell collider transfer", "Registering collider blobs", exteriorCellCount);
-            WorldResources.StaticCellColliders.Clear();
-            WorldResources.TerrainColliders.Clear();
-            WorldResources.StaticCellColliders.EnsureCapacity(exteriorCellCount);
-            WorldResources.TerrainColliders.EnsureCapacity(exteriorCellCount);
+            progress?.BeginStage("Collider blobs", "Registering interactable collider blobs", 1);
             WorldResources.ColliderBlobs = collisionLoad.Blobs;
-
-            int statCellsWithCol = 0;
-            int terrainCellsWithCol = 0;
-            int cursor = 0;
-            var exteriorCells = WorldResources.CopyExteriorCellEntries();
-            for (int i = 0; i < exteriorCells.Length; i++)
-            {
-                var kv = exteriorCells[i];
-                k_StatCellBlobs.Begin();
-                try
-                {
-                    var coord = kv.Key;
-                    var data = kv.Value;
-                    if (data.HasStaticCollider)
-                    {
-                        WorldResources.StaticCellColliders[coord] = data.StaticColliderBlob;
-                        data.StaticColliderBlob = default;
-                        statCellsWithCol++;
-                    }
-                    if (data.HasTerrainCollider)
-                    {
-                        WorldResources.TerrainColliders[coord] = data.TerrainColliderBlob;
-                        data.TerrainColliderBlob = default;
-                        terrainCellsWithCol++;
-                    }
-                }
-                finally
-                {
-                    k_StatCellBlobs.End();
-                }
-
-                cursor++;
-                if (cursor == exteriorCellCount || (cursor % MergeBatchSize) == 0)
-                {
-                    progress?.Report($"Registering collider blobs {cursor}/{exteriorCellCount}", cursor, exteriorCellCount);
-                    yield return null;
-                }
-            }
+            progress?.Report("Interactable collider blobs registered", 1, 1);
             progress?.CompleteStage("Collider blobs registered");
+            yield return null;
         }
     }
 }

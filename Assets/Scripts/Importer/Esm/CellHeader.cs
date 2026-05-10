@@ -23,8 +23,10 @@ namespace VVardenfell.Importer.Esm
         public readonly CellEnvironmentData Environment;
         /// <summary>Stream position of the record header (start of the 16-byte record).</summary>
         public readonly long RecordOffset;
+        public readonly string SourcePath;
+        public readonly int ContentFileIndex;
 
-        public CellHeader(string name, CellFlags flags, int gridX, int gridY, CellEnvironmentData environment, long recordOffset)
+        public CellHeader(string name, CellFlags flags, int gridX, int gridY, CellEnvironmentData environment, long recordOffset, string sourcePath = null, int contentFileIndex = 0)
         {
             Name = name;
             Flags = flags;
@@ -32,6 +34,8 @@ namespace VVardenfell.Importer.Esm
             GridY = gridY;
             Environment = environment;
             RecordOffset = recordOffset;
+            SourcePath = sourcePath ?? string.Empty;
+            ContentFileIndex = contentFileIndex;
         }
 
         public bool IsInterior => (Flags & CellFlags.Interior) != 0;

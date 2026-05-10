@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Entities.Serialization;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Cache;
@@ -10,142 +12,172 @@ namespace VVardenfell.Runtime.Streaming
 {
     internal static class RuntimeWorldCellBlobBuilder
     {
-        public static BlobAssetReference<RuntimeWorldCellBlob> Build()
+        public static BlobAssetReference<RuntimeWorldCellBlob> Build(CacheLoader cache)
         {
-            if (!WorldResources.PreloadedCellsComplete)
-                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] cannot build runtime world-cell blob before cell preload is complete.");
+            if (cache?.Manifest == null)
+                throw new InvalidOperationException("[VVardenfell][WorldCellBlob] cannot build without a cache manifest.");
 
-            int exteriorCount = WorldResources.ExteriorCellCount;
-            int interiorCount = WorldResources.InteriorCellHashCount;
-            var cellSources = new List<CellSource>(exteriorCount + interiorCount);
+            var sources = LoadSectionSources(cache);
+            return BuildBlob(sources);
+        }
 
-            var exteriorCells = WorldResources.CopyExteriorCellEntries();
-            for (int i = 0; i < exteriorCells.Length; i++)
+        static List<CellSource> LoadSectionSources(CacheLoader cache)
+        {
+            var result = new List<CellSource>((cache.Manifest.CellGrid?.Length ?? 0) + (cache.Manifest.InteriorCellIds?.Length ?? 0));
+            var states = BuildCellStateLookup(cache.Manifest.CellStates);
+            var exterior = cache.Manifest.CellGrid ?? Array.Empty<(int X, int Y)>();
+            for (int i = 0; i < exterior.Length; i++)
             {
-                var kv = exteriorCells[i];
-                if (kv.Value == null)
-                    throw new InvalidOperationException($"[VVardenfell][WorldCellBlob] Exterior cell {kv.Key.x},{kv.Key.y} is null.");
-                cellSources.Add(new CellSource { Cell = kv.Value, Coord = kv.Key, IsInterior = false });
+                var coord = new int2(exterior[i].X, exterior[i].Y);
+                string path = ResolveCellSectionPath(ResolveCellState(states, false, coord.x, coord.y, null), false, coord.x, coord.y, null);
+                result.Add(ReadSection(path, false, string.Empty));
             }
 
-            var interiorCells = WorldResources.CopyInteriorCellHashEntries();
-            for (int i = 0; i < interiorCells.Length; i++)
+            var interiors = cache.Manifest.InteriorCellIds ?? Array.Empty<string>();
+            for (int i = 0; i < interiors.Length; i++)
             {
-                var kv = interiorCells[i];
-                if (kv.Value == null)
-                    throw new InvalidOperationException($"[VVardenfell][WorldCellBlob] Interior cell hash 0x{kv.Key:X16} is null.");
-                cellSources.Add(new CellSource
+                string cellId = interiors[i] ?? string.Empty;
+                string path = ResolveCellSectionPath(ResolveCellState(states, true, 0, 0, cellId), true, 0, 0, cellId);
+                result.Add(ReadSection(path, true, cellId));
+            }
+
+            return result;
+        }
+
+        static CellSource ReadSection(string path, bool isInterior, string cellId)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                throw new InvalidDataException($"[VVardenfell][WorldCellBlob] missing runtime cell section '{path}'; rebake required.");
+
+            using var world = new World($"VV.WorldCellBlobRead({Path.GetFileName(path)})");
+            byte[] bytes = File.ReadAllBytes(path);
+            unsafe
+            {
+                fixed (byte* ptr = bytes)
                 {
-                    Cell = kv.Value,
-                    Coord = default,
-                    IsInterior = true,
-                    InteriorCellHash = kv.Key,
-                    InteriorCellId = WorldResources.ResolveInteriorCellId(kv.Key),
-                });
+                    using var reader = new MemoryBinaryReader(ptr, bytes.Length);
+                    var tx = world.EntityManager.BeginExclusiveEntityTransaction();
+                    SerializeUtility.DeserializeWorld(tx, reader);
+                    world.EntityManager.EndExclusiveEntityTransaction();
+                }
             }
 
+            var em = world.EntityManager;
+            using var query = em.CreateEntityQuery(ComponentType.ReadOnly<RuntimeCellSectionHeader>());
+            if (query.CalculateEntityCount() != 1)
+                throw new InvalidDataException($"[VVardenfell][WorldCellBlob] section '{path}' must contain exactly one header.");
+            Entity entity = query.GetSingletonEntity();
+            var header = em.GetComponentData<RuntimeCellSectionHeader>(entity);
+            if (header.PipelineVersion != CacheFormat.WorldBakePipelineVersion)
+                throw new InvalidDataException($"[VVardenfell][WorldCellBlob] section '{path}' pipeline {header.PipelineVersion} does not match {CacheFormat.WorldBakePipelineVersion}; rebake required.");
+            if ((header.IsInterior != 0) != isInterior)
+                throw new InvalidDataException($"[VVardenfell][WorldCellBlob] section '{path}' interior flag mismatch.");
+
+            return new CellSource
+            {
+                Header = header,
+                Refs = CopyRefs(em, entity),
+                Doors = CopyDoors(em, entity),
+                LockStates = CopyLockStates(em, entity),
+                CapturedSouls = CopyCapturedSouls(em, entity),
+                TerrainHeights = CopyTerrainHeights(em, entity, header.Flags),
+                WorldMapSamples = CopyWorldMapSamples(em, entity, header.Flags),
+            };
+        }
+
+        static BlobAssetReference<RuntimeWorldCellBlob> BuildBlob(List<CellSource> sources)
+        {
             int refCount = 0;
             int doorCount = 0;
             int lockStateCount = 0;
             int capturedSoulCount = 0;
             int terrainHeightCount = 0;
             int worldMapSampleCount = 0;
-            for (int i = 0; i < cellSources.Count; i++)
+            for (int i = 0; i < sources.Count; i++)
             {
-                refCount += cellSources[i].Cell.Refs?.Length ?? 0;
-                doorCount += cellSources[i].Cell.Doors?.Length ?? 0;
-                lockStateCount += cellSources[i].Cell.LockStates?.Length ?? 0;
-                capturedSoulCount += cellSources[i].Cell.CapturedSouls?.Length ?? 0;
-                terrainHeightCount += cellSources[i].Cell.Heights?.Length ?? 0;
-                worldMapSampleCount += cellSources[i].Cell.WorldMap?.Length ?? 0;
+                refCount += sources[i].Refs.Length;
+                doorCount += sources[i].Doors.Length;
+                lockStateCount += sources[i].LockStates.Length;
+                capturedSoulCount += sources[i].CapturedSouls.Length;
+                terrainHeightCount += sources[i].TerrainHeights.Length;
+                worldMapSampleCount += sources[i].WorldMapSamples.Length;
             }
 
             var builder = new BlobBuilder(Allocator.Temp);
             try
             {
                 ref RuntimeWorldCellBlob root = ref builder.ConstructRoot<RuntimeWorldCellBlob>();
-                var cells = builder.Allocate(ref root.Cells, cellSources.Count);
+                var cells = builder.Allocate(ref root.Cells, sources.Count);
                 var refs = builder.Allocate(ref root.Refs, refCount);
                 var doors = builder.Allocate(ref root.Doors, doorCount);
                 var lockStates = builder.Allocate(ref root.LockStates, lockStateCount);
                 var capturedSouls = builder.Allocate(ref root.CapturedSouls, capturedSoulCount);
                 var terrainHeights = builder.Allocate(ref root.TerrainHeights, terrainHeightCount);
                 var worldMapSamples = builder.Allocate(ref root.WorldMapSamples, worldMapSampleCount);
-                var exteriorLookup = new List<RuntimeWorldCellExteriorLookupBlob>(exteriorCount);
-                var interiorLookup = new List<RuntimeContentHashLookupBlob>(interiorCount);
+                var exteriorLookup = new List<RuntimeWorldCellExteriorLookupBlob>();
+                var interiorLookup = new List<RuntimeContentHashLookupBlob>();
 
                 int refCursor = 0;
                 int doorCursor = 0;
-                int lockStateCursor = 0;
-                int capturedSoulCursor = 0;
-                int terrainHeightCursor = 0;
-                int worldMapSampleCursor = 0;
-                for (int i = 0; i < cellSources.Count; i++)
+                int lockCursor = 0;
+                int soulCursor = 0;
+                int heightCursor = 0;
+                int mapCursor = 0;
+                for (int i = 0; i < sources.Count; i++)
                 {
-                    var source = cellSources[i];
-                    var data = source.Cell;
-                    var sourceRefs = data.Refs ?? Array.Empty<RefEntry>();
-                    var sourceDoors = data.Doors ?? Array.Empty<DoorRefEntry>();
-                    var sourceLockStates = data.LockStates ?? Array.Empty<PlacedRefLockEntry>();
-                    var sourceCapturedSouls = data.CapturedSouls ?? Array.Empty<PlacedRefSoulEntry>();
-                    var sourceTerrainHeights = data.Heights ?? Array.Empty<float>();
-                    var sourceWorldMapSamples = data.WorldMap ?? Array.Empty<sbyte>();
+                    var source = sources[i];
                     int firstRef = refCursor;
                     int firstDoor = doorCursor;
-                    int firstLockState = lockStateCursor;
-                    int firstCapturedSoul = capturedSoulCursor;
-                    int firstTerrainHeight = terrainHeightCursor;
-                    int firstWorldMapSample = worldMapSampleCursor;
+                    int firstLock = lockCursor;
+                    int firstSoul = soulCursor;
+                    int firstHeight = heightCursor;
+                    int firstMap = mapCursor;
 
-                    for (int r = 0; r < sourceRefs.Length; r++)
-                        refs[refCursor++] = sourceRefs[r];
-                    for (int d = 0; d < sourceDoors.Length; d++)
-                        doors[doorCursor++] = CopyDoor(sourceDoors[d]);
-                    for (int l = 0; l < sourceLockStates.Length; l++)
-                        lockStates[lockStateCursor++] = CopyLockState(sourceLockStates[l]);
-                    for (int s = 0; s < sourceCapturedSouls.Length; s++)
-                        capturedSouls[capturedSoulCursor++] = CopyCapturedSoul(sourceCapturedSouls[s]);
-                    for (int h = 0; h < sourceTerrainHeights.Length; h++)
-                        terrainHeights[terrainHeightCursor++] = sourceTerrainHeights[h];
-                    for (int m = 0; m < sourceWorldMapSamples.Length; m++)
-                        worldMapSamples[worldMapSampleCursor++] = sourceWorldMapSamples[m];
+                    for (int r = 0; r < source.Refs.Length; r++)
+                        refs[refCursor++] = source.Refs[r];
+                    for (int d = 0; d < source.Doors.Length; d++)
+                        doors[doorCursor++] = source.Doors[d];
+                    for (int l = 0; l < source.LockStates.Length; l++)
+                        lockStates[lockCursor++] = source.LockStates[l];
+                    for (int s = 0; s < source.CapturedSouls.Length; s++)
+                        capturedSouls[soulCursor++] = source.CapturedSouls[s];
+                    for (int h = 0; h < source.TerrainHeights.Length; h++)
+                        terrainHeights[heightCursor++] = source.TerrainHeights[h];
+                    for (int m = 0; m < source.WorldMapSamples.Length; m++)
+                        worldMapSamples[mapCursor++] = source.WorldMapSamples[m];
 
+                    bool isInterior = source.Header.IsInterior != 0;
+                    var coord = new int2(source.Header.GridX, source.Header.GridY);
                     cells[i] = new RuntimeWorldCellDefBlob
                     {
-                        ExteriorCoord = source.Coord,
-                        CellId = RuntimeFixedStringUtility.ToFixed128OrDefault(data.CellId),
-                        InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(source.InteriorCellId),
-                        InteriorCellHash = source.InteriorCellHash,
-                        IsInterior = (byte)(source.IsInterior ? 1 : 0),
-                        HasTerrain = (byte)(data.HasTerrain ? 1 : 0),
-                        HasWorldMap = (byte)(data.WorldMap != null ? 1 : 0),
-                        HasStaticCollider = (byte)(data.HasStaticCollider || WorldResources.TryGetStaticCellCollider(source.Coord, out _) ? 1 : 0),
-                        HasTerrainCollider = (byte)(data.HasTerrainCollider || WorldResources.TryGetTerrainCollider(source.Coord, out _) ? 1 : 0),
+                        ExteriorCoord = coord,
+                        CellId = source.Header.CellId,
+                        InteriorCellId = isInterior ? source.Header.CellId : default,
+                        InteriorCellHash = source.Header.InteriorCellHash,
+                        IsInterior = (byte)(isInterior ? 1 : 0),
+                        HasTerrain = (byte)((source.Header.Flags & CacheFormat.CellFlagHasTerrain) != 0 ? 1 : 0),
+                        HasWorldMap = (byte)((source.Header.Flags & CacheFormat.CellFlagHasWorldMap) != 0 ? 1 : 0),
+                        HasStaticCollider = (byte)((source.Header.Flags & CacheFormat.CellFlagHasStaticCollision) != 0 ? 1 : 0),
+                        HasTerrainCollider = (byte)((source.Header.Flags & CacheFormat.CellFlagHasTerrain) != 0 ? 1 : 0),
                         FirstRefIndex = firstRef,
-                        RefCount = sourceRefs.Length,
+                        RefCount = source.Refs.Length,
                         FirstDoorIndex = firstDoor,
-                        DoorCount = sourceDoors.Length,
-                        FirstLockStateIndex = firstLockState,
-                        LockStateCount = sourceLockStates.Length,
-                        FirstCapturedSoulIndex = firstCapturedSoul,
-                        CapturedSoulCount = sourceCapturedSouls.Length,
-                        FirstTerrainHeightIndex = firstTerrainHeight,
-                        TerrainHeightCount = sourceTerrainHeights.Length,
-                        FirstWorldMapSampleIndex = firstWorldMapSample,
-                        WorldMapSampleCount = sourceWorldMapSamples.Length,
-                        Environment = CopyEnvironment(data.Environment),
+                        DoorCount = source.Doors.Length,
+                        FirstLockStateIndex = firstLock,
+                        LockStateCount = source.LockStates.Length,
+                        FirstCapturedSoulIndex = firstSoul,
+                        CapturedSoulCount = source.CapturedSouls.Length,
+                        FirstTerrainHeightIndex = firstHeight,
+                        TerrainHeightCount = source.TerrainHeights.Length,
+                        FirstWorldMapSampleIndex = firstMap,
+                        WorldMapSampleCount = source.WorldMapSamples.Length,
+                        Environment = CopyEnvironment(source.Header.Environment),
                     };
 
-                    if (source.IsInterior)
-                    {
-                        if (source.InteriorCellHash == 0UL)
-                            throw new InvalidOperationException($"[VVardenfell][WorldCellBlob] Interior cell '{source.InteriorCellId}' has no hash.");
-                        interiorLookup.Add(new RuntimeContentHashLookupBlob { Hash = source.InteriorCellHash, HandleValue = i });
-                    }
+                    if (isInterior)
+                        interiorLookup.Add(new RuntimeContentHashLookupBlob { Hash = source.Header.InteriorCellHash, HandleValue = i });
                     else
-                    {
-                        exteriorLookup.Add(new RuntimeWorldCellExteriorLookupBlob { Coord = source.Coord, CellIndex = i });
-                    }
+                        exteriorLookup.Add(new RuntimeWorldCellExteriorLookupBlob { Coord = coord, CellIndex = i });
                 }
 
                 CopyExteriorLookup(ref builder, ref root.ExteriorCellLookup, exteriorLookup);
@@ -158,46 +190,99 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        static RuntimeWorldDoorRefDefBlob CopyDoor(in DoorRefEntry source)
+        static RefEntry[] CopyRefs(EntityManager em, Entity entity)
         {
-            ulong destinationHash = string.IsNullOrWhiteSpace(source.DestinationCellId)
-                ? 0UL
-                : InteriorCellIdHash.Hash(source.DestinationCellId);
-            return new RuntimeWorldDoorRefDefBlob
-            {
-                PlacedRefId = source.PlacedRefId,
-                Flags = source.Flags,
-                DestPosX = source.DestPosX,
-                DestPosY = source.DestPosY,
-                DestPosZ = source.DestPosZ,
-                DestRotX = source.DestRotX,
-                DestRotY = source.DestRotY,
-                DestRotZ = source.DestRotZ,
-                DestRotW = source.DestRotW,
-                DestinationCellId = RuntimeFixedStringUtility.ToFixed128OrDefault(source.DestinationCellId),
-                DestinationCellHash = destinationHash,
-            };
+            var buffer = em.GetBuffer<RuntimeCellSectionRef>(entity);
+            var result = new RefEntry[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = buffer[i].Value;
+            return result;
         }
 
-        static RuntimeWorldPlacedRefLockStateBlob CopyLockState(in PlacedRefLockEntry source)
-            => new RuntimeWorldPlacedRefLockStateBlob
+        static RuntimeWorldDoorRefDefBlob[] CopyDoors(EntityManager em, Entity entity)
+        {
+            var buffer = em.GetBuffer<RuntimeCellSectionDoor>(entity);
+            var result = new RuntimeWorldDoorRefDefBlob[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
             {
-                PlacedRefId = source.PlacedRefId,
-                LockLevel = source.LockLevel,
-                Locked = source.Locked,
-                KeyId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(source.KeyId),
-                TrapId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(source.TrapId),
-            };
+                var door = buffer[i];
+                result[i] = new RuntimeWorldDoorRefDefBlob
+                {
+                    PlacedRefId = door.PlacedRefId,
+                    Flags = door.Flags,
+                    DestPosX = door.DestinationPosition.x,
+                    DestPosY = door.DestinationPosition.y,
+                    DestPosZ = door.DestinationPosition.z,
+                    DestRotX = door.DestinationRotation.value.x,
+                    DestRotY = door.DestinationRotation.value.y,
+                    DestRotZ = door.DestinationRotation.value.z,
+                    DestRotW = door.DestinationRotation.value.w,
+                    DestinationCellId = door.DestinationCellId,
+                    DestinationCellHash = string.IsNullOrWhiteSpace(door.DestinationCellId.ToString()) ? 0UL : InteriorCellIdHash.Hash(door.DestinationCellId.ToString()),
+                };
+            }
+            return result;
+        }
 
-        static RuntimeWorldPlacedRefCapturedSoulBlob CopyCapturedSoul(in PlacedRefSoulEntry source)
-            => new RuntimeWorldPlacedRefCapturedSoulBlob
+        static RuntimeWorldPlacedRefLockStateBlob[] CopyLockStates(EntityManager em, Entity entity)
+        {
+            var buffer = em.GetBuffer<RuntimeCellSectionLockState>(entity);
+            var result = new RuntimeWorldPlacedRefLockStateBlob[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
             {
-                PlacedRefId = source.PlacedRefId,
-                SoulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(source.SoulId),
-                SoulIdHash = RuntimeContentStableHash.HashId(source.SoulId),
-            };
+                var item = buffer[i];
+                result[i] = new RuntimeWorldPlacedRefLockStateBlob
+                {
+                    PlacedRefId = item.PlacedRefId,
+                    LockLevel = item.LockLevel,
+                    Locked = item.Locked,
+                    KeyId = item.KeyId,
+                    TrapId = item.TrapId,
+                };
+            }
+            return result;
+        }
 
-        static RuntimeWorldCellEnvironmentDefBlob CopyEnvironment(in CellEnvironmentData source)
+        static RuntimeWorldPlacedRefCapturedSoulBlob[] CopyCapturedSouls(EntityManager em, Entity entity)
+        {
+            var buffer = em.GetBuffer<RuntimeCellSectionCapturedSoul>(entity);
+            var result = new RuntimeWorldPlacedRefCapturedSoulBlob[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
+            {
+                var item = buffer[i];
+                result[i] = new RuntimeWorldPlacedRefCapturedSoulBlob
+                {
+                    PlacedRefId = item.PlacedRefId,
+                    SoulId = item.SoulId,
+                    SoulIdHash = RuntimeContentStableHash.HashId(item.SoulId.ToString()),
+                };
+            }
+            return result;
+        }
+
+        static float[] CopyTerrainHeights(EntityManager em, Entity entity, uint flags)
+        {
+            if ((flags & CacheFormat.CellFlagHasTerrain) == 0)
+                return Array.Empty<float>();
+            var buffer = em.GetBuffer<RuntimeCellSectionTerrainHeight>(entity);
+            var result = new float[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = buffer[i].Value;
+            return result;
+        }
+
+        static sbyte[] CopyWorldMapSamples(EntityManager em, Entity entity, uint flags)
+        {
+            if ((flags & CacheFormat.CellFlagHasWorldMap) == 0)
+                return Array.Empty<sbyte>();
+            var buffer = em.GetBuffer<RuntimeCellSectionWorldMapSample>(entity);
+            var result = new sbyte[buffer.Length];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = buffer[i].Value;
+            return result;
+        }
+
+        static RuntimeWorldCellEnvironmentDefBlob CopyEnvironment(in CellEnvironmentDataBlob source)
             => new RuntimeWorldCellEnvironmentDefBlob
             {
                 HasMood = source.HasMood,
@@ -207,13 +292,41 @@ namespace VVardenfell.Runtime.Streaming
                 FogColorRgba = source.FogColorRgba,
                 FogDensity = source.FogDensity,
                 WaterHeight = source.WaterHeight,
-                RegionIdHash = RuntimeContentStableHash.HashId(source.RegionId),
+                RegionIdHash = RuntimeContentStableHash.HashId(source.RegionId.ToString()),
             };
 
-        static void CopyExteriorLookup(
-            ref BlobBuilder builder,
-            ref BlobArray<RuntimeWorldCellExteriorLookupBlob> destination,
-            List<RuntimeWorldCellExteriorLookupBlob> source)
+        static Dictionary<string, BakeManifest.BakedCellState> BuildCellStateLookup(BakeManifest.BakedCellState[] states)
+        {
+            var lookup = new Dictionary<string, BakeManifest.BakedCellState>(StringComparer.OrdinalIgnoreCase);
+            if (states == null)
+                return lookup;
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i];
+                if (state == null)
+                    continue;
+                lookup[state.IsInterior ? BuildInteriorCellStateKey(state.InteriorId) : BuildExteriorCellStateKey(state.GridX, state.GridY)] = state;
+            }
+            return lookup;
+        }
+
+        static BakeManifest.BakedCellState ResolveCellState(Dictionary<string, BakeManifest.BakedCellState> stateByKey, bool isInterior, int gridX, int gridY, string interiorId)
+        {
+            string key = isInterior ? BuildInteriorCellStateKey(interiorId) : BuildExteriorCellStateKey(gridX, gridY);
+            return stateByKey.TryGetValue(key, out var state) ? state : null;
+        }
+
+        static string ResolveCellSectionPath(BakeManifest.BakedCellState state, bool isInterior, int gridX, int gridY, string interiorId)
+            => !string.IsNullOrWhiteSpace(state?.SectionPath)
+                ? state.SectionPath
+                : isInterior
+                    ? CachePaths.InteriorCellSectionFile(interiorId ?? string.Empty)
+                    : CachePaths.ExteriorCellSectionFile(gridX, gridY);
+
+        static string BuildExteriorCellStateKey(int gridX, int gridY) => $"ext:{gridX},{gridY}";
+        static string BuildInteriorCellStateKey(string interiorId) => $"int:{(interiorId ?? string.Empty).Trim().ToLowerInvariant()}";
+
+        static void CopyExteriorLookup(ref BlobBuilder builder, ref BlobArray<RuntimeWorldCellExteriorLookupBlob> destination, List<RuntimeWorldCellExteriorLookupBlob> source)
         {
             source.Sort((a, b) => PackCoord(a.Coord).CompareTo(PackCoord(b.Coord)));
             var dst = builder.Allocate(ref destination, source.Count);
@@ -228,10 +341,7 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
-        static void CopyInteriorLookup(
-            ref BlobBuilder builder,
-            ref BlobArray<RuntimeContentHashLookupBlob> destination,
-            List<RuntimeContentHashLookupBlob> source)
+        static void CopyInteriorLookup(ref BlobBuilder builder, ref BlobArray<RuntimeContentHashLookupBlob> destination, List<RuntimeContentHashLookupBlob> source)
         {
             source.Sort((a, b) => a.Hash.CompareTo(b.Hash));
             var dst = builder.Allocate(ref destination, source.Count);
@@ -250,11 +360,13 @@ namespace VVardenfell.Runtime.Streaming
 
         struct CellSource
         {
-            public CellData Cell;
-            public int2 Coord;
-            public bool IsInterior;
-            public string InteriorCellId;
-            public ulong InteriorCellHash;
+            public RuntimeCellSectionHeader Header;
+            public RefEntry[] Refs;
+            public RuntimeWorldDoorRefDefBlob[] Doors;
+            public RuntimeWorldPlacedRefLockStateBlob[] LockStates;
+            public RuntimeWorldPlacedRefCapturedSoulBlob[] CapturedSouls;
+            public float[] TerrainHeights;
+            public sbyte[] WorldMapSamples;
         }
     }
 }

@@ -2,6 +2,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
+using VVardenfell.Core.Config;
 
 namespace VVardenfell.Core.Cache
 {
@@ -12,13 +13,15 @@ namespace VVardenfell.Core.Cache
     {
         public const string RootFolderName = "vvardenfell-cache";
         private static string s_root;
+        private static string s_profileRootFolderName;
 
-        public static string Root => s_root ??= Path.Combine(Application.persistentDataPath, RootFolderName);
+        public static string Root => s_root ??= Path.Combine(Application.persistentDataPath, s_profileRootFolderName ?? RootFolderName);
         public static string Manifest => Path.Combine(Root, "manifest.bin");
         public static string Meshes => Path.Combine(Root, "meshes.bin");
         public static string Materials => Path.Combine(Root, "materials.bin");
         public static string MeshNames => Path.Combine(Root, "meshnames.bin");
         public static string ModelPrefabs => Path.Combine(Root, "model_prefabs.bin");
+        public static string RuntimeSpawnPrefabs => Path.Combine(Root, "runtime_spawn_prefabs.entities");
         public static string VfxEffects => Path.Combine(Root, "vfx_effects.bin");
         public static string ActorAnimations => Path.Combine(Root, "actor_animations.bin");
         public static string TexturesIndex => Path.Combine(Root, "textures.bin");
@@ -39,17 +42,23 @@ namespace VVardenfell.Core.Cache
         public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");
         public static string TexturesDir => Path.Combine(Root, "textures");
         public static string AudioDir => Path.Combine(Root, "audio");
-        public static string CellsDir => Path.Combine(Root, "cells");
-        public static string InteriorCellsDir => Path.Combine(Root, "interiors");
+        public static string LegacyExteriorCellsDir => Path.Combine(Root, "cells");
+        public static string LegacyInteriorCellsDir => Path.Combine(Root, "interiors");
+        public static string CellAuditsDir => Path.Combine(Root, "cell_audits");
+        public static string ExteriorCellAuditsDir => Path.Combine(CellAuditsDir, "exteriors");
+        public static string InteriorCellAuditsDir => Path.Combine(CellAuditsDir, "interiors");
+        public static string CellSectionsDir => Path.Combine(Root, "cell_sections");
+        public static string ExteriorCellSectionsDir => Path.Combine(CellSectionsDir, "exteriors");
+        public static string InteriorCellSectionsDir => Path.Combine(CellSectionsDir, "interiors");
         public static string UiMoviesDir => Path.Combine(Root, "ui_movies");
 
         public static string TextureFile(string hashHex) => Path.Combine(TexturesDir, hashHex + ".dds");
-        public static string CellFile(int gridX, int gridY) => Path.Combine(CellsDir, $"{gridX}_{gridY}.bin");
-        public static string CellPlacementAuditFile(int gridX, int gridY) => Path.Combine(CellsDir, $"{gridX}_{gridY}.audit.bin");
-        public static string InteriorCellFile(string cellId)
-            => Path.Combine(InteriorCellsDir, StableHashHex(cellId) + ".bin");
+        public static string ExteriorCellSectionFile(int gridX, int gridY) => Path.Combine(ExteriorCellSectionsDir, $"{gridX}_{gridY}.entities");
+        public static string CellPlacementAuditFile(int gridX, int gridY) => Path.Combine(ExteriorCellAuditsDir, $"{gridX}_{gridY}.audit.bin");
+        public static string InteriorCellSectionFile(string cellId)
+            => Path.Combine(InteriorCellSectionsDir, StableHashHex(cellId) + ".entities");
         public static string InteriorCellPlacementAuditFile(string cellId)
-            => Path.Combine(InteriorCellsDir, StableHashHex(cellId) + ".audit.bin");
+            => Path.Combine(InteriorCellAuditsDir, StableHashHex(cellId) + ".audit.bin");
         public static string UiMovieFile(string slotName)
             => Path.Combine(UiMoviesDir, SanitizeFileName(slotName) + ".mp4");
 
@@ -61,11 +70,34 @@ namespace VVardenfell.Core.Cache
             _ = Root;
         }
 
+        public static void UseVanillaRoot()
+        {
+            s_profileRootFolderName = null;
+            s_root = null;
+        }
+
+        public static void UseContentProfile(MorrowindContentProfile profile)
+        {
+            if (profile == null || string.Equals(profile.ProfileId, "vanilla", System.StringComparison.OrdinalIgnoreCase))
+            {
+                UseVanillaRoot();
+                return;
+            }
+
+            string key = string.IsNullOrWhiteSpace(profile.ProfileCacheKey)
+                ? MorrowindContentProfile.BuildCacheKey(profile)
+                : profile.ProfileCacheKey;
+            s_profileRootFolderName = RootFolderName + "-" + SanitizeFileName(profile.ProfileId) + "-" + SanitizeFileName(key);
+            s_root = null;
+        }
+
         public static void EnsureExists()
         {
             Directory.CreateDirectory(Root);
-            Directory.CreateDirectory(CellsDir);
-            Directory.CreateDirectory(InteriorCellsDir);
+            Directory.CreateDirectory(ExteriorCellAuditsDir);
+            Directory.CreateDirectory(InteriorCellAuditsDir);
+            Directory.CreateDirectory(ExteriorCellSectionsDir);
+            Directory.CreateDirectory(InteriorCellSectionsDir);
             Directory.CreateDirectory(UiMoviesDir);
         }
 

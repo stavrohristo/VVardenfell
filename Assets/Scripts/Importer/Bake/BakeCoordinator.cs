@@ -14,15 +14,18 @@ namespace VVardenfell.Importer.Bake
     public static class BakeCoordinator
     {
         public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress)
+            => Bake(config, config?.CreateVanillaContentProfile(), progress);
+
+        public static IEnumerator Bake(MorrowindConfig config, MorrowindContentProfile profile, BakeProgress progress)
         {
             progress.Done = false;
-            yield return GameplayContentBakery.Bake(config, progress, markDone: false);
+            yield return GameplayContentBakery.Bake(config, profile, progress, markDone: false);
             if (!string.IsNullOrEmpty(progress.Error))
                 yield break;
 
             progress.Done = false;
             var gameplayContent = GameplayContentFile.Read(CachePaths.GameplayContent);
-            yield return WorldBakeService.Bake(config, progress, gameplayContent);
+            yield return WorldBakeService.Bake(config, profile, progress, gameplayContent);
         }
 
         public static IEnumerator BakeUiOnly(MorrowindConfig config, BakeProgress progress)
@@ -31,18 +34,24 @@ namespace VVardenfell.Importer.Bake
         }
 
         public static IEnumerator BakeGameplayOnly(MorrowindConfig config, BakeProgress progress)
+            => BakeGameplayOnly(config, config?.CreateVanillaContentProfile(), progress);
+
+        public static IEnumerator BakeGameplayOnly(MorrowindConfig config, MorrowindContentProfile profile, BakeProgress progress)
         {
-            yield return GameplayContentBakery.Bake(config, progress);
+            yield return GameplayContentBakery.Bake(config, profile, progress);
         }
 
         public static IEnumerator BakeUiAndGameplayOnly(MorrowindConfig config, BakeProgress progress)
+            => BakeUiAndGameplayOnly(config, config?.CreateVanillaContentProfile(), progress);
+
+        public static IEnumerator BakeUiAndGameplayOnly(MorrowindConfig config, MorrowindContentProfile profile, BakeProgress progress)
         {
             yield return BakeUiOnlyInternal(config, progress, markDone: false);
             if (!string.IsNullOrEmpty(progress.Error))
                 yield break;
 
             progress.Done = false;
-            yield return GameplayContentBakery.Bake(config, progress);
+            yield return GameplayContentBakery.Bake(config, profile, progress);
         }
 
         static IEnumerator BakeUiOnlyInternal(MorrowindConfig config, BakeProgress progress, bool markDone)

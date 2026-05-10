@@ -395,7 +395,6 @@ namespace VVardenfell.Runtime.Rendering
             int prototypeMeshIndex)
         {
             Entity prototype = entityManager.CreateEntity();
-            entityManager.SetName(prototype, name);
             RenderMeshUtility.AddComponents(
                 prototype,
                 entityManager,

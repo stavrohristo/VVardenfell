@@ -21,7 +21,6 @@ namespace VVardenfell.Runtime.Animation
             }
 
             Entity settingsEntity = state.EntityManager.CreateEntity();
-            state.EntityManager.SetName(settingsEntity, "VVardenfell.ActorAnimationRuntimeSettings");
             state.EntityManager.AddComponentData(settingsEntity, new ActorAnimationRuntimeSettings
             {
                 Mode = ActorAnimationRuntimeMode.Gpu,

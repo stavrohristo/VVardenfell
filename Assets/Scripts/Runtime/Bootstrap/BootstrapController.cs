@@ -75,7 +75,7 @@ namespace VVardenfell.Runtime.Bootstrap
             }
         }
 
-        private enum Stage { PickPath, PickMode, PickBattleground, Baking, Loading, Ready, Failed }
+        private enum Stage { PickPath, PickMode, PickProjectTamrielPath, PickBattleground, Baking, Loading, Ready, Failed }
         public static BootstrapController Active { get; private set; }
 
         [Header("Player Movement")]
@@ -84,6 +84,8 @@ namespace VVardenfell.Runtime.Bootstrap
         private Stage _stage = Stage.PickPath;
         private string _path = "";
         private string _pathError;
+        private string _projectTamrielPath = "";
+        private string _projectTamrielPathError;
         private string _fatalError;
         private string _lastLoggedDisplayedError;
         private MorrowindConfig _config;
@@ -96,6 +98,7 @@ namespace VVardenfell.Runtime.Bootstrap
         private bool _loadStartRequested;
         private BootstrapRuntimeMode _selectedRuntimeMode = BootstrapRuntimeMode.Vanilla;
         private WorldBootstrapOptions _bootstrapOptions = WorldBootstrapOptions.Vanilla;
+        private MorrowindContentProfile _selectedContentProfile;
         private bool _pendingCombatBattlegroundSelection;
         private string _combatBattlegroundFilter = string.Empty;
         private (int X, int Y)[] _combatBattlegroundCells = Array.Empty<(int X, int Y)>();
@@ -218,6 +221,20 @@ namespace VVardenfell.Runtime.Bootstrap
         private void BeginCacheFlow(BootstrapRuntimeMode mode)
         {
             _selectedRuntimeMode = mode;
+            if (!ResolveContentProfileForMode(mode, out _selectedContentProfile, out string profileError))
+            {
+                if (mode == BootstrapRuntimeMode.ProjectTamriel)
+                {
+                    ShowProjectTamrielPathSelection(profileError);
+                    return;
+                }
+
+                SetFatalError(profileError);
+                _stage = Stage.Failed;
+                return;
+            }
+            CachePaths.UseContentProfile(_selectedContentProfile);
+
             _pendingCombatBattlegroundSelection = mode == BootstrapRuntimeMode.CombatSandbox;
             if (!_pendingCombatBattlegroundSelection)
                 _bootstrapOptions = BuildBootstrapOptions(mode);
@@ -229,13 +246,13 @@ namespace VVardenfell.Runtime.Bootstrap
             _progress.Error = null;
             _progress.Done = false;
 
-            string esmPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.esm");
-            string bsaPath = Path.Combine(_config.InstallPath, "Data Files", "Morrowind.bsa");
-            string[] gameplayRecordSources = InstalledContentSources.ResolveGameplayRecordSources(_config.InstallPath);
-            string[] gameplaySources = InstalledContentSources.ResolveGameplayDependencySources(_config.InstallPath);
+            string esmPath = _selectedContentProfile.ContentFiles.Length > 0 ? _selectedContentProfile.ContentFiles[0] : Path.Combine(_config.InstallPath, "Data Files", "Morrowind.esm");
+            string bsaPath = _selectedContentProfile.Archives.Length > 0 ? _selectedContentProfile.Archives[0] : Path.Combine(_config.InstallPath, "Data Files", "Morrowind.bsa");
+            string[] gameplayRecordSources = InstalledContentSources.ResolveGameplayRecordSources(_selectedContentProfile);
+            string[] gameplaySources = InstalledContentSources.ResolveGameplayDependencySources(_selectedContentProfile);
 
             bool worldCacheValid = BakeManifest.TryRead(CachePaths.Manifest, out var worldManifest)
-                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplayRecordSources)
+                                   && worldManifest.SourcesMatch(esmPath, bsaPath, gameplaySources)
                                    && WorldCachePipelineMatchesRuntime(worldManifest);
             bool uiCacheValid = UiCacheManifest.TryRead(CachePaths.UiManifest, out var uiManifest)
                                 && uiManifest.SourcesMatch(_config.InstallPath)
@@ -253,7 +270,7 @@ namespace VVardenfell.Runtime.Bootstrap
             else if (worldCacheValid && uiCacheValid)
             {
                 _stage = Stage.Baking;
-                StartCoroutine(BakeCoordinator.BakeGameplayOnly(_config, _progress));
+                StartCoroutine(BakeCoordinator.BakeGameplayOnly(_config, _selectedContentProfile, _progress));
             }
             else if (worldCacheValid && gameplayCacheValid)
             {
@@ -263,13 +280,101 @@ namespace VVardenfell.Runtime.Bootstrap
             else if (worldCacheValid)
             {
                 _stage = Stage.Baking;
-                StartCoroutine(BakeCoordinator.BakeUiAndGameplayOnly(_config, _progress));
+                StartCoroutine(BakeCoordinator.BakeUiAndGameplayOnly(_config, _selectedContentProfile, _progress));
             }
             else
             {
                 _stage = Stage.Baking;
-                StartCoroutine(BakeCoordinator.Bake(_config, _progress));
+                StartCoroutine(BakeCoordinator.Bake(_config, _selectedContentProfile, _progress));
             }
+        }
+
+        private bool ResolveContentProfileForMode(BootstrapRuntimeMode mode, out MorrowindContentProfile profile, out string error)
+        {
+            if (mode != BootstrapRuntimeMode.ProjectTamriel)
+            {
+                profile = _config.CreateVanillaContentProfile();
+                error = null;
+                return true;
+            }
+
+            profile = _config.ProjectTamrielProfile;
+            if (profile != null && profile.IsValid(out _))
+            {
+                if (InstalledContentSources.TryCreateProjectTamrielProfile(
+                        _config.InstallPath,
+                        profile.InstallPath,
+                        out MorrowindContentProfile refreshedProfile,
+                        out _)
+                    && !ContentProfilesMatch(profile, refreshedProfile))
+                {
+                    profile = refreshedProfile;
+                    _config.ProjectTamrielProfile = profile;
+                    ConfigStorage.Save(_config);
+                }
+
+                error = null;
+                return true;
+            }
+
+            if (!InstalledContentSources.TryCreateProjectTamrielProfile(_config.InstallPath, out profile, out error))
+                return false;
+
+            _config.ProjectTamrielProfile = profile;
+            ConfigStorage.Save(_config);
+            error = null;
+            return true;
+        }
+
+        private static bool ContentProfilesMatch(MorrowindContentProfile a, MorrowindContentProfile b)
+        {
+            if (a == null || b == null)
+                return false;
+
+            string aKey = string.IsNullOrWhiteSpace(a.ProfileCacheKey)
+                ? MorrowindContentProfile.BuildCacheKey(a)
+                : a.ProfileCacheKey;
+            string bKey = string.IsNullOrWhiteSpace(b.ProfileCacheKey)
+                ? MorrowindContentProfile.BuildCacheKey(b)
+                : b.ProfileCacheKey;
+
+            return string.Equals(aKey, bKey, StringComparison.OrdinalIgnoreCase)
+                   && StringArraysMatch(a.ContentFiles, b.ContentFiles)
+                   && StringArraysMatch(a.Archives, b.Archives)
+                   && StringArraysMatch(a.DataRoots, b.DataRoots);
+        }
+
+        private static bool StringArraysMatch(string[] a, string[] b)
+        {
+            int aLength = a?.Length ?? 0;
+            int bLength = b?.Length ?? 0;
+            if (aLength != bLength)
+                return false;
+
+            for (int i = 0; i < aLength; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+            return true;
+        }
+
+        private void ShowProjectTamrielPathSelection(string error)
+        {
+            _stage = Stage.PickProjectTamrielPath;
+            _projectTamrielPath = ResolveInitialProjectTamrielPickerPath();
+            _projectTamrielPathError = error;
+        }
+
+        private string ResolveInitialProjectTamrielPickerPath()
+        {
+            if (!string.IsNullOrWhiteSpace(_projectTamrielPath))
+                return _projectTamrielPath;
+
+            string savedInstallPath = _config?.ProjectTamrielProfile?.InstallPath;
+            if (!string.IsNullOrWhiteSpace(savedInstallPath))
+                return savedInstallPath;
+
+            return _config?.InstallPath ?? _path ?? string.Empty;
         }
 
         private static bool WorldCachePipelineMatchesRuntime(BakeManifest manifest)
@@ -599,6 +704,13 @@ namespace VVardenfell.Runtime.Bootstrap
                 case Stage.PickMode:
                     _fallbackView.ShowModePicker(_config?.InstallPath, OnFallbackModeSelected);
                     break;
+                case Stage.PickProjectTamrielPath:
+                    _fallbackView.ShowPathPicker(
+                        _projectTamrielPath,
+                        _projectTamrielPathError,
+                        "VVardenfell - Locate Project Tamriel Data",
+                        "Path to Project Tamriel install or Data Files");
+                    break;
                 case Stage.PickBattleground:
                     _fallbackView.ShowCombatBattlegroundPicker(
                         _combatBattlegroundCells,
@@ -644,12 +756,25 @@ namespace VVardenfell.Runtime.Bootstrap
 
         private void OnFallbackPathChanged(string value)
         {
+            if (_stage == Stage.PickProjectTamrielPath)
+            {
+                _projectTamrielPath = value ?? string.Empty;
+                _projectTamrielPathError = null;
+                return;
+            }
+
             _path = value ?? string.Empty;
             _pathError = null;
         }
 
         private void ContinueFromFallbackPicker()
         {
+            if (_stage == Stage.PickProjectTamrielPath)
+            {
+                ContinueFromProjectTamrielPicker();
+                return;
+            }
+
             var cfg = new MorrowindConfig { InstallPath = _path?.Trim() };
             if (cfg.IsValid(out var err))
             {
@@ -663,6 +788,30 @@ namespace VVardenfell.Runtime.Bootstrap
             {
                 SetPathError(err);
             }
+        }
+
+        private void ContinueFromProjectTamrielPicker()
+        {
+            if (_config == null)
+            {
+                SetProjectTamrielPathError("Morrowind install must be configured before Project Tamriel.");
+                return;
+            }
+
+            if (!InstalledContentSources.TryCreateProjectTamrielProfile(
+                    _config.InstallPath,
+                    _projectTamrielPath,
+                    out MorrowindContentProfile profile,
+                    out string error))
+            {
+                SetProjectTamrielPathError(error);
+                return;
+            }
+
+            _config.ProjectTamrielProfile = profile;
+            ConfigStorage.Save(_config);
+            _projectTamrielPathError = null;
+            BeginCacheFlow(BootstrapRuntimeMode.ProjectTamriel);
         }
 
         private void OnFallbackModeSelected(BootstrapRuntimeMode mode)
@@ -700,7 +849,10 @@ namespace VVardenfell.Runtime.Bootstrap
                     return new WorldBootstrapOptions(mode, profile.PlayerStartPosition, profile.PlayerStartRotation, profile);
             }
 
-            return WorldBootstrapOptions.Vanilla;
+            return new WorldBootstrapOptions(
+                mode,
+                WorldBootstrap.DefaultPlayerSpawnPosition(),
+                quaternion.identity);
         }
 
         private static bool ShouldSkipPresentationForMode(BootstrapRuntimeMode mode)
@@ -711,18 +863,31 @@ namespace VVardenfell.Runtime.Bootstrap
         private Action GetBrowseCallback()
         {
 #if UNITY_EDITOR
-            return BrowseForInstallPath;
+            return BrowseForActivePath;
 #else
             return null;
 #endif
         }
 
 #if UNITY_EDITOR
-        private void BrowseForInstallPath()
+        private void BrowseForActivePath()
         {
-            var picked = UnityEditor.EditorUtility.OpenFolderPanel("Select Morrowind folder", _path, "");
+            string title = _stage == Stage.PickProjectTamrielPath
+                ? "Select Project Tamriel install or Data Files folder"
+                : "Select Morrowind folder";
+            string startPath = _stage == Stage.PickProjectTamrielPath
+                ? ResolveInitialProjectTamrielPickerPath()
+                : _path;
+            var picked = UnityEditor.EditorUtility.OpenFolderPanel(title, startPath, "");
             if (!string.IsNullOrEmpty(picked))
             {
+                if (_stage == Stage.PickProjectTamrielPath)
+                {
+                    _projectTamrielPath = picked;
+                    _projectTamrielPathError = null;
+                    return;
+                }
+
                 _path = picked;
                 _pathError = null;
             }
@@ -733,6 +898,12 @@ namespace VVardenfell.Runtime.Bootstrap
         {
             _pathError = error;
             LogDisplayedError("Path", error);
+        }
+
+        private void SetProjectTamrielPathError(string error)
+        {
+            _projectTamrielPathError = error;
+            LogDisplayedError("ProjectTamrielPath", error);
         }
 
         private void SetFatalError(string error)

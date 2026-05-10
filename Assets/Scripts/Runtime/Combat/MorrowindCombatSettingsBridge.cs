@@ -30,7 +30,6 @@ namespace VVardenfell.Runtime.Combat
             if (query.IsEmptyIgnoreFilter)
             {
                 Entity entity = entityManager.CreateEntity(typeof(MorrowindCombatSettings));
-                entityManager.SetName(entity, "VVardenfell.MorrowindCombatSettings");
                 entityManager.SetComponentData(entity, new MorrowindCombatSettings { Difficulty = difficulty });
                 return;
             }

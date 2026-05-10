@@ -17,6 +17,7 @@ namespace VVardenfell.Core.Config
     public class MorrowindConfig
     {
         public string InstallPath;
+        public MorrowindContentProfile ProjectTamrielProfile;
 
         // --- Bake ---------------------------------------------------------------
 
@@ -105,6 +106,13 @@ namespace VVardenfell.Core.Config
             }
             error = null;
             return true;
+        }
+
+        public MorrowindContentProfile CreateVanillaContentProfile()
+        {
+            var profile = InstalledContentSources.CreateVanillaProfile(InstallPath);
+            profile.RefreshCacheKey();
+            return profile;
         }
 
         /// <summary>

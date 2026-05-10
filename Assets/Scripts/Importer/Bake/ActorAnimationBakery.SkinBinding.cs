@@ -154,12 +154,26 @@ namespace VVardenfell.Importer.Bake
                     {
                         // OpenMW's CopyRigVisitor simply copies no rig geometry when a template
                         // drawable does not match the active body-part filter.
-                        MarkSkinMeshNonRenderable(skinMeshes[i]);
+                        if (!string.IsNullOrWhiteSpace(operation.SkipReason))
+                            WarnUnsupportedCopiedRigSkipped(skinMeshes[i], bindReferenceSkeleton ?? skeleton, operation.SkipReason);
+                        MarkSkinMeshNonRenderable(skinMeshes[i], operation.SkipReason);
                         continue;
                     }
 
-                    if (remapSkinBonesToReferenceSkeleton)
-                        RemapWeightedSkinBoneIndices(skinMeshes[i], bindReferenceSkeleton ?? skeleton);
+                    if (remapSkinBonesToReferenceSkeleton
+                        && !TryRemapWeightedSkinBoneIndices(
+                            skinMeshes[i],
+                            bindReferenceSkeleton ?? skeleton,
+                            operation.Kind,
+                            out string unsupportedBoneName))
+                    {
+                        WarnUnsupportedCopiedRigSkipped(
+                            skinMeshes[i],
+                            bindReferenceSkeleton ?? skeleton,
+                            $"unsupported copied local skin bone '{unsupportedBoneName}'");
+                        MarkSkinMeshNonRenderable(skinMeshes[i], $"unsupported copied local skin bone '{unsupportedBoneName}'");
+                        continue;
+                    }
                     ValidateWeightedSkinMeshBake(
                         skinMeshes[i],
                         bindReferenceSkeleton ?? skeleton,
@@ -171,8 +185,11 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        static void MarkSkinMeshNonRenderable(ActorSkinMeshDef skinMesh)
+        void MarkSkinMeshNonRenderable(ActorSkinMeshDef skinMesh, string reason)
         {
+            if (skinMesh != null && !string.IsNullOrWhiteSpace(reason))
+                _unsupportedSkinMeshReasonsByKey[BuildSkinMeshUnsupportedKey(skinMesh.ModelPath, skinMesh.NodeName)] = reason;
+
             skinMesh.MeshIndex = -1;
             skinMesh.MaterialIndex = -1;
             skinMesh.TextureIndex = -1;
@@ -183,6 +200,10 @@ namespace VVardenfell.Importer.Bake
             skinMesh.VertexUvs = Array.Empty<float>();
             skinMesh.Indices = Array.Empty<int>();
         }
+
+
+        static string BuildSkinMeshUnsupportedKey(string modelPath, string nodeName)
+            => $"{NormalizeModelPath(modelPath)}#{nodeName ?? string.Empty}";
 
 
         void AppendModelGraphNodes(ModelPrefabSource prefabSource, int firstGraphNodeIndex)
@@ -270,6 +291,7 @@ namespace VVardenfell.Importer.Bake
             public int TargetBoneIndex = -1;
             public byte AssemblyMirrorX;
             public Matrix4x4 GeometryToSkeleton = Matrix4x4.identity;
+            public string SkipReason;
         }
 
 
@@ -374,7 +396,12 @@ namespace VVardenfell.Importer.Bake
             bool copiedRigBinding)
         {
             return copiedRigBinding
-                ? ComputeCopiedRigAssemblyOperation(firstGraphNodeIndex, renderLeafNodeIndex, skinMesh, targetSkeleton)
+                ? ComputeCopiedRigAssemblyOperation(
+                    firstGraphNodeIndex,
+                    renderLeafNodeIndex,
+                    skinMesh,
+                    targetSkeleton,
+                    allowMissingTargetBone: true)
                 : ComputeFullGraphAssemblyOperation(firstGraphNodeIndex, graphNodeCount, skinMesh, skeleton);
         }
 
@@ -495,7 +522,8 @@ namespace VVardenfell.Importer.Bake
             int firstGraphNodeIndex,
             int renderLeafNodeIndex,
             ActorSkinMeshDef skinMesh,
-            ActorSkeletonDef targetSkeleton)
+            ActorSkeletonDef targetSkeleton,
+            bool allowMissingTargetBone)
         {
             int graphNodeIndex = firstGraphNodeIndex + renderLeafNodeIndex;
             var operation = new RigAssemblyOperation
@@ -511,15 +539,21 @@ namespace VVardenfell.Importer.Bake
             if (!TryResolveCopiedRigReference(graphNodeIndex, out var reference, out string meshFilter))
                 return operation;
 
-            operation.Kind = ActorRigAssemblyKind.CopiedRig;
             operation.TargetBoneIndex = ResolveCopiedRigTargetBoneIndex(targetSkeleton, reference);
             if (operation.TargetBoneIndex < 0)
             {
+                if (allowMissingTargetBone && reference == ActorVisualPartReference.Tail)
+                {
+                    operation.SkipReason = $"missing copied-rig target bone '{ActorVisualMappingPolicy.GetBoneName(reference)}'";
+                    return operation;
+                }
+
                 throw new InvalidOperationException(
                     $"Actor weighted skin '{skinMesh?.ModelPath}#{skinMesh?.NodeName}' copied-rig filter '{meshFilter}' " +
                     $"could not resolve target bone '{ActorVisualMappingPolicy.GetBoneName(reference)}' against skeleton '{targetSkeleton?.ModelPath ?? "<unknown>"}'.");
             }
 
+            operation.Kind = ActorRigAssemblyKind.CopiedRig;
             int copiedRoot = ResolveCopiedRigRootGraphNodeIndex(graphNodeIndex, meshFilter);
             operation.CopiedRigRootGraphNodeIndex = copiedRoot;
             if ((uint)copiedRoot >= (uint)_graphNodes.Count)
@@ -1045,14 +1079,19 @@ namespace VVardenfell.Importer.Bake
         
 
 
-        static void RemapWeightedSkinBoneIndices(ActorSkinMeshDef skinMesh, ActorSkeletonDef referenceSkeleton)
+        static bool TryRemapWeightedSkinBoneIndices(
+            ActorSkinMeshDef skinMesh,
+            ActorSkeletonDef referenceSkeleton,
+            ActorRigAssemblyKind rigAssemblyKind,
+            out string unsupportedBoneName)
         {
+            unsupportedBoneName = string.Empty;
             if (skinMesh == null || skinMesh.IsRigid != 0)
-                return;
+                return true;
 
             int skinBoneCount = skinMesh.BoneIndices?.Length ?? 0;
             if (skinBoneCount == 0)
-                return;
+                return true;
 
             var bones = referenceSkeleton?.Bones ?? Array.Empty<ActorSkeletonBoneDef>();
             if (bones.Length == 0)
@@ -1067,6 +1106,12 @@ namespace VVardenfell.Importer.Bake
                 int referenceBoneIndex = ResolveBindReferenceBoneIndex(skinMesh, i, bones.Length, boneLookup);
                 if ((uint)referenceBoneIndex >= (uint)bones.Length)
                 {
+                    if (rigAssemblyKind == ActorRigAssemblyKind.CopiedRig)
+                    {
+                        unsupportedBoneName = ReadBoneName(skinMesh, i);
+                        return false;
+                    }
+
                     throw new InvalidOperationException(
                         $"Actor weighted skin '{skinMesh.ModelPath}#{skinMesh.NodeName}' could not resolve skin bone '{ReadBoneName(skinMesh, i)}' " +
                         $"against reference skeleton '{referenceSkeleton?.ModelPath ?? "<unknown>"}'.");
@@ -1075,6 +1120,24 @@ namespace VVardenfell.Importer.Bake
                 if (skinMesh.BoneIndices[i] != referenceBoneIndex)
                     skinMesh.BoneIndices[i] = referenceBoneIndex;
             }
+
+            return true;
+        }
+
+
+        void WarnUnsupportedCopiedRigSkipped(
+            ActorSkinMeshDef skinMesh,
+            ActorSkeletonDef referenceSkeleton,
+            string reason)
+        {
+            string key = $"{skinMesh?.ModelPath}#{skinMesh?.NodeName}|{referenceSkeleton?.ModelPath}|{reason}";
+            if (!_unsupportedCopiedRigWarnings.Add(key))
+                return;
+
+            Debug.LogWarning(
+                $"[VVardenfell][ActorCopiedRigMeshSkipped] skin='{skinMesh?.ModelPath}#{skinMesh?.NodeName}' " +
+                $"referenceSkeleton='{referenceSkeleton?.ModelPath ?? "<unknown>"}' was marked non-renderable: {reason}. " +
+                "The current actor renderer can attach copied body-part meshes to the active NPC skeleton, but cannot yet preserve copied local skeleton/dummy rigs from full creature-style templates.");
         }
 
 

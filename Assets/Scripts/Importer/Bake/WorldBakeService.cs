@@ -48,23 +48,26 @@ namespace VVardenfell.Importer.Bake
             public readonly CellHeader Cell;
             public readonly bool IsInterior;
             public readonly long LandOffset;
+            public readonly string LandSourcePath;
+            public readonly CellHeader[] CellRecords;
             public readonly string Key;
-            public readonly string OutputPath;
             public readonly Vector3 CellOrigin;
 
             public CellBakeWorkItem(
                 CellHeader cell,
                 bool isInterior,
                 long landOffset,
+                string landSourcePath,
+                CellHeader[] cellRecords,
                 string key,
-                string outputPath,
                 Vector3 cellOrigin)
             {
                 Cell = cell;
                 IsInterior = isInterior;
                 LandOffset = landOffset;
+                LandSourcePath = landSourcePath ?? cell.SourcePath;
+                CellRecords = cellRecords ?? new[] { cell };
                 Key = key;
-                OutputPath = outputPath;
                 CellOrigin = cellOrigin;
             }
         }
@@ -72,19 +75,27 @@ namespace VVardenfell.Importer.Bake
 
         private sealed class WorkerContext : IDisposable
         {
-            public readonly EsmReader RefsReader;
-            public readonly EsmReader LandReader;
+            readonly Dictionary<string, EsmReader> _readers = new(StringComparer.OrdinalIgnoreCase);
 
-            public WorkerContext(string esmPath)
+            public EsmReader GetReader(string esmPath)
             {
-                RefsReader = new EsmReader(esmPath);
-                LandReader = new EsmReader(esmPath);
+                if (string.IsNullOrWhiteSpace(esmPath))
+                    throw new InvalidOperationException("Cannot read ESM data without a source path.");
+
+                if (!_readers.TryGetValue(esmPath, out var reader))
+                {
+                    reader = new EsmReader(esmPath);
+                    _readers.Add(esmPath, reader);
+                }
+
+                return reader;
             }
 
             public void Dispose()
             {
-                RefsReader.Dispose();
-                LandReader.Dispose();
+                foreach (var pair in _readers)
+                    pair.Value.Dispose();
+                _readers.Clear();
             }
         }
 
@@ -401,7 +412,6 @@ namespace VVardenfell.Importer.Bake
         private sealed class PreparedCellWriteData
         {
             public string Key;
-            public string OutputPath;
             public bool IsInterior;
             public string CellId;
             public int GridX;
@@ -425,7 +435,6 @@ namespace VVardenfell.Importer.Bake
             public int LockStateCount;
             public int CombinedRenderChunkCount;
             public BuiltCellBlobData BlobData;
-            public FinalCellWriteBuffer FinalBuffer;
         }
 
 
@@ -433,28 +442,6 @@ namespace VVardenfell.Importer.Bake
         {
             public byte[] TerrainColliderBlobBytes;
             public byte[] StaticCollisionBlobBytes;
-        }
-
-
-        private sealed class FinalCellWriteBuffer
-        {
-            public byte[] HeaderBytes;
-            public byte[] TerrainHeightBytes;
-            public byte[] TerrainNormalBytes;
-            public byte[] TerrainColliderChunkBytes;
-            public byte[] LayerGridBytes;
-            public byte[] WorldMapBytes;
-            public byte[] StaticCollisionChunkBytes;
-            public byte[] RefCountBytes;
-            public byte[] RefBytes;
-            public byte[] DoorCountBytes;
-            public byte[] DoorBytes;
-            public byte[] CapturedSoulCountBytes;
-            public byte[] CapturedSoulBytes;
-            public byte[] LockStateCountBytes;
-            public byte[] LockStateBytes;
-            public byte[] CombinedRenderChunkCountBytes;
-            public byte[] CombinedRenderChunkBytes;
         }
 
 

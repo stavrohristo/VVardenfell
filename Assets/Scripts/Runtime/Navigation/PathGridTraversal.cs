@@ -301,7 +301,6 @@ namespace VVardenfell.Runtime.Pathfinding
             }
 
             Entity entity = state.EntityManager.CreateEntity();
-            state.EntityManager.SetName(entity, "VVardenfell.PathGridTraversalSettings");
             state.EntityManager.AddComponentData(entity, PathGridTraversalSettings.Defaults);
             RuntimeBootstrapRequestUtility.Consume<PathGridTraversalSettingsBootstrapRequest>(state.EntityManager);
         }

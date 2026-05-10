@@ -5,5 +5,6 @@ namespace VVardenfell.Runtime.Bootstrap
         Vanilla = 0,
         Sandbox = 1,
         CombatSandbox = 2,
+        ProjectTamriel = 3,
     }
 }

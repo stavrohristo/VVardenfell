@@ -107,16 +107,13 @@ namespace VVardenfell.Runtime.Streaming
         public static readonly Dictionary<int2, List<Entity>> ExteriorCellEntities = new();
 
         /// <summary>
-        /// Every baked cell, preloaded once at bootstrap. Keyed by grid coord.
-        /// ~60-80 MB retained (1404 cells × ~40 KB + managed overhead). Trades
-        /// gen2 heap for zero per-stream disk I/O — the ref-spawn path is a dict
-        /// lookup instead of <see cref="CellFile.Read"/>.
+        /// Loaded DOTS cell-section roots. Keyed by grid coord for exteriors and
+        /// stable cell-id hash for interiors; failed loads are tracked by the
+        /// streaming state map, not retried through a legacy reader.
         /// </summary>
-        public static readonly Dictionary<int2, CellData> Cells = new();
-        public static readonly Dictionary<string, CellData> InteriorCells = new(System.StringComparer.OrdinalIgnoreCase);
-        public static readonly Dictionary<ulong, CellData> InteriorCellsByHash = new();
+        public static readonly Dictionary<int2, Entity> ExteriorSectionEntities = new();
+        public static readonly Dictionary<ulong, Entity> InteriorSectionEntitiesByHash = new();
         public static readonly Dictionary<ulong, string> InteriorCellIdsByHash = new();
-        public static bool PreloadedCellsComplete { get; private set; }
 
         /// <summary>
         /// Global deduped interactable-collider blobs (indexed by <see cref="RefEntry.CollisionIndex"/>).
@@ -128,108 +125,56 @@ namespace VVardenfell.Runtime.Streaming
         public static BlobAssetReference<Collider> ActorCapsuleCollider;
         public static BlobAssetReference<Collider> ActorPickCapsuleCollider;
 
-        /// <summary>Per-cell combined STAT collider (null for wilderness cells).</summary>
-        public static readonly Dictionary<int2, BlobAssetReference<Collider>> StaticCellColliders = new();
-
-        /// <summary>Per-cell terrain heightfield collider (null for cells without LAND).</summary>
-        public static readonly Dictionary<int2, BlobAssetReference<Collider>> TerrainColliders = new();
+        public static void RegisterInteriorCellId(string cellId)
+        {
+            cellId ??= string.Empty;
+            ulong cellHash = InteriorCellIdHash.Hash(cellId);
+            if (cellHash == 0UL)
+                return;
+            InteriorCellIdsByHash[cellHash] = cellId;
+        }
 
         public static bool TryGetStaticCellCollider(int2 coord, out BlobAssetReference<Collider> collider)
         {
-            return StaticCellColliders.TryGetValue(coord, out collider) && collider.IsCreated;
+            collider = default;
+            if (!ExteriorSectionEntities.TryGetValue(coord, out Entity sectionEntity))
+                return false;
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null)
+                return false;
+            var em = world.EntityManager;
+            if (!em.Exists(sectionEntity) || !em.HasComponent<RuntimeCellSectionStaticCollider>(sectionEntity))
+                return false;
+            collider = em.GetComponentData<RuntimeCellSectionStaticCollider>(sectionEntity).Blob;
+            return collider.IsCreated;
         }
 
         public static bool TryGetTerrainCollider(int2 coord, out BlobAssetReference<Collider> collider)
         {
-            return TerrainColliders.TryGetValue(coord, out collider) && collider.IsCreated;
-        }
-
-        public static bool HasAnyPreloadedCells()
-            => Cells.Count > 0 || InteriorCellsByHash.Count > 0;
-
-        public static int ExteriorCellCount
-            => Cells.Count;
-
-        public static int InteriorCellHashCount
-            => InteriorCellsByHash.Count;
-
-        public static KeyValuePair<int2, CellData>[] CopyExteriorCellEntries()
-        {
-            var entries = new KeyValuePair<int2, CellData>[Cells.Count];
-            int index = 0;
-            foreach (var kv in Cells)
-                entries[index++] = kv;
-            return entries;
-        }
-
-        public static KeyValuePair<ulong, CellData>[] CopyInteriorCellHashEntries()
-        {
-            var entries = new KeyValuePair<ulong, CellData>[InteriorCellsByHash.Count];
-            int index = 0;
-            foreach (var kv in InteriorCellsByHash)
-                entries[index++] = kv;
-            return entries;
-        }
-
-        public static bool TryGetExteriorCell(int2 coord, out CellData cell)
-            => Cells.TryGetValue(coord, out cell) && cell != null;
-
-        public static void ClearPreloadedCells()
-        {
-            PreloadedCellsComplete = false;
-            Cells.Clear();
-            InteriorCells.Clear();
-            InteriorCellsByHash.Clear();
-            InteriorCellIdsByHash.Clear();
-        }
-
-        public static void MarkPreloadedCellsComplete()
-        {
-            if (!HasAnyPreloadedCells())
-                throw new System.InvalidOperationException("[VVardenfell][Streaming] cannot complete world-cell preload with no registered cells.");
-
-            PreloadedCellsComplete = true;
-        }
-
-        public static void EnsurePreloadedCellCapacity(int totalPreloadedCells)
-        {
-            int capacity = System.Math.Max(totalPreloadedCells, 1);
-            Cells.EnsureCapacity(capacity);
-            InteriorCells.EnsureCapacity(capacity);
-            InteriorCellsByHash.EnsureCapacity(capacity);
-            InteriorCellIdsByHash.EnsureCapacity(capacity);
-        }
-
-        public static void RegisterExteriorCell(int2 coord, CellData data)
-        {
-            if (data == null)
-                throw new System.InvalidOperationException($"[VVardenfell][Streaming] cannot register null exterior cell ({coord.x},{coord.y}).");
-            Cells[coord] = data;
-        }
-
-        public static bool TryRegisterInteriorCell(string cellId, CellData data, out string collisionId)
-        {
-            collisionId = string.Empty;
-            if (data == null)
-                throw new System.InvalidOperationException($"[VVardenfell][Streaming] cannot register null interior cell '{cellId}'.");
-
-            cellId ??= string.Empty;
-            if (!InteriorCells.ContainsKey(cellId))
-                InteriorCells[cellId] = data;
-
-            ulong cellHash = InteriorCellIdHash.Hash(cellId);
-            if (cellHash == 0UL)
-                return true;
-
-            if (InteriorCellsByHash.TryGetValue(cellHash, out var existing) && !ReferenceEquals(existing, data))
-            {
-                collisionId = ResolveInteriorCellId(cellHash);
+            collider = default;
+            if (!ExteriorSectionEntities.TryGetValue(coord, out Entity sectionEntity))
                 return false;
-            }
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null)
+                return false;
+            var em = world.EntityManager;
+            if (!em.Exists(sectionEntity) || !em.HasComponent<RuntimeCellSectionTerrainCollider>(sectionEntity))
+                return false;
+            collider = em.GetComponentData<RuntimeCellSectionTerrainCollider>(sectionEntity).Blob;
+            return collider.IsCreated;
+        }
 
-            InteriorCellsByHash[cellHash] = data;
-            InteriorCellIdsByHash[cellHash] = cellId;
-            return true;
+        public static bool TrySampleExteriorTerrainHeight(int2 coord, float localX, float localZ, out float height)
+        {
+            height = 0f;
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null)
+                return false;
+            using var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimeWorldCellBlobReference>());
+            if (query.CalculateEntityCount() != 1)
+                return false;
+            var blob = query.GetSingleton<RuntimeWorldCellBlobReference>().Blob;
+            return blob.IsCreated && RuntimeWorldCellBlobUtility.TrySampleTerrainHeight(ref blob.Value, coord, localX, localZ, out height);
         }
 
         public static void RegisterExteriorCellEntity(int2 coord, Entity entity)
@@ -250,14 +195,6 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             entities.Add(entity);
-        }
-
-        public static bool TryGetInteriorCell(ulong cellHash, out CellData cell)
-        {
-            cell = null;
-            return cellHash != 0UL
-                   && InteriorCellsByHash.TryGetValue(cellHash, out cell)
-                   && cell != null;
         }
 
         public static string ResolveInteriorCellId(ulong cellHash)
@@ -337,25 +274,9 @@ namespace VVardenfell.Runtime.Streaming
             }
             LoadedManaged.Clear();
             ExteriorCellEntities.Clear();
-
-            foreach (var kv in Cells)
-                DisposeCellResidentBlobs(kv.Value);
-            Cells.Clear();
-
-            foreach (var kv in InteriorCells)
-                DisposeCellResidentBlobs(kv.Value);
-            InteriorCells.Clear();
-            InteriorCellsByHash.Clear();
+            ExteriorSectionEntities.Clear();
+            InteriorSectionEntitiesByHash.Clear();
             InteriorCellIdsByHash.Clear();
-            PreloadedCellsComplete = false;
-
-            // Dispose per-cell static + terrain collider blobs before clearing the dicts.
-            foreach (var kv in StaticCellColliders)
-                if (kv.Value.IsCreated) kv.Value.Dispose();
-            StaticCellColliders.Clear();
-            foreach (var kv in TerrainColliders)
-                if (kv.Value.IsCreated) kv.Value.Dispose();
-            TerrainColliders.Clear();
             if (ColliderBlobs != null)
             {
                 for (int i = 0; i < ColliderBlobs.Length; i++)
@@ -412,24 +333,6 @@ namespace VVardenfell.Runtime.Streaming
             Desc = default;
             if (PathGridNavigation.IsCreated)
                 PathGridNavigation.Dispose();
-        }
-
-        private static void DisposeCellResidentBlobs(CellData data)
-        {
-            if (data == null)
-                return;
-
-            if (data.StaticColliderBlob.IsCreated)
-            {
-                data.StaticColliderBlob.Dispose();
-                data.StaticColliderBlob = default;
-            }
-
-            if (data.TerrainColliderBlob.IsCreated)
-            {
-                data.TerrainColliderBlob.Dispose();
-                data.TerrainColliderBlob = default;
-            }
         }
     }
 }

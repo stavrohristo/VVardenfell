@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Map
             if (transition.InteriorActive != 0)
                 return;
 
+            _playerQuery.CompleteDependency();
             var playerTransform = _playerQuery.GetSingleton<LocalTransform>();
             var stateEntity = SystemAPI.GetSingletonEntity<LocalMapDiscoveryState>();
             var state = systemState.EntityManager.GetComponentData<LocalMapDiscoveryState>(stateEntity);
@@ -133,7 +134,6 @@ namespace VVardenfell.Runtime.Map
             }
 
             var entity = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(entity, $"LocalMapDiscovery({cell.x},{cell.y})");
             systemState.EntityManager.AddComponentData(entity, new ExteriorMapDiscoveryTile
             {
                 Cell = cell,

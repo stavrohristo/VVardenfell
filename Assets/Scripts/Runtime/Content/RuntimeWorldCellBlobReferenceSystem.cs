@@ -14,10 +14,10 @@ namespace VVardenfell.Runtime.Content
         {
             if (SystemAPI.HasSingleton<RuntimeWorldCellBlobReference>())
                 return;
-            if (!WorldResources.PreloadedCellsComplete)
+            if (WorldResources.Cache == null)
                 return;
 
-            var blob = RuntimeWorldCellBlobBuilder.Build();
+            var blob = RuntimeWorldCellBlobBuilder.Build(WorldResources.Cache);
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new RuntimeWorldCellBlobReference { Blob = blob });

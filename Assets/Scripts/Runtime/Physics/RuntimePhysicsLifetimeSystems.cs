@@ -89,7 +89,6 @@ namespace VVardenfell.Runtime.Physics
             else
             {
                 entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.RuntimePhysicsLifetime");
                 systemState.EntityManager.AddComponentData(entity, new RuntimePhysicsLifetimeState());
             }
 

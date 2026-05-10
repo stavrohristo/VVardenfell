@@ -7,7 +7,8 @@
         "Unity.Physics",
         "Unity.Collections",
         "Unity.Mathematics",
-        "Unity.Burst"
+        "Unity.Burst",
+        "Unity.Transforms"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

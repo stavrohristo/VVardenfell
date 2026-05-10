@@ -24,6 +24,7 @@ namespace VVardenfell.Importer.Bake
             public int GraphNodeCount;
             public int FirstClipIndex = -1;
             public int ClipCount;
+            public string UnsupportedSkinBindingReason;
         }
 
 
@@ -63,6 +64,8 @@ namespace VVardenfell.Importer.Bake
         readonly Dictionary<string, int> _bindingIndicesByBindingKey = new(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, int> _rigFamiliesByKey = new(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, int> _skinBindingsByKey = new(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<int, string> _unsupportedSkinBindingReasonsBySkinBindingIndex = new();
+        readonly Dictionary<string, string> _unsupportedSkinMeshReasonsByKey = new(StringComparer.OrdinalIgnoreCase);
         readonly List<ModelBindingBuildState> _bindings = new();
         readonly List<ActorRigFamilyDef> _rigFamilies = new();
         readonly List<ActorSkinBindingDef> _skinBindings = new();
@@ -85,6 +88,8 @@ namespace VVardenfell.Importer.Bake
         readonly HashSet<string> _bipedalCreatureActorModels = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _requiredCompanionKfActorModels = new(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<string> _missingControllerTargetWarnings = new(StringComparer.OrdinalIgnoreCase);
+        readonly HashSet<string> _unsupportedCopiedRigWarnings = new(StringComparer.OrdinalIgnoreCase);
+        readonly HashSet<string> _unsupportedActorVisualWarnings = new(StringComparer.OrdinalIgnoreCase);
         public bool Modified { get; private set; }
         public int ModelBindingCount => _bindings.Count;
         public int SkeletonCount => _skeletons.Count;
@@ -184,6 +189,14 @@ namespace VVardenfell.Importer.Bake
                 meshes,
                 materials,
                 textures);
+
+            string unsupportedSkinBindingReason = null;
+            if (remapSkinBonesToReferenceSkeleton && !HasRenderableSkinMeshes(skinMeshes))
+            {
+                unsupportedSkinBindingReason =
+                    $"model remapped to reference skeleton '{normalizedReferenceSkeletonPath}' produced no renderable skin meshes";
+            }
+
             for (int i = 0; i < skinMeshes.Length; i++)
                 _skinMeshes.Add(skinMeshes[i]);
 
@@ -212,6 +225,7 @@ namespace VVardenfell.Importer.Bake
                 GraphNodeCount = graphNodeCount,
                 FirstClipIndex = assignment.FirstClipIndex,
                 ClipCount = assignment.ClipCount,
+                UnsupportedSkinBindingReason = unsupportedSkinBindingReason,
             });
             _bindingIndicesByBindingKey[bindingKey] = _bindings.Count - 1;
             Modified = true;
@@ -229,6 +243,7 @@ namespace VVardenfell.Importer.Bake
             _equipmentVisualEntries.Clear();
             _rigFamiliesByKey.Clear();
             _skinBindingsByKey.Clear();
+            _unsupportedSkinBindingReasonsBySkinBindingIndex.Clear();
 
             gameplayContent ??= new GameplayContentData();
             var races = BuildRaceLookup(gameplayContent);
@@ -238,6 +253,19 @@ namespace VVardenfell.Importer.Bake
             BuildEquipmentVisuals(gameplayContent);
 
             Modified = true;
+        }
+
+
+        static bool HasRenderableSkinMeshes(ActorSkinMeshDef[] skinMeshes)
+        {
+            skinMeshes ??= Array.Empty<ActorSkinMeshDef>();
+            for (int i = 0; i < skinMeshes.Length; i++)
+            {
+                if (IsRenderableSkinMesh(skinMeshes[i]))
+                    return true;
+            }
+
+            return false;
         }
 
 
@@ -446,11 +474,25 @@ namespace VVardenfell.Importer.Bake
         {
             string actorModel = ResolveCreatureActorModelPath(actor, bsaByName);
             int rigFamilyIndex = AddRigFamily(ActorRigFamilyKind.Creature, actorModel, actor.Id);
-            int skinBindingIndex = RequireSkinBinding(actorModel, rigFamilyIndex, null, $"creature '{actor.Id}'");
+            int skinBindingIndex = RequireSkinBinding(
+                actorModel,
+                rigFamilyIndex,
+                null,
+                $"creature '{actor.Id}'",
+                allowSemanticOnlyNoSkin: true);
             var binding = _skinBindings[skinBindingIndex];
             int firstEntry = _actorVisualRecipeEntries.Count;
-            AddAllSkinBindingMeshesToActorRecipe(skinBindingIndex, binding, ActorVisualPartReference.Cuirass);
-            AddActorVisualRecipe(actor.ContentId, false, ActorVisualBodyVariant.Male, rigFamilyIndex, firstEntry, _actorVisualRecipeEntries.Count - firstEntry);
+            bool hasRenderableMeshes = SkinBindingHasRenderableMeshes(binding);
+            if (hasRenderableMeshes)
+                AddAllSkinBindingMeshesToActorRecipe(skinBindingIndex, binding, ActorVisualPartReference.Cuirass);
+            AddActorVisualRecipe(
+                actor.ContentId,
+                false,
+                ActorVisualBodyVariant.Male,
+                rigFamilyIndex,
+                firstEntry,
+                _actorVisualRecipeEntries.Count - firstEntry,
+                allowEmptySemanticOnly: !hasRenderableMeshes);
         }
 
 
@@ -509,10 +551,27 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        void AddActorVisualRecipe(ContentId actorContentId, bool firstPerson, ActorVisualBodyVariant variant, int rigFamilyIndex, int firstEntry, int entryCount)
+        void AddActorVisualRecipe(
+            ContentId actorContentId,
+            bool firstPerson,
+            ActorVisualBodyVariant variant,
+            int rigFamilyIndex,
+            int firstEntry,
+            int entryCount,
+            bool allowEmptySemanticOnly = false)
         {
             if (entryCount <= 0)
-                throw new InvalidOperationException($"Actor visual recipe '{actorContentId}' firstPerson={firstPerson} produced no skin entries.");
+            {
+                if (allowEmptySemanticOnly)
+                {
+                    firstEntry = -1;
+                    entryCount = 0;
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Actor visual recipe '{actorContentId}' firstPerson={firstPerson} produced no skin entries.");
+                }
+            }
 
             _actorVisualRecipes.Add(new ActorVisualRecipeDef
             {
@@ -619,6 +678,8 @@ namespace VVardenfell.Importer.Bake
 
                     var bodyPartRef = bodyParts[bodyPartIndex];
                     if (firstPerson && !IsFirstPersonPartReference((ActorVisualPartReference)(byte)bodyPartRef.Part))
+                        continue;
+                    if (bodyPartRef.Part == ItemEquipmentPartReference.Tail && !beastRig)
                         continue;
 
                     AddEquipmentPartVisual(item.Id, bodyPartRef, rigFamilyIndex, firstPerson, variant, ref usedParts);
@@ -751,7 +812,12 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        int RequireSkinBinding(string modelPath, int rigFamilyIndex, ActorVisualPartReference? reference, string context)
+        int RequireSkinBinding(
+            string modelPath,
+            int rigFamilyIndex,
+            ActorVisualPartReference? reference,
+            string context,
+            bool allowSemanticOnlyNoSkin = false)
         {
             if ((uint)rigFamilyIndex >= (uint)_rigFamilies.Count)
                 throw new InvalidOperationException($"{context} references invalid rig family {rigFamilyIndex}.");
@@ -768,7 +834,20 @@ namespace VVardenfell.Importer.Bake
             int bindingIndex = RequireBindingIndex(model, referenceSkeleton, context);
             var binding = _bindings[bindingIndex];
             if (binding.FirstSkinMeshIndex < 0 || binding.SkinMeshCount <= 0)
-                throw new InvalidOperationException($"{context} skin model '{model}' has no baked skin meshes for rig '{_rigFamilies[rigFamilyIndex].SkeletonModelPath}'.");
+            {
+                string reason = binding.UnsupportedSkinBindingReason;
+                if (string.IsNullOrEmpty(reason))
+                {
+                    if (!allowSemanticOnlyNoSkin)
+                    {
+                        throw new InvalidOperationException($"{context} skin model '{model}' has no baked skin meshes for rig '{_rigFamilies[rigFamilyIndex].SkeletonModelPath}'.");
+                    }
+
+                    reason = "model has no baked skin meshes; preserving a skeleton-only actor visual recipe";
+                }
+
+                WarnUnsupportedActorVisualSkipped(model, _rigFamilies[rigFamilyIndex].SkeletonModelPath, context, reason);
+            }
 
             int index = _skinBindings.Count;
             _skinBindings.Add(new ActorSkinBindingDef
@@ -781,6 +860,8 @@ namespace VVardenfell.Importer.Bake
                 GraphNodeCount = binding.GraphNodeCount,
             });
             _skinBindingsByKey[key] = index;
+            if (!string.IsNullOrEmpty(binding.UnsupportedSkinBindingReason))
+                _unsupportedSkinBindingReasonsBySkinBindingIndex[index] = binding.UnsupportedSkinBindingReason;
             return index;
         }
 
@@ -875,11 +956,36 @@ namespace VVardenfell.Importer.Bake
                 }
 
                 if (added == 0)
+                {
+                    if (TryGetUnsupportedMatchingSkinMeshReason(binding, meshFilters, out string reason))
+                    {
+                        AddActorSemanticEntry(skinBindingIndex, reference, attachBoneIndex, rigidMirrorX);
+                        WarnUnsupportedActorVisualSkipped(binding.SkinModelPath, rig.SkeletonModelPath, context, reason);
+                        return;
+                    }
+
+                    if (TryGetMissingDeclaredPartPeerReason(binding, reference, out reason))
+                    {
+                        AddActorSemanticEntry(skinBindingIndex, reference, attachBoneIndex, rigidMirrorX);
+                        WarnUnsupportedActorVisualSkipped(binding.SkinModelPath, rig.SkeletonModelPath, context, reason);
+                        return;
+                    }
+
                     throw new InvalidOperationException($"{context} produced no renderable meshes matching '{string.Join("' or '", meshFilters)}'.");
+                }
             }
 
             if (added == 0)
+            {
+                if (TryGetUnsupportedSkinBindingReason(skinBindingIndex, out string reason))
+                {
+                    AddActorSemanticEntry(skinBindingIndex, reference, attachBoneIndex, rigidMirrorX);
+                    WarnUnsupportedActorVisualSkipped(binding.SkinModelPath, rig.SkeletonModelPath, context, reason);
+                    return;
+                }
+
                 throw new InvalidOperationException($"{context} declared '{reference}' but produced no renderable meshes.");
+            }
         }
 
 
@@ -934,6 +1040,145 @@ namespace VVardenfell.Importer.Bake
                 AttachBoneIndex = mesh.IsRigid != 0 ? attachBoneIndex : -1,
                 RigidMirrorX = mesh.IsRigid != 0 ? rigidMirrorX : (byte)0,
             });
+        }
+
+
+        void AddActorSemanticEntry(
+            int skinBindingIndex,
+            ActorVisualPartReference reference,
+            int attachBoneIndex,
+            byte rigidMirrorX)
+        {
+            _actorVisualRecipeEntries.Add(new ActorVisualRecipeEntryDef
+            {
+                PartReference = reference,
+                SkinBindingIndex = skinBindingIndex,
+                SkinMeshIndex = -1,
+                AttachBoneIndex = attachBoneIndex,
+                RigidMirrorX = rigidMirrorX,
+            });
+        }
+
+
+        bool TryGetUnsupportedSkinBindingReason(int skinBindingIndex, out string reason)
+            => _unsupportedSkinBindingReasonsBySkinBindingIndex.TryGetValue(skinBindingIndex, out reason)
+               && !string.IsNullOrEmpty(reason);
+
+
+        bool TryGetUnsupportedMatchingSkinMeshReason(
+            ActorSkinBindingDef binding,
+            string[] meshFilters,
+            out string reason)
+        {
+            reason = null;
+            int start = Math.Max(0, binding.FirstSkinMeshIndex);
+            int end = Math.Min(_skinMeshes.Count, binding.FirstSkinMeshIndex + binding.SkinMeshCount);
+            for (int i = start; i < end; i++)
+            {
+                var mesh = _skinMeshes[i];
+                if (mesh == null || IsRenderableSkinMesh(mesh))
+                    continue;
+
+                bool matches = false;
+                for (int filterIndex = 0; filterIndex < meshFilters.Length; filterIndex++)
+                {
+                    if (MatchesMeshFilter(mesh, meshFilters[filterIndex]))
+                    {
+                        matches = true;
+                        break;
+                    }
+                }
+
+                if (!matches)
+                    continue;
+
+                if (_unsupportedSkinMeshReasonsByKey.TryGetValue(
+                        BuildSkinMeshUnsupportedKey(mesh.ModelPath, mesh.NodeName),
+                        out reason)
+                    && !string.IsNullOrWhiteSpace(reason))
+                {
+                    reason = $"matching mesh '{mesh.NodeName}' was marked non-renderable: {reason}";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        bool TryGetMissingDeclaredPartPeerReason(
+            ActorSkinBindingDef binding,
+            ActorVisualPartReference reference,
+            out string reason)
+        {
+            reason = null;
+            string meshPartFilter = ActorVisualMappingPolicy.GetMeshPartFilter(reference);
+            if (string.IsNullOrWhiteSpace(meshPartFilter))
+                return false;
+
+            int start = Math.Max(0, binding.FirstSkinMeshIndex);
+            int end = Math.Min(_skinMeshes.Count, binding.FirstSkinMeshIndex + binding.SkinMeshCount);
+            for (int i = start; i < end; i++)
+            {
+                var mesh = _skinMeshes[i];
+                if (mesh == null)
+                    continue;
+
+                if (MeshOrAncestorMatchesPartName(mesh, meshPartFilter))
+                {
+                    reason = $"declared body-part model has no mesh for '{ActorVisualMappingPolicy.GetMeshFilter(reference)}' but contains peer mesh '{mesh.NodeName}' for body-part slot '{meshPartFilter}'";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        bool MeshOrAncestorMatchesPartName(ActorSkinMeshDef mesh, string meshPartFilter)
+        {
+            if (PartNameContains(mesh.NodeName, meshPartFilter))
+                return true;
+
+            int graphNodeIndex = mesh.SourceGraphNodeIndex;
+            int guard = 0;
+            while ((uint)graphNodeIndex < (uint)_graphNodes.Count && guard++ < _graphNodes.Count)
+            {
+                var graphNode = _graphNodes[graphNodeIndex];
+                if (PartNameContains(graphNode?.Name, meshPartFilter))
+                    return true;
+
+                graphNodeIndex = graphNode?.ParentIndex ?? -1;
+            }
+
+            return false;
+        }
+
+
+        static bool PartNameContains(string nodeName, string meshPartFilter)
+        {
+            string normalizedNode = NormalizePartName(nodeName);
+            string normalizedFilter = NormalizePartName(meshPartFilter);
+            return !string.IsNullOrWhiteSpace(normalizedNode)
+                   && !string.IsNullOrWhiteSpace(normalizedFilter)
+                   && normalizedNode.Contains(normalizedFilter, StringComparison.Ordinal);
+        }
+
+
+        void WarnUnsupportedActorVisualSkipped(
+            string modelPath,
+            string skeletonModelPath,
+            string context,
+            string reason)
+        {
+            string key = $"{modelPath}|{skeletonModelPath}|{context}|{reason}";
+            if (!_unsupportedActorVisualWarnings.Add(key))
+                return;
+
+            Debug.LogWarning(
+                $"[VVardenfell][ActorVisualMeshSkipped] {context} skin='{modelPath}' " +
+                $"rig='{skeletonModelPath ?? "<unknown>"}' produced a semantic-only recipe entry: {reason}. " +
+                "The current actor renderer cannot yet preserve copied local creature-style rigs inside NPC body-part visuals.");
         }
 
 

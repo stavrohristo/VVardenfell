@@ -16,9 +16,7 @@ namespace VVardenfell.Runtime.Cache
     /// (no BVH rebuild), so boot collapses from tens of seconds to sub-second.
     ///
     /// Only interactable refs (DOOR / ACTI / CONT / LIGH / pickable items) consume these
-    /// blobs; pure STATs have their collision combined per-cell. Exterior cell
-    /// blobs are transferred to <see cref="Streaming.WorldResources.StaticCellColliders"/>
-    /// during bootstrap, while interior blobs remain on <see cref="CellData.StaticColliderBlob"/>.
+    /// blobs; pure STATs have their collision combined into serialized cell sections.
     ///
     /// Blobs live in <see cref="Streaming.WorldResources.ColliderBlobs"/> and are disposed
     /// on world teardown.

@@ -41,7 +41,8 @@ namespace VVardenfell.Importer.Esm
                     scale, deleted,
                     soulId, lockLevel, keyId, trapId,
                     isDoor, doorDest,
-                    ddx, ddy, ddz, ddrx, ddry, ddrz));
+                    ddx, ddy, ddz, ddrx, ddry, ddrz,
+                    cell.ContentFileIndex));
             }
 
             void ResetRef()

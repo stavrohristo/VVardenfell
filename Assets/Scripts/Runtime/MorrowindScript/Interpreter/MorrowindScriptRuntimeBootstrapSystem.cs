@@ -56,7 +56,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 typeof(MorrowindScriptRuntimeState),
                 typeof(MorrowindScriptRuntimeCatalog),
                 typeof(SessionTeardown));
-            systemState.EntityManager.SetName(runtime, "VVardenfell.MorrowindScriptRuntime");
             systemState.EntityManager.SetComponentData(runtime, new MorrowindScriptRuntimeState
             {
                 NextAudioRequestSequence = 1u,

@@ -61,7 +61,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
 
             Entity entity = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
             systemState.EntityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetEntity = request.TargetEntity,
@@ -99,7 +98,6 @@ namespace VVardenfell.Runtime.MorrowindScript
             instance.Status = (byte)MorrowindScriptInstanceStatus.Running;
             instance.DisabledReason = default;
             systemState.EntityManager.SetComponentData(entity, instance);
-            systemState.EntityManager.SetName(entity, $"VVardenfell.GlobalScript.{request.ProgramIndex}");
         }
 
         Entity FindGlobalScriptEntity(int programIndex)

@@ -464,6 +464,8 @@ namespace VVardenfell.Importer.Nif
         public ushort Flags;   // Morrowind reads this — version <= VER_OB_OLD (10.0.1.2)
         public uint ApplyMode;
         public TextureSlot[] Textures;
+        public Vector2 BumpMapLumaBias;
+        public Vector4 BumpMapMatrix;
 
         public class TextureSlot
         {
@@ -498,8 +500,53 @@ namespace VVardenfell.Importer.Nif
             {
                 Textures[i] = new TextureSlot();
                 Textures[i].Read(s);
+                if (i == 5)
+                {
+                    if (Textures[i].Enabled)
+                    {
+                        ReadBumpMapTail(s);
+                    }
+                    else if (TryReadDisabledBumpMapTail(s))
+                    {
+                        break;
+                    }
+                }
                 // MW doesn't have envmap/parallax secondary reads we need here.
             }
+        }
+
+        void ReadBumpMapTail(NifStream s)
+        {
+            BumpMapLumaBias = new Vector2(s.ReadFloat(), s.ReadFloat());
+            BumpMapMatrix = new Vector4(s.ReadFloat(), s.ReadFloat(), s.ReadFloat(), s.ReadFloat());
+        }
+
+        bool TryReadDisabledBumpMapTail(NifStream s)
+        {
+            if (s.Version != NifStream.VersionMorrowind || s.Remaining < 24)
+                return false;
+
+            long start = s.Position;
+            ReadBumpMapTail(s);
+
+            if (IsNextRecordType(s, s.Position))
+                return true;
+
+            if (s.Remaining >= 2)
+            {
+                long afterTail = s.Position;
+                if (s.ReadUInt16() == 0 && IsNextRecordType(s, s.Position))
+                    return true;
+                s.Seek(afterTail);
+            }
+
+            s.Seek(start);
+            return false;
+        }
+
+        static bool IsNextRecordType(NifStream s, long position)
+        {
+            return s.TryPeekSizedStringAt(position, out string value) && NifFactory.IsKnown(value);
         }
     }
 

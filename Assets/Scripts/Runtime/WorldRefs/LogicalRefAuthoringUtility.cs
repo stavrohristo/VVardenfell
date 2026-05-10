@@ -451,14 +451,34 @@ namespace VVardenfell.Runtime.Components
             if (!itemContent.IsValid || visibleCount <= 0)
                 return;
 
+            int condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent);
+            byte restocking = (byte)(count < 0 ? 1 : 0);
+            if (condition > 0)
+            {
+                for (int i = 0; i < visibleCount; i++)
+                {
+                    inventory.Add(new ActorInventoryItem
+                    {
+                        Content = itemContent,
+                        Count = 1,
+                        Condition = condition,
+                        EnchantmentCharge = -1f,
+                        AuthoredOrder = authoredOrder,
+                        Restocking = restocking,
+                    });
+                }
+
+                return;
+            }
+
             inventory.Add(new ActorInventoryItem
             {
                 Content = itemContent,
                 Count = visibleCount,
-                Condition = InventoryConditionUtility.ResolveInitialCondition(ref content, itemContent),
+                Condition = 0,
                 EnchantmentCharge = -1f,
                 AuthoredOrder = authoredOrder,
-                Restocking = (byte)(count < 0 ? 1 : 0),
+                Restocking = restocking,
             });
         }
 
@@ -489,7 +509,6 @@ namespace VVardenfell.Runtime.Components
                 return;
 
             Entity pickEntity = ecb.CreateEntity();
-            ecb.SetName(pickEntity, new FixedString64Bytes("ActorInteractionPick"));
             ecb.AddComponent<InteractionPickSurfaceTag>(pickEntity);
             ecb.AddComponent<InteractionActorPickSurfaceTag>(pickEntity);
             ecb.AddComponent(pickEntity, new LogicalRefParent { Value = logicalEntity });

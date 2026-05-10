@@ -3,58 +3,52 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine;
 using VVardenfell.Core.Cache;
-using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
-using Stopwatch = System.Diagnostics.Stopwatch;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Streaming
 {
     internal static class WorldInteriorSpawnUtility
     {
-        internal static void SpawnInteriorCell(World world, CellData cell, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
+        internal static void SpawnInteriorCell(World world, Entity sectionEntity, float3 worldOffset, Entity transitionEntity, ref LogicalRefLookup logicalRefs)
         {
-            if (cell == null)
+            if (sectionEntity == Entity.Null)
                 return;
 
             var em = world.EntityManager;
-            var cellSw = Stopwatch.StartNew();
-            var spawnedEntities = new List<Entity>(cell.Refs?.Length + (cell.HasStaticCollider ? 1 : 0) ?? 1);
-            var interiorChildEntities = cell.Refs != null ? new Entity[cell.Refs.Length] : System.Array.Empty<Entity>();
-            var interiorCellId = new FixedString128Bytes(cell.CellId ?? string.Empty);
+            var header = em.GetComponentData<RuntimeCellSectionHeader>(sectionEntity);
+            var spawnedEntities = new List<Entity>();
+            var refs = em.GetBuffer<RuntimeCellSectionRef>(sectionEntity);
+            var refArray = refs.Length > 0 ? new RefEntry[refs.Length] : System.Array.Empty<RefEntry>();
+            for (int i = 0; i < refs.Length; i++)
+                refArray[i] = refs[i].Value;
+            var interiorChildEntities = refArray.Length > 0 ? new Entity[refArray.Length] : System.Array.Empty<Entity>();
+            var interiorCellId = header.CellId;
 
-            if (cell.HasStaticCollider)
-                SpawnInteriorStaticCollider(em, cell, worldOffset, spawnedEntities);
+            if (em.HasComponent<RuntimeCellSectionStaticCollider>(sectionEntity))
+                SpawnInteriorStaticCollider(em, header, em.GetComponentData<RuntimeCellSectionStaticCollider>(sectionEntity), worldOffset, spawnedEntities);
 
-            if (cell.Refs != null)
-            {
-                for (int i = 0; i < cell.Refs.Length; i++)
-                {
-                    var entry = cell.Refs[i];
-                    interiorChildEntities[i] = WorldRefSpawnUtility.SpawnInteriorRef(em, entry, worldOffset, interiorCellId, spawnedEntities);
-                }
-            }
+            for (int i = 0; i < refArray.Length; i++)
+                interiorChildEntities[i] = WorldRefSpawnUtility.SpawnInteriorRef(em, refArray[i], worldOffset, interiorCellId, spawnedEntities);
 
-            int logicalRefCount = 0;
-            int proxyQueueCount = 0;
-            if (cell.Refs != null && cell.Refs.Length > 0)
+            if (refArray.Length > 0)
             {
                 var contentBlob = WorldResources.Cache?.ContentBlob ?? default;
                 if (!contentBlob.IsCreated)
                     throw new System.InvalidOperationException("[VVardenfell][ContentBlob] Interior spawn requires runtime content blob for logical refs.");
-                logicalRefCount = WorldRefSpawnUtility.BuildLogicalRefs(
+                WorldRefSpawnUtility.BuildLogicalRefs(
                     em,
                     contentBlob,
-                    cell.Refs,
+                    refArray,
                     interiorChildEntities,
                     true,
                     interiorCellId,
                     worldOffset,
                     ref logicalRefs,
                     spawnedEntities,
-                    out proxyQueueCount);
+                    out _);
             }
 
             EnableInteriorPickColliders(em, spawnedEntities);
@@ -62,14 +56,19 @@ namespace VVardenfell.Runtime.Streaming
             var spawnedBuffer = em.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
             for (int i = 0; i < spawnedEntities.Count; i++)
                 spawnedBuffer.Add(new InteriorSpawnedEntity { Value = spawnedEntities[i] });
-
-            cellSw.Stop();
         }
 
-        static void SpawnInteriorStaticCollider(EntityManager em, CellData cell, float3 worldOffset, List<Entity> spawnedEntities)
+        static void SpawnInteriorStaticCollider(
+            EntityManager em,
+            RuntimeCellSectionHeader header,
+            RuntimeCellSectionStaticCollider collider,
+            float3 worldOffset,
+            List<Entity> spawnedEntities)
         {
+            if (!collider.Blob.IsCreated)
+                return;
+
             var staticEntity = em.CreateEntity();
-            em.SetName(staticEntity, $"InteriorStatic({cell.CellId})");
             em.AddComponentData(staticEntity, LocalTransform.FromPositionRotationScale(worldOffset, quaternion.identity, 1f));
             em.AddComponentData(staticEntity, new LocalToWorld
             {
@@ -80,7 +79,7 @@ namespace VVardenfell.Runtime.Streaming
             RuntimeColliderAttachmentUtility.AttachSource(
                 em,
                 staticEntity,
-                cell.StaticColliderBlob,
+                collider.Blob,
                 RuntimeColliderKind.StaticCell,
                 active: true);
             spawnedEntities.Add(staticEntity);

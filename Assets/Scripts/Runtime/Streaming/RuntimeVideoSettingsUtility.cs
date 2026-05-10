@@ -29,7 +29,6 @@ namespace VVardenfell.Runtime.Streaming
             if (query.IsEmptyIgnoreFilter)
             {
                 Entity entity = em.CreateEntity(typeof(RuntimeVideoSettings));
-                em.SetName(entity, "VVardenfell.RuntimeVideoSettings");
                 em.SetComponentData(entity, settings);
                 return;
             }

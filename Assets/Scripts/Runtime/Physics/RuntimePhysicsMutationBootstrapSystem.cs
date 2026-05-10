@@ -23,7 +23,6 @@ namespace VVardenfell.Runtime.Physics
             }
 
             Entity entity = systemState.EntityManager.CreateEntity(typeof(RuntimePhysicsMutationQueueTag), typeof(PhysicsFlushRequested));
-            systemState.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.RuntimePhysicsMutationQueue"));
             systemState.EntityManager.AddBuffer<RuntimePhysicsMutationRequest>(entity);
             systemState.EntityManager.SetComponentData(entity, new PhysicsFlushRequested());
             RuntimeBootstrapRequestUtility.Consume<RuntimePhysicsMutationBootstrapRequest>(systemState.EntityManager);

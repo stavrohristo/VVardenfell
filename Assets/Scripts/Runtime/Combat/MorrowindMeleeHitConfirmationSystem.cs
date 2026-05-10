@@ -253,7 +253,6 @@ namespace VVardenfell.Runtime.Combat
         static void EmitMeleeHitEvent(ref EntityCommandBuffer ecb, in ResolvedMeleeHitConfirmation hit)
         {
             Entity entity = ecb.CreateEntity();
-            ecb.SetName(entity, "VVardenfell.MorrowindMeleeHitEvent");
             ecb.AddComponent(entity, new MorrowindMeleeHitEvent
             {
                 Attacker = hit.Attacker,

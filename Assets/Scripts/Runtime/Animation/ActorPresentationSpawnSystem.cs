@@ -457,9 +457,6 @@ namespace VVardenfell.Runtime.Animation
             ref DynamicBuffer<LinkedEntityGroup> linked,
             bool createdLinkedBuffer)
         {
-            ecb.SetName(child, visibilityMode == ActorRenderMeshVisibilityMode.FirstPersonShadowOnly
-                ? $"VVardenfell.ActorShadowOnlyRenderMesh[{skinMeshIndex}]"
-                : $"VVardenfell.ActorRenderMesh[{skinMeshIndex}]");
             if (prototypeComponents.HasLocalTransform)
                 ecb.SetComponent(child, LocalTransform.Identity);
             else
@@ -1243,7 +1240,14 @@ namespace VVardenfell.Runtime.Animation
             }
 
             foreach (int modelPrefabIndex in s_RigidEquipmentPrefabBuildSet)
-                WorldBootstrap.EnsureModelPrefabBuilt(systemState.EntityManager, modelPrefabIndex);
+            {
+                if ((uint)modelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length
+                    || WorldResources.ModelPrefabs[modelPrefabIndex] == Entity.Null)
+                {
+                    throw new System.InvalidOperationException(
+                        $"[VVardenfell][SpawnPrefabs] rigid equipment model prefab {modelPrefabIndex} is not loaded; rebake required.");
+                }
+            }
         }
 
         void PopulateRigidEquipment(ref SystemState systemState, 

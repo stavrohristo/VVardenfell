@@ -29,28 +29,24 @@ namespace VVardenfell.Runtime.Streaming
             if (!SystemAPI.HasSingleton<ActiveEnvironmentState>())
             {
                 var entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.LightingState");
                 systemState.EntityManager.AddComponentData(entity, CreateFallbackEnvironment(isInterior: false));
             }
 
             if (!SystemAPI.HasSingleton<MorrowindDayCycleState>())
             {
                 var entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.DayCycleState");
                 systemState.EntityManager.AddComponentData(entity, CreateDefaultDayCycle(ref content));
             }
 
             if (!SystemAPI.HasSingleton<ActiveSkyWeatherState>())
             {
                 var entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.SkyWeatherState");
                 systemState.EntityManager.AddComponentData(entity, CreateFallbackSkyWeather());
             }
 
             if (!SystemAPI.HasSingleton<RuntimeVideoSettings>())
             {
                 var entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.RuntimeVideoSettings");
                 systemState.EntityManager.AddComponentData(entity, ResolveRuntimeVideoSettings());
             }
 

@@ -11,7 +11,6 @@ namespace VVardenfell.Runtime.Systems
                 return;
 
             Entity entity = entityManager.CreateEntity();
-            entityManager.SetName(entity, "VVardenfell.RuntimeActive");
             entityManager.AddComponentData(entity, new MorrowindRuntimeActive());
         }
 
@@ -21,7 +20,6 @@ namespace VVardenfell.Runtime.Systems
                 return;
 
             Entity entity = entityManager.CreateEntity();
-            entityManager.SetName(entity, "VVardenfell.RuntimePaused");
             entityManager.AddComponentData(entity, new MorrowindRuntimePaused());
         }
 

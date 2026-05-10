@@ -104,7 +104,6 @@ namespace VVardenfell.Runtime.WorldRefs
                 typeof(ActiveExplicitRefLookupDirty),
                 typeof(ActiveExplicitRefLookupBuildState),
                 typeof(SessionTeardown));
-            entityManager.SetName(entity, "VVardenfell.ActiveExplicitRefs");
             entityManager.SetComponentData(entity, new ActiveExplicitRefLookup
             {
                 ByContentKey = new NativeParallelHashMap<int, ActiveExplicitRefTarget>(InitialCapacity, Allocator.Persistent),

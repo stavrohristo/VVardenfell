@@ -51,7 +51,6 @@ namespace VVardenfell.Importer.Bake
                     }
                     else
                     {
-                        AssembleFinalCellWriteBuffer(preparedWrite);
                         claimed++;
                         completed++;
                         info.LastCompletedCellKey = preparedWrite.Key;
@@ -185,23 +184,10 @@ namespace VVardenfell.Importer.Bake
             {
                 pending.PreparedWrite.BlobData ??= new BuiltCellBlobData();
                 pending.PreparedWrite.BlobData.StaticCollisionBlobBytes = SerializeCellBlob(pending.Output[0]);
-                AssembleFinalCellWriteBuffer(pending.PreparedWrite);
             }
             finally
             {
                 pending.Dispose();
-            }
-        }
-
-
-        private static void AssembleFinalCellWriteBuffer(PreparedCellWriteData preparedWrite)
-        {
-            try
-            {
-                preparedWrite.FinalBuffer = BuildFinalCellWriteBuffer(preparedWrite);
-            }
-            finally
-            {
             }
         }
 
@@ -219,95 +205,29 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static FinalCellWriteBuffer BuildFinalCellWriteBuffer(PreparedCellWriteData preparedWrite)
-        {
-            return new FinalCellWriteBuffer
-            {
-                HeaderBytes = BuildCellHeaderBytes(preparedWrite),
-                TerrainHeightBytes = preparedWrite.TerrainHeightBytes,
-                TerrainNormalBytes = preparedWrite.TerrainNormalBytes,
-                TerrainColliderChunkBytes = ((preparedWrite.Flags & CacheFormat.CellFlagHasTerrain) != 0)
-                    ? BuildLengthPrefixedBytes(preparedWrite.BlobData?.TerrainColliderBlobBytes)
-                    : null,
-                LayerGridBytes = preparedWrite.LayerGridBytes,
-                WorldMapBytes = preparedWrite.WorldMapBytes,
-                StaticCollisionChunkBytes = ((preparedWrite.Flags & CacheFormat.CellFlagHasStaticCollision) != 0)
-                    ? BuildLengthPrefixedBytes(preparedWrite.BlobData?.StaticCollisionBlobBytes)
-                    : null,
-                RefCountBytes = BuildUInt32Bytes((uint)preparedWrite.RefCount),
-                RefBytes = preparedWrite.RefBytes,
-                DoorCountBytes = BuildUInt32Bytes((uint)preparedWrite.DoorCount),
-                DoorBytes = preparedWrite.DoorBytes,
-                CapturedSoulCountBytes = BuildUInt32Bytes((uint)preparedWrite.CapturedSoulCount),
-                CapturedSoulBytes = preparedWrite.CapturedSoulBytes,
-                LockStateCountBytes = BuildUInt32Bytes((uint)preparedWrite.LockStateCount),
-                LockStateBytes = preparedWrite.LockStateBytes,
-                CombinedRenderChunkCountBytes = BuildUInt32Bytes((uint)preparedWrite.CombinedRenderChunkCount),
-                CombinedRenderChunkBytes = preparedWrite.CombinedRenderChunkBytes,
-            };
-        }
-
-
-        private static IEnumerator FlushCellFilesIncremental(
+        private static IEnumerator FlushCellSectionsIncremental(
             PreparedCellWriteData[] preparedWrites,
             BakeProgress progress)
         {
-            var info = new CellWriteProgressInfo { Subphase = "Flushing cell files" };
+            var info = new CellWriteProgressInfo { Subphase = "Flushing cell sections" };
             UpdateCellWriteProgress(progress, preparedWrites.Length, info);
             yield return null;
 
-            int claimed = 0;
             int completed = 0;
             string lastCompletedKey = null;
-            Exception flushFailure = null;
-            int maxWriters = Math.Max(1, Math.Min(Environment.ProcessorCount, preparedWrites.Length));
 
-            var flushTask = Task.Run(() =>
+            for (int index = 0; index < preparedWrites.Length; index++)
             {
-                int nextIndex = 0;
-                int failureSignaled = 0;
-                var workers = new Task[maxWriters];
-                for (int worker = 0; worker < maxWriters; worker++)
-                {
-                    workers[worker] = Task.Factory.StartNew(() =>
-                    {
-                        while (Volatile.Read(ref failureSignaled) == 0)
-                        {
-                            int index = Interlocked.Increment(ref nextIndex) - 1;
-                            if (index >= preparedWrites.Length)
-                                break;
-
-                            Interlocked.Increment(ref claimed);
-                            try
-                            {
-                                FlushCellFile(preparedWrites[index]);
-                                lastCompletedKey = preparedWrites[index].Key;
-                                Interlocked.Increment(ref completed);
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Interlocked.CompareExchange(ref failureSignaled, 1, 0) == 0)
-                                    flushFailure = ex;
-                                break;
-                            }
-                        }
-                    }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-                }
-
-                Task.WaitAll(workers);
-            });
-
-            while (!flushTask.IsCompleted)
-            {
-                info.ClaimedCount = claimed;
+                info.ClaimedCount = index + 1;
                 info.CompletedCount = completed;
                 info.LastCompletedCellKey = lastCompletedKey;
                 UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-                yield return null;
+                FlushCellSection(preparedWrites[index]);
+                lastCompletedKey = preparedWrites[index].Key;
+                completed++;
+                if ((index & 3) == 3)
+                    yield return null;
             }
-
-            if (flushFailure != null)
-                throw flushFailure;
 
             info.ClaimedCount = preparedWrites.Length;
             info.CompletedCount = preparedWrites.Length;
@@ -317,41 +237,9 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static void FlushCellFile(PreparedCellWriteData preparedWrite)
+        private static void FlushCellSection(PreparedCellWriteData preparedWrite)
         {
-            try
-            {
-                using var fs = File.Create(preparedWrite.OutputPath);
-                WriteSegment(fs, preparedWrite.FinalBuffer.HeaderBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.TerrainHeightBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.TerrainNormalBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.TerrainColliderChunkBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.LayerGridBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.WorldMapBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.StaticCollisionChunkBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.RefCountBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.RefBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.DoorCountBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.DoorBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulCountBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.CapturedSoulBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.LockStateCountBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.LockStateBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.CombinedRenderChunkCountBytes);
-                WriteSegment(fs, preparedWrite.FinalBuffer.CombinedRenderChunkBytes);
-
-                fs.Flush(flushToDisk: true);
-
-            }
-            finally
-            {
-            }
-
-            if (!TryValidateCellFile(preparedWrite.OutputPath, preparedWrite.IsInterior, preparedWrite.CellId, out string validationError))
-            {
-                throw new InvalidDataException(
-                    $"Wrote invalid cell file '{preparedWrite.OutputPath}' for '{preparedWrite.Key}': {validationError}");
-            }
+            WriteRuntimeCellSection(preparedWrite);
         }
 
 
@@ -564,206 +452,6 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static byte[] BuildCellHeaderBytes(PreparedCellWriteData preparedWrite)
-        {
-            using var ms = new MemoryStream(64);
-            using var w = new BinaryWriter(ms);
-            w.Write(CellBakery.MagicCell);
-            w.Write(preparedWrite.GridX);
-            w.Write(preparedWrite.GridY);
-            w.Write(preparedWrite.Flags);
-            if ((preparedWrite.Flags & CacheFormat.CellFlagHasEnvironment) != 0)
-            {
-                var environment = preparedWrite.Environment;
-                w.Write(environment.HasMood);
-                w.Write(environment.HasWater);
-                w.Write(environment.AmbientColorRgba);
-                w.Write(environment.DirectionalColorRgba);
-                w.Write(environment.FogColorRgba);
-                w.Write(environment.FogDensity);
-                w.Write(environment.WaterHeight);
-                w.Write(environment.RegionId ?? string.Empty);
-            }
-            return ms.ToArray();
-        }
-
-
-        private static byte[] BuildLengthPrefixedBytes(byte[] payload)
-        {
-            if (payload == null || payload.Length == 0)
-                return BuildInt32Bytes(0);
-
-            var bytes = new byte[sizeof(int) + payload.Length];
-            int offset = 0;
-            WriteInt32(bytes, ref offset, payload.Length);
-            Buffer.BlockCopy(payload, 0, bytes, offset, payload.Length);
-            return bytes;
-        }
-
-
-        private static byte[] BuildUInt32Bytes(uint value)
-        {
-            var bytes = new byte[sizeof(uint)];
-            int offset = 0;
-            WriteUInt32(bytes, ref offset, value);
-            return bytes;
-        }
-
-
-        private static byte[] BuildInt32Bytes(int value)
-        {
-            var bytes = new byte[sizeof(int)];
-            int offset = 0;
-            WriteInt32(bytes, ref offset, value);
-            return bytes;
-        }
-
-
-        private static void WriteSegment(Stream stream, byte[] bytes)
-        {
-            if (bytes == null || bytes.Length == 0)
-                return;
-            stream.Write(bytes, 0, bytes.Length);
-        }
-
-
-        private static bool TryValidateCellFile(string path, bool isInterior, string cellId, out string error)
-        {
-            error = null;
-
-            try
-            {
-                using var fs = File.OpenRead(path);
-                using var r = new BinaryReader(fs);
-
-                if (r.ReadUInt32() != CellBakery.MagicCell)
-                {
-                    error = "bad cell magic";
-                    return false;
-                }
-
-                r.ReadInt32();
-                r.ReadInt32();
-                uint flags = r.ReadUInt32();
-
-                bool hasTerrain = (flags & CacheFormat.CellFlagHasTerrain) != 0;
-                bool hasNormals = (flags & CacheFormat.CellFlagHasNormals) != 0;
-                bool hasVtex = (flags & CacheFormat.CellFlagHasVtex) != 0;
-                bool hasStaticCollision = (flags & CacheFormat.CellFlagHasStaticCollision) != 0;
-                bool hasEnvironment = (flags & CacheFormat.CellFlagHasEnvironment) != 0;
-                bool hasWorldMap = (flags & CacheFormat.CellFlagHasWorldMap) != 0;
-
-                if (hasEnvironment)
-                {
-                    SkipExact(r, 2L, "cell environment flags");
-                    SkipExact(r, 4L * 3L, "cell environment colors");
-                    SkipExact(r, sizeof(float) * 2L, "cell environment scalars");
-                    r.ReadString();
-                }
-
-                if (hasTerrain)
-                {
-                    SkipExact(r, 65L * 65L * sizeof(float), "terrain heights");
-                    if (hasNormals)
-                        SkipExact(r, 3L * 65L * 65L, "terrain normals");
-
-                    var terrainBlob = BlobStreamIO.ReadLengthPrefixed<Unity.Physics.Collider>(
-                        r,
-                        CacheFormat.PhysicsBlobVersion,
-                        $"cell file '{path}' terrain collider");
-                    if (terrainBlob.IsCreated)
-                        terrainBlob.Dispose();
-
-                    if (hasVtex)
-                        SkipExact(r, 16L * 16L * sizeof(ushort), "layer grid");
-                    if (hasWorldMap)
-                        SkipExact(r, 81L, "world map");
-                }
-
-                if (hasStaticCollision)
-                {
-                    var staticBlob = BlobStreamIO.ReadLengthPrefixed<Unity.Physics.Collider>(
-                        r,
-                        CacheFormat.PhysicsBlobVersion,
-                        $"cell file '{path}' static collider");
-                    if (staticBlob.IsCreated)
-                        staticBlob.Dispose();
-                }
-
-                uint refCount = r.ReadUInt32();
-                SkipExact(r, checked((long)refCount * 72L), "ref table");
-
-                uint doorCount = r.ReadUInt32();
-                for (int i = 0; i < doorCount; i++)
-                {
-                    SkipExact(r, 36L, "door table entry");
-                    r.ReadString();
-                }
-
-                uint capturedSoulCount = r.ReadUInt32();
-                for (int i = 0; i < capturedSoulCount; i++)
-                {
-                    SkipExact(r, sizeof(uint), "captured soul table entry placed ref id");
-                    r.ReadString();
-                }
-
-                uint lockStateCount = r.ReadUInt32();
-                for (int i = 0; i < lockStateCount; i++)
-                {
-                    SkipExact(r, sizeof(uint) + sizeof(int) + sizeof(byte), "lock state table entry fixed fields");
-                    r.ReadString();
-                    r.ReadString();
-                }
-
-                uint combinedRenderChunkCount = r.ReadUInt32();
-                for (int i = 0; i < combinedRenderChunkCount; i++)
-                {
-                    SkipExact(r, sizeof(int) * 4L + sizeof(float) * 6L + sizeof(uint) * 3L, "combined render chunk fixed fields");
-                    uint vertexByteCount = r.ReadUInt32();
-                    uint indexByteCount = r.ReadUInt32();
-                    uint memberCount = r.ReadUInt32();
-                    SkipExact(
-                        r,
-                        checked((long)vertexByteCount + indexByteCount + (long)memberCount * (sizeof(uint) + sizeof(int))),
-                        "combined render chunk payload");
-                }
-
-                if (fs.Position != fs.Length)
-                {
-                    error = $"unexpected trailing data at offset {fs.Position}/{fs.Length}";
-                    return false;
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                string cellLabel = isInterior
-                    ? $"interior '{cellId ?? string.Empty}'"
-                    : $"cell file '{path}'";
-                error = $"{cellLabel}: {ex.Message}";
-                return false;
-            }
-        }
-
-
-        private static void SkipExact(BinaryReader reader, long byteCount, string section)
-        {
-            if (byteCount < 0)
-                throw new InvalidDataException($"Negative byte count while validating {section}.");
-
-            var stream = reader.BaseStream;
-            long remaining = stream.Length - stream.Position;
-            if (remaining < byteCount)
-            {
-                throw new InvalidDataException(
-                    $"Truncated {section}: expected {byteCount} bytes, only {remaining} remain.");
-            }
-
-            stream.Seek(byteCount, SeekOrigin.Current);
-        }
-
-
         private static void WriteUInt16(byte[] buffer, ref int offset, ushort value)
         {
             buffer[offset++] = (byte)value;
@@ -799,7 +487,7 @@ namespace VVardenfell.Importer.Bake
                 return new BakeManifest.BakedCellState
                 {
                     Key = staged.WorkItem.Key,
-                    OutputPath = staged.WorkItem.OutputPath,
+                    SectionPath = BuildCellSectionPath(staged.WorkItem),
                     Fingerprint = staged.Fingerprint,
                     PipelineVersion = CacheFormat.WorldBakePipelineVersion,
                     IsInterior = staged.WorkItem.IsInterior,
@@ -817,7 +505,7 @@ namespace VVardenfell.Importer.Bake
             return new BakeManifest.BakedCellState
             {
                 Key = staged.WorkItem.Key,
-                OutputPath = staged.WorkItem.OutputPath,
+                SectionPath = BuildCellSectionPath(staged.WorkItem),
                 Fingerprint = staged.Fingerprint,
                 PipelineVersion = CacheFormat.WorldBakePipelineVersion,
                 IsInterior = staged.WorkItem.IsInterior,
@@ -830,6 +518,14 @@ namespace VVardenfell.Importer.Bake
                 CollisionIndices = staged.GlobalCollisionIndices ?? Array.Empty<int>(),
                 TerrainLayerIndices = staged.GlobalTerrainLayerIndices ?? Array.Empty<int>(),
             };
+        }
+
+
+        private static string BuildCellSectionPath(CellBakeWorkItem workItem)
+        {
+            return workItem.IsInterior
+                ? CachePaths.InteriorCellSectionFile(workItem.Cell.Name ?? string.Empty)
+                : CachePaths.ExteriorCellSectionFile(workItem.Cell.GridX, workItem.Cell.GridY);
         }
 
 
@@ -847,7 +543,7 @@ namespace VVardenfell.Importer.Bake
             List<CellReference> refs,
             LandRecord land,
             RecordIndex recordIndex,
-            Dictionary<int, string> ltexMap,
+            Dictionary<string, Dictionary<int, string>> ltexMapsBySource,
             bool bakeCombinedCellRenderChunks)
         {
             using var ms = new MemoryStream();
@@ -929,7 +625,11 @@ namespace VVardenfell.Importer.Bake
                         {
                             ushort vtex = land.VtexIndices[i];
                             w.Write(vtex);
-                            w.Write(LtexIndex.ResolveVtex(vtex, ltexMap) ?? string.Empty);
+                            w.Write(LtexIndex.ResolveVtexRequired(
+                                vtex,
+                                ltexMapsBySource,
+                                workItem.LandSourcePath,
+                                $"{workItem.Key} terrain VTEX slot {i}") ?? string.Empty);
                         }
                     }
 

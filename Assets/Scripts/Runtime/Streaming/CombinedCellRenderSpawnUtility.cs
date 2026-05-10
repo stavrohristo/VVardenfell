@@ -16,22 +16,28 @@ namespace VVardenfell.Runtime.Streaming
 {
     internal static class CombinedCellRenderSpawnUtility
     {
-        public static Entity[] SpawnChunks(EntityManager em, int2 coord, CellData data, bool active)
+        public static Entity[] SpawnChunks(EntityManager em, int2 coord, Entity sectionEntity, bool active)
         {
-            var chunks = data?.CombinedRenderChunks;
-            if (chunks == null || chunks.Length == 0)
+            if (sectionEntity == Entity.Null || !em.Exists(sectionEntity))
+                return System.Array.Empty<Entity>();
+            int chunkCount = em.GetBuffer<RuntimeCellSectionCombinedChunk>(sectionEntity).Length;
+            if (chunkCount == 0)
                 return System.Array.Empty<Entity>();
 
-            var result = new Entity[chunks.Length];
+            var result = new Entity[chunkCount];
             var managed = WorldResources.LoadedManaged.TryGetValue(coord, out var existing)
                 ? existing
                 : new WorldResources.PerCellManaged();
-            managed.CombinedRenderMeshes ??= new List<Mesh>(chunks.Length);
-            managed.CombinedRenderRmas ??= new List<RenderMeshArray>(chunks.Length);
+            managed.CombinedRenderMeshes ??= new List<Mesh>(chunkCount);
+            managed.CombinedRenderRmas ??= new List<RenderMeshArray>(chunkCount);
 
-            for (int i = 0; i < chunks.Length; i++)
+            for (int i = 0; i < chunkCount; i++)
             {
-                var chunk = chunks[i];
+                var chunks = em.GetBuffer<RuntimeCellSectionCombinedChunk>(sectionEntity);
+                var vertexBytes = em.GetBuffer<RuntimeCellSectionCombinedVertexByte>(sectionEntity);
+                var indexBytes = em.GetBuffer<RuntimeCellSectionCombinedIndexByte>(sectionEntity);
+                var members = em.GetBuffer<RuntimeCellSectionCombinedMember>(sectionEntity);
+                var chunk = BuildChunkDef(chunks[i], vertexBytes, indexBytes, members);
                 Mesh mesh = CombinedCellRenderMeshUploadUtility.Upload(chunk, $"CombinedCellRender({coord.x},{coord.y})#{i}");
                 RenderMeshArray rma = CreateRenderMeshArray(chunk, mesh);
                 managed.CombinedRenderMeshes.Add(mesh);
@@ -45,14 +51,15 @@ namespace VVardenfell.Runtime.Streaming
 
         public static void AttachMembershipLinks(
             EntityManager em,
-            CombinedCellRenderChunkDef[] chunkDefs,
+            Entity sectionEntity,
             Entity[] chunkEntities,
             ref LogicalRefLookup logicalRefs)
         {
-            if (chunkDefs == null || chunkEntities == null || !logicalRefs.Map.IsCreated)
+            if (sectionEntity == Entity.Null || chunkEntities == null || !logicalRefs.Map.IsCreated)
                 return;
+            int chunkCount = em.GetBuffer<RuntimeCellSectionCombinedChunk>(sectionEntity).Length;
 
-            for (int i = 0; i < chunkDefs.Length && i < chunkEntities.Length; i++)
+            for (int i = 0; i < chunkCount && i < chunkEntities.Length; i++)
             {
                 Entity chunkEntity = chunkEntities[i];
                 if (chunkEntity == Entity.Null || !em.Exists(chunkEntity))
@@ -60,12 +67,12 @@ namespace VVardenfell.Runtime.Streaming
 
                 var chunk = em.GetComponentData<CombinedCellRenderChunk>(chunkEntity);
                 var pendingMembers = new List<CombinedCellRenderChunkMember>();
-                var members = chunkDefs[i].Members ?? System.Array.Empty<CombinedCellRenderChunkMemberDef>();
-                for (int m = 0; m < members.Length; m++)
+                var chunkDef = em.GetBuffer<RuntimeCellSectionCombinedChunk>(sectionEntity)[i];
+                int firstMember = chunkDef.FirstMember;
+                int memberCount = chunkDef.MemberCount;
+                for (int m = 0; m < memberCount; m++)
                 {
-                    var member = members[m];
-                    if (member == null)
-                        continue;
+                    var member = em.GetBuffer<RuntimeCellSectionCombinedMember>(sectionEntity)[firstMember + m];
 
                     uint placedRefId = member.PlacedRefId;
                     if (!logicalRefs.Map.TryGetValue(placedRefId, out Entity logicalEntity)
@@ -124,6 +131,47 @@ namespace VVardenfell.Runtime.Streaming
             }
         }
 
+        static CombinedCellRenderChunkDef BuildChunkDef(
+            RuntimeCellSectionCombinedChunk chunk,
+            DynamicBuffer<RuntimeCellSectionCombinedVertexByte> vertexBytes,
+            DynamicBuffer<RuntimeCellSectionCombinedIndexByte> indexBytes,
+            DynamicBuffer<RuntimeCellSectionCombinedMember> members)
+        {
+            var def = new CombinedCellRenderChunkDef
+            {
+                TileX = chunk.TileX,
+                TileY = chunk.TileY,
+                MaterialIndex = chunk.MaterialIndex,
+                TextureBucketKey = chunk.TextureBucketKey,
+                BoundsCenterX = chunk.BoundsCenter.x,
+                BoundsCenterY = chunk.BoundsCenter.y,
+                BoundsCenterZ = chunk.BoundsCenter.z,
+                BoundsExtentsX = chunk.BoundsExtents.x,
+                BoundsExtentsY = chunk.BoundsExtents.y,
+                BoundsExtentsZ = chunk.BoundsExtents.z,
+                VertexCount = chunk.VertexCount,
+                IndexCount = chunk.IndexCount,
+                MeshFlags = chunk.MeshFlags,
+                VertexBytes = new byte[chunk.VertexByteCount],
+                IndexBytes = new byte[chunk.IndexByteCount],
+                Members = new CombinedCellRenderChunkMemberDef[chunk.MemberCount],
+            };
+            for (int i = 0; i < def.VertexBytes.Length; i++)
+                def.VertexBytes[i] = vertexBytes[chunk.FirstVertexByte + i].Value;
+            for (int i = 0; i < def.IndexBytes.Length; i++)
+                def.IndexBytes[i] = indexBytes[chunk.FirstIndexByte + i].Value;
+            for (int i = 0; i < def.Members.Length; i++)
+            {
+                var member = members[chunk.FirstMember + i];
+                def.Members[i] = new CombinedCellRenderChunkMemberDef
+                {
+                    PlacedRefId = member.PlacedRefId,
+                    NodeIndex = member.NodeIndex,
+                };
+            }
+            return def;
+        }
+
         static RenderMeshArray CreateRenderMeshArray(CombinedCellRenderChunkDef chunk, Mesh mesh)
         {
             var cache = WorldResources.Cache;
@@ -153,7 +201,6 @@ namespace VVardenfell.Runtime.Streaming
             int index)
         {
             Entity entity = em.CreateEntity();
-            em.SetName(entity, $"CombinedCellRender({coord.x},{coord.y})#{index}");
             RenderMeshUtility.AddComponents(
                 entity,
                 em,

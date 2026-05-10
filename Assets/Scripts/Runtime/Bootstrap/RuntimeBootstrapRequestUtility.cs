@@ -38,7 +38,6 @@ namespace VVardenfell.Runtime.Bootstrap
 
             Entity entity = entityManager.CreateEntity();
             if (!string.IsNullOrWhiteSpace(entityName))
-                entityManager.SetName(entity, entityName);
             entityManager.AddComponent<T>(entity);
         }
 

@@ -48,7 +48,6 @@ namespace VVardenfell.Runtime.Streaming
                 {
                     Value = _light,
                 });
-                entityManager.SetName(entity, "VVardenfell.MainLight");
                 return true;
             }
 

@@ -81,6 +81,11 @@ namespace VVardenfell.Runtime.Streaming
                     loaded.ActiveRevision++;
                     activeChanged = true;
                 }
+                if (loaded.SectionStates.IsCreated
+                    && (!loaded.SectionStates.TryGetValue(coord, out byte rawState) || rawState != (byte)CellSectionLoadState.Failed))
+                {
+                    loaded.SectionStates[coord] = (byte)CellSectionLoadState.LoadedInactive;
+                }
                 // Managed resources (terrain Mesh/Texture/Material) stay alive across
                 // enable/disable cycles — we only toggle render/physics state.
             }

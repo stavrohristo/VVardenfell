@@ -29,7 +29,6 @@ namespace VVardenfell.Runtime.Audio
             AudioTuningState tuning = tuningSettings.BuildRuntimeState();
 
             var entity = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(entity, "VVardenfell.AudioState");
             systemState.EntityManager.AddComponentData(entity, new AudioContextState
             {
                 Mode = AudioPlaybackMode.Bootstrap,

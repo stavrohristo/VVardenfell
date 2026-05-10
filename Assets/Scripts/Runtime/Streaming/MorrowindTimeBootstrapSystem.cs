@@ -27,7 +27,6 @@ namespace VVardenfell.Runtime.Streaming
             if (!SystemAPI.HasSingleton<MorrowindTimeState>())
             {
                 Entity entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.TimeState");
                 systemState.EntityManager.AddComponentData(entity, CreateDefaultTime(ref content));
                 systemState.EntityManager.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
             }
@@ -41,7 +40,6 @@ namespace VVardenfell.Runtime.Streaming
             if (!SystemAPI.HasSingleton<MorrowindWeatherState>())
             {
                 Entity entity = systemState.EntityManager.CreateEntity();
-                systemState.EntityManager.SetName(entity, "VVardenfell.WeatherState");
                 systemState.EntityManager.AddComponentData(entity, CreateDefaultWeather());
                 systemState.EntityManager.AddBuffer<MorrowindWeatherChangeRequest>(entity);
                 systemState.EntityManager.AddBuffer<MorrowindWeatherForceRequest>(entity);

@@ -3,10 +3,10 @@ using System.Collections.Generic;
 namespace VVardenfell.Importer.Esm
 {
     /// <summary>
-    /// One scan over the ESM collects every LTEX record into an <c>mIndex → BSA texture path</c>
-    /// map. Keyed by the LTEX's own <c>INTV</c> index — VTEX subrecord values reference this same
-    /// index but offset by +1 (OpenMW <c>storage.cpp:374</c> "All vtex ids are +1 compared to the
-    /// ltex ids"). Index 0 in VTEX means "default terrain texture" and does not come from any LTEX.
+    /// One scan over an ESM collects every LTEX record into an <c>mIndex -> texture path</c>
+    /// map. LTEX indices are plugin-local: VTEX subrecord values reference the LAND record's own
+    /// source plugin LTEX table, offset by +1. Index 0 in VTEX means "default terrain texture" and
+    /// does not come from any LTEX.
     /// </summary>
     public static class LtexIndex
     {
@@ -67,14 +67,50 @@ namespace VVardenfell.Importer.Esm
         }
 
         /// <summary>
-        /// Resolve a VTEX subrecord value (0 = default, otherwise ltex-index + 1) to a BSA texture
-        /// path. Returns <see cref="DefaultTexturePath"/> for unknown indices so we never fail to
-        /// bake a layer.
-        /// </summary>
         public static string ResolveVtex(ushort vtex, Dictionary<int, string> ltexMap)
         {
             if (vtex == 0) return DefaultTexturePath;
             return ltexMap.TryGetValue(vtex - 1, out var path) ? path : DefaultTexturePath;
+        }
+
+        public static string ResolveVtexRequired(ushort vtex, Dictionary<int, string> ltexMap, string context)
+        {
+            if (vtex == 0)
+                return DefaultTexturePath;
+
+            int ltexIndex = vtex - 1;
+            if (ltexMap != null && ltexMap.TryGetValue(ltexIndex, out var path) && !string.IsNullOrWhiteSpace(path))
+                return path;
+
+            throw new System.IO.InvalidDataException(
+                $"{context} references missing LTEX index {ltexIndex} from VTEX value {vtex}; native terrain atlas requires every non-zero VTEX entry to resolve to an LTEX texture.");
+        }
+
+        public static string ResolveVtexRequired(
+            ushort vtex,
+            IReadOnlyDictionary<string, Dictionary<int, string>> ltexMapsBySource,
+            string sourcePath,
+            string context)
+        {
+            if (vtex == 0)
+                return DefaultTexturePath;
+
+            int ltexIndex = vtex - 1;
+            if (!string.IsNullOrWhiteSpace(sourcePath)
+                && ltexMapsBySource != null
+                && ltexMapsBySource.TryGetValue(sourcePath, out var sourceMap)
+                && sourceMap != null
+                && sourceMap.TryGetValue(ltexIndex, out var path)
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                return path;
+            }
+
+            string sourceName = string.IsNullOrWhiteSpace(sourcePath)
+                ? "<unknown>"
+                : System.IO.Path.GetFileName(sourcePath);
+            throw new System.IO.InvalidDataException(
+                $"{context} references missing LTEX index {ltexIndex} from VTEX value {vtex} in LAND source '{sourceName}'; native terrain atlas requires every non-zero VTEX entry to resolve against the LAND record's source content file.");
         }
     }
 }

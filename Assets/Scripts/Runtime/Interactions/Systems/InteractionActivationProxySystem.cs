@@ -115,7 +115,6 @@ namespace VVardenfell.Runtime.Interactions
                 InteractionCollisionLayers.ActivationProxyFilter);
 
             Entity proxyEntity = ecb.CreateEntity();
-            ecb.SetName(proxyEntity, new FixedString64Bytes("InteractionActivationProxy"));
             ecb.AddComponent(proxyEntity, LocalTransform.FromPositionRotationScale(worldBounds.Center, quaternion.identity, 1f));
             ecb.AddComponent(proxyEntity, new LocalToWorld
             {

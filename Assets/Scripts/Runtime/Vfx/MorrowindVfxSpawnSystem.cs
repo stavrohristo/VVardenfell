@@ -173,7 +173,6 @@ namespace VVardenfell.Runtime.Vfx
                 return;
 
             Entity entity = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(entity, "VVardenfell.MorrowindVfxRuntime");
             systemState.EntityManager.AddComponentData(entity, new MorrowindVfxRuntimeState());
         }
 

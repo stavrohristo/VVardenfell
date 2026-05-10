@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
@@ -11,6 +12,7 @@ namespace VVardenfell.Importer.Bsa
     public sealed class BsaArchive : IDisposable
     {
         private const uint MorrowindVersion = 0x100;
+        private static readonly Dictionary<string, BsaArchive> s_OpenArchives = new(StringComparer.OrdinalIgnoreCase);
 
         private readonly FileStream _stream;
         public string FilePath { get; }
@@ -21,6 +23,8 @@ namespace VVardenfell.Importer.Bsa
             FilePath = path;
             _stream = stream;
             Entries = entries;
+            lock (s_OpenArchives)
+                s_OpenArchives[path] = this;
         }
 
         public static BsaArchive Open(string path)
@@ -97,7 +101,7 @@ namespace VVardenfell.Importer.Bsa
                 if (absOffset + fileSizes[i] > fsize)
                     throw new InvalidDataException($"BSA entry '{name}' extends past end: {path}");
 
-                entries[i] = new BsaEntry(name, absOffset, fileSizes[i]);
+                entries[i] = new BsaEntry(name, absOffset, fileSizes[i], path);
             }
 
             return entries;
@@ -105,6 +109,27 @@ namespace VVardenfell.Importer.Bsa
 
         /// <summary>Read the full contents of an entry into a new byte array.</summary>
         public byte[] Read(in BsaEntry entry)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.LoosePath))
+                return File.ReadAllBytes(entry.LoosePath);
+
+            if (!string.IsNullOrWhiteSpace(entry.ArchivePath)
+                && !string.Equals(entry.ArchivePath, FilePath, StringComparison.OrdinalIgnoreCase))
+            {
+                lock (s_OpenArchives)
+                {
+                    if (s_OpenArchives.TryGetValue(entry.ArchivePath, out var targetArchive) && targetArchive != null)
+                        return targetArchive.ReadOwn(entry);
+                }
+
+                using var temporaryArchive = Open(entry.ArchivePath);
+                return temporaryArchive.ReadOwn(entry);
+            }
+
+            return ReadOwn(entry);
+        }
+
+        byte[] ReadOwn(in BsaEntry entry)
         {
             var buf = new byte[entry.Size];
             lock (_stream)
@@ -121,6 +146,19 @@ namespace VVardenfell.Importer.Bsa
             return buf;
         }
 
-        public void Dispose() => _stream?.Dispose();
+        public void Dispose()
+        {
+            lock (s_OpenArchives)
+            {
+                if (!string.IsNullOrWhiteSpace(FilePath)
+                    && s_OpenArchives.TryGetValue(FilePath, out var archive)
+                    && ReferenceEquals(archive, this))
+                {
+                    s_OpenArchives.Remove(FilePath);
+                }
+            }
+
+            _stream?.Dispose();
+        }
     }
 }

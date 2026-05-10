@@ -55,7 +55,24 @@ namespace VVardenfell.Importer.Esm
         public static RecordIndex Build(EsmReader esm)
         {
             var map = new Dictionary<string, BaseRecord>(16 * 1024, StringComparer.OrdinalIgnoreCase);
+            AddRecords(esm, map);
+            return new RecordIndex(map);
+        }
 
+        public static RecordIndex Build(string[] sourcePaths)
+        {
+            var map = new Dictionary<string, BaseRecord>(16 * 1024, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < (sourcePaths?.Length ?? 0); i++)
+            {
+                using var esm = new EsmReader(sourcePaths[i]);
+                AddRecords(esm, map);
+            }
+
+            return new RecordIndex(map);
+        }
+
+        static void AddRecords(EsmReader esm, Dictionary<string, BaseRecord> map)
+        {
             esm.Seek(0);
             while (esm.ReadRecordHeader(out var rec))
             {
@@ -82,8 +99,6 @@ namespace VVardenfell.Importer.Esm
                 if (!string.IsNullOrEmpty(id))
                     map[id] = new BaseRecord(rec.Tag, id, model ?? "", displayName ?? "");
             }
-
-            return new RecordIndex(map);
         }
     }
 }

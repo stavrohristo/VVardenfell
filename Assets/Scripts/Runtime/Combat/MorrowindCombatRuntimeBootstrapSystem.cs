@@ -29,7 +29,6 @@ namespace VVardenfell.Runtime.Combat
                 return;
 
             Entity entity = state.EntityManager.CreateEntity(typeof(MorrowindCombatRuntimeState));
-            state.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
             state.EntityManager.SetComponentData(entity, new MorrowindCombatRuntimeState
             {
                 RandomState = 0x6E624EB7u,

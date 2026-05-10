@@ -59,6 +59,7 @@ namespace VVardenfell.Runtime.Streaming
             var loaded = _singletonQuery.GetSingleton<LoadedCellsMap>();
             var loadedEntity = _singletonQuery.GetSingletonEntity();
             uint startActiveRevision = loaded.ActiveRevision;
+            bool loadedStateChanged = false;
             var logicalRefs = _singletonQuery.GetSingleton<LogicalRefLookup>();
             var pendingPhysicsLoad = _singletonQuery.GetSingleton<PendingCellPhysicsLoad>();
 
@@ -72,19 +73,53 @@ namespace VVardenfell.Runtime.Streaming
             {
                 if (loaded.Active.Contains(coord))
                     continue;
+                if (loaded.SectionStates.IsCreated
+                    && loaded.SectionStates.TryGetValue(coord, out byte rawState)
+                    && rawState == (byte)CellSectionLoadState.Failed)
+                {
+                    continue;
+                }
 
                 if (!loaded.Streamed.Contains(coord))
                 {
-                    if (WorldSpawner.TrySpawnExteriorCellByCoord(
-                            World.DefaultGameObjectInjectionWorld,
-                            coord,
-                            ref loaded,
-                            ref logicalRefs,
-                            active: true,
-                            gateTerrainByRadius: cfg.GateTerrainByRadius))
+                    if (loaded.SectionStates.IsCreated)
                     {
+                        loaded.SectionStates[coord] = (byte)CellSectionLoadState.Loading;
+                        loadedStateChanged = true;
+                    }
+
+                    bool spawned = false;
+                    try
+                    {
+                        spawned = WorldSpawner.TrySpawnExteriorCellByCoord(
+                                World.DefaultGameObjectInjectionWorld,
+                                coord,
+                                ref loaded,
+                                ref logicalRefs,
+                                active: true,
+                                gateTerrainByRadius: cfg.GateTerrainByRadius);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        if (loaded.SectionStates.IsCreated)
+                            loaded.SectionStates[coord] = (byte)CellSectionLoadState.Failed;
+                        loadedStateChanged = true;
+                        UnityEngine.Debug.LogError($"[VVardenfell][CellStreaming] failed loading exterior cell ({coord.x},{coord.y}); cell marked failed and will not retry until reload: {ex}");
+                        continue;
+                    }
+
+                    if (spawned)
+                    {
+                        if (loaded.SectionStates.IsCreated)
+                            loaded.SectionStates[coord] = (byte)CellSectionLoadState.Active;
+                        loadedStateChanged = true;
                         QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
                         spawnedCellThisFrame = true;
+                    }
+                    else if (loaded.SectionStates.IsCreated)
+                    {
+                        loaded.SectionStates[coord] = (byte)CellSectionLoadState.Unloaded;
+                        loadedStateChanged = true;
                     }
 
                     if (spawnedCellThisFrame)
@@ -104,12 +139,18 @@ namespace VVardenfell.Runtime.Streaming
                 QueuePhysicsCell(ref pendingPhysicsLoad.Cells, coord);
                 if (loaded.Active.Add(coord))
                     loaded.ActiveRevision++;
+                if (loaded.SectionStates.IsCreated)
+                {
+                    loaded.SectionStates[coord] = (byte)CellSectionLoadState.Active;
+                    loadedStateChanged = true;
+                }
             }
 
-            if (loaded.ActiveRevision != startActiveRevision)
+            if (loaded.ActiveRevision != startActiveRevision || loadedStateChanged)
             {
                 state.EntityManager.SetComponentData(loadedEntity, loaded);
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(state.EntityManager);
+                if (loaded.ActiveRevision != startActiveRevision)
+                    ActiveExplicitRefLookupLifecycleUtility.MarkDirty(state.EntityManager);
             }
         }
 

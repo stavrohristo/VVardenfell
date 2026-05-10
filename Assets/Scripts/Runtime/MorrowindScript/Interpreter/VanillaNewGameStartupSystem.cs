@@ -35,9 +35,10 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             ref RuntimeContentBlob content = ref contentReference.Value;
             Entity runtimeEntity = SystemAPI.GetSingletonEntity<MorrowindScriptRuntimeState>();
-            var globals = systemState.EntityManager.GetBuffer<MorrowindScriptGlobalValue>(runtimeEntity);
 
             DestroyExistingGlobalScripts(systemState.EntityManager);
+
+            var globals = systemState.EntityManager.GetBuffer<MorrowindScriptGlobalValue>(runtimeEntity);
             ResetGlobals(ref content, globals);
             SetCharGenState(ref content, globals, 1);
             EnsureCharGenStage(systemState.EntityManager, SystemAPI.GetSingletonEntity<CharacterGenerationState>(), SystemAPI.GetSingleton<CharacterGenerationState>(), 1);
@@ -95,7 +96,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return;
 
             Entity entity = entityManager.CreateEntity();
-            entityManager.SetName(entity, $"VVardenfell.GlobalScript.{scriptId}");
             entityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance());
             entityManager.AddComponentData(entity, new MorrowindScriptInstance
             {

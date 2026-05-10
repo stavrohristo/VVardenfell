@@ -21,6 +21,7 @@ namespace VVardenfell.Importer.Bake
 
         private readonly object _gate = new object();
         private readonly BsaArchive _bsa;
+        private readonly ContentAssetResolver _assetResolver;
         private readonly TexturePathResolver _resolver;
         private readonly Dictionary<string, int> _indexByResolved =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -37,6 +38,13 @@ namespace VVardenfell.Importer.Bake
         public TextureBakery(BsaArchive bsa, TexturePathResolver resolver)
         {
             _bsa = bsa;
+            _resolver = resolver;
+        }
+
+        public TextureBakery(ContentAssetResolver assetResolver, TexturePathResolver resolver)
+        {
+            _assetResolver = assetResolver;
+            _bsa = assetResolver?.PrimaryArchive;
             _resolver = resolver;
         }
 
@@ -108,6 +116,43 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
+        public int AddOrGetRequired(string rawTexPath, string context)
+        {
+            lock (_gate)
+            {
+                if (string.IsNullOrWhiteSpace(rawTexPath))
+                    throw new InvalidDataException($"{context} has an empty texture path.");
+                if (_indexByRaw.TryGetValue(rawTexPath, out var idx))
+                {
+                    if (idx < 0)
+                        throw new InvalidDataException($"{context} texture '{rawTexPath}' could not be resolved in configured data roots or archives.");
+                    return idx;
+                }
+
+                if (!_resolver.TryResolve(rawTexPath, out var entry, out var resolved))
+                {
+                    _indexByRaw[rawTexPath] = -1;
+                    throw new InvalidDataException($"{context} texture '{rawTexPath}' could not be resolved in configured data roots or archives.");
+                }
+
+                if (_indexByResolved.TryGetValue(resolved, out idx))
+                {
+                    _indexByRaw[rawTexPath] = idx;
+                    return idx;
+                }
+
+                string hex = Sha1Hex16(resolved);
+
+                idx = _hashHexByIndex.Count;
+                _resolvedByIndex.Add(resolved);
+                _hashHexByIndex.Add(hex);
+                _indexByResolved[resolved] = idx;
+                _indexByRaw[rawTexPath] = idx;
+                Modified = true;
+                return idx;
+            }
+        }
+
         public IReadOnlyList<string> HashesInOrder => _hashHexByIndex;
 
         public readonly struct CatalogEntry
@@ -159,7 +204,7 @@ namespace VVardenfell.Importer.Bake
                     _indexByResolved[actualResolved] = textureIndex;
                 }
 
-                payload = DdsTexture.DecodePayload(_bsa.Read(entry), actualResolved);
+                payload = DdsTexture.DecodePayload(ReadEntry(entry), actualResolved);
                 _payloadByIndex[textureIndex] = payload;
                 return payload;
             }
@@ -178,7 +223,7 @@ namespace VVardenfell.Importer.Bake
                 if (!_resolver.TryResolve(resolved, out var entry, out var actualResolved))
                     throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build terrain texture layers.");
 
-                payload = DdsTexture.DecodeToRgba32Payload(_bsa.Read(entry), actualResolved);
+                payload = DdsTexture.DecodeToRgba32Payload(ReadEntry(entry), actualResolved);
                 _rgba32PayloadByIndex[textureIndex] = payload;
                 return payload;
             }
@@ -402,6 +447,15 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < 8; i++)
                 sb.AppendFormat("{0:x2}", hash[i]);
             return sb.ToString();
+        }
+
+        byte[] ReadEntry(BsaEntry entry)
+        {
+            if (_assetResolver != null)
+                return _assetResolver.Read(entry);
+            if (_bsa == null)
+                throw new InvalidDataException($"Texture '{entry.Name}' is unavailable because no archive resolver is loaded.");
+            return _bsa.Read(entry);
         }
 
     }

@@ -452,13 +452,10 @@ namespace VVardenfell.Runtime.WorldState
             if (dx > PreloadedRadius || dz > PreloadedRadius)
                 throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] formation position exited the preloaded 3x3 battleground neighborhood.");
 
-            if (!WorldResources.TryGetExteriorCell(cell, out CellData cellData) || cellData == null)
-                throw new System.InvalidOperationException($"[VVardenfell][BattleSimulator] terrain data for cell {cell.x},{cell.y} is not loaded.");
-
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float localX = position.x - cell.x * cellMeters;
             float localZ = position.z - cell.y * cellMeters;
-            if (!WorldTerrainStaticSpawnUtility.TrySampleTerrainHeight(cellData, localX, localZ, out float height))
+            if (!WorldResources.TrySampleExteriorTerrainHeight(cell, localX, localZ, out float height))
                 throw new System.InvalidOperationException($"[VVardenfell][BattleSimulator] cannot ground battle unit in cell {cell.x},{cell.y}.");
 
             position.y = height;

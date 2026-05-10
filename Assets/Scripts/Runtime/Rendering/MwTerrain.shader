@@ -1,8 +1,8 @@
 Shader "VVardenfell/MwTerrain"
 {
     // Faithful Morrowind-style terrain: 16x16 LTEX quadrant grid per cell, stored as a 16x16
-    // R16_UInt splatmap; textures packed into a single Texture2DArray. Fragment does a 4-tap
-    // bilinear blend across the splatmap, sampling the texture array 4 times per fragment.
+    // R16_UInt splatmap; textures packed into native-resolution atlas pages. Fragment does a
+    // 4-tap bilinear blend across the splatmap, sampling the atlas array 4 times per fragment.
     // Mathematically identical to OpenMW's per-layer alpha-blend multi-pass, compressed into
     // one draw call so Entities.Graphics batching stays intact.
     //
@@ -11,7 +11,9 @@ Shader "VVardenfell/MwTerrain"
 
     Properties
     {
-        [NoScaleOffset] _LayerArray ("Terrain layer array", 2DArray) = "white" {}
+        [NoScaleOffset] _LayerArray ("Terrain layer atlas pages", 2DArray) = "white" {}
+        [NoScaleOffset] _LayerMeta0 ("Terrain layer meta 0", 2D) = "black" {}
+        [NoScaleOffset] _LayerMeta1 ("Terrain layer meta 1", 2D) = "black" {}
         [NoScaleOffset] _Splat      ("Splatmap (R16 UInt, 16x16)", 2D) = "black" {}
         _TileScale  ("Diffuse tiles per cell edge", Float) = 16
         _SplatSize  ("Splatmap side (=LAND_TEXTURE_SIZE)", Float) = 16
@@ -57,6 +59,8 @@ Shader "VVardenfell/MwTerrain"
             #include "Assets/Scripts/Runtime/Rendering/MwLightingCommon.hlsl"
 
             TEXTURE2D_ARRAY(_LayerArray);        SAMPLER(sampler_LayerArray);
+            TEXTURE2D(_LayerMeta0);
+            TEXTURE2D(_LayerMeta1);
             TEXTURE2D(_Splat);                   // point-sampled via Load(); no SamplerState needed
 
             CBUFFER_START(UnityPerMaterial)
@@ -118,9 +122,16 @@ Shader "VVardenfell/MwTerrain"
                 return floor(r * 65535.0 + 0.5);
             }
 
-            float4 SampleLayer(float2 duv, float layer)
+            float4 SampleLayer(float2 tiledUv, float layer)
             {
-                return SAMPLE_TEXTURE2D_ARRAY(_LayerArray, sampler_LayerArray, duv, layer);
+                int layerIndex = (int)layer;
+                float4 meta0 = _LayerMeta0.Load(int3(layerIndex, 0, 0));
+                float4 meta1 = _LayerMeta1.Load(int3(layerIndex, 0, 0));
+                float page = meta0.x;
+                float2 rectMin = meta0.yz;
+                float2 rectSize = meta1.xy;
+                float2 atlasUv = rectMin + frac(tiledUv) * rectSize;
+                return SAMPLE_TEXTURE2D_ARRAY(_LayerArray, sampler_LayerArray, atlasUv, page);
             }
 
             half4 frag(Varyings IN) : SV_Target

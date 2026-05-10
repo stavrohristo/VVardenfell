@@ -143,9 +143,7 @@ namespace VVardenfell.Runtime.Shell
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float x = cell.x * cellMeters + cellMeters * 0.5f;
             float z = cell.y * cellMeters + cellMeters * 0.5f;
-            if (!WorldResources.TryGetExteriorCell(cell, out CellData cellData) || cellData == null)
-                throw new InvalidOperationException($"[VVardenfell][BattleSimulatorUI] terrain data for battle cell {cell.x},{cell.y} is not loaded.");
-            if (!WorldTerrainStaticSpawnUtility.TrySampleTerrainHeight(cellData, cellMeters * 0.5f, cellMeters * 0.5f, out float height))
+            if (!WorldResources.TrySampleExteriorTerrainHeight(cell, cellMeters * 0.5f, cellMeters * 0.5f, out float height))
                 throw new InvalidOperationException($"[VVardenfell][BattleSimulatorUI] cannot sample terrain height for battle cell {cell.x},{cell.y}.");
 
             return new Vector3(x, height, z);
@@ -160,7 +158,6 @@ namespace VVardenfell.Runtime.Shell
             if (active)
             {
                 Entity entity = EntityManager.CreateEntity(typeof(BattleSimulatorSetupUiActive));
-                EntityManager.SetName(entity, "VVardenfell.BattleSimulatorSetupUiActive");
                 return;
             }
 

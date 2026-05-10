@@ -73,10 +73,10 @@ namespace VVardenfell.Runtime.WorldState
                 || (uint)descriptor.ModelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length)
                 return false;
 
-            if (!WorldBootstrap.EnsureModelPrefabBuilt(entityManager, descriptor.ModelPrefabIndex))
+            Entity renderPrefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
+            if (renderPrefab == Entity.Null)
                 return false;
 
-            Entity renderPrefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
             Entity renderRoot = ecb.Instantiate(renderPrefab);
             QueueRenderRootMetadata(
                 entityManager,

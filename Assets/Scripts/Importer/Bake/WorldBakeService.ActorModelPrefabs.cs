@@ -260,6 +260,8 @@ namespace VVardenfell.Importer.Bake
 
                 if (part.FirstPerson != 0)
                     continue;
+                if (part.Part == ActorBodyPartMeshPart.Tail && !IsBeastRace(part.RaceId, races))
+                    continue;
 
                 string targetSkeleton = ResolveNpcSkeletonModel(
                     part.FirstPerson != 0,
@@ -316,6 +318,13 @@ namespace VVardenfell.Importer.Bake
             ActorBodyPartDef part,
             Dictionary<string, BsaEntry> bsaByName)
         {
+            if (part.Part == ActorBodyPartMeshPart.Tail)
+            {
+                AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, true, bsaByName), part.Id);
+                AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, true, true, bsaByName), part.Id);
+                return;
+            }
+
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, false, bsaByName), part.Id);
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, true, false, bsaByName), part.Id);
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(false, false, true, bsaByName), part.Id);
@@ -337,6 +346,8 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, BsaEntry> bsaByName)
         {
             if (!IsFirstPersonMeshPart(part.Part))
+                return;
+            if (part.Part == ActorBodyPartMeshPart.Tail)
                 return;
 
             AddSkinReferenceTarget(result, part.Model, ResolveNpcSkeletonModel(true, false, false, bsaByName), part.Id);
@@ -508,7 +519,9 @@ namespace VVardenfell.Importer.Bake
             => (ActorVisualPartReference)(byte)type;
 
 
-        private static void PrepareDirtyCell(StagedCellData staged, Dictionary<int, string> ltexMap)
+        private static void PrepareDirtyCell(
+            StagedCellData staged,
+            Dictionary<string, Dictionary<int, string>> ltexMapsBySource)
         {
             try
             {
@@ -521,7 +534,11 @@ namespace VVardenfell.Importer.Bake
                 {
                     var texturePaths = new string[LandRecord.NumTextures];
                     for (int i = 0; i < LandRecord.NumTextures; i++)
-                        texturePaths[i] = LtexIndex.ResolveVtex(staged.Land.VtexIndices[i], ltexMap);
+                        texturePaths[i] = LtexIndex.ResolveVtexRequired(
+                            staged.Land.VtexIndices[i],
+                            ltexMapsBySource,
+                            staged.WorkItem.LandSourcePath,
+                            $"{staged.WorkItem.Key} terrain VTEX slot {i}");
                     staged.TerrainTexturePaths = texturePaths;
                 }
                 finally

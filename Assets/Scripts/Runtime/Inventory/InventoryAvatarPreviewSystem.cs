@@ -98,7 +98,6 @@ namespace VVardenfell.Runtime.Inventory
             ulong signature)
         {
             Entity preview = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(preview, "VVardenfell.InventoryAvatarPreview");
             systemState.EntityManager.AddComponent<InventoryAvatarPreviewTag>(preview);
             systemState.EntityManager.AddComponentData(preview, new ActorSpawnSource
             {

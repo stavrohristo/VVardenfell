@@ -113,7 +113,6 @@ namespace VVardenfell.Runtime.Projectiles
         void EmitHitEvent(ref SystemState systemState, in MorrowindProjectile projectile, Entity projectileEntity, in DeferredPhysicsQueryResult hit, ref EntityCommandBuffer ecb)
         {
             Entity evt = ecb.CreateEntity();
-            ecb.SetName(evt, new FixedString64Bytes("VVardenfell.ProjectileHitEvent"));
             ecb.AddComponent(evt, new MorrowindProjectileHitEvent
             {
                 Projectile = projectileEntity,
@@ -139,7 +138,6 @@ namespace VVardenfell.Runtime.Projectiles
         static void EmitVisualRemove(Entity projectileEntity, ref EntityCommandBuffer ecb)
         {
             Entity request = ecb.CreateEntity();
-            ecb.SetName(request, new FixedString64Bytes("VVardenfell.ProjectileVfxRemove"));
             ecb.AddComponent(request, new MorrowindVfxRemoveRequest
             {
                 Owner = projectileEntity,

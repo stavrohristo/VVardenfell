@@ -7,6 +7,8 @@ namespace VVardenfell.Importer.Esm
     public readonly struct CellReference
     {
         public readonly uint FormId;
+        public readonly uint RawFormId;
+        public readonly int ContentFileIndex;
         public readonly string BaseId;      // refId of the base record (e.g. "ex_common_house_01")
         public readonly float PosX, PosY, PosZ;
         public readonly float RotX, RotY, RotZ;
@@ -27,9 +29,12 @@ namespace VVardenfell.Importer.Esm
             float scale, bool deleted,
             string soulId, int lockLevel, string keyId, string trapId,
             bool isDoor, string doorDestCell,
-            float ddx, float ddy, float ddz, float ddrx, float ddry, float ddrz)
+            float ddx, float ddy, float ddz, float ddrx, float ddry, float ddrz,
+            int contentFileIndex = 0)
         {
-            FormId = formId;
+            RawFormId = formId;
+            ContentFileIndex = contentFileIndex;
+            FormId = ComposeStableFormId(formId, contentFileIndex);
             BaseId = baseId;
             PosX = px; PosY = py; PosZ = pz;
             RotX = rx; RotY = ry; RotZ = rz;
@@ -43,6 +48,14 @@ namespace VVardenfell.Importer.Esm
             DoorDestCell = doorDestCell;
             DoorDestX = ddx; DoorDestY = ddy; DoorDestZ = ddz;
             DoorDestRotX = ddrx; DoorDestRotY = ddry; DoorDestRotZ = ddrz;
+        }
+
+        static uint ComposeStableFormId(uint formId, int contentFileIndex)
+        {
+            if (contentFileIndex <= 0)
+                return formId;
+
+            return ((uint)(contentFileIndex & 0xFF) << 24) | (formId & 0x00FFFFFFu);
         }
     }
 }

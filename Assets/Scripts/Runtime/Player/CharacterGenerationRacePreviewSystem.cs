@@ -67,7 +67,6 @@ namespace VVardenfell.Runtime.Player
             }
 
             Entity preview = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(preview, "VVardenfell.CharacterGenerationRacePreview");
             systemState.EntityManager.AddComponent<CharacterGenerationRacePreviewTag>(preview);
             systemState.EntityManager.AddComponentData(preview, new ActorSpawnSource
             {

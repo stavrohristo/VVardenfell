@@ -537,21 +537,12 @@ namespace VVardenfell.Runtime.Streaming
             var prefabs = WorldResources.ModelPrefabs;
             if (prefabs == null || (uint)entry.ModelPrefabIndex >= (uint)prefabs.Length)
             {
-                WarnDroppedRef(entry, cellLabel, DescribeModelPrefabFailure(entry, prefabs));
-                return Entity.Null;
+                throw new InvalidOperationException($"[VVardenfell][SpawnPrefabs] {cellLabel} ref {entry.PlacedRefId:X8} cannot resolve runtime prefab: {DescribeModelPrefabFailure(entry, prefabs)}.");
             }
 
-            if (!WorldBootstrap.EnsureModelPrefabBuilt(em, entry.ModelPrefabIndex))
-            {
-                WarnDroppedRef(entry, cellLabel, $"model prefab {entry.ModelPrefabIndex} could not be built");
-                return Entity.Null;
-            }
-
-            prefabs = WorldResources.ModelPrefabs;
             if (prefabs == null || (uint)entry.ModelPrefabIndex >= (uint)prefabs.Length || prefabs[entry.ModelPrefabIndex] == Entity.Null)
             {
-                WarnDroppedRef(entry, cellLabel, $"model prefab {entry.ModelPrefabIndex} was not available after build");
-                return Entity.Null;
+                throw new InvalidOperationException($"[VVardenfell][SpawnPrefabs] {cellLabel} ref {entry.PlacedRefId:X8} resolved model prefab {entry.ModelPrefabIndex}, but the prefab root is unavailable; rebake required.");
             }
 
             var root = em.Instantiate(prefabs[entry.ModelPrefabIndex]);

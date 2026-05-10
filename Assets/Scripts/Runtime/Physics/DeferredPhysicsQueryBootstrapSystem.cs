@@ -33,7 +33,6 @@ namespace VVardenfell.Runtime.Physics
                 typeof(DeferredPhysicsQueryQueueTag),
                 typeof(DeferredPhysicsQueryPending),
                 typeof(DeferredPhysicsQueryRuntime));
-            systemState.EntityManager.SetName(entity, new FixedString64Bytes("VVardenfell.DeferredPhysicsQueryQueue"));
             systemState.EntityManager.AddBuffer<DeferredPhysicsQueryRequest>(entity);
             systemState.EntityManager.AddBuffer<DeferredPhysicsQueryResult>(entity);
             systemState.EntityManager.SetComponentEnabled<DeferredPhysicsQueryPending>(entity, false);

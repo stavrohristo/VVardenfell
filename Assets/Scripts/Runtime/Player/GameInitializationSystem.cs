@@ -188,7 +188,6 @@ namespace VVardenfell.Runtime.Player
                 effectModifiers,
                 derivedStats);
             var player = em.CreateEntity();
-            em.SetName(player, "VVardenfell.Player");
             em.AddComponentData(player, new PlayerTag());
             em.AddComponentData(player, LocalTransform.FromPositionRotationScale(init.PlayerPosition, init.PlayerRotation, 1f));
             em.AddComponentData(player, new LocalToWorld
@@ -306,7 +305,6 @@ namespace VVardenfell.Runtime.Player
             em.AddComponent<PhysicsTemporalCoherenceTag>(player);
 
             var viewEntity = em.CreateEntity();
-            em.SetName(viewEntity, "VVardenfell.PlayerView");
             var initialEyeOffset = new float3(0f, init.PlayerSettings.StandingEyeHeight, 0f);
             em.AddComponentData(viewEntity, new Parent { Value = player });
             em.AddComponentData(viewEntity, LocalTransform.FromPositionRotationScale(initialEyeOffset, quaternion.identity, 1f));
@@ -532,7 +530,6 @@ namespace VVardenfell.Runtime.Player
                 return;
 
             Entity entity = em.CreateEntity();
-            em.SetName(entity, "VVardenfell.VanillaNewGameStartup");
             em.AddComponentData(entity, new VanillaNewGameStartupPending());
         }
 

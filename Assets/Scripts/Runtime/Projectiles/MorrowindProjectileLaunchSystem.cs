@@ -58,7 +58,6 @@ namespace VVardenfell.Runtime.Projectiles
                 Unity.Physics.CollisionFilter.Default);
 
             Entity projectile = ecb.CreateEntity();
-            ecb.SetName(projectile, new FixedString64Bytes("VVardenfell.Projectile"));
             ecb.AddComponent(projectile, new LocalTransform
             {
                 Position = request.Position,
@@ -106,7 +105,6 @@ namespace VVardenfell.Runtime.Projectiles
                 throw new InvalidOperationException("[VVardenfell][Projectile] Visual projectile launch has no model path hash.");
 
             Entity visual = ecb.CreateEntity();
-            ecb.SetName(visual, new FixedString64Bytes("VVardenfell.ProjectileVfxSpawn"));
             ecb.AddComponent(visual, new MorrowindVfxSpawnRequest
             {
                 ModelPrefabIndex = request.ModelPrefabIndex,

@@ -46,7 +46,7 @@ namespace VVardenfell.Importer.Bake
                     string path = staged.TerrainTexturePaths[i];
                     if (!layerByPath.TryGetValue(path, out ushort layer))
                     {
-                        int texIdx = GetTextureIndex(path, textures, textureIndexCache);
+                        int texIdx = GetTerrainTextureIndex(path, textures, textureIndexCache, $"{staged.WorkItem.Key} terrain VTEX slot {i}");
                         layer = GetTerrainLayerIndex(texIdx, terrainLayers, terrainLayerCache);
                         layerByPath[path] = layer;
                     }
@@ -165,6 +165,20 @@ namespace VVardenfell.Importer.Bake
                 textureIndex = textures.AddOrGet(texturePath);
                 textureIndexCache[texturePath] = textureIndex;
             }
+            return textureIndex;
+        }
+
+
+        private static int GetTerrainTextureIndex(string texturePath, TextureBakery textures, Dictionary<string, int> textureIndexCache, string context)
+        {
+            texturePath ??= string.Empty;
+            if (!textureIndexCache.TryGetValue(texturePath, out int textureIndex))
+            {
+                textureIndex = textures.AddOrGetRequired(texturePath, context);
+                textureIndexCache[texturePath] = textureIndex;
+            }
+            if (textureIndex < 0)
+                throw new InvalidDataException($"{context} texture '{texturePath}' could not be resolved in configured data roots or archives.");
             return textureIndex;
         }
 
@@ -399,7 +413,7 @@ namespace VVardenfell.Importer.Bake
             var preparedWrites = new PreparedCellWriteData[dirtyCells.Count];
             yield return PrepareCellWritePayloadsIncremental(dirtyCells, preparedWrites, progress);
             yield return BuildCellColliderBlobsIncremental(preparedWrites, progress, cellMeters);
-            yield return FlushCellFilesIncremental(preparedWrites, progress);
+            yield return FlushCellSectionsIncremental(preparedWrites, progress);
         }
 
 
@@ -494,7 +508,6 @@ namespace VVardenfell.Importer.Bake
                 return new PreparedCellWriteData
                 {
                     Key = staged.WorkItem.Key,
-                    OutputPath = staged.WorkItem.OutputPath,
                     IsInterior = staged.WorkItem.IsInterior,
                     CellId = staged.WorkItem.Cell.Name ?? string.Empty,
                     GridX = staged.WorkItem.IsInterior ? 0 : staged.WorkItem.Cell.GridX,

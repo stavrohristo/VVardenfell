@@ -129,7 +129,6 @@ namespace VVardenfell.Runtime.Bootstrap
             if (requestQuery.IsEmptyIgnoreFilter)
             {
                 var entity = em.CreateEntity();
-                em.SetName(entity, entityName);
                 em.AddComponent<T>(entity);
             }
 
@@ -162,7 +161,6 @@ namespace VVardenfell.Runtime.Bootstrap
             Entity entity = requestQuery.IsEmptyIgnoreFilter
                 ? em.CreateEntity()
                 : requestQuery.GetSingletonEntity();
-            em.SetName(entity, "VVardenfell.LoadGameInitialization");
             if (!em.HasComponent<LoadGameInitializationSingleton>(entity))
                 em.AddComponentData(entity, new LoadGameInitializationSingleton());
 
@@ -220,7 +218,6 @@ namespace VVardenfell.Runtime.Bootstrap
                 out var knownSpells,
                 out var initialInventory);
             var initEntity = em.CreateEntity();
-            em.SetName(initEntity, "VVardenfell.GameInitialization");
             em.AddComponentData(initEntity, new GameInitializationSingleton
             {
                 PlayerSettings = BootstrapController.ResolvePlayerMovementSettings(),

@@ -66,15 +66,7 @@ namespace VVardenfell.Core.Cache
             var sources = sourcePaths ?? Array.Empty<string>();
             var states = new SourceState[sources.Length];
             for (int i = 0; i < sources.Length; i++)
-            {
-                var info = new FileInfo(sources[i]);
-                states[i] = new SourceState
-                {
-                    Path = sources[i],
-                    Size = info.Exists ? info.Length : 0L,
-                    MtimeTicks = info.Exists ? info.LastWriteTimeUtc.Ticks : 0L,
-                };
-            }
+                states[i] = BuildSourceState(sources[i]);
 
             return new GameplayContentManifest
             {
@@ -96,20 +88,64 @@ namespace VVardenfell.Core.Cache
 
             for (int i = 0; i < sources.Length; i++)
             {
-                if (!File.Exists(sources[i]))
+                var state = states[i];
+                if (!string.Equals(state.Path, sources[i], StringComparison.OrdinalIgnoreCase))
                     return false;
 
-                var info = new FileInfo(sources[i]);
-                var state = states[i];
-                if (!string.Equals(state.Path, sources[i], StringComparison.OrdinalIgnoreCase) ||
-                    state.Size != info.Length ||
-                    state.MtimeTicks != info.LastWriteTimeUtc.Ticks)
+                if (File.Exists(sources[i]))
                 {
-                    return false;
+                    var info = new FileInfo(sources[i]);
+                    if (state.Size != info.Length || state.MtimeTicks != info.LastWriteTimeUtc.Ticks)
+                        return false;
+                    continue;
                 }
+
+                if (Directory.Exists(sources[i]))
+                {
+                    var info = new DirectoryInfo(sources[i]);
+                    if (state.Size == -1L && state.MtimeTicks == info.LastWriteTimeUtc.Ticks)
+                        continue;
+
+                    if (state.Size == 0L && state.MtimeTicks == 0L)
+                        continue;
+                }
+
+                return false;
             }
 
             return true;
+        }
+
+        static SourceState BuildSourceState(string path)
+        {
+            if (File.Exists(path))
+            {
+                var info = new FileInfo(path);
+                return new SourceState
+                {
+                    Path = path,
+                    Size = info.Length,
+                    MtimeTicks = info.LastWriteTimeUtc.Ticks,
+                };
+            }
+
+            if (Directory.Exists(path))
+            {
+                var info = new DirectoryInfo(path);
+                return new SourceState
+                {
+                    Path = path,
+                    Size = -1L,
+                    MtimeTicks = info.LastWriteTimeUtc.Ticks,
+                };
+            }
+
+            return new SourceState
+            {
+                Path = path,
+                Size = 0L,
+                MtimeTicks = 0L,
+            };
         }
 
         public void Write(string path)

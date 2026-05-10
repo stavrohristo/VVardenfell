@@ -35,6 +35,7 @@ namespace VVardenfell.Runtime.Streaming
                 Map = new NativeHashMap<int2, Entity>(cellCap, Allocator.Persistent),
                 Streamed = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
                 Active = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
+                SectionStates = new NativeHashMap<int2, byte>(cellCap, Allocator.Persistent),
             };
             logicalRefLookup = new LogicalRefLookup
             {
@@ -100,7 +101,6 @@ namespace VVardenfell.Runtime.Streaming
             int2 defaultCameraCell)
         {
             var singleton = em.CreateEntity();
-            em.SetName(singleton, "VVardenfell.World");
             em.AddComponentData(singleton, new StreamingConfig
             {
                 ViewRadius = WorldBootstrap.DefaultViewRadius,
@@ -129,7 +129,6 @@ namespace VVardenfell.Runtime.Streaming
             Entity entity = query.IsEmptyIgnoreFilter
                 ? em.CreateEntity()
                 : query.GetSingletonEntity();
-            em.SetName(entity, "VVardenfell.RuntimeMode");
 
             var modeState = new RuntimeBootstrapModeState
             {
@@ -153,7 +152,6 @@ namespace VVardenfell.Runtime.Streaming
                 em.DestroyEntity(disabledQuery);
 
             Entity entity = em.CreateEntity();
-            em.SetName(entity, "VVardenfell.RuntimePresentationGate");
             if (BootstrapRuntimeModeUtility.IsSandboxMode(mode))
                 em.AddComponentData(entity, new RuntimePresentationDisabled());
             else
@@ -175,7 +173,6 @@ namespace VVardenfell.Runtime.Streaming
                 out var knownSpells,
                 out var initialInventory);
             var initEntity = em.CreateEntity();
-            em.SetName(initEntity, "VVardenfell.GameInitialization");
             em.AddComponentData(initEntity, new GameInitializationSingleton
             {
                 PlayerSettings = ResolvePlayerMovementSettings(),
@@ -213,7 +210,6 @@ namespace VVardenfell.Runtime.Streaming
             Entity entity = query.IsEmptyIgnoreFilter
                 ? em.CreateEntity()
                 : query.GetSingletonEntity();
-            em.SetName(entity, "VVardenfell.BattleSimulatorBoot");
             var state = new BattleSimulatorBootState
             {
                 BattlegroundCell = profile.CombatExteriorCell,
@@ -251,7 +247,6 @@ namespace VVardenfell.Runtime.Streaming
                 return;
 
             var requestEntity = em.CreateEntity();
-            em.SetName(requestEntity, "VVardenfell.SandboxInitialization");
             em.AddComponentData(requestEntity, new NewGameInitializationSingleton());
         }
 
@@ -328,6 +323,8 @@ namespace VVardenfell.Runtime.Streaming
                 loadedMap.Streamed.Dispose();
             if (loadedMap.Active.IsCreated)
                 loadedMap.Active.Dispose();
+            if (loadedMap.SectionStates.IsCreated)
+                loadedMap.SectionStates.Dispose();
             if (logicalRefLookup.Map.IsCreated)
                 logicalRefLookup.Map.Dispose();
             if (placedRefRuntimeStateLookup.DisabledByPlacedRef.IsCreated)
@@ -379,6 +376,7 @@ namespace VVardenfell.Runtime.Streaming
                     if (lc.Map.IsCreated) lc.Map.Dispose();
                     if (lc.Streamed.IsCreated) lc.Streamed.Dispose();
                     if (lc.Active.IsCreated) lc.Active.Dispose();
+                    if (lc.SectionStates.IsCreated) lc.SectionStates.Dispose();
                 }
             }
 

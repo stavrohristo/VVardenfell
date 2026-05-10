@@ -14,7 +14,7 @@ namespace VVardenfell.Runtime.Bootstrap
         // between phases doesn't feel like swapping dialogs.
         const float WindowWidth = 720f;
         const float PickerHeight = 232f;
-        const float ModePickerHeight = 344f;
+        const float ModePickerHeight = 394f;
         const float BattlegroundPickerHeight = 520f;
         const float ProgressHeight = 232f;
         const float ErrorHeight = 204f;
@@ -57,6 +57,7 @@ namespace VVardenfell.Runtime.Bootstrap
         MorrowindButtonView _continueButton;
         MorrowindButtonView _browseButton;
         MorrowindButtonView _vanillaButton;
+        MorrowindButtonView _projectTamrielButton;
         MorrowindButtonView _sandboxButton;
         MorrowindButtonView _combatSandboxButton;
         MorrowindButtonView _battlegroundPrevButton;
@@ -158,16 +159,19 @@ namespace VVardenfell.Runtime.Bootstrap
         }
 
         public void ShowPathPicker(string path, string error)
+            => ShowPathPicker(path, error, "VVardenfell - Locate Morrowind Installation", "Path to Morrowind");
+
+        public void ShowPathPicker(string path, string error, string title, string placeholder)
         {
             EnsureInitialized();
             _showBattlegroundImgui = false;
-            ShowRoot("VVardenfell - Locate Morrowind Installation", PickerHeight);
+            ShowRoot(title, PickerHeight);
             _pickerRoot.gameObject.SetActive(true);
             _modeRoot.gameObject.SetActive(false);
             _battlegroundRoot.gameObject.SetActive(false);
             _progressRoot.gameObject.SetActive(false);
             _errorRoot.gameObject.SetActive(false);
-            SetInputDisplay(path ?? string.Empty, "Path to Morrowind");
+            SetInputDisplay(path ?? string.Empty, placeholder);
             _pathErrorText.text = string.IsNullOrWhiteSpace(error) ? string.Empty : error.Trim();
             _pathErrorText.gameObject.SetActive(!string.IsNullOrWhiteSpace(error));
             _browseButton.Root.gameObject.SetActive(_onBrowse != null);
@@ -401,12 +405,33 @@ namespace VVardenfell.Runtime.Bootstrap
             ReplaceButtonLabel(_vanillaButton, "Vanilla");
             _vanillaButton.Button.onClick.AddListener(OnVanillaPressed);
 
+            var projectTamrielRect = RuntimeUiFactory.CreateAnchoredRect(
+                "ProjectTamrielButtonRow",
+                _modeRoot,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(132f)),
+                new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
+            projectTamrielRect.pivot = new Vector2(0f, 1f);
+
+            _projectTamrielButton = RuntimeUiFactory.CreateMorrowindButton(
+                "ProjectTamrielButton",
+                projectTamrielRect,
+                _theme,
+                "Project Tamriel",
+                1f,
+                BodyTextColor,
+                ButtonCenterColor);
+            RuntimeUiFactory.Stretch(_projectTamrielButton.Root);
+            ReplaceButtonLabel(_projectTamrielButton, "Project Tamriel");
+            _projectTamrielButton.Button.onClick.AddListener(OnProjectTamrielPressed);
+
             var sandboxRect = RuntimeUiFactory.CreateAnchoredRect(
                 "SandboxButtonRow",
                 _modeRoot,
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
-                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(132f)),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
                 new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
             sandboxRect.pivot = new Vector2(0f, 1f);
 
@@ -427,7 +452,7 @@ namespace VVardenfell.Runtime.Bootstrap
                 _modeRoot,
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
-                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(182f)),
+                new Vector2(0f, -RuntimeUiScaleSettings.ScalePixels(232f)),
                 new Vector2(0f, RuntimeUiScaleSettings.ScalePixels(42f)));
             combatSandboxRect.pivot = new Vector2(0f, 1f);
 
@@ -916,6 +941,11 @@ namespace VVardenfell.Runtime.Bootstrap
         void OnSandboxPressed()
         {
             _onModeSelected?.Invoke(BootstrapRuntimeMode.Sandbox);
+        }
+
+        void OnProjectTamrielPressed()
+        {
+            _onModeSelected?.Invoke(BootstrapRuntimeMode.ProjectTamriel);
         }
 
         void OnCombatSandboxPressed()

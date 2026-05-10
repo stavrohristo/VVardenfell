@@ -16,7 +16,6 @@ namespace VVardenfell.Runtime.Streaming
         public void OnCreate(ref SystemState systemState)
         {
             _snapshotEntity = systemState.EntityManager.CreateEntity(typeof(TerrainCameraFrustumSnapshot));
-            systemState.EntityManager.SetName(_snapshotEntity, "VVardenfell.TerrainCameraFrustumSnapshot");
             systemState.RequireForUpdate<MainCameraSingleton>();
         }
 

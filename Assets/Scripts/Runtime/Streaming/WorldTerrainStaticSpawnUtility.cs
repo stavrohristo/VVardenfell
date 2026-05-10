@@ -24,16 +24,19 @@ namespace VVardenfell.Runtime.Streaming
 
     internal static class WorldTerrainStaticSpawnUtility
     {
-        internal static TerrainCellSpawnResult SpawnTerrainCell(EntityManager em, int2 coord, CellData data, bool active)
+        internal static TerrainCellSpawnResult SpawnTerrainCell(EntityManager em, int2 coord, Entity sectionEntity, bool active)
         {
-            if (data == null || !data.HasTerrain)
+            if (sectionEntity == Entity.Null || !em.Exists(sectionEntity))
+                return default;
+            var header = em.GetComponentData<RuntimeCellSectionHeader>(sectionEntity);
+            if ((header.Flags & CacheFormat.CellFlagHasTerrain) == 0)
                 return default;
 
             var managed = WorldResources.LoadedManaged.TryGetValue(coord, out var existingManaged)
                 ? existingManaged
                 : new WorldResources.PerCellManaged();
-            managed.TerrainMesh = BuildTerrainMesh(data);
-            managed.TerrainMat = BuildTerrainMaterial(data);
+            managed.TerrainMesh = BuildTerrainMesh(em, sectionEntity, coord);
+            managed.TerrainMat = BuildTerrainMaterial(em, sectionEntity, coord);
             managed.SplatMap = (managed.TerrainMat != null && managed.TerrainMat != WorldResources.TerrainFallbackMat)
                 ? managed.TerrainMat.GetTexture("_Splat") as Texture2D
                 : null;
@@ -43,8 +46,9 @@ namespace VVardenfell.Runtime.Streaming
 
             Entity terrainEntity = CreateTerrainEntity(em, coord, managed, active);
             byte terrainColliderCount = 0;
-            if (WorldResources.TryGetTerrainCollider(coord, out var terrBlob))
+            if (em.HasComponent<RuntimeCellSectionTerrainCollider>(sectionEntity))
             {
+                var terrBlob = em.GetComponentData<RuntimeCellSectionTerrainCollider>(sectionEntity).Blob;
                 RuntimeColliderAttachmentUtility.AttachSource(
                     em,
                     terrainEntity,
@@ -70,7 +74,6 @@ namespace VVardenfell.Runtime.Streaming
                 return Entity.Null;
 
             var staticEntity = em.CreateEntity();
-            em.SetName(staticEntity, $"CellStatic({coord.x},{coord.y})");
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             em.AddComponentData(staticEntity, LocalTransform.FromPositionRotationScale(
                 new float3(coord.x * cellMeters, 0f, coord.y * cellMeters),
@@ -92,35 +95,9 @@ namespace VVardenfell.Runtime.Streaming
             return staticEntity;
         }
 
-        internal static bool TrySampleTerrainHeight(CellData data, float localX, float localZ, out float height)
-        {
-            const int N = 65;
-            height = 0f;
-            if (data?.Heights == null || data.Heights.Length < N * N)
-                return false;
-
-            float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-            float sampleX = math.clamp(localX / cellMeters * (N - 1), 0f, N - 1);
-            float sampleZ = math.clamp(localZ / cellMeters * (N - 1), 0f, N - 1);
-            int x0 = (int)math.floor(sampleX);
-            int z0 = (int)math.floor(sampleZ);
-            int x1 = math.min(x0 + 1, N - 1);
-            int z1 = math.min(z0 + 1, N - 1);
-            float tx = sampleX - x0;
-            float tz = sampleZ - z0;
-
-            float h00 = data.Heights[z0 * N + x0];
-            float h10 = data.Heights[z0 * N + x1];
-            float h01 = data.Heights[z1 * N + x0];
-            float h11 = data.Heights[z1 * N + x1];
-            height = math.lerp(math.lerp(h00, h10, tx), math.lerp(h01, h11, tx), tz);
-            return true;
-        }
-
         static Entity CreateTerrainEntity(EntityManager em, int2 coord, WorldResources.PerCellManaged managed, bool active)
         {
             Entity terrainEntity = em.CreateEntity();
-            em.SetName(terrainEntity, $"Terrain({coord.x},{coord.y})");
             RenderMeshUtility.AddComponents(
                 terrainEntity,
                 em,
@@ -159,7 +136,6 @@ namespace VVardenfell.Runtime.Streaming
                 return Entity.Null;
 
             Entity pickEntity = em.CreateEntity();
-            em.SetName(pickEntity, $"TerrainPick({coord.x},{coord.y})");
             float ox = coord.x * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float oz = coord.y * LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             em.AddComponentData(pickEntity, LocalTransform.FromPositionRotationScale(
@@ -186,38 +162,51 @@ namespace VVardenfell.Runtime.Streaming
             return pickEntity;
         }
 
-        static Material BuildTerrainMaterial(CellData data)
+        static Material BuildTerrainMaterial(EntityManager em, Entity sectionEntity, int2 coord)
         {
             if (WorldResources.TerrainShader == null
                 || WorldResources.TerrainTemplate == null
                 || WorldResources.Cache?.TerrainLayers == null
                 || WorldResources.Cache.TerrainLayers.Array == null
-                || data.LayerGrid == null)
+                || WorldResources.Cache.TerrainLayers.LayerMeta0 == null
+                || WorldResources.Cache.TerrainLayers.LayerMeta1 == null
+                || !em.HasBuffer<RuntimeCellSectionTerrainLayer>(sectionEntity))
             {
                 return WorldResources.TerrainFallbackMat;
             }
 
             var mat = new Material(WorldResources.TerrainTemplate)
             {
-                name = $"VV:Terrain({data.GridX},{data.GridY})",
+                name = $"VV:Terrain({coord.x},{coord.y})",
             };
             mat.SetTexture("_LayerArray", WorldResources.Cache.TerrainLayers.Array);
+            mat.SetTexture("_LayerMeta0", WorldResources.Cache.TerrainLayers.LayerMeta0);
+            mat.SetTexture("_LayerMeta1", WorldResources.Cache.TerrainLayers.LayerMeta1);
 
             var splat = new Texture2D(16, 16, TextureFormat.R16, mipChain: false, linear: true)
             {
-                name = $"VV:Splat({data.GridX},{data.GridY})",
+                name = $"VV:Splat({coord.x},{coord.y})",
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp,
             };
-            splat.SetPixelData(data.LayerGrid, 0);
+            var layerBuffer = em.GetBuffer<RuntimeCellSectionTerrainLayer>(sectionEntity);
+            var layers = new ushort[layerBuffer.Length];
+            for (int i = 0; i < layers.Length; i++)
+                layers[i] = layerBuffer[i].Value;
+            splat.SetPixelData(layers, 0);
             splat.Apply(updateMipmaps: false, makeNoLongerReadable: true);
             mat.SetTexture("_Splat", splat);
             return mat;
         }
 
-        static Mesh BuildTerrainMesh(CellData data)
+        static Mesh BuildTerrainMesh(EntityManager em, Entity sectionEntity, int2 coord)
         {
             const int N = 65;
+            var heightBuffer = em.GetBuffer<RuntimeCellSectionTerrainHeight>(sectionEntity);
+            DynamicBuffer<RuntimeCellSectionTerrainNormal> normalBuffer = default;
+            bool hasNormals = em.HasBuffer<RuntimeCellSectionTerrainNormal>(sectionEntity);
+            if (hasNormals)
+                normalBuffer = em.GetBuffer<RuntimeCellSectionTerrainNormal>(sectionEntity);
             float spacingMw = LandRecordSize.CellUnitsMw / (float)(N - 1);
             float spacingU = spacingMw * WorldScale.MwUnitsToMeters;
 
@@ -229,13 +218,13 @@ namespace VVardenfell.Runtime.Streaming
                 for (int x = 0; x < N; x++)
                 {
                     int i = y * N + x;
-                    verts[i] = new Vector3(x * spacingU, data.Heights[i], y * spacingU);
+                    verts[i] = new Vector3(x * spacingU, heightBuffer[i].Value, y * spacingU);
                     uvs[i] = new Vector2(x / (float)(N - 1), y / (float)(N - 1));
-                    if (data.Normals != null)
+                    if (hasNormals)
                     {
-                        float nx = data.Normals[i * 3 + 0] / 127f;
-                        float ny = data.Normals[i * 3 + 1] / 127f;
-                        float nz = data.Normals[i * 3 + 2] / 127f;
+                        float nx = normalBuffer[i * 3 + 0].Value / 127f;
+                        float ny = normalBuffer[i * 3 + 1].Value / 127f;
+                        float nz = normalBuffer[i * 3 + 2].Value / 127f;
                         normals[i] = new Vector3(nx, nz, ny).normalized;
                     }
                 }
@@ -256,12 +245,12 @@ namespace VVardenfell.Runtime.Streaming
                 }
             }
 
-            var mesh = new Mesh { name = $"Terrain({data.GridX},{data.GridY})" };
+            var mesh = new Mesh { name = $"Terrain({coord.x},{coord.y})" };
             mesh.indexFormat = IndexFormat.UInt16;
             mesh.SetVertices(verts);
             mesh.SetUVs(0, uvs);
             mesh.SetTriangles(tris, 0);
-            if (data.Normals != null)
+            if (hasNormals)
                 mesh.SetNormals(normals);
             else
                 mesh.RecalculateNormals();

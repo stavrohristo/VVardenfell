@@ -49,7 +49,6 @@ namespace VVardenfell.Runtime.Shell
             if (blocked)
             {
                 Entity entity = systemState.EntityManager.CreateEntity(typeof(RuntimeShellUiInputBlocker));
-                systemState.EntityManager.SetName(entity, "VVardenfell.RuntimeShellUiInputBlocker");
                 return;
             }
 

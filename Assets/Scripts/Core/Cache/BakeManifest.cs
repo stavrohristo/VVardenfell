@@ -8,10 +8,17 @@ namespace VVardenfell.Core.Cache
     /// </summary>
     public sealed class BakeManifest
     {
+        public sealed class SourceState
+        {
+            public string Path;
+            public long Size;
+            public long MtimeTicks;
+        }
+
         public sealed class BakedCellState
         {
             public string Key;
-            public string OutputPath;
+            public string SectionPath;
             public string Fingerprint;
             public uint PipelineVersion;
             public bool IsInterior;
@@ -31,6 +38,7 @@ namespace VVardenfell.Core.Cache
         public long BsaSize;
         public long BsaMtimeTicks;
         public string GameplaySourcesHash;
+        public SourceState[] Sources;
         public int MeshCount;
         public int MaterialCount;
         public int TextureCount;
@@ -46,20 +54,25 @@ namespace VVardenfell.Core.Cache
         public static BakeManifest FromCurrentSources(string esmPath, string bsaPath, string[] gameplaySourcePaths = null)
         {
             var esm = new FileInfo(esmPath);
-            var bsa = new FileInfo(bsaPath);
+            var bsa = new FileInfo(bsaPath ?? string.Empty);
             return new BakeManifest
             {
                 FormatVersion = CacheFormat.FormatVersion,
-                EsmSize = esm.Length,
-                EsmMtimeTicks = esm.LastWriteTimeUtc.Ticks,
-                BsaSize = bsa.Length,
-                BsaMtimeTicks = bsa.LastWriteTimeUtc.Ticks,
+                EsmSize = esm.Exists ? esm.Length : 0L,
+                EsmMtimeTicks = esm.Exists ? esm.LastWriteTimeUtc.Ticks : 0L,
+                BsaSize = bsa.Exists ? bsa.Length : 0L,
+                BsaMtimeTicks = bsa.Exists ? bsa.LastWriteTimeUtc.Ticks : 0L,
                 GameplaySourcesHash = BuildGameplaySourcesHash(gameplaySourcePaths),
+                Sources = BuildSourceStates(gameplaySourcePaths),
             };
         }
 
         public bool SourcesMatch(string esmPath, string bsaPath, string[] gameplaySourcePaths = null)
         {
+            if (Sources != null && Sources.Length > 0)
+                return SourceStatesMatch(gameplaySourcePaths)
+                    && FormatVersion == CacheFormat.FormatVersion;
+
             if (!File.Exists(esmPath) || !File.Exists(bsaPath)) return false;
             var esm = new FileInfo(esmPath);
             var bsa = new FileInfo(bsaPath);
@@ -82,6 +95,15 @@ namespace VVardenfell.Core.Cache
             w.Write(BsaSize);
             w.Write(BsaMtimeTicks);
             w.Write(GameplaySourcesHash ?? string.Empty);
+            int sourceCount = Sources?.Length ?? 0;
+            w.Write(sourceCount);
+            for (int i = 0; i < sourceCount; i++)
+            {
+                var source = Sources[i];
+                w.Write(source?.Path ?? string.Empty);
+                w.Write(source?.Size ?? 0L);
+                w.Write(source?.MtimeTicks ?? 0L);
+            }
             w.Write(MeshCount);
             w.Write(MaterialCount);
             w.Write(TextureCount);
@@ -118,12 +140,23 @@ namespace VVardenfell.Core.Cache
                     BsaSize = r.ReadInt64(),
                     BsaMtimeTicks = r.ReadInt64(),
                     GameplaySourcesHash = r.ReadString(),
-                    MeshCount = r.ReadInt32(),
-                    MaterialCount = r.ReadInt32(),
-                    TextureCount = r.ReadInt32(),
-                    CollisionCount = r.ReadInt32(),
-                    CellCount = r.ReadInt32(),
                 };
+                int sourceCount = r.ReadInt32();
+                m.Sources = new SourceState[sourceCount];
+                for (int i = 0; i < sourceCount; i++)
+                {
+                    m.Sources[i] = new SourceState
+                    {
+                        Path = r.ReadString(),
+                        Size = r.ReadInt64(),
+                        MtimeTicks = r.ReadInt64(),
+                    };
+                }
+                m.MeshCount = r.ReadInt32();
+                m.MaterialCount = r.ReadInt32();
+                m.TextureCount = r.ReadInt32();
+                m.CollisionCount = r.ReadInt32();
+                m.CellCount = r.ReadInt32();
                 m.CellGrid = new (int, int)[m.CellCount];
                 for (int i = 0; i < m.CellCount; i++)
                     m.CellGrid[i] = (r.ReadInt32(), r.ReadInt32());
@@ -147,7 +180,7 @@ namespace VVardenfell.Core.Cache
         private static void WriteCellState(BinaryWriter w, BakedCellState state)
         {
             w.Write(state?.Key ?? string.Empty);
-            w.Write(state?.OutputPath ?? string.Empty);
+            w.Write(state?.SectionPath ?? string.Empty);
             w.Write(state?.Fingerprint ?? string.Empty);
             w.Write(state?.PipelineVersion ?? 0u);
             w.Write(state != null && state.IsInterior);
@@ -166,7 +199,7 @@ namespace VVardenfell.Core.Cache
             return new BakedCellState
             {
                 Key = r.ReadString(),
-                OutputPath = r.ReadString(),
+                SectionPath = r.ReadString(),
                 Fingerprint = r.ReadString(),
                 PipelineVersion = r.ReadUInt32(),
                 IsInterior = r.ReadBoolean(),
@@ -225,6 +258,85 @@ namespace VVardenfell.Core.Cache
             for (int i = 0; i < hash.Length; i++)
                 sb.Append(hash[i].ToString("x2"));
             return sb.ToString();
+        }
+
+        static SourceState[] BuildSourceStates(string[] sourcePaths)
+        {
+            var sources = sourcePaths ?? System.Array.Empty<string>();
+            var states = new SourceState[sources.Length];
+            for (int i = 0; i < sources.Length; i++)
+                states[i] = BuildSourceState(sources[i]);
+
+            return states;
+        }
+
+        static SourceState BuildSourceState(string path)
+        {
+            if (File.Exists(path))
+            {
+                var info = new FileInfo(path);
+                return new SourceState
+                {
+                    Path = path,
+                    Size = info.Length,
+                    MtimeTicks = info.LastWriteTimeUtc.Ticks,
+                };
+            }
+
+            if (Directory.Exists(path))
+            {
+                var info = new DirectoryInfo(path);
+                return new SourceState
+                {
+                    Path = path,
+                    Size = -1L,
+                    MtimeTicks = info.LastWriteTimeUtc.Ticks,
+                };
+            }
+
+            return new SourceState
+            {
+                Path = path,
+                Size = 0L,
+                MtimeTicks = 0L,
+            };
+        }
+
+        bool SourceStatesMatch(string[] sourcePaths)
+        {
+            var sources = sourcePaths ?? System.Array.Empty<string>();
+            var states = Sources ?? System.Array.Empty<SourceState>();
+            if (sources.Length != states.Length)
+                return false;
+
+            for (int i = 0; i < sources.Length; i++)
+            {
+                var state = states[i];
+                if (!string.Equals(state.Path, sources[i], System.StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (File.Exists(sources[i]))
+                {
+                    var info = new FileInfo(sources[i]);
+                    if (state.Size != info.Length || state.MtimeTicks != info.LastWriteTimeUtc.Ticks)
+                        return false;
+                    continue;
+                }
+
+                if (Directory.Exists(sources[i]))
+                {
+                    var info = new DirectoryInfo(sources[i]);
+                    if (state.Size == -1L && state.MtimeTicks == info.LastWriteTimeUtc.Ticks)
+                        continue;
+
+                    if (state.Size == 0L && state.MtimeTicks == 0L)
+                        continue;
+                }
+
+                return false;
+            }
+
+            return true;
         }
     }
 }

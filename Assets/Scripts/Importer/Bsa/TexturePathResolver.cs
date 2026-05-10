@@ -22,6 +22,16 @@ namespace VVardenfell.Importer.Bsa
             foreach (var e in bsa.Entries) _entries[e.Name] = e;
         }
 
+        public TexturePathResolver(IReadOnlyDictionary<string, BsaEntry> entries)
+        {
+            _entries = new Dictionary<string, BsaEntry>(entries?.Count ?? 0, System.StringComparer.OrdinalIgnoreCase);
+            if (entries == null)
+                return;
+
+            foreach (var pair in entries)
+                _entries[pair.Key] = pair.Value;
+        }
+
         public bool TryResolve(string rawPath, out BsaEntry entry, out string resolvedName)
         {
             string corrected = Correct(rawPath);

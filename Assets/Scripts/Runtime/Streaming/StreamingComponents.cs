@@ -45,8 +45,20 @@ namespace VVardenfell.Runtime.Streaming
         /// <summary>Subset of <see cref="Map"/>: cells whose entities are currently rendering.</summary>
         public NativeHashSet<int2> Active;
 
+        /// <summary>Exterior cell load state. Prevents failed cells from being retried every frame.</summary>
+        public NativeHashMap<int2, byte> SectionStates;
+
         /// <summary>Incremented whenever <see cref="Active"/> membership changes.</summary>
         public uint ActiveRevision;
+    }
+
+    public enum CellSectionLoadState : byte
+    {
+        Unloaded = 0,
+        Loading = 1,
+        LoadedInactive = 2,
+        Active = 3,
+        Failed = 4,
     }
 
     /// <summary>

@@ -160,7 +160,6 @@ namespace VVardenfell.Runtime.Player
             if (!SystemAPI.HasSingleton<Singleton>())
             {
                 Entity singletonEntity = state.EntityManager.CreateEntity();
-                state.EntityManager.SetName(singletonEntity, "VVardenfell.FixedTick");
                 state.EntityManager.AddComponentData(singletonEntity, new Singleton());
             }
         }

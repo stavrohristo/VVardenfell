@@ -21,7 +21,6 @@ namespace VVardenfell.Runtime.Physics
             systemState.RequireForUpdate<PhysicsStep>();
             systemState.RequireForUpdate<MorrowindOwnedPhysicsBootstrapRequest>();
             Entity stateEntity = systemState.EntityManager.CreateEntity();
-            systemState.EntityManager.SetName(stateEntity, "VVardenfell.MorrowindPhysicsFrame");
             systemState.EntityManager.AddComponentData(stateEntity, new MorrowindPhysicsFrameState());
         }
 

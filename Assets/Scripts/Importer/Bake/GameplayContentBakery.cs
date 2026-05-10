@@ -296,10 +296,13 @@ namespace VVardenfell.Importer.Bake
 
 
         public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress, bool markDone = true)
+            => Bake(config, config?.CreateVanillaContentProfile(), progress, markDone);
+
+        public static IEnumerator Bake(MorrowindConfig config, MorrowindContentProfile profile, BakeProgress progress, bool markDone = true)
         {
 
-            string[] recordSourcePaths = InstalledContentSources.ResolveGameplayRecordSources(config.InstallPath);
-            string[] dependencySourcePaths = InstalledContentSources.ResolveGameplayDependencySources(config.InstallPath);
+            string[] recordSourcePaths = InstalledContentSources.ResolveGameplayRecordSources(profile);
+            string[] dependencySourcePaths = InstalledContentSources.ResolveGameplayDependencySources(profile);
             if (recordSourcePaths.Length == 0)
             {
                 progress.Error = "No gameplay-content sources were found under the configured install path.";
@@ -334,7 +337,7 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "Building deterministic content arrays";
             progress.Current = recordSourcePaths.Length + 1;
             ApplyOpenMwFallbackGameSettings(state.GameSettings);
-            GameplayContentData data = BuildContentData(state, config.InstallPath, recordSourcePaths);
+            GameplayContentData data = BuildContentData(state, profile?.InstallPath ?? config.InstallPath, recordSourcePaths);
             yield return null;
 
             progress.Label = "Writing gameplay content cache";

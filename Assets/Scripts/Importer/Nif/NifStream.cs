@@ -21,6 +21,7 @@ namespace VVardenfell.Importer.Nif
         public uint Version { get; private set; }
         public long Position => _stream.Position;
         public long Length => _stream.Length;
+        public long Remaining => _stream.Length - _stream.Position;
 
         public NifStream(string path) : this(path, File.OpenRead(path)) { }
 
@@ -110,6 +111,36 @@ namespace VVardenfell.Importer.Nif
         }
 
         public void Skip(long bytes) => _stream.Seek(bytes, SeekOrigin.Current);
+        public void Seek(long position) => _stream.Seek(position, SeekOrigin.Begin);
+
+        public bool TryPeekSizedStringAt(long position, out string value)
+        {
+            value = null;
+            if (position < 0 || position + 4 > _stream.Length)
+                return false;
+
+            long restore = _stream.Position;
+            try
+            {
+                _stream.Seek(position, SeekOrigin.Begin);
+                uint len = _reader.ReadUInt32();
+                if (len == 0 || len > 256 || _stream.Position + len > _stream.Length)
+                    return false;
+
+                var bytes = _reader.ReadBytes((int)len);
+                if (bytes.Length != len)
+                    return false;
+
+                int end = Array.IndexOf<byte>(bytes, 0);
+                if (end < 0) end = bytes.Length;
+                value = Encoding.ASCII.GetString(bytes, 0, end);
+                return true;
+            }
+            finally
+            {
+                _stream.Seek(restore, SeekOrigin.Begin);
+            }
+        }
 
         public void Dispose() => _reader.Dispose();
     }

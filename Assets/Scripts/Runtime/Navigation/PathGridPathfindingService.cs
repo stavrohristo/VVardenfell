@@ -107,7 +107,6 @@ namespace VVardenfell.Runtime.Pathfinding
             _activeEntries = new NativeList<JobEntry>(Allocator.Persistent);
             _pooledEntries = new NativeList<JobEntry>(Allocator.Persistent);
             _singleton = state.EntityManager.CreateEntity();
-            state.EntityManager.SetName(_singleton, "VVardenfell.PathGridPathfinding");
             state.EntityManager.AddComponentData(_singleton, PathGridPathfindingState.Defaults);
             state.EntityManager.AddBuffer<PendingPathGridPathRequest>(_singleton);
             state.EntityManager.AddBuffer<CompletedPathGridPath>(_singleton);

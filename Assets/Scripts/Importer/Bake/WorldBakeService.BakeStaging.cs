@@ -23,15 +23,22 @@ namespace VVardenfell.Importer.Bake
     internal static partial class WorldBakeService
     {
         public static IEnumerator Bake(MorrowindConfig config, BakeProgress progress, GameplayContentData gameplayContent = null)
+            => Bake(config, config?.CreateVanillaContentProfile(), progress, gameplayContent);
+
+        public static IEnumerator Bake(MorrowindConfig config, MorrowindContentProfile profile, BakeProgress progress, GameplayContentData gameplayContent = null)
         {
-            string esmPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.esm");
-            string bsaPath = Path.Combine(config.InstallPath, "Data Files", "Morrowind.bsa");
-            if (!File.Exists(esmPath) || !File.Exists(bsaPath))
+            profile ??= config?.CreateVanillaContentProfile();
+            string profileError = null;
+            if (profile == null || !profile.IsValid(out profileError))
             {
-                progress.Error = "Morrowind.esm or Morrowind.bsa missing under the configured install path.";
+                progress.Error = profileError ?? "Content profile is invalid.";
                 progress.Done = true;
                 yield break;
             }
+
+            string[] sourcePaths = profile.ContentFiles ?? Array.Empty<string>();
+            string esmPath = sourcePaths.Length > 0 ? sourcePaths[0] : string.Empty;
+            string bsaPath = (profile.Archives != null && profile.Archives.Length > 0) ? profile.Archives[0] : string.Empty;
 
             CachePaths.Warmup();
             CachePaths.EnsureExists();
@@ -43,44 +50,78 @@ namespace VVardenfell.Importer.Bake
             progress.Total = 5;
             yield return null;
 
-            using var sharedBsa = BsaArchive.Open(bsaPath);
+            using var assetResolver = ContentAssetResolver.Open(profile);
+            var sharedBsa = assetResolver.PrimaryArchive;
 
             progress.Label = "Building record index";
             progress.Current = 1;
             yield return null;
-            RecordIndex recordIndex;
-            using (var esm = new EsmReader(esmPath))
-                recordIndex = RecordIndex.Build(esm);
+            RecordIndex recordIndex = RecordIndex.Build(sourcePaths);
 
             progress.Label = "Enumerating cells";
             progress.Current = 2;
             yield return null;
-            var exteriorCells = new List<CellHeader>(2048);
-            var interiorCells = new List<CellHeader>(2048);
-            using (var esm = new EsmReader(esmPath))
+            var exteriorCellGroups = new Dictionary<string, List<CellHeader>>(StringComparer.OrdinalIgnoreCase);
+            var interiorCellGroups = new Dictionary<string, List<CellHeader>>(StringComparer.OrdinalIgnoreCase);
+            for (int sourceIndex = 0; sourceIndex < sourcePaths.Length; sourceIndex++)
             {
-                foreach (var cell in CellIndex.Enumerate(esm))
+                using var esm = new EsmReader(sourcePaths[sourceIndex]);
+                foreach (var cell in CellIndex.Enumerate(esm, sourceIndex))
                 {
-                    if (cell.IsInterior)
-                        interiorCells.Add(cell);
-                    else
-                        exteriorCells.Add(cell);
+                    var key = cell.IsInterior ? BuildInteriorKey(cell.Name ?? string.Empty) : BuildExteriorKey(cell.GridX, cell.GridY);
+                    var groups = cell.IsInterior ? interiorCellGroups : exteriorCellGroups;
+                    if (!groups.TryGetValue(key, out var list))
+                        groups[key] = list = new List<CellHeader>();
+                    list.Add(cell);
                 }
             }
+
+            var exteriorCells = new List<CellHeader>(exteriorCellGroups.Count);
+            var interiorCells = new List<CellHeader>(interiorCellGroups.Count);
+            var cellRecordGroups = new Dictionary<string, CellHeader[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in exteriorCellGroups)
+            {
+                var records = pair.Value.ToArray();
+                cellRecordGroups[pair.Key] = records;
+                var cell = records[^1];
+                exteriorCells.Add(cell);
+            }
+            foreach (var pair in interiorCellGroups)
+            {
+                var records = pair.Value.ToArray();
+                cellRecordGroups[pair.Key] = records;
+                var cell = records[^1];
+                interiorCells.Add(cell);
+            }
+
+            exteriorCells.Sort((a, b) =>
+            {
+                int x = a.GridX.CompareTo(b.GridX);
+                return x != 0 ? x : a.GridY.CompareTo(b.GridY);
+            });
+            interiorCells.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 
             progress.Label = "Indexing terrain";
             progress.Current = 3;
             yield return null;
-            Dictionary<(int, int), long> landOffsets;
-            using (var esm = new EsmReader(esmPath))
-                landOffsets = LandIndex.BuildOffsetMap(esm);
+            var landOffsets = new Dictionary<(int, int), (string SourcePath, long Offset)>();
+            for (int sourceIndex = 0; sourceIndex < sourcePaths.Length; sourceIndex++)
+            {
+                using var esm = new EsmReader(sourcePaths[sourceIndex]);
+                var sourceLandOffsets = LandIndex.BuildOffsetMap(esm);
+                foreach (var pair in sourceLandOffsets)
+                    landOffsets[pair.Key] = (sourcePaths[sourceIndex], pair.Value);
+            }
 
             progress.Label = "Indexing land textures";
             progress.Current = 4;
             yield return null;
-            Dictionary<int, string> ltexMap;
-            using (var esm = new EsmReader(esmPath))
-                ltexMap = LtexIndex.Build(esm);
+            var ltexMapsBySource = new Dictionary<string, Dictionary<int, string>>(StringComparer.OrdinalIgnoreCase);
+            for (int sourceIndex = 0; sourceIndex < sourcePaths.Length; sourceIndex++)
+            {
+                using var esm = new EsmReader(sourcePaths[sourceIndex]);
+                ltexMapsBySource[sourcePaths[sourceIndex]] = LtexIndex.Build(esm);
+            }
 
             progress.Stage = "Dependency Snapshot";
             progress.Label = "Loading previous cache state";
@@ -100,17 +141,18 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
-            var textureResolver = new TexturePathResolver(sharedBsa);
+            var textureResolver = new TexturePathResolver(assetResolver.Entries);
             var bakeryMeshes = new MeshBakery();
             bakeryMeshes.TryLoadExisting(CachePaths.MeshCatalog, CachePaths.Meshes);
             var bakeryMaterials = new MaterialBakery();
             bakeryMaterials.TryLoadExisting(CachePaths.MaterialCatalog);
-            var bakeryTextures = new TextureBakery(sharedBsa, textureResolver);
+            var bakeryTextures = new TextureBakery(assetResolver, textureResolver);
             bakeryTextures.TryLoadExisting(CachePaths.TextureCatalog);
-            int defaultTexIdx = bakeryTextures.AddOrGet(LtexIndex.DefaultTexturePath);
+            int defaultTexIdx = bakeryTextures.AddOrGetRequired(LtexIndex.DefaultTexturePath, "Default terrain texture");
             SeedSkyWeatherTextures(gameplayContent, bakeryTextures);
             var bakeryLayers = new TerrainLayerBakery(defaultTexIdx);
             bakeryLayers.TryLoadExisting(CachePaths.TerrainLayers);
+            bool forceCellRebuild = bakeryLayers.ExistingCacheInvalid;
             var bakeryCollisions = new CollisionBakery();
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
             var bakeryModelPrefabs = new ModelPrefabBakery();
@@ -123,9 +165,7 @@ namespace VVardenfell.Importer.Bake
             progress.Current = 1;
             yield return null;
 
-            var bsaByName = new Dictionary<string, BsaEntry>(sharedBsa.Entries.Length, StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in sharedBsa.Entries)
-                bsaByName[entry.Name] = entry;
+            var bsaByName = assetResolver.CopyEntryMap();
 
             SeedRequiredVfxAssets(gameplayContent, sharedBsa, bsaByName, modelCache, bakeryTextures, requiredVfxModels);
             SeedRuntimeSpawnableModels(gameplayContent, sharedBsa, bsaByName, modelCache);
@@ -135,14 +175,16 @@ namespace VVardenfell.Importer.Bake
             for (int i = 0; i < exteriorCells.Count; i++)
             {
                 var cell = exteriorCells[i];
-                landOffsets.TryGetValue((cell.GridX, cell.GridY), out var landOffset);
+                landOffsets.TryGetValue((cell.GridX, cell.GridY), out var landLocation);
                 var cellOrigin = new Vector3(cell.GridX * cellMeters, 0f, cell.GridY * cellMeters);
+                string key = BuildExteriorKey(cell.GridX, cell.GridY);
                 workItems.Add(new CellBakeWorkItem(
                     cell,
                     false,
-                    landOffset,
-                    BuildExteriorKey(cell.GridX, cell.GridY),
-                    CachePaths.CellFile(cell.GridX, cell.GridY),
+                    landLocation.Offset,
+                    landLocation.SourcePath,
+                    cellRecordGroups[key],
+                    key,
                     cellOrigin));
             }
 
@@ -150,12 +192,14 @@ namespace VVardenfell.Importer.Bake
             {
                 var cell = interiorCells[i];
                 string interiorId = cell.Name ?? string.Empty;
+                string key = BuildInteriorKey(interiorId);
                 workItems.Add(new CellBakeWorkItem(
                     cell,
                     true,
                     0,
-                    BuildInteriorKey(interiorId),
-                    CachePaths.InteriorCellFile(interiorId),
+                    cell.SourcePath,
+                    cellRecordGroups[key],
+                    key,
                     Vector3.zero));
             }
 
@@ -177,7 +221,7 @@ namespace VVardenfell.Importer.Bake
                     Parallel.ForEach(
                         Partitioner.Create(0, workItems.Count),
                         options,
-                        () => new WorkerContext(esmPath),
+                        () => new WorkerContext(),
                         (range, _, worker) =>
                         {
                             for (int i = range.Item1; i < range.Item2; i++)
@@ -190,11 +234,11 @@ namespace VVardenfell.Importer.Bake
                                     gameplayContentLookup,
                                     sharedBsa,
                                     bsaByName,
-                                    ltexMap,
+                                    ltexMapsBySource,
                                     previousStateByKey,
                                     modelCache,
                                     config.BakeCombinedCellRenderChunks,
-                                    false);
+                                    forceCellRebuild);
                                 Interlocked.Increment(ref plannedCount);
                             }
                             return worker;
@@ -229,13 +273,15 @@ namespace VVardenfell.Importer.Bake
             yield return null;
 
             var cellStates = new BakeManifest.BakedCellState[stagedCells.Length];
-            var expectedOutputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var expectedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var dirtyCells = new List<StagedCellData>();
 
             for (int i = 0; i < stagedCells.Length; i++)
             {
                 var staged = stagedCells[i];
-                expectedOutputs.Add(staged.WorkItem.OutputPath);
+                expectedSections.Add(staged.WorkItem.IsInterior
+                    ? CachePaths.InteriorCellSectionFile(staged.WorkItem.Cell.Name ?? string.Empty)
+                    : CachePaths.ExteriorCellSectionFile(staged.WorkItem.Cell.GridX, staged.WorkItem.Cell.GridY));
                 if (staged.NeedsWrite)
                     dirtyCells.Add(staged);
 
@@ -245,7 +291,7 @@ namespace VVardenfell.Importer.Bake
                     yield return null;
             }
 
-            yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMap);
+            yield return PrepareDirtyCellsIncremental(dirtyCells, progress, ltexMapsBySource);
             bakeryActorAnimations.ConfigureCreatureAnimationSources(gameplayContent, bsaByName);
             yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryVfxEffects, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent, requiredVfxModels);
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
@@ -259,7 +305,7 @@ namespace VVardenfell.Importer.Bake
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 14;
+            progress.Total = 16;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -283,23 +329,34 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "model_prefabs.bin";
             progress.Current = 3;
             yield return null;
+            var modelPrefabCatalog = bakeryModelPrefabs.BuildCatalog();
             if (bakeryModelPrefabs.Modified || bakeryObjectAnimations.Modified || !File.Exists(CachePaths.ModelPrefabs))
-                ModelPrefabFile.Write(CachePaths.ModelPrefabs, bakeryModelPrefabs.BuildCatalog());
+                ModelPrefabFile.Write(CachePaths.ModelPrefabs, modelPrefabCatalog);
+
+            progress.Label = "runtime_spawn_prefabs.entities";
+            progress.Current = 4;
+            yield return null;
+            if (bakeryModelPrefabs.Modified
+                || bakeryObjectAnimations.Modified
+                || !File.Exists(CachePaths.RuntimeSpawnPrefabs))
+            {
+                RuntimeSpawnPrefabBakery.Write(CachePaths.RuntimeSpawnPrefabs, modelPrefabCatalog);
+            }
 
             progress.Label = "vfx_effects.bin";
-            progress.Current = 4;
+            progress.Current = 5;
             yield return null;
             if (bakeryVfxEffects.Modified || !File.Exists(CachePaths.VfxEffects))
                 MorrowindVfxFile.Write(CachePaths.VfxEffects, bakeryVfxEffects.BuildCatalog());
 
             progress.Label = "actor_animations.bin";
-            progress.Current = 5;
+            progress.Current = 6;
             yield return null;
             if (bakeryActorAnimations.Modified || !ActorAnimationFile.IsCurrentVersion(CachePaths.ActorAnimations))
                 ActorAnimationFile.Write(CachePaths.ActorAnimations, bakeryActorAnimations.BuildCatalog());
 
             progress.Label = "textures.bin";
-            progress.Current = 6;
+            progress.Current = 7;
             yield return null;
             bool texturesNeedWrite = bakeryTextures.Modified || !File.Exists(CachePaths.TexturesIndex) || !File.Exists(CachePaths.TextureCatalog);
             if (texturesNeedWrite)
@@ -309,19 +366,19 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "ref_texture_buckets.bin";
-            progress.Current = 7;
+            progress.Current = 8;
             yield return null;
             if (texturesNeedWrite || !File.Exists(CachePaths.RefTextureBuckets))
                 RefTextureBucketFile.Write(CachePaths.RefTextureBuckets, bakeryTextures.BuildRefTextureBuckets());
 
             progress.Label = "terrain_layers.bin";
-            progress.Current = 8;
+            progress.Current = 9;
             yield return null;
             if (texturesNeedWrite || bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers, bakeryTextures);
 
             progress.Label = "collisions.bin";
-            progress.Current = 9;
+            progress.Current = 10;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -330,32 +387,34 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 10;
+            progress.Current = 11;
             yield return null;
-            PruneOrphans(CachePaths.CellsDir, expectedOutputs);
-            PruneOrphans(CachePaths.InteriorCellsDir, expectedOutputs);
+            PruneOrphans(CachePaths.LegacyExteriorCellsDir, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            PruneOrphans(CachePaths.LegacyInteriorCellsDir, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            PruneOrphans(CachePaths.ExteriorCellSectionsDir, expectedSections);
+            PruneOrphans(CachePaths.InteriorCellSectionsDir, expectedSections);
             PruneLegacyTextureFiles(CachePaths.TexturesDir);
 
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 11;
-            yield return null;
-
-            progress.Label = "world_collision_validation.txt";
             progress.Current = 12;
             yield return null;
 
-            progress.Label = "ui.bin";
+            progress.Label = "world_collision_validation.txt";
             progress.Current = 13;
+            yield return null;
+
+            progress.Label = "ui.bin";
+            progress.Current = 14;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 14;
+            progress.Current = 16;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
                 bsaPath,
-                InstalledContentSources.ResolveGameplayRecordSources(config.InstallPath));
+                InstalledContentSources.ResolveGameplayDependencySources(profile));
             manifest.MeshCount = bakeryMeshes.Count;
             manifest.MaterialCount = bakeryMaterials.Count;
             manifest.TextureCount = bakeryTextures.Count;
@@ -633,6 +692,48 @@ namespace VVardenfell.Importer.Bake
                 throw new InvalidOperationException($"{context} required texture '{path}' is missing from the archive.");
         }
 
+        static List<CellReference> ReadMergedReferences(WorkerContext worker, CellBakeWorkItem workItem)
+        {
+            var result = new List<CellReference>();
+            var indexByFormId = new Dictionary<uint, int>();
+            var records = workItem.CellRecords ?? Array.Empty<CellHeader>();
+            for (int recordIndex = 0; recordIndex < records.Length; recordIndex++)
+            {
+                var cell = records[recordIndex];
+                var refs = CellReader.ReadReferences(worker.GetReader(cell.SourcePath), cell);
+                for (int i = 0; i < refs.Count; i++)
+                {
+                    var reference = refs[i];
+                    if (reference.FormId == 0u)
+                        continue;
+
+                    if (reference.Deleted)
+                    {
+                        if (indexByFormId.TryGetValue(reference.FormId, out int existingIndex))
+                        {
+                            result.RemoveAt(existingIndex);
+                            indexByFormId.Clear();
+                            for (int rebuild = 0; rebuild < result.Count; rebuild++)
+                                indexByFormId[result[rebuild].FormId] = rebuild;
+                        }
+                        continue;
+                    }
+
+                    if (indexByFormId.TryGetValue(reference.FormId, out int replaceIndex))
+                    {
+                        result[replaceIndex] = reference;
+                    }
+                    else
+                    {
+                        indexByFormId[reference.FormId] = result.Count;
+                        result.Add(reference);
+                    }
+                }
+            }
+
+            return result;
+        }
+
 
         private static StagedCellData StageCell(
             WorkerContext worker,
@@ -642,7 +743,7 @@ namespace VVardenfell.Importer.Bake
             Dictionary<string, ContentReference> gameplayContentLookup,
             BsaArchive sharedBsa,
             Dictionary<string, BsaEntry> bsaByName,
-            Dictionary<int, string> ltexMap,
+            Dictionary<string, Dictionary<int, string>> ltexMapsBySource,
             Dictionary<string, BakeManifest.BakedCellState> previousStateByKey,
             ConcurrentDictionary<string, Lazy<ModelSource>> modelCache,
             bool bakeCombinedCellRenderChunks,
@@ -651,7 +752,7 @@ namespace VVardenfell.Importer.Bake
             List<CellReference> refs;
             try
             {
-                refs = CellReader.ReadReferences(worker.RefsReader, workItem.Cell);
+                refs = ReadMergedReferences(worker, workItem);
             }
             catch
             {
@@ -663,7 +764,7 @@ namespace VVardenfell.Importer.Bake
             {
                 try
                 {
-                    land = LandIndex.ReadAt(worker.LandReader, workItem.LandOffset);
+                    land = LandIndex.ReadAt(worker.GetReader(workItem.LandSourcePath), workItem.LandOffset);
                 }
                 catch
                 {
@@ -671,14 +772,16 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
-            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMap, bakeCombinedCellRenderChunks);
+            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMapsBySource, bakeCombinedCellRenderChunks);
             bool hasPrevious = previousStateByKey.TryGetValue(workItem.Key, out var previousState);
+            string sectionPath = workItem.IsInterior
+                ? CachePaths.InteriorCellSectionFile(workItem.Cell.Name ?? string.Empty)
+                : CachePaths.ExteriorCellSectionFile(workItem.Cell.GridX, workItem.Cell.GridY);
             bool canReuse = !forceRebuild
                 && hasPrevious
                 && previousState.PipelineVersion == CacheFormat.WorldBakePipelineVersion
                 && string.Equals(previousState.Fingerprint, fingerprint, StringComparison.Ordinal)
-                && File.Exists(workItem.OutputPath)
-                && TryValidateCellFile(workItem.OutputPath, workItem.IsInterior, workItem.Cell.Name, out _);
+                && File.Exists(sectionPath);
 
             var staged = new StagedCellData
             {
@@ -1305,7 +1408,7 @@ namespace VVardenfell.Importer.Bake
         private static IEnumerator PrepareDirtyCellsIncremental(
             List<StagedCellData> dirtyCells,
             BakeProgress progress,
-            Dictionary<int, string> ltexMap)
+            Dictionary<string, Dictionary<int, string>> ltexMapsBySource)
         {
             progress.Stage = "Preparing dirty cells";
             progress.Total = dirtyCells.Count;
@@ -1341,7 +1444,7 @@ namespace VVardenfell.Importer.Bake
 
                                 try
                                 {
-                                    PrepareDirtyCell(dirtyCells[index], ltexMap);
+                                    PrepareDirtyCell(dirtyCells[index], ltexMapsBySource);
                                     Interlocked.Increment(ref completed);
                                 }
                                 catch (Exception ex)

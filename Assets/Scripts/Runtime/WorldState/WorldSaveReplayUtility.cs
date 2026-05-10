@@ -737,7 +737,6 @@ namespace VVardenfell.Runtime.WorldState
                         continue;
 
                     var entity = ecb.CreateEntity();
-                    ecb.SetName(entity, new FixedString64Bytes($"LocalMapDiscovery({payload.Cell.x},{payload.Cell.y})"));
                     ecb.AddComponent(entity, new ExteriorMapDiscoveryTile
                     {
                         Cell = payload.Cell,
@@ -782,7 +781,6 @@ namespace VVardenfell.Runtime.WorldState
                 return;
 
             stateEntity = ecb.CreateEntity();
-            ecb.SetName(stateEntity, new FixedString64Bytes("VVardenfell.LocalMapDiscovery"));
             ecb.AddComponent(stateEntity, new LocalMapDiscoveryState
             {
                 MaskResolution = 64,
@@ -921,7 +919,6 @@ namespace VVardenfell.Runtime.WorldState
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             entity = ecb.CreateEntity();
-            ecb.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindCombatRuntime"));
             ecb.AddComponent(entity, state);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
         }
@@ -947,7 +944,6 @@ namespace VVardenfell.Runtime.WorldState
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             entity = ecb.CreateEntity();
-            ecb.SetName(entity, new FixedString64Bytes("VVardenfell.MorrowindMagicRuntime"));
             ecb.AddComponent(entity, state);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             ApplySelectedMagicSource(entityManager, payload);
@@ -1105,7 +1101,6 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
 
             Entity entity = entityManager.CreateEntity();
-            entityManager.SetName(entity, $"VVardenfell.GlobalScript.{saved.ProgramIndex}");
             entityManager.AddComponentData(entity, new MorrowindGlobalScriptInstance
             {
                 TargetPlacedRefId = saved.TargetPlacedRefId,
@@ -1521,7 +1516,6 @@ namespace VVardenfell.Runtime.WorldState
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 entity = ecb.CreateEntity();
-                ecb.SetName(entity, new FixedString64Bytes("VVardenfell.TimeState"));
                 ecb.AddComponent(entity, time);
                 ecb.AddBuffer<MorrowindTimeAdvanceRequest>(entity);
                 WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
@@ -1563,7 +1557,6 @@ namespace VVardenfell.Runtime.WorldState
             {
                 var ecb = new EntityCommandBuffer(Allocator.Temp);
                 entity = ecb.CreateEntity();
-                ecb.SetName(entity, new FixedString64Bytes("VVardenfell.WeatherState"));
                 ecb.AddComponent(entity, weather);
                 ecb.AddBuffer<MorrowindWeatherChangeRequest>(entity);
                 ecb.AddBuffer<MorrowindWeatherForceRequest>(entity);
