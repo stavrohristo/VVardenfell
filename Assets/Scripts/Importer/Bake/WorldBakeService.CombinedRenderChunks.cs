@@ -15,6 +15,7 @@ namespace VVardenfell.Importer.Bake
         const int CombinedCellRenderTileCount = 2;
         const int CombinedCellRenderMinLeaves = 2;
         const int CombinedCellRenderCoalesceMaxSourceVertices = 16384;
+        const int CombinedCellRenderPolicyVersion = 2;
 
         private static List<CombinedCellRenderChunkDef> BuildCombinedCellRenderChunks(
             StagedCellData staged,
@@ -40,7 +41,7 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                if (!IsCombinedCellRenderEligibleStaticGraph(placed))
+                if (!placed.CombinedStaticEligible)
                     continue;
 
                 staged.CombinedRenderCandidateRefCount++;
@@ -100,14 +101,17 @@ namespace VVardenfell.Importer.Bake
         }
 
         static bool IsCombinedCellRenderEligibleStaticGraph(in StagedPlacedRefData placed)
+            => IsCombinedCellRenderEligibleStaticGraph(placed.ModelPath, placed.Model);
+
+        static bool IsCombinedCellRenderEligibleStaticGraph(string modelPath, ModelSource model)
         {
-            if (placed.Model == null || placed.Model.Prefab == null || string.IsNullOrEmpty(placed.ModelPath))
+            if (model == null || model.Prefab == null || string.IsNullOrEmpty(modelPath))
                 return false;
 
-            if (placed.Model.HasObjectAnimation || placed.Model.HasUnsupportedObjectControllers)
+            if (model.HasObjectAnimation || model.HasUnsupportedObjectControllers)
                 return false;
 
-            var nodes = placed.Model.Prefab.Nodes;
+            var nodes = model.Prefab.Nodes;
             for (int i = 0; i < nodes.Length; i++)
             {
                 var nodeKind = nodes[i].Kind;

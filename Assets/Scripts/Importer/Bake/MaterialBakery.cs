@@ -61,6 +61,16 @@ namespace VVardenfell.Importer.Bake
             }
         }
 
+        public uint GetFlags(int index)
+        {
+            lock (_gate)
+            {
+                if ((uint)index >= (uint)_records.Count)
+                    throw new InvalidDataException($"Material index {index} is outside catalog length {_records.Count}.");
+                return _records[index].Flags;
+            }
+        }
+
         public void WriteCatalog(string path)
         {
             using var fs = File.Create(path);

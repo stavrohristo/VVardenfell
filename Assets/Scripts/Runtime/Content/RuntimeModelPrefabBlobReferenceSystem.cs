@@ -10,16 +10,27 @@ namespace VVardenfell.Runtime.Content
     [UpdateAfter(typeof(RuntimeContentBlobReferenceSystem))]
     public partial struct RuntimeModelPrefabBlobReferenceSystem : ISystem
     {
+        EntityQuery _materializationResourcesQuery;
+
+        public void OnCreate(ref SystemState systemState)
+        {
+            _materializationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeMaterializationResources>());
+        }
+
         public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<RuntimeModelPrefabBlobReference>())
                 return;
 
-            var cache = WorldResources.Cache;
-            if (cache?.ModelPrefabCatalog?.Records == null || WorldResources.ColliderBlobs == null)
+            if (_materializationResourcesQuery.IsEmptyIgnoreFilter)
                 return;
 
-            var blob = RuntimeModelPrefabBlobBuilder.Build(cache.ModelPrefabCatalog, WorldResources.ColliderBlobs);
+            var resources = RuntimeMaterializationResources.Require(systemState.EntityManager);
+            var cache = resources.Cache;
+            if (cache?.ModelPrefabCatalog?.Records == null || resources.ColliderBlobs == null)
+                return;
+
+            var blob = RuntimeModelPrefabBlobBuilder.Build(cache.ModelPrefabCatalog, resources.ColliderBlobs);
             using var ecb = new EntityCommandBuffer(Allocator.Temp);
             Entity entity = ecb.CreateEntity();
             ecb.AddComponent(entity, new RuntimeModelPrefabBlobReference { Blob = blob });

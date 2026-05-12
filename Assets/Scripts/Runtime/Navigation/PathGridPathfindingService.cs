@@ -112,6 +112,7 @@ namespace VVardenfell.Runtime.Pathfinding
             state.EntityManager.AddBuffer<CompletedPathGridPath>(_singleton);
             state.EntityManager.AddBuffer<CompletedPathGridPathNode>(_singleton);
             state.EntityManager.AddBuffer<CanceledPathGridPathRequest>(_singleton);
+            state.RequireForUpdate<RuntimePathGridNavigationResource>();
         }
 
         public void OnDestroy(ref SystemState state)
@@ -163,10 +164,11 @@ namespace VVardenfell.Runtime.Pathfinding
             bool scheduledJobs = false;
             if (pending.Length > 0)
             {
-                if (!WorldResources.PathGridNavigation.IsCreated)
+                var navigation = SystemAPI.GetSingleton<RuntimePathGridNavigationResource>().Navigation;
+                if (!navigation.IsCreated)
                     FailPendingWithoutGraph(ref state, pending, completed, now);
                 else
-                    scheduledJobs = ScheduleAllPending(ref state, pending);
+                    scheduledJobs = ScheduleAllPending(ref state, pending, navigation);
             }
 
             if (scheduledJobs)
@@ -220,7 +222,8 @@ namespace VVardenfell.Runtime.Pathfinding
 
         bool ScheduleAllPending(
             ref PathGridPathfindingState state,
-            DynamicBuffer<PendingPathGridPathRequest> pending)
+            DynamicBuffer<PendingPathGridPathRequest> pending,
+            PathGridNavigationWorld navigation)
         {
             int count = pending.Length;
             if (count <= 0)
@@ -229,11 +232,11 @@ namespace VVardenfell.Runtime.Pathfinding
             for (int i = 0; i < count; i++)
             {
                 var pendingRequest = pending[i];
-                var entry = RentEntry(pendingRequest.RequestId, pendingRequest.Owner);
+                var entry = RentEntry(pendingRequest.RequestId, pendingRequest.Owner, navigation);
 
                 var job = new PathGridPathfindingJob
                 {
-                    World = WorldResources.PathGridNavigation,
+                    World = navigation,
                     Request = new PathGridPathRequest
                     {
                         StartNodeIndex = pendingRequest.StartNodeIndex,
@@ -401,7 +404,7 @@ namespace VVardenfell.Runtime.Pathfinding
             return false;
         }
 
-        JobEntry RentEntry(int requestId, Entity owner)
+        JobEntry RentEntry(int requestId, Entity owner, PathGridNavigationWorld navigation)
         {
             JobEntry entry;
             if (_pooledEntries.Length > 0)
@@ -409,15 +412,15 @@ namespace VVardenfell.Runtime.Pathfinding
                 int index = _pooledEntries.Length - 1;
                 entry = _pooledEntries[index];
                 _pooledEntries.RemoveAt(index);
-                if (!IsEntryCompatible(entry, WorldResources.PathGridNavigation))
+                if (!IsEntryCompatible(entry, navigation))
                 {
                     entry.Dispose();
-                    entry = CreateEntry();
+                    entry = CreateEntry(navigation);
                 }
             }
             else
             {
-                entry = CreateEntry();
+                entry = CreateEntry(navigation);
             }
 
             entry.RequestId = requestId;
@@ -428,9 +431,9 @@ namespace VVardenfell.Runtime.Pathfinding
             return entry;
         }
 
-        JobEntry CreateEntry() => new JobEntry
+        JobEntry CreateEntry(PathGridNavigationWorld navigation) => new JobEntry
         {
-            WorkingSet = WorldResources.PathGridNavigation.CreateWorkingSet(Allocator.Persistent),
+            WorkingSet = navigation.CreateWorkingSet(Allocator.Persistent),
             OutputPath = new NativeList<int>(Allocator.Persistent),
             Result = new NativeArray<PathGridPathResult>(1, Allocator.Persistent),
         };
@@ -474,6 +477,9 @@ namespace VVardenfell.Runtime.Pathfinding
         static World s_PathfindingQueryWorld;
         static EntityQuery s_PathfindingQuery;
         static bool s_PathfindingQueryCreated;
+        static World s_NavigationQueryWorld;
+        static EntityQuery s_NavigationQuery;
+        static bool s_NavigationQueryCreated;
 
         public static bool TryRequestPath(
             int startNodeIndex,
@@ -529,10 +535,8 @@ namespace VVardenfell.Runtime.Pathfinding
             int maxAbstractIterations = 0)
         {
             requestId = 0;
-            var navigation = WorldResources.PathGridNavigation;
-            if (!navigation.IsCreated)
+            if (!TryGetNavigation(out var navigation, out error))
             {
-                error = "Pathgrid navigation world is not ready.";
                 return false;
             }
 
@@ -557,6 +561,46 @@ namespace VVardenfell.Runtime.Pathfinding
                 allowPartial,
                 maxFineIterations,
                 maxAbstractIterations);
+        }
+
+        static bool TryGetNavigation(out PathGridNavigationWorld navigation, out string error)
+        {
+            navigation = default;
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated)
+            {
+                error = "Default ECS world is not ready.";
+                return false;
+            }
+
+            EntityQuery query = GetNavigationQuery(world.EntityManager);
+            if (query.CalculateEntityCount() != 1)
+            {
+                error = "Pathgrid navigation resource is not ready.";
+                return false;
+            }
+
+            navigation = query.GetSingleton<RuntimePathGridNavigationResource>().Navigation;
+            if (!navigation.IsCreated)
+            {
+                error = "Pathgrid navigation world is not ready.";
+                return false;
+            }
+
+            error = null;
+            return true;
+        }
+
+        static EntityQuery GetNavigationQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_NavigationQueryCreated && s_NavigationQueryWorld == world)
+                return s_NavigationQuery;
+
+            s_NavigationQueryWorld = world;
+            s_NavigationQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimePathGridNavigationResource>());
+            s_NavigationQueryCreated = true;
+            return s_NavigationQuery;
         }
 
         public static bool TryHasResult(int requestId, out bool hasResult, out string error)

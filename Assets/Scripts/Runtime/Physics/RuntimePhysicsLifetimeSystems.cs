@@ -16,7 +16,7 @@ namespace VVardenfell.Runtime.Physics
 {
     /// <summary>
     /// Runtime physics ownership rules:
-    /// - World/cache collider blobs are owned by WorldResources and disposed only on world teardown.
+    /// - World/cache collider blobs are owned by bootstrap-published ECS resources and disposed only on world teardown.
     /// - Player stance collider blobs are owned by player teardown.
     /// - Generated temporary blobs, such as activation proxy colliders, must be queued here
     ///   for deferred disposal after Unity Physics has rebuilt without entities that used them.

@@ -37,30 +37,23 @@ namespace VVardenfell.Runtime.Streaming
         {
             using var _ = k_PhysicsSync.Auto();
 
-            SyncRegisteredExteriorPhysics(em, desired);
             SyncLinkedExteriorPhysics(em, desired);
         }
 
         static void SetRegisteredCellPhysicsActive(EntityManager em, int2 coord, bool active)
         {
-            if (!WorldResources.ExteriorCellEntities.TryGetValue(coord, out var entities))
-                return;
-
+            EntityQuery query = LinkedExteriorColliderQueryCache.Get(em);
+            using var entities = query.ToEntityArray(Allocator.Temp);
+            using var links = query.ToComponentDataArray<CellLink>(Allocator.Temp);
             Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
             var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
             bool queued = false;
-            for (int i = entities.Count - 1; i >= 0; i--)
+            for (int i = 0; i < entities.Length; i++)
             {
+                if (!links[i].Value.Equals(coord))
+                    continue;
+
                 Entity entity = entities[i];
-                if (entity == Entity.Null || !em.Exists(entity))
-                {
-                    entities.RemoveAt(i);
-                    continue;
-                }
-
-                if (!em.HasComponent<RuntimeColliderSource>(entity))
-                    continue;
-
                 bool isActive = em.HasComponent<PhysicsCollider>(entity);
                 if (active)
                 {
@@ -77,45 +70,6 @@ namespace VVardenfell.Runtime.Streaming
                     RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
                 }
                 queued = true;
-            }
-
-            if (queued)
-                RuntimePhysicsMutationQueueUtility.MarkFlushRequested(em, queueEntity);
-        }
-
-        static void SyncRegisteredExteriorPhysics(EntityManager em, NativeHashSet<int2> desired)
-        {
-            Entity queueEntity = RuntimePhysicsMutationQueueUtility.RequireQueueEntity(em);
-            var mutations = em.GetBuffer<RuntimePhysicsMutationRequest>(queueEntity);
-            bool queued = false;
-            foreach (var pair in WorldResources.ExteriorCellEntities)
-            {
-                bool shouldBeActive = desired.Contains(pair.Key);
-                var entities = pair.Value;
-                for (int i = entities.Count - 1; i >= 0; i--)
-                {
-                    Entity entity = entities[i];
-                    if (entity == Entity.Null || !em.Exists(entity))
-                    {
-                        entities.RemoveAt(i);
-                        continue;
-                    }
-
-                    if (!em.HasComponent<RuntimeColliderSource>(entity))
-                        continue;
-
-                    bool isActive = em.HasComponent<PhysicsCollider>(entity);
-                    if (shouldBeActive && !isActive)
-                    {
-                        RuntimePhysicsMutationQueueUtility.EnqueueEnable(ref mutations, entity);
-                        queued = true;
-                    }
-                    else if (!shouldBeActive && isActive)
-                    {
-                        RuntimePhysicsMutationQueueUtility.EnqueueDisable(ref mutations, entity);
-                        queued = true;
-                    }
-                }
             }
 
             if (queued)

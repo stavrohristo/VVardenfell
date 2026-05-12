@@ -367,12 +367,6 @@ namespace VVardenfell.Runtime.WorldState
                 return false;
             }
 
-            if (payload.JournalEntries == null)
-            {
-                error = "Save payload is missing journal data.";
-                return false;
-            }
-
             if (payload.QuestJournal.States == null || payload.QuestJournal.Entries == null)
             {
                 error = "Save payload is missing quest journal data.";
@@ -795,7 +789,6 @@ namespace VVardenfell.Runtime.WorldState
             QueueClearMapDiscovery(entityManager, ref ecb, ensureState: true);
             WorldStateStructuralUtility.PlaybackAndDispose(entityManager, ref ecb);
             RefreshMapDiscoveryState(entityManager);
-            entityManager.GetBuffer<WorldJournalEntry>(journalEntity).Clear();
             ClearQuestJournal(entityManager, questJournalEntity);
             ClearDialogue(entityManager, questJournalEntity);
             ClearActorDeathCounts(entityManager, questJournalEntity);
@@ -834,19 +827,9 @@ namespace VVardenfell.Runtime.WorldState
             RefreshMapDiscoveryState(entityManager);
             GlobalMapPresentationCache.RestoreOverlayPayload(payload.GlobalMapOverlay);
 
-            var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            uint maxSequence = 0u;
-            for (int i = 0; i < payload.JournalEntries.Length; i++)
-            {
-                var entry = payload.JournalEntries[i];
-                journal.Add(entry);
-                if (entry.Sequence > maxSequence)
-                    maxSequence = entry.Sequence;
-            }
-
             entityManager.SetComponentData(journalEntity, new WorldJournalState
             {
-                NextSequence = math.max(payload.NextJournalSequence, maxSequence),
+                NextSequence = 1u,
             });
 
             if (!ApplyQuestJournalPayload(entityManager, questJournalEntity, payload.QuestJournal, out error))
@@ -871,9 +854,8 @@ namespace VVardenfell.Runtime.WorldState
                     inventory.Add(payload.Inventory[i]);
             }
 
-            journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var pickedItems = entityManager.GetBuffer<PickedItemRecord>(runtimeEntity);
-            WorldJournalUtility.RebuildPickedItemProjection(journal, pickedItems);
+            ScriptVisibleSaveStateUtility.RebuildPickedItemsFromOverlay(entityManager, pickedItems);
             if (entityManager.HasBuffer<BookReadHistoryEntry>(runtimeEntity))
             {
                 var bookHistory = entityManager.GetBuffer<BookReadHistoryEntry>(runtimeEntity);
@@ -885,9 +867,8 @@ namespace VVardenfell.Runtime.WorldState
                 }
             }
 
-            RuntimeSpawnProjectionUtility.RebuildRegistryFromJournal(entityManager);
-            journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            uint maxRuntimeOrdinal = RuntimeSpawnProjectionUtility.FindMaxRuntimeOrdinal(journal);
+            ApplyRuntimeSpawnRegistryPayload(entityManager, spawnEntity, payload.RuntimeSpawns);
+            uint maxRuntimeOrdinal = FindMaxRuntimeOrdinal(payload.RuntimeSpawns);
             var spawnState = entityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
             spawnState.NextRuntimeRefId = math.max(payload.NextRuntimeRefId, maxRuntimeOrdinal);
             spawnState.NextRequestSequence = 0u;
@@ -898,6 +879,41 @@ namespace VVardenfell.Runtime.WorldState
             ApplyCombatPayload(entityManager, payload.Combat);
             ApplyMagicPayload(entityManager, payload.Magic);
             return true;
+        }
+
+        static void ApplyRuntimeSpawnRegistryPayload(EntityManager entityManager, Entity spawnEntity, RuntimeSpawnedRef[] spawns)
+        {
+            var registry = entityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
+            registry.Clear();
+            if (spawns == null)
+                return;
+
+            for (int i = 0; i < spawns.Length; i++)
+            {
+                var spawn = spawns[i];
+                spawn.LogicalEntity = Entity.Null;
+                registry.Add(spawn);
+            }
+        }
+
+        static uint FindMaxRuntimeOrdinal(RuntimeSpawnedRef[] spawns)
+        {
+            uint maxOrdinal = 0u;
+            if (spawns == null)
+                return maxOrdinal;
+
+            for (int i = 0; i < spawns.Length; i++)
+            {
+                uint runtimeRefId = spawns[i].RuntimeRefId;
+                if (!RuntimeSpawnRegistryUtility.IsRuntimeRefId(runtimeRefId))
+                    continue;
+
+                uint ordinal = runtimeRefId & ~0x80000000u;
+                if (ordinal > maxOrdinal)
+                    maxOrdinal = ordinal;
+            }
+
+            return maxOrdinal;
         }
 
         static void ApplyCombatPayload(EntityManager entityManager, MorrowindCombatSavePayload payload)
@@ -1030,16 +1046,16 @@ namespace VVardenfell.Runtime.WorldState
             }
 
             ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(entityManager, scriptRuntimeEntity);
-            if (entityManager.HasBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity))
+            if (entityManager.HasBuffer<PlacedRefOverlayScriptInstance>(scriptRuntimeEntity))
             {
-                entityManager.GetBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity).Clear();
-                entityManager.GetBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity).Clear();
+                entityManager.GetBuffer<PlacedRefOverlayScriptInstance>(scriptRuntimeEntity).Clear();
+                entityManager.GetBuffer<PlacedRefOverlayScriptLocalValue>(scriptRuntimeEntity).Clear();
             }
 
             if (payload.ObjectScripts != null)
             {
-                var savedInstances = entityManager.GetBuffer<PlacedRefSavedScriptInstance>(scriptRuntimeEntity);
-                var savedLocals = entityManager.GetBuffer<PlacedRefSavedScriptLocalValue>(scriptRuntimeEntity);
+                var savedInstances = entityManager.GetBuffer<PlacedRefOverlayScriptInstance>(scriptRuntimeEntity);
+                var savedLocals = entityManager.GetBuffer<PlacedRefOverlayScriptLocalValue>(scriptRuntimeEntity);
                 for (int i = 0; i < payload.ObjectScripts.Length; i++)
                 {
                     var saved = payload.ObjectScripts[i];
@@ -1052,7 +1068,7 @@ namespace VVardenfell.Runtime.WorldState
                     if (!ValidateScriptProgram(ref content, saved.ProgramIndex, saved.Locals?.Length ?? 0, out error))
                         return false;
 
-                    savedInstances.Add(new PlacedRefSavedScriptInstance
+                    savedInstances.Add(new PlacedRefOverlayScriptInstance
                     {
                         PlacedRefId = saved.PlacedRefId,
                         ProgramIndex = saved.ProgramIndex,
@@ -1065,7 +1081,7 @@ namespace VVardenfell.Runtime.WorldState
                     {
                         for (int local = 0; local < saved.Locals.Length; local++)
                         {
-                            savedLocals.Add(new PlacedRefSavedScriptLocalValue
+                            savedLocals.Add(new PlacedRefOverlayScriptLocalValue
                             {
                                 PlacedRefId = saved.PlacedRefId,
                                 ProgramIndex = saved.ProgramIndex,
@@ -1148,13 +1164,13 @@ namespace VVardenfell.Runtime.WorldState
         static bool ApplyPlacedRefStatePayload(
             EntityManager entityManager,
             Entity scriptRuntimeEntity,
-            in PlacedRefStateSavePayload payload,
+            in PlacedRefOverlaySavePayload payload,
             out string error)
         {
             error = null;
             ScriptVisibleSaveStateUtility.EnsureRuntimeBuffers(entityManager, scriptRuntimeEntity);
 
-            var states = entityManager.GetBuffer<PlacedRefSavedState>(scriptRuntimeEntity);
+            var states = entityManager.GetBuffer<PlacedRefOverlayState>(scriptRuntimeEntity);
             states.Clear();
             if (payload.Entries != null)
             {
@@ -1167,9 +1183,12 @@ namespace VVardenfell.Runtime.WorldState
                         return false;
                     }
 
-                    states.Add(new PlacedRefSavedState
+                    states.Add(new PlacedRefOverlayState
                     {
                         PlacedRefId = entry.PlacedRefId,
+                        HasRemoved = entry.HasRemoved,
+                        Removed = entry.Removed,
+                        RemovedContent = entry.RemovedContent,
                         HasDisabled = entry.HasDisabled,
                         Disabled = entry.Disabled,
                         HasLock = entry.HasLock,
@@ -1185,11 +1204,12 @@ namespace VVardenfell.Runtime.WorldState
                         InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(entry.InteriorCellId),
                         InteriorCellHash = entry.InteriorCellHash,
                         IsInterior = entry.IsInterior,
+                        HasContainer = entry.HasContainer,
                     });
                 }
             }
 
-            var inventoryItems = entityManager.GetBuffer<PlacedRefSavedActorInventoryItem>(scriptRuntimeEntity);
+            var inventoryItems = entityManager.GetBuffer<PlacedRefOverlayActorInventoryItem>(scriptRuntimeEntity);
             inventoryItems.Clear();
             if (payload.ActorInventories != null)
             {
@@ -1207,7 +1227,7 @@ namespace VVardenfell.Runtime.WorldState
 
                     for (int item = 0; item < inventory.Items.Length; item++)
                     {
-                        inventoryItems.Add(new PlacedRefSavedActorInventoryItem
+                        inventoryItems.Add(new PlacedRefOverlayActorInventoryItem
                         {
                             PlacedRefId = inventory.PlacedRefId,
                             Item = inventory.Items[item],
@@ -1215,6 +1235,37 @@ namespace VVardenfell.Runtime.WorldState
                     }
                 }
             }
+
+            var containerItems = entityManager.GetBuffer<PlacedRefOverlayContainerItem>(scriptRuntimeEntity);
+            containerItems.Clear();
+            if (payload.Containers != null)
+            {
+                for (int i = 0; i < payload.Containers.Length; i++)
+                {
+                    var container = payload.Containers[i];
+                    if (container.PlacedRefId == 0u)
+                    {
+                        error = $"Placed ref container save entry {i} has placed ref id 0.";
+                        return false;
+                    }
+
+                    if (container.Items == null)
+                        continue;
+
+                    for (int item = 0; item < container.Items.Length; item++)
+                    {
+                        var savedItem = container.Items[item];
+                        savedItem.PlacedRefId = container.PlacedRefId;
+                        containerItems.Add(new PlacedRefOverlayContainerItem
+                        {
+                            PlacedRefId = container.PlacedRefId,
+                            Item = savedItem,
+                        });
+                    }
+                }
+            }
+
+            ScriptVisibleSaveStateUtility.RebuildOverlayIndex(entityManager, scriptRuntimeEntity);
 
             Entity stateLookupEntity = WorldStateEntityQueryUtility.GetSingletonEntity<PlacedRefRuntimeStateLookup>(entityManager);
             if (stateLookupEntity != Entity.Null)
@@ -1225,7 +1276,9 @@ namespace VVardenfell.Runtime.WorldState
                     lookup.DisabledByPlacedRef.Clear();
                     for (int i = 0; i < states.Length; i++)
                     {
-                        if (states[i].HasDisabled != 0)
+                        if (states[i].HasRemoved != 0 && states[i].Removed != 0)
+                            lookup.DisabledByPlacedRef[states[i].PlacedRefId] = 1;
+                        else if (states[i].HasDisabled != 0)
                             lookup.DisabledByPlacedRef[states[i].PlacedRefId] = states[i].Disabled;
                     }
                     entityManager.SetComponentData(stateLookupEntity, lookup);

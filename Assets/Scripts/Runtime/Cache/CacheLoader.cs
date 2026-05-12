@@ -30,6 +30,7 @@ namespace VVardenfell.Runtime.Cache
         const uint SupportedMeshPayloadFlags =
             CacheFormat.MeshFlagHasNormals |
             CacheFormat.MeshFlagHasUVs |
+            CacheFormat.MeshFlagHasUV1 |
             CacheFormat.MeshFlagIndex32;
         const int MeshBatchSize = 256;
         const int BucketYieldStride = 512;
@@ -54,8 +55,17 @@ namespace VVardenfell.Runtime.Cache
         public ActorAnimationCatalogData ActorAnimationCatalog { get; private set; }
         public Texture2D[] Textures => _lazyTextures;
         public TerrainLayers TerrainLayers { get; private set; }
+        public Texture2DArray TerrainSplats { get; private set; }
         public MaterialRegistry Registry { get; private set; }
         public BlobAssetReference<RuntimeContentBlob> ContentBlob { get; private set; }
+        public PathGridNavigationWorld PathGridNavigation { get; private set; }
+        public Texture2DArray[] RefBaseArrays { get; private set; }
+        public NativeArray<int2> TexBucketInfo { get; private set; }
+        public int[] RefBucketKeys { get; private set; }
+        public Dictionary<int, int> RefBucketIndexByKey { get; private set; }
+        public int2 FallbackBucketSlice { get; private set; }
+        public int BlendVariantCount { get; private set; }
+        public int CombinedRenderVariantCount { get; private set; }
 
         Dictionary<string, int> _textureIndexByPath;
         Dictionary<ulong, int> _textureIndexByPathHash;
@@ -94,14 +104,45 @@ namespace VVardenfell.Runtime.Cache
 
             TerrainLayers?.Dispose();
             TerrainLayers = null;
+            if (TerrainSplats != null)
+            {
+                UnityEngine.Object.Destroy(TerrainSplats);
+                TerrainSplats = null;
+            }
+            if (RefBaseArrays != null)
+            {
+                for (int i = 0; i < RefBaseArrays.Length; i++)
+                {
+                    if (RefBaseArrays[i] != null)
+                        UnityEngine.Object.Destroy(RefBaseArrays[i]);
+                }
+                RefBaseArrays = null;
+            }
+            if (TexBucketInfo.IsCreated)
+                TexBucketInfo.Dispose();
+            RefBucketKeys = null;
+            RefBucketIndexByKey = null;
+            FallbackBucketSlice = default;
+            BlendVariantCount = 0;
+            CombinedRenderVariantCount = 0;
             _refTextureBuckets = null;
         }
 
         public void DisposeContentResources()
         {
+            if (PathGridNavigation.IsCreated)
+                PathGridNavigation.Dispose();
+            PathGridNavigation = default;
             if (ContentBlob.IsCreated)
                 ContentBlob.Dispose();
             ContentBlob = default;
+        }
+
+        public PathGridNavigationWorld ReleasePathGridNavigation()
+        {
+            var navigation = PathGridNavigation;
+            PathGridNavigation = default;
+            return navigation;
         }
 
         public IEnumerator LoadIncremental(RuntimeLoadProgress progress)
@@ -145,9 +186,9 @@ namespace VVardenfell.Runtime.Cache
             try
             {
                 ContentBlob = RuntimeContentBlobFile.Read(CachePaths.RuntimeContentBlob);
-                if (WorldResources.PathGridNavigation.IsCreated)
-                    WorldResources.PathGridNavigation.Dispose();
-                WorldResources.PathGridNavigation = PathGridNavigationWorld.Create(ContentBlob);
+                if (PathGridNavigation.IsCreated)
+                    PathGridNavigation.Dispose();
+                PathGridNavigation = PathGridNavigationWorld.Create(ContentBlob);
             }
             finally
             {
@@ -186,6 +227,9 @@ namespace VVardenfell.Runtime.Cache
                 progress?.CompleteStage();
                 yield return null;
             }
+
+            progress?.BeginStage("Terrain splat array", "Preparing terrain splats", 1);
+            yield return LoadTerrainSplatsIncremental(progress);
 
             progress?.BeginStage("Actor animation metadata", "Waiting for actor animation catalog", 1);
             while (actorAnimationCatalogTask != null && !actorAnimationCatalogTask.IsCompleted)
@@ -428,6 +472,48 @@ namespace VVardenfell.Runtime.Cache
             progress?.CompleteStage("Meshes ready");
         }
 
+        private IEnumerator LoadTerrainSplatsIncremental(RuntimeLoadProgress progress)
+        {
+            ushort[][] slices = TerrainSplatFile.Read(CachePaths.TerrainSplats);
+            var array = new Texture2DArray(
+                TerrainSplatFile.Width,
+                TerrainSplatFile.Height,
+                slices.Length,
+                TextureFormat.R16,
+                mipChain: false,
+                linear: true)
+            {
+                name = $"VV:TerrainSplats[{slices.Length}]",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp,
+            };
+
+            bool success = false;
+            try
+            {
+                for (int i = 0; i < slices.Length; i++)
+                {
+                    array.SetPixelData(slices[i], 0, i);
+                    if (((i + 1) & 63) == 0)
+                    {
+                        progress?.Report($"Uploading terrain splats {i + 1}/{slices.Length}", i + 1, slices.Length);
+                        yield return null;
+                    }
+                }
+
+                array.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+                TerrainSplats = array;
+                progress?.Report($"Terrain splats ready: {slices.Length} slices", slices.Length, slices.Length);
+                progress?.CompleteStage("Terrain splats ready");
+                success = true;
+            }
+            finally
+            {
+                if (!success && array != null)
+                    UnityEngine.Object.Destroy(array);
+            }
+        }
+
         void BuildTexturePathLookup(string[] texHashes)
         {
             _textureIndexByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -668,13 +754,13 @@ namespace VVardenfell.Runtime.Cache
                     texBucketInfo[i] = new int2(bucketIndex, slice);
                 }
 
-                WorldResources.RefBaseArrays = arrays;
-                WorldResources.TexBucketInfo = texBucketInfo;
-                WorldResources.RefBucketKeys = bucketKeys;
-                WorldResources.RefBucketIndexByKey = bucketIndexByKey;
-                WorldResources.FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
-                WorldResources.BlendVariantCount = matRecords.Length;
-                WorldResources.CombinedRenderVariantCount = combinedRenderVariantCount;
+                RefBaseArrays = arrays;
+                TexBucketInfo = texBucketInfo;
+                RefBucketKeys = bucketKeys;
+                RefBucketIndexByKey = bucketIndexByKey;
+                FallbackBucketSlice = new int2(fallbackBucket, fallbackSlice);
+                BlendVariantCount = matRecords.Length;
+                CombinedRenderVariantCount = combinedRenderVariantCount;
                 Materials = materials;
                 CombinedMaterials = combinedMaterials;
 
@@ -828,6 +914,7 @@ namespace VVardenfell.Runtime.Cache
 
             bool hasNormals = (flags & CacheFormat.MeshFlagHasNormals) != 0;
             bool hasUVs = (flags & CacheFormat.MeshFlagHasUVs) != 0;
+            bool hasUV1 = (flags & CacheFormat.MeshFlagHasUV1) != 0;
             bool index32 = (flags & CacheFormat.MeshFlagIndex32) != 0;
             if (!hasNormals)
                 throw new InvalidDataException($"Mesh '{name}' is missing baked normals.");
@@ -839,7 +926,7 @@ namespace VVardenfell.Runtime.Cache
             uint vertexDataBytes = r.ReadUInt32();
             uint indexDataBytes = r.ReadUInt32();
 
-            int vertexStride = GetVertexStride(hasNormals, hasUVs);
+            int vertexStride = GetVertexStride(hasNormals, hasUVs, hasUV1);
             long expectedVertexBytes = (long)vertexCount * vertexStride;
             int indexStride = index32 ? 4 : 2;
             long expectedIndexBytes = (long)indexCount * indexStride;
@@ -873,6 +960,7 @@ namespace VVardenfell.Runtime.Cache
                         IndexCount = (int)indexCount,
                         HasNormals = hasNormals,
                         HasUvs = hasUVs,
+                        HasUv1 = hasUV1,
                         Index32 = index32,
                         BoundsCenter = bc,
                         BoundsExtents = be,
@@ -920,7 +1008,7 @@ namespace VVardenfell.Runtime.Cache
                     try
                     {
                         var meshData = meshDataArray[0];
-                        var descriptors = GetVertexLayout(payload.HasNormals, payload.HasUvs);
+                        var descriptors = GetVertexLayout(payload.HasNormals, payload.HasUvs, payload.HasUv1);
                         meshData.SetVertexBufferParams(payload.VertexCount, descriptors);
                         meshData.SetIndexBufferParams(payload.IndexCount, payload.Index32 ? IndexFormat.UInt32 : IndexFormat.UInt16);
 
@@ -970,6 +1058,7 @@ namespace VVardenfell.Runtime.Cache
             public int IndexCount;
             public bool HasNormals;
             public bool HasUvs;
+            public bool HasUv1;
             public bool Index32;
             public Vector3 BoundsCenter;
             public Vector3 BoundsExtents;
@@ -1006,25 +1095,29 @@ namespace VVardenfell.Runtime.Cache
             }
         }
 
-        private static VertexAttributeDescriptor[] GetVertexLayout(bool hasNormals, bool hasUVs)
+        private static VertexAttributeDescriptor[] GetVertexLayout(bool hasNormals, bool hasUVs, bool hasUV1)
         {
-            int count = 1 + (hasNormals ? 1 : 0) + (hasUVs ? 1 : 0);
+            int count = 1 + (hasNormals ? 1 : 0) + (hasUVs ? 1 : 0) + (hasUV1 ? 1 : 0);
             var descriptors = new VertexAttributeDescriptor[count];
             int i = 0;
             descriptors[i++] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, 0);
             if (hasNormals)
                 descriptors[i++] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, 0);
             if (hasUVs)
-                descriptors[i] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, 0);
+                descriptors[i++] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, 0);
+            if (hasUV1)
+                descriptors[i] = new VertexAttributeDescriptor(VertexAttribute.TexCoord1, VertexAttributeFormat.Float32, 2, 0);
             return descriptors;
         }
 
-        private static int GetVertexStride(bool hasNormals, bool hasUVs)
+        private static int GetVertexStride(bool hasNormals, bool hasUVs, bool hasUV1)
         {
             int stride = 12;
             if (hasNormals)
                 stride += 12;
             if (hasUVs)
+                stride += 8;
+            if (hasUV1)
                 stride += 8;
             return stride;
         }

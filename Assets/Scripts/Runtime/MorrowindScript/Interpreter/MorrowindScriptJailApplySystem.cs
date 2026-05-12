@@ -41,6 +41,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadWrite<InteriorSpawnedEntity>());
             _streamingQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<StreamingConfig>(),
+                ComponentType.ReadWrite<RuntimeSectionRegistry>(),
                 ComponentType.ReadWrite<LogicalRefLookup>(),
                 ComponentType.ReadOnly<AvailableCells>(),
                 ComponentType.ReadWrite<LoadedCellsMap>());
@@ -278,16 +279,20 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             var streamingEntity = _streamingQuery.GetSingletonEntity();
             var config = systemState.EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
+            var sectionRegistry = systemState.EntityManager.GetComponentData<RuntimeSectionRegistry>(streamingEntity);
             var logicalRefLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
             var available = systemState.EntityManager.GetComponentData<AvailableCells>(streamingEntity);
             var loaded = systemState.EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var interiorSections = RequireInteriorSections(systemState.World);
+            var exteriorSections = RequireExteriorSections(systemState.World);
 
             transition.TransitionInProgress = 1;
             if (destination.IsInterior)
             {
+                interiorSections.DeactivateActiveInterior(transition);
                 DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
-                WorldSpawner.HideExteriorVisibility(systemState.World, ref loaded);
-                if (!WorldSpawner.TrySpawnInteriorCellByHash(systemState.World, destination.InteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
+                exteriorSections.HideExteriorVisibility(ref loaded);
+                if (!interiorSections.LoadAndActivateByHash(destination.InteriorCellHash, InteriorWorldOffset, ref sectionRegistry, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
                     throw new InvalidOperationException($"[VVardenfell][MWScript] GotoJail destination interior '{destination.InteriorCellId}' was not preloaded.");
                 config.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
@@ -296,16 +301,18 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
             else
             {
+                interiorSections.DeactivateActiveInterior(transition);
                 DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
                 config.ExteriorStreamingPaused = false;
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
                 transition.ActiveInteriorCellHash = 0UL;
                 config.CameraCell = destination.ExteriorCell;
-                WorldSpawner.SyncExteriorVisibility(systemState.World, config, available, ref loaded);
+                exteriorSections.SyncExteriorVisibility(config, available, ref loaded);
             }
 
             systemState.EntityManager.SetComponentData(streamingEntity, config);
+            systemState.EntityManager.SetComponentData(streamingEntity, sectionRegistry);
             systemState.EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
             systemState.EntityManager.SetComponentData(streamingEntity, loaded);
             transition.TransitionInProgress = 0;
@@ -416,6 +423,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     for (int i = 0; i < entitiesToDestroy.Length; i++)
                     {
                         if (systemState.EntityManager.Exists(entitiesToDestroy[i])
+                            && systemState.EntityManager.HasComponent<RuntimeCellSectionMember>(entitiesToDestroy[i]))
+                        {
+                            continue;
+                        }
+
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i])
                             && systemState.EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
                         {
                             LogicalRefDestroyUtility.QueueDestroyLogicalRef(
@@ -453,6 +466,22 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return quaternion.identity;
             forward = math.normalize(forward);
             return quaternion.LookRotationSafe(forward, math.up());
+        }
+
+        static InteriorSectionLifecycleSystem RequireInteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<InteriorSectionLifecycleSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] InteriorSectionLifecycleSystem is unavailable.");
+            return system;
+        }
+
+        static CellLoadWorkerSystem RequireExteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
         }
 
         struct PrisonMarkerDestination

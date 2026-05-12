@@ -1,6 +1,5 @@
 using System;
 using Unity.Collections;
-using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using VVardenfell.Core.Cache;
@@ -14,7 +13,6 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(ContainerWindowStateSystem))]
     [UpdateAfter(typeof(InventoryWindowStateSystem))]
@@ -23,7 +21,6 @@ namespace VVardenfell.Runtime.Inventory
     {
         EntityQuery _playerInventoryQuery;
         EntityQuery _playerEquipmentQuery;
-        EntityQuery _worldJournalQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
@@ -33,9 +30,6 @@ namespace VVardenfell.Runtime.Inventory
             _playerEquipmentQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<ActorEquipmentSlot>());
-            _worldJournalQuery = systemState.GetEntityQuery(
-                ComponentType.ReadWrite<WorldJournalState>(),
-                ComponentType.ReadWrite<WorldJournalEntry>());
 
             systemState.RequireForUpdate<InventoryItemActionRequest>();
             systemState.RequireForUpdate<InventoryHeldItemState>();
@@ -43,7 +37,6 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             bool hasQueuedRequests = SystemAPI.HasSingleton<InventoryItemActionRequestElement>();
@@ -267,8 +260,8 @@ namespace VVardenfell.Runtime.Inventory
                 return;
 
             int transferCount = math.clamp(requestedCount, 1, containerEntry.Count);
-            AppendContainerDelta(ref systemState, sourcePlacedRefId, containerEntry.Content, -transferCount);
             RemoveContainerCountAt(items, sourceIndex, transferCount);
+            PersistContainerSnapshot(ref systemState, sourcePlacedRefId, containerEntry.Content);
             ContainerLootUtility.AddInventoryStack(
                 ref contentBlob,
                 inventory,
@@ -308,8 +301,8 @@ namespace VVardenfell.Runtime.Inventory
 
                 int count = math.clamp(requestedCount, 1, entry.Count);
                 RemoveCorpseBackingInventory(ref systemState, sourcePlacedRefId, entry, count);
-                AppendContainerDelta(ref systemState, sourcePlacedRefId, entry.Content, -count);
                 RemoveContainerCountAt(items, sourceIndex, count);
+                PersistContainerSnapshot(ref systemState, sourcePlacedRefId, entry.Content);
                 ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 return;
             }
@@ -323,7 +316,7 @@ namespace VVardenfell.Runtime.Inventory
                 UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
                 ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
                 AddCorpseBackingInventory(ref systemState, ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-                AppendContainerDelta(ref systemState, targetPlacedRefId, entry.Content, count);
+                PersistContainerSnapshot(ref systemState, targetPlacedRefId, entry.Content);
                 RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             }
         }
@@ -349,7 +342,7 @@ namespace VVardenfell.Runtime.Inventory
             UnequipInventoryIndex(equipment, sourceIndex, entry.Content);
             ContainerLootUtility.AddOrIncrementContainerStack(items, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
             AddCorpseBackingInventory(ref systemState, ref contentBlob, targetPlacedRefId, entry.Content, entry.SoulId, entry.SoulActorHandleValue, count);
-            AppendContainerDelta(ref systemState, targetPlacedRefId, entry.Content, count);
+            PersistContainerSnapshot(ref systemState, targetPlacedRefId, entry.Content);
             RemovePlayerCountAt(inventory, sourceIndex, count, equipment);
             ClearHeld(ref held);
         }
@@ -618,30 +611,19 @@ namespace VVardenfell.Runtime.Inventory
             ecb.Dispose();
         }
 
-        uint AppendContainerDelta(ref SystemState systemState, uint placedRefId, ContentReference content, int deltaCount)
+        uint PersistContainerSnapshot(ref SystemState systemState, uint placedRefId, ContentReference content)
         {
-            if (placedRefId == 0u || !content.IsValid || deltaCount == 0)
+            if (placedRefId == 0u || !content.IsValid)
                 return 0u;
 
-            if (_worldJournalQuery.CalculateEntityCount() != 1)
-                throw new InvalidOperationException("[VVardenfell][Inventory] cannot mutate container contents without exactly one world journal entity.");
+            if (!SystemAPI.HasSingleton<ContainerSessionItem>())
+                throw new InvalidOperationException("[VVardenfell][Inventory] cannot persist container contents without exactly one ContainerSessionItem buffer.");
 
-            Entity journalEntity = _worldJournalQuery.GetSingletonEntity();
-            var state = systemState.EntityManager.GetComponentData<WorldJournalState>(journalEntity);
-            uint sequence = state.NextSequence + 1u;
-            state.NextSequence = sequence;
-            systemState.EntityManager.SetComponentData(journalEntity, state);
-
-            var journal = systemState.EntityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            journal.Add(new WorldJournalEntry
-            {
-                Sequence = sequence,
-                Kind = (byte)WorldJournalEntryKind.ContainerDelta,
-                PlacedRefId = placedRefId,
-                Content = content,
-                DeltaCount = deltaCount,
-            });
-            return sequence;
+            ScriptVisibleSaveStateUtility.ReplaceContainerItems(
+                systemState.EntityManager,
+                placedRefId,
+                SystemAPI.GetSingletonBuffer<ContainerSessionItem>());
+            return 1u;
         }
 
         static void RemovePlayerCountAt(

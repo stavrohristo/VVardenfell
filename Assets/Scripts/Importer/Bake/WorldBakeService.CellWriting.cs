@@ -1,12 +1,9 @@
-﻿using System;
+using System;
 using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
@@ -22,118 +19,148 @@ namespace VVardenfell.Importer.Bake
 
     internal static partial class WorldBakeService
     {
-        private static IEnumerator BuildCellColliderBlobsIncremental(
-            PreparedCellWriteData[] preparedWrites,
+        private static IEnumerator AuthorCellSectionsIncremental(
+            List<StagedCellData> dirtyCells,
             BakeProgress progress,
-            float cellMeters)
+            float cellMeters,
+            ModelPrefabCatalogData modelPrefabCatalog,
+            TextureBakery textures,
+            MaterialBakery materials,
+            GameplayContentData gameplayContent,
+            CollisionBakery collisions)
         {
-            var info = new CellWriteProgressInfo { Subphase = "Building collider blobs" };
-            UpdateCellWriteProgress(progress, preparedWrites.Length, info);
+            var info = new CellWriteProgressInfo { Subphase = "Authoring cell sections" };
+            UpdateCellWriteProgress(progress, dirtyCells.Count, info);
             yield return null;
 
+            if (dirtyCells.Count == 0)
+                yield break;
+
             using var scratch = new CellWriteScratch();
+            using var runtimeContentBlob = RuntimeContentBlobBuilder.Build(gameplayContent);
             var pendingStaticJobs = new List<PendingStaticColliderJob>();
             int nextIndex = 0;
-            int claimed = 0;
             int completed = 0;
-            int maxInFlightStaticJobs = Math.Max(1, Math.Min(Math.Max(1, Environment.ProcessorCount - 1), preparedWrites.Length));
-
-            while (completed < preparedWrites.Length)
-            {
-                while (nextIndex < preparedWrites.Length && pendingStaticJobs.Count < maxInFlightStaticJobs)
-                {
-                    var preparedWrite = preparedWrites[nextIndex++];
-                    PrepareTerrainColliderBlob(preparedWrite, cellMeters, scratch);
-
-                    if ((preparedWrite.Flags & CacheFormat.CellFlagHasStaticCollision) != 0)
-                    {
-                        pendingStaticJobs.Add(ScheduleStaticColliderBlobJob(preparedWrite));
-                    }
-                    else
-                    {
-                        claimed++;
-                        completed++;
-                        info.LastCompletedCellKey = preparedWrite.Key;
-                    }
-                }
-
-                for (int i = pendingStaticJobs.Count - 1; i >= 0; i--)
-                {
-                    var pending = pendingStaticJobs[i];
-                    if (!pending.Handle.IsCompleted)
-                        continue;
-
-                    FinalizeStaticColliderBlobJob(pending);
-                    pendingStaticJobs.RemoveAt(i);
-                    claimed++;
-                    completed++;
-                    info.LastCompletedCellKey = pending.PreparedWrite.Key;
-                }
-
-                info.ClaimedCount = claimed;
-                info.CompletedCount = completed;
-                UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-                yield return null;
-            }
-
-            for (int i = 0; i < pendingStaticJobs.Count; i++)
-                pendingStaticJobs[i].Dispose();
-
-            if (pendingStaticJobs.Count == 0 && nextIndex > 0)
-            {
-                info.ClaimedCount = preparedWrites.Length;
-                info.CompletedCount = preparedWrites.Length;
-                UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-            }
-
-        }
-
-
-        private static void PrepareTerrainColliderBlob(
-            PreparedCellWriteData preparedWrite,
-            float cellMeters,
-            CellWriteScratch scratch)
-        {
-            if ((preparedWrite.Flags & CacheFormat.CellFlagHasTerrain) == 0)
-                return;
+            int maxInFlightStaticJobs = Math.Max(1, Math.Min(Math.Max(1, Environment.ProcessorCount - 1), dirtyCells.Count));
 
             try
             {
-                preparedWrite.BlobData ??= new BuiltCellBlobData();
-
-                const int n = LandRecord.Size;
-                for (int i = 0; i < n * n; i++)
-                    scratch.TerrainHeights[i] = preparedWrite.Land.Heights[i] * WorldScale.MwUnitsToMeters;
-
-                float spacing = cellMeters / (n - 1);
-                var terrainScale = new Unity.Mathematics.float3(spacing, 1f, spacing);
-                var terrainBlob = Unity.Physics.TerrainCollider.Create(
-                    scratch.TerrainHeights,
-                    new Unity.Mathematics.int2(n, n),
-                    terrainScale,
-                    Unity.Physics.TerrainCollider.CollisionMethod.VertexSamples);
-                try
+                while (completed < dirtyCells.Count)
                 {
-                    preparedWrite.BlobData.TerrainColliderBlobBytes = SerializeCellBlob(terrainBlob);
+                    while (nextIndex < dirtyCells.Count && pendingStaticJobs.Count < maxInFlightStaticJobs)
+                    {
+                        var staged = dirtyCells[nextIndex++];
+                        if (HasStaticCollision(staged))
+                        {
+                            pendingStaticJobs.Add(ScheduleStaticColliderBlobJob(staged));
+                        }
+                        else
+                        {
+                            AuthorCellSection(staged, cellMeters, scratch, default, modelPrefabCatalog, textures, materials, runtimeContentBlob, collisions);
+                            completed++;
+                            info.LastCompletedCellKey = staged.WorkItem.Key;
+                            if ((completed & 3) == 3)
+                                break;
+                        }
+                    }
+
+                    for (int i = pendingStaticJobs.Count - 1; i >= 0; i--)
+                    {
+                        var pending = pendingStaticJobs[i];
+                        if (!pending.Handle.IsCompleted)
+                            continue;
+
+                        var staticCollider = CompleteStaticColliderBlobJob(pending);
+                        pendingStaticJobs.RemoveAt(i);
+                        try
+                        {
+                            AuthorCellSection(pending.Staged, cellMeters, scratch, staticCollider, modelPrefabCatalog, textures, materials, runtimeContentBlob, collisions);
+                        }
+                        finally
+                        {
+                            if (staticCollider.IsCreated)
+                                staticCollider.Dispose();
+                        }
+
+                        completed++;
+                        info.LastCompletedCellKey = pending.Staged.WorkItem.Key;
+                    }
+
+                    info.ClaimedCount = nextIndex;
+                    info.CompletedCount = completed;
+                    UpdateCellWriteProgress(progress, dirtyCells.Count, info);
+                    yield return null;
                 }
-                finally
-                {
-                    if (terrainBlob.IsCreated)
-                        terrainBlob.Dispose();
-                }
+
+                info.ClaimedCount = dirtyCells.Count;
+                info.CompletedCount = dirtyCells.Count;
+                UpdateCellWriteProgress(progress, dirtyCells.Count, info);
+                yield return null;
             }
             finally
             {
+                for (int i = 0; i < pendingStaticJobs.Count; i++)
+                {
+                    pendingStaticJobs[i].Handle.Complete();
+                    pendingStaticJobs[i].Dispose();
+                }
             }
         }
 
 
-        private static PendingStaticColliderJob ScheduleStaticColliderBlobJob(PreparedCellWriteData preparedWrite)
+        private static void AuthorCellSection(
+            StagedCellData staged,
+            float cellMeters,
+            CellWriteScratch scratch,
+            Unity.Entities.BlobAssetReference<Unity.Physics.Collider> staticCollider,
+            ModelPrefabCatalogData modelPrefabCatalog,
+            TextureBakery textures,
+            MaterialBakery materials,
+            Unity.Entities.BlobAssetReference<RuntimeContentBlob> runtimeContentBlob,
+            CollisionBakery collisions)
+        {
+            Unity.Entities.BlobAssetReference<Unity.Physics.Collider> terrainCollider = default;
+            try
+            {
+                terrainCollider = CreateTerrainColliderBlob(staged, cellMeters, scratch);
+                WriteRuntimeCellSection(staged, terrainCollider, staticCollider, modelPrefabCatalog, textures, materials, runtimeContentBlob, collisions);
+            }
+            finally
+            {
+                if (terrainCollider.IsCreated)
+                    terrainCollider.Dispose();
+            }
+        }
+
+
+        private static Unity.Entities.BlobAssetReference<Unity.Physics.Collider> CreateTerrainColliderBlob(
+            StagedCellData staged,
+            float cellMeters,
+            CellWriteScratch scratch)
+        {
+            if (!HasTerrain(staged))
+                return default;
+
+            const int n = LandRecord.Size;
+            for (int i = 0; i < n * n; i++)
+                scratch.TerrainHeights[i] = staged.Land.Heights[i] * WorldScale.MwUnitsToMeters;
+
+            float spacing = cellMeters / (n - 1);
+            var terrainScale = new Unity.Mathematics.float3(spacing, 1f, spacing);
+            return Unity.Physics.TerrainCollider.Create(
+                scratch.TerrainHeights,
+                new Unity.Mathematics.int2(n, n),
+                terrainScale,
+                Unity.Physics.TerrainCollider.CollisionMethod.VertexSamples);
+        }
+
+
+        private static PendingStaticColliderJob ScheduleStaticColliderBlobJob(StagedCellData staged)
         {
             try
             {
-                int vertexCount = preparedWrite.StaticCollision.Vertices.Length;
-                int triangleCount = preparedWrite.StaticCollision.Indices.Length / 3;
+                int vertexCount = staged.StaticCollision.Vertices.Length;
+                int triangleCount = staged.StaticCollision.Indices.Length / 3;
 
                 var points = new Unity.Collections.NativeArray<Unity.Mathematics.float3>(vertexCount, Unity.Collections.Allocator.Persistent);
                 var triangles = new Unity.Collections.NativeArray<Unity.Mathematics.int3>(triangleCount, Unity.Collections.Allocator.Persistent);
@@ -141,21 +168,21 @@ namespace VVardenfell.Importer.Bake
 
                 for (int i = 0; i < vertexCount; i++)
                 {
-                    var vertex = preparedWrite.StaticCollision.Vertices[i];
+                    var vertex = staged.StaticCollision.Vertices[i];
                     points[i] = new Unity.Mathematics.float3(vertex.x, vertex.y, vertex.z);
                 }
 
                 for (int t = 0; t < triangleCount; t++)
                 {
                     triangles[t] = new Unity.Mathematics.int3(
-                        preparedWrite.StaticCollision.Indices[t * 3 + 0],
-                        preparedWrite.StaticCollision.Indices[t * 3 + 1],
-                        preparedWrite.StaticCollision.Indices[t * 3 + 2]);
+                        staged.StaticCollision.Indices[t * 3 + 0],
+                        staged.StaticCollision.Indices[t * 3 + 1],
+                        staged.StaticCollision.Indices[t * 3 + 2]);
                 }
 
                 var pending = new PendingStaticColliderJob
                 {
-                    PreparedWrite = preparedWrite,
+                    Staged = staged,
                     Points = points,
                     Triangles = triangles,
                     Output = output,
@@ -177,69 +204,21 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static void FinalizeStaticColliderBlobJob(PendingStaticColliderJob pending)
+        private static Unity.Entities.BlobAssetReference<Unity.Physics.Collider> CompleteStaticColliderBlobJob(PendingStaticColliderJob pending)
         {
             pending.Handle.Complete();
             try
             {
-                pending.PreparedWrite.BlobData ??= new BuiltCellBlobData();
-                pending.PreparedWrite.BlobData.StaticCollisionBlobBytes = SerializeCellBlob(pending.Output[0]);
+                var blob = pending.Output[0];
+                if (!blob.IsCreated)
+                    throw new InvalidDataException($"{pending.Staged.WorkItem.Key} static collider job produced no collider.");
+                pending.Output[0] = default;
+                return blob;
             }
             finally
             {
                 pending.Dispose();
             }
-        }
-
-
-        private static byte[] SerializeCellBlob<T>(Unity.Entities.BlobAssetReference<T> blob)
-            where T : unmanaged
-        {
-            try
-            {
-                return BlobStreamIO.SerializeBlob(blob, CacheFormat.PhysicsBlobVersion);
-            }
-            finally
-            {
-            }
-        }
-
-
-        private static IEnumerator FlushCellSectionsIncremental(
-            PreparedCellWriteData[] preparedWrites,
-            BakeProgress progress)
-        {
-            var info = new CellWriteProgressInfo { Subphase = "Flushing cell sections" };
-            UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-            yield return null;
-
-            int completed = 0;
-            string lastCompletedKey = null;
-
-            for (int index = 0; index < preparedWrites.Length; index++)
-            {
-                info.ClaimedCount = index + 1;
-                info.CompletedCount = completed;
-                info.LastCompletedCellKey = lastCompletedKey;
-                UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-                FlushCellSection(preparedWrites[index]);
-                lastCompletedKey = preparedWrites[index].Key;
-                completed++;
-                if ((index & 3) == 3)
-                    yield return null;
-            }
-
-            info.ClaimedCount = preparedWrites.Length;
-            info.CompletedCount = preparedWrites.Length;
-            info.LastCompletedCellKey = lastCompletedKey;
-            UpdateCellWriteProgress(progress, preparedWrites.Length, info);
-            yield return null;
-        }
-
-
-        private static void FlushCellSection(PreparedCellWriteData preparedWrite)
-        {
-            WriteRuntimeCellSection(preparedWrite);
         }
 
 
@@ -254,20 +233,6 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static byte[] BuildTerrainHeightBytes(LandRecord land)
-        {
-            const int n = LandRecord.Size;
-            var bytes = new byte[n * n * sizeof(float)];
-            int offset = 0;
-            for (int i = 0; i < n * n; i++)
-            {
-                float height = land.Heights[i] * WorldScale.MwUnitsToMeters;
-                WriteSingle(bytes, ref offset, height);
-            }
-            return bytes;
-        }
-
-
         private static Dictionary<string, ContentReference> BuildGameplayContentLookup(GameplayContentData gameplayContent)
         {
             return GameplayContentReferenceIndex.BuildPlaceableIndex(gameplayContent);
@@ -279,204 +244,6 @@ namespace VVardenfell.Importer.Bake
             return GameplayContentReferenceIndex.TryResolvePlaceable(lookup, baseId, out var contentReference)
                 ? contentReference
                 : default;
-        }
-
-
-        private static byte[] BuildTerrainNormalBytes(LandRecord land)
-        {
-            var bytes = new byte[land.Normals.Length];
-            Buffer.BlockCopy(land.Normals, 0, bytes, 0, bytes.Length);
-            return bytes;
-        }
-
-
-        private static byte[] BuildLayerGridBytes(ushort[] layerGrid)
-        {
-            var bytes = new byte[layerGrid.Length * sizeof(ushort)];
-            int offset = 0;
-            for (int i = 0; i < layerGrid.Length; i++)
-                WriteUInt16(bytes, ref offset, layerGrid[i]);
-            return bytes;
-        }
-
-
-        private static byte[] BuildWorldMapBytes(LandRecord land)
-        {
-            var bytes = new byte[land.WorldMap.Length];
-            for (int i = 0; i < land.WorldMap.Length; i++)
-                bytes[i] = unchecked((byte)land.WorldMap[i]);
-            return bytes;
-        }
-
-
-        private static byte[] BuildRefBytes(IReadOnlyList<CellBakery.BakedRef> refs)
-        {
-            int count = refs?.Count ?? 0;
-            if (count == 0)
-                return null;
-
-            using var ms = new MemoryStream(count * 72);
-            using var w = new BinaryWriter(ms);
-            for (int i = 0; i < count; i++)
-            {
-                var r = refs[i];
-                w.Write(r.SpawnModeRaw);
-                w.Write(r.ModelPrefabIndex);
-                w.Write(r.LocalMeshIndex);
-                w.Write(r.LocalMaterialIndex);
-                w.Write(r.SliceIndex);
-                w.Write(r.CollisionIndex);
-                w.Write(r.PlacedRefId);
-                w.Write(r.DoorMetaIndex);
-                w.Write(r.ContentHandleValue);
-                w.Write(r.ContentKind);
-                w.Write(r.PositionUnity.x);
-                w.Write(r.PositionUnity.y);
-                w.Write(r.PositionUnity.z);
-                w.Write(r.RotationUnity.x);
-                w.Write(r.RotationUnity.y);
-                w.Write(r.RotationUnity.z);
-                w.Write(r.RotationUnity.w);
-                w.Write(r.Scale);
-            }
-            return ms.ToArray();
-        }
-
-
-        private static byte[] BuildDoorBytes(IReadOnlyList<DoorRefEntry> doors)
-        {
-            int count = doors?.Count ?? 0;
-            if (count == 0)
-                return null;
-
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            for (int i = 0; i < count; i++)
-            {
-                var door = doors[i];
-                w.Write(door.PlacedRefId);
-                w.Write(door.Flags);
-                w.Write(door.DestPosX);
-                w.Write(door.DestPosY);
-                w.Write(door.DestPosZ);
-                w.Write(door.DestRotX);
-                w.Write(door.DestRotY);
-                w.Write(door.DestRotZ);
-                w.Write(door.DestRotW);
-                w.Write(door.DestinationCellId ?? string.Empty);
-            }
-            return ms.ToArray();
-        }
-
-        private static byte[] BuildCapturedSoulBytes(IReadOnlyList<PlacedRefSoulEntry> entries)
-        {
-            int count = entries?.Count ?? 0;
-            if (count == 0)
-                return null;
-
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            for (int i = 0; i < count; i++)
-            {
-                var entry = entries[i];
-                w.Write(entry.PlacedRefId);
-                w.Write(entry.SoulId ?? string.Empty);
-            }
-
-            return ms.ToArray();
-        }
-
-        private static byte[] BuildLockStateBytes(IReadOnlyList<PlacedRefLockEntry> entries)
-        {
-            int count = entries?.Count ?? 0;
-            if (count == 0)
-                return null;
-
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            for (int i = 0; i < count; i++)
-            {
-                var entry = entries[i];
-                w.Write(entry.PlacedRefId);
-                w.Write(entry.LockLevel);
-                w.Write(entry.Locked);
-                w.Write(entry.KeyId ?? string.Empty);
-                w.Write(entry.TrapId ?? string.Empty);
-            }
-
-            return ms.ToArray();
-        }
-
-        private static byte[] BuildCombinedRenderChunkBytes(IReadOnlyList<CombinedCellRenderChunkDef> chunks)
-        {
-            int count = chunks?.Count ?? 0;
-            if (count == 0)
-                return null;
-
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            for (int i = 0; i < count; i++)
-            {
-                var chunk = chunks[i] ?? throw new InvalidDataException($"Combined render chunk {i} is null.");
-                var vertexBytes = chunk.VertexBytes ?? Array.Empty<byte>();
-                var indexBytes = chunk.IndexBytes ?? Array.Empty<byte>();
-                var members = chunk.Members ?? Array.Empty<CombinedCellRenderChunkMemberDef>();
-
-                w.Write(chunk.TileX);
-                w.Write(chunk.TileY);
-                w.Write(chunk.MaterialIndex);
-                w.Write(chunk.TextureBucketKey);
-                w.Write(chunk.BoundsCenterX);
-                w.Write(chunk.BoundsCenterY);
-                w.Write(chunk.BoundsCenterZ);
-                w.Write(chunk.BoundsExtentsX);
-                w.Write(chunk.BoundsExtentsY);
-                w.Write(chunk.BoundsExtentsZ);
-                w.Write((uint)chunk.VertexCount);
-                w.Write((uint)chunk.IndexCount);
-                w.Write(chunk.MeshFlags);
-                w.Write((uint)vertexBytes.Length);
-                w.Write((uint)indexBytes.Length);
-                w.Write((uint)members.Length);
-                w.Write(vertexBytes);
-                w.Write(indexBytes);
-                for (int m = 0; m < members.Length; m++)
-                {
-                    var member = members[m] ?? throw new InvalidDataException($"Combined render chunk {i} member {m} is null.");
-                    w.Write(member.PlacedRefId);
-                    w.Write(member.NodeIndex);
-                }
-            }
-
-            return ms.ToArray();
-        }
-
-
-        private static void WriteUInt16(byte[] buffer, ref int offset, ushort value)
-        {
-            buffer[offset++] = (byte)value;
-            buffer[offset++] = (byte)(value >> 8);
-        }
-
-
-        private static void WriteInt32(byte[] buffer, ref int offset, int value)
-        {
-            WriteUInt32(buffer, ref offset, unchecked((uint)value));
-        }
-
-
-        private static void WriteUInt32(byte[] buffer, ref int offset, uint value)
-        {
-            buffer[offset++] = (byte)value;
-            buffer[offset++] = (byte)(value >> 8);
-            buffer[offset++] = (byte)(value >> 16);
-            buffer[offset++] = (byte)(value >> 24);
-        }
-
-
-        private static void WriteSingle(byte[] buffer, ref int offset, float value)
-        {
-            WriteUInt32(buffer, ref offset, unchecked((uint)BitConverter.SingleToInt32Bits(value)));
         }
 
 
@@ -544,7 +311,8 @@ namespace VVardenfell.Importer.Bake
             LandRecord land,
             RecordIndex recordIndex,
             Dictionary<string, Dictionary<int, string>> ltexMapsBySource,
-            bool bakeCombinedCellRenderChunks)
+            bool bakeCombinedCellRenderChunks,
+            CombinedStaticExclusionData combinedStaticExclusions)
         {
             using var ms = new MemoryStream();
             using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
@@ -562,6 +330,7 @@ namespace VVardenfell.Importer.Bake
                 w.Write(workItem.Cell.Environment.WaterHeight);
                 w.Write(workItem.Cell.Environment.RegionId ?? string.Empty);
                 w.Write(bakeCombinedCellRenderChunks);
+                w.Write(CombinedCellRenderPolicyVersion);
                 w.Write(refs.Count);
                 for (int i = 0; i < refs.Count; i++)
                 {
@@ -585,6 +354,7 @@ namespace VVardenfell.Importer.Bake
                     w.Write(reference.DoorDestRotY);
                     w.Write(reference.DoorDestRotZ);
                     w.Write(reference.SoulId ?? string.Empty);
+                    w.Write(IsMutablePlacedOrScriptedStaticRef(reference.FormId, reference.BaseId, combinedStaticExclusions));
                     if (recordIndex.TryGet(reference.BaseId, out var rec))
                     {
                         w.Write(rec.Tag);

@@ -25,11 +25,4 @@ namespace VVardenfell.Runtime.Combat
         public byte HasHitPosition;
     }
 
-    public struct ActorMeleeCombatAiState : IComponentData
-    {
-        public float CooldownSeconds;
-        public float DesiredAttackStrength;
-        public ActorWeaponAttackType DesiredAttackType;
-        public byte AttackInProgress;
-    }
 }

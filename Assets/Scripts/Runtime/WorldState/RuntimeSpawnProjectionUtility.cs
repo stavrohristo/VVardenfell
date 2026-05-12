@@ -1,3 +1,4 @@
+using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -9,6 +10,7 @@ using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.WorldState
 {
@@ -24,6 +26,8 @@ namespace VVardenfell.Runtime.WorldState
             public RuntimeSpawnedRef[] Snapshot;
             public RestoreAliveRefMaterialization[] Materializations;
             public LogicalRefLookup LogicalLookup;
+            public LoadedCellsMap Loaded;
+            public InteriorTransitionState Transition;
             public AvailableCells Available;
             public bool ChangedAvailable;
         }
@@ -44,11 +48,13 @@ namespace VVardenfell.Runtime.WorldState
             ref RuntimeContentBlob content = ref contentBlob.Value;
             var worldCellBlob = RequireRuntimeWorldCellBlob(entityManager);
             ref RuntimeWorldCellBlob worldCells = ref worldCellBlob.Value;
+            var materializationResources = RuntimeMaterializationResources.Require(entityManager);
             var createEcb = new EntityCommandBuffer(Allocator.Temp);
             if (!TryQueueRestoreAliveRefsCreatePhase(
                     entityManager,
                     ref content,
                     ref worldCells,
+                    materializationResources,
                     ref createEcb,
                     out var projection))
             {
@@ -116,80 +122,11 @@ namespace VVardenfell.Runtime.WorldState
             return false;
         }
 
-        public static void RebuildRegistryFromJournal(EntityManager entityManager)
-        {
-            if (!WorldJournalUtility.TryGetJournalEntity(entityManager, out Entity journalEntity)
-                || !TryGetRegistryEntity(entityManager, out Entity registryEntity))
-            {
-                return;
-            }
-
-            var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            var rebuilt = new NativeList<RuntimeSpawnedRef>(journal.Length, Allocator.Temp);
-            var indices = new NativeParallelHashMap<uint, int>(journal.Length, Allocator.Temp);
-            try
-            {
-                for (int i = 0; i < journal.Length; i++)
-                {
-                    var entry = journal[i];
-                    if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeSpawned)
-                    {
-                        var spawned = new RuntimeSpawnedRef
-                        {
-                            RuntimeRefId = entry.RuntimeRefId,
-                            Content = entry.Content,
-                            Position = entry.Position,
-                            Rotation = entry.Rotation,
-                            Scale = math.max(0.0001f, entry.Scale),
-                            ExteriorCell = entry.ExteriorCell,
-                            InteriorCellId = entry.InteriorCellId,
-                            InteriorCellHash = entry.InteriorCellHash != 0UL
-                                ? entry.InteriorCellHash
-                                : InteriorCellIdHash.Hash(entry.InteriorCellId),
-                            LogicalEntity = Entity.Null,
-                            IsInterior = entry.IsInterior,
-                            PersistencePolicy = entry.PersistencePolicy,
-                            Alive = 1,
-                        };
-
-                        if (indices.TryGetValue(spawned.RuntimeRefId, out int existingIndex))
-                        {
-                            rebuilt[existingIndex] = spawned;
-                        }
-                        else
-                        {
-                            indices.Add(spawned.RuntimeRefId, rebuilt.Length);
-                            rebuilt.Add(spawned);
-                        }
-                    }
-                    else if (entry.Kind == (byte)WorldJournalEntryKind.RuntimeDestroyed
-                             && indices.TryGetValue(entry.RuntimeRefId, out int existingIndex))
-                    {
-                        var destroyed = rebuilt[existingIndex];
-                        destroyed.Alive = 0;
-                        destroyed.LogicalEntity = Entity.Null;
-                        rebuilt[existingIndex] = destroyed;
-                    }
-                }
-
-                var registry = entityManager.GetBuffer<RuntimeSpawnedRef>(registryEntity);
-                registry.Clear();
-                for (int i = 0; i < rebuilt.Length; i++)
-                    registry.Add(rebuilt[i]);
-            }
-            finally
-            {
-                if (indices.IsCreated)
-                    indices.Dispose();
-                if (rebuilt.IsCreated)
-                    rebuilt.Dispose();
-            }
-        }
-
         public static bool TryQueueRestoreAliveRefsCreatePhase(
             EntityManager entityManager,
             ref RuntimeContentBlob content,
             ref RuntimeWorldCellBlob worldCells,
+            RuntimeMaterializationResources materializationResources,
             ref EntityCommandBuffer ecb,
             out RestoreAliveRefsProjection projection)
         {
@@ -258,8 +195,8 @@ namespace VVardenfell.Runtime.WorldState
                     continue;
 
                 bool actorSpawn = entry.Content.Kind == ContentReferenceKind.Actor;
-                WorldResources.RuntimeSpawnPrefabDescriptor descriptor = default;
-                if (!actorSpawn && !WorldResources.TryGetRuntimeSpawnPrefab(entry.Content, out descriptor))
+                RuntimeSpawnPrefabDescriptor descriptor = default;
+                if (!actorSpawn && !materializationResources.TryGetRuntimeSpawnPrefab(entry.Content, out descriptor))
                 {
                     Debug.LogWarning($"[VVardenfell][Save] skipped runtime ref 0x{entry.RuntimeRefId:X8}: no spawnable prefab descriptor for {entry.Content.Kind}:{entry.Content.HandleValue}.");
                     continue;
@@ -284,6 +221,7 @@ namespace VVardenfell.Runtime.WorldState
                         entityManager,
                         ref ecb,
                         ref content,
+                        materializationResources,
                         descriptor,
                         entry.Content,
                         entry.RuntimeRefId,
@@ -322,6 +260,8 @@ namespace VVardenfell.Runtime.WorldState
                 Snapshot = snapshot,
                 Materializations = compactMaterializations,
                 LogicalLookup = logicalLookup,
+                Loaded = loaded,
+                Transition = transition,
                 Available = available,
                 ChangedAvailable = changedAvailable,
             };
@@ -355,6 +295,11 @@ namespace VVardenfell.Runtime.WorldState
                 var entry = projection.Snapshot[materialization.SnapshotIndex];
                 entry.LogicalEntity = logicalEntity;
                 projection.Snapshot[materialization.SnapshotIndex] = entry;
+                ActiveExplicitRefLookupLifecycleUtility.QueueDynamicAddIfActive(
+                    entityManager,
+                    logicalEntity,
+                    projection.Loaded,
+                    projection.Transition);
             }
         }
 
@@ -395,8 +340,11 @@ namespace VVardenfell.Runtime.WorldState
             var config = entityManager.GetComponentData<StreamingConfig>(streamingEntity);
             var available = entityManager.GetComponentData<AvailableCells>(streamingEntity);
             var loaded = entityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var sectionRegistry = entityManager.GetComponentData<RuntimeSectionRegistry>(streamingEntity);
             var logicalLookup = entityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
             var transition = entityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
+            var interiorSections = RequireInteriorSections(world);
+            var exteriorSections = RequireExteriorSections(world);
 
             if (payload.InteriorActive && !string.IsNullOrWhiteSpace(payload.ActiveInteriorCellId))
             {
@@ -409,8 +357,10 @@ namespace VVardenfell.Runtime.WorldState
                     return false;
                 }
 
-                WorldSpawner.HideExteriorVisibility(world, ref loaded);
-                if (!WorldSpawner.TrySpawnInteriorCellByHash(world, activeInteriorCellHash, InteriorWorldOffset, transitionEntity, ref logicalLookup, out FixedString128Bytes spawnedInteriorCellId))
+                interiorSections.DeactivateActiveInterior(transition);
+                DestroyTransientInteriorEntities(entityManager, transitionEntity, ref logicalLookup);
+                exteriorSections.HideExteriorVisibility(ref loaded);
+                if (!interiorSections.LoadAndActivateByHash(activeInteriorCellHash, InteriorWorldOffset, ref sectionRegistry, ref logicalLookup, out FixedString128Bytes spawnedInteriorCellId))
                 {
                     error = $"Continue save references unloaded interior '{payload.ActiveInteriorCellId}'.";
                     return false;
@@ -429,38 +379,78 @@ namespace VVardenfell.Runtime.WorldState
             }
             else
             {
+                interiorSections.DeactivateActiveInterior(transition);
+                DestroyTransientInteriorEntities(entityManager, transitionEntity, ref logicalLookup);
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
                 transition.ActiveInteriorCellHash = 0UL;
                 transition.TransitionInProgress = 0;
                 config.ExteriorStreamingPaused = false;
                 config.CameraCell = ComputeExteriorCell(payload.PlayerPosition);
-                WorldSpawner.SyncExteriorVisibility(world, config, available, ref loaded);
+                exteriorSections.SyncExteriorVisibility(config, available, ref loaded);
             }
 
             entityManager.SetComponentData(streamingEntity, config);
             entityManager.SetComponentData(streamingEntity, available);
+            entityManager.SetComponentData(streamingEntity, sectionRegistry);
             entityManager.SetComponentData(streamingEntity, loaded);
             entityManager.SetComponentData(streamingEntity, logicalLookup);
             entityManager.SetComponentData(transitionEntity, transition);
             return true;
         }
 
-        public static uint FindMaxRuntimeOrdinal(DynamicBuffer<WorldJournalEntry> journal)
+        static void DestroyTransientInteriorEntities(EntityManager entityManager, Entity transitionEntity, ref LogicalRefLookup logicalLookup)
         {
-            uint maxOrdinal = 0u;
-            for (int i = 0; i < journal.Length; i++)
-            {
-                var entry = journal[i];
-                if (entry.Kind != (byte)WorldJournalEntryKind.RuntimeSpawned)
-                    continue;
+            var spawnedBuffer = entityManager.GetBuffer<InteriorSpawnedEntity>(transitionEntity);
+            if (spawnedBuffer.Length == 0)
+                return;
 
-                uint ordinal = entry.RuntimeRefId & ~0x80000000u;
-                if (ordinal > maxOrdinal)
-                    maxOrdinal = ordinal;
+            var entitiesToDestroy = new NativeArray<Entity>(spawnedBuffer.Length, Allocator.Temp);
+            try
+            {
+                for (int i = 0; i < spawnedBuffer.Length; i++)
+                    entitiesToDestroy[i] = spawnedBuffer[i].Value;
+
+                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                try
+                {
+                    for (int i = 0; i < entitiesToDestroy.Length; i++)
+                    {
+                        Entity entity = entitiesToDestroy[i];
+                        if (entityManager.Exists(entity)
+                            && entityManager.HasComponent<RuntimeCellSectionMember>(entity))
+                        {
+                            continue;
+                        }
+
+                        if (entityManager.Exists(entity) && entityManager.HasComponent<LogicalRefTag>(entity))
+                        {
+                            LogicalRefDestroyUtility.QueueDestroyLogicalRef(
+                                entityManager,
+                                ref ecb,
+                                entity,
+                                ref logicalLookup,
+                                preserveRuntimeSpawnRegistration: true);
+                            continue;
+                        }
+
+                        if (entityManager.Exists(entity))
+                            ecb.DestroyEntity(entity);
+                    }
+
+                    ecb.Playback(entityManager);
+                }
+                finally
+                {
+                    ecb.Dispose();
+                }
+            }
+            finally
+            {
+                entitiesToDestroy.Dispose();
             }
 
-            return maxOrdinal;
+            spawnedBuffer.Clear();
         }
 
         static bool TryGetRegistryEntity(EntityManager entityManager, out Entity registryEntity)
@@ -588,6 +578,22 @@ namespace VVardenfell.Runtime.WorldState
                 return;
 
             available.Set.Capacity = math.max(available.Set.Capacity * 2, count + 1);
+        }
+
+        static InteriorSectionLifecycleSystem RequireInteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<InteriorSectionLifecycleSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] InteriorSectionLifecycleSystem is unavailable.");
+            return system;
+        }
+
+        static CellLoadWorkerSystem RequireExteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
         }
     }
 }

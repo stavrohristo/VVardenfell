@@ -19,6 +19,8 @@ namespace VVardenfell.Runtime.Vfx
         EntityQuery _removeQuery;
         EntityQuery _wakeQuery;
         EntityQuery _runtimeQuery;
+        EntityQuery _materializationResourcesQuery;
+        EntityQuery _presentationResourcesQuery;
         NativeList<VfxSpawnWorkItem> _spawnWork;
         NativeList<VfxRemoveWorkItem> _removeWork;
         NativeList<MorrowindVfxResources.FollowRequest> _followRequests;
@@ -34,6 +36,8 @@ namespace VVardenfell.Runtime.Vfx
             _spawnQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxSpawnRequest>());
             _removeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRemoveRequest>());
             _runtimeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRuntimeState>());
+            _materializationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeMaterializationResources>());
+            _presentationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeVfxPresentationResources>());
             _wakeQuery = systemState.GetEntityQuery(new EntityQueryDesc
             {
                 Any = new[]
@@ -55,27 +59,23 @@ namespace VVardenfell.Runtime.Vfx
 
             systemState.RequireForUpdate(_wakeQuery);
             systemState.RequireForUpdate<RuntimePresentationEnabled>();
+            systemState.RequireForUpdate(_materializationResourcesQuery);
+            systemState.RequireForUpdate(_presentationResourcesQuery);
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
-            CacheLoader cache = WorldResources.Cache;
+            CacheLoader cache = RuntimeMaterializationResources.Require(systemState.EntityManager).Cache;
             if (cache == null)
-            {
-                if (!_spawnQuery.IsEmptyIgnoreFilter || !_removeQuery.IsEmptyIgnoreFilter)
-                    throw new InvalidOperationException("[VVardenfell][VFX] Runtime cache is not loaded.");
-
-                if (!_runtimeQuery.IsEmptyIgnoreFilter)
-                    systemState.EntityManager.DestroyEntity(_runtimeQuery);
-                return;
-            }
+                throw new InvalidOperationException("[VVardenfell][VFX] Runtime cache is not loaded.");
 
             MorrowindVfxRenderDispatch.EnsureRegistered();
-            var resources = WorldResources.Vfx;
+            var presentationResources = RuntimeVfxPresentationResources.Require(systemState.EntityManager);
+            var resources = presentationResources.Resources;
             if (resources == null)
             {
                 resources = new MorrowindVfxResources(cache);
-                WorldResources.Vfx = resources;
+                presentationResources.Resources = resources;
             }
             EnsureRuntimeState(ref systemState);
 
@@ -114,9 +114,6 @@ namespace VVardenfell.Runtime.Vfx
                 _followRequests.Dispose();
             if (_followResults.IsCreated)
                 _followResults.Dispose();
-
-            WorldResources.Vfx?.Dispose();
-            WorldResources.Vfx = null;
         }
 
         void CollectSpawnAndRemoveRequests(ref SystemState systemState)

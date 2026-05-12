@@ -5,28 +5,10 @@ using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
 {
-    public enum MorrowindScriptInstanceStatus : byte
-    {
-        None = 0,
-        Running = 1,
-        Disabled = 2,
-        Faulted = 3,
-    }
-
     public struct MorrowindScriptRuntimeState : IComponentData
     {
         public uint NextAudioRequestSequence;
         public uint RandomState;
-    }
-
-    public struct MorrowindScriptInstance : IComponentData
-    {
-        public MorrowindScriptProgramDefHandle Program;
-        public int ProgramIndex;
-        public int ProgramCounter;
-        public byte Status;
-        public byte SuppressActivation;
-        public FixedString128Bytes DisabledReason;
     }
 
     public struct MorrowindScriptFaultReported : IComponentData
@@ -56,20 +38,6 @@ namespace VVardenfell.Runtime.Components
         public int ProgramIndex;
     }
 
-    public struct MorrowindScriptLocalValue : IBufferElementData
-    {
-        public int IntValue;
-        public float FloatValue;
-        public byte ValueKind;
-    }
-
-    public struct MorrowindScriptStackValue : IBufferElementData
-    {
-        public int IntValue;
-        public float FloatValue;
-        public byte ValueKind;
-    }
-
     public struct MorrowindScriptGlobalValue : IBufferElementData
     {
         public int IntValue;
@@ -88,17 +56,6 @@ namespace VVardenfell.Runtime.Components
 
     public struct MorrowindActorOnDeathConsumed : IComponentData
     {
-    }
-
-    public struct ActorScriptEventState : IComponentData
-    {
-        public byte Murdered;
-        public byte Attacked;
-        public byte KnockedDownOneFrame;
-        public Entity LastHitAttemptActor;
-        public uint LastHitAttemptActorPlacedRefId;
-        public ContentReference LastHitAttemptObject;
-        public ContentReference LastHitObject;
     }
 
     public struct MorrowindQuestJournalState : IComponentData

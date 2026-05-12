@@ -18,8 +18,8 @@ namespace VVardenfell.Runtime.Cache
     /// Only interactable refs (DOOR / ACTI / CONT / LIGH / pickable items) consume these
     /// blobs; pure STATs have their collision combined into serialized cell sections.
     ///
-    /// Blobs live in <see cref="Streaming.WorldResources.ColliderBlobs"/> and are disposed
-    /// on world teardown.
+    /// Blobs live in <see cref="Streaming.RuntimeMaterializationResources"/> and are disposed
+    /// from bootstrap teardown.
     /// </summary>
     public static class CollisionLoader
     {

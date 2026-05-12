@@ -76,35 +76,8 @@ namespace VVardenfell.Runtime.Components
         public byte Alive;
     }
 
-    public enum WorldJournalEntryKind : byte
-    {
-        None = 0,
-        LooseItemRemoved = 1,
-        ContainerDelta = 2,
-        RuntimeSpawned = 3,
-        RuntimeDestroyed = 4,
-    }
-
     public struct WorldJournalState : IComponentData
     {
         public uint NextSequence;
-    }
-
-    public struct WorldJournalEntry : IBufferElementData
-    {
-        public uint Sequence;
-        public byte Kind;
-        public uint PlacedRefId;
-        public uint RuntimeRefId;
-        public ContentReference Content;
-        public int DeltaCount;
-        public float3 Position;
-        public quaternion Rotation;
-        public float Scale;
-        public int2 ExteriorCell;
-        public FixedString128Bytes InteriorCellId;
-        public ulong InteriorCellHash;
-        public byte IsInterior;
-        public byte PersistencePolicy;
     }
 }

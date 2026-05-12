@@ -16,12 +16,13 @@ using VVardenfell.Runtime.WorldState;
 namespace VVardenfell.Runtime.Streaming
 {
     /// <summary>
-    /// One-time setup for the world: fills WorldResources, preloads every cell, creates
-    /// startup entities, and publishes the singleton entities the runtime observes.
+    /// One-time setup for the world: validates cache products, creates startup entities,
+    /// and publishes the singleton entities the runtime observes.
     /// </summary>
     public static class WorldBootstrap
     {
         public const int DefaultViewRadius = 1;
+        public const int DefaultDistantTerrainRadius = 12;
         public const int DefaultMaxLoadsPerFrame = 1;
         public const int DefaultMaxUnloadsPerFrame = 64;
         public const bool DefaultGateTerrainByRadius = false;
@@ -44,6 +45,7 @@ namespace VVardenfell.Runtime.Streaming
 
             NativeHashSet<int2> available = default;
             var loadedMap = default(LoadedCellsMap);
+            var sectionRegistry = default(RuntimeSectionRegistry);
             var logicalRefLookup = default(LogicalRefLookup);
             var placedRefRuntimeStateLookup = default(PlacedRefRuntimeStateLookup);
             var loadQueue = default(LoadQueue);
@@ -52,17 +54,20 @@ namespace VVardenfell.Runtime.Streaming
             var pendingPhysicsUnload = default(PendingCellPhysicsUnload);
             WorldBootstrapPreloadResult preload = null;
             Task<WorldBootstrapCollisionLoadResult> collisionTask = null;
+            var renderRegistries = new WorldBootstrapRenderRegistryResult();
             bool singletonInstalled = false;
 
             try
             {
-                WorldResources.RuntimeMode = options.Mode;
                 WorldBootstrapStateUtility.PublishRuntimeMode(em, options.Mode);
                 RuntimeBootstrapRequestUtility.PublishAll(em);
                 foreach (var step in WorldBootstrapResourceSetup.InstallManagedResources(cache, progress))
                     yield return step;
 
-                foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, progress))
+                foreach (var step in WorldBootstrapResourceSetup.InstallTerrainAssets(cache, renderRegistries, progress))
+                    yield return step;
+
+                foreach (var step in WorldBootstrapResourceSetup.InstallRenderAssetRegistrations(cache, renderRegistries, progress))
                     yield return step;
 
                 collisionTask = Task.Run(WorldBootstrapResourceSetup.LoadCollisionBlobs);
@@ -105,6 +110,7 @@ namespace VVardenfell.Runtime.Streaming
                     cache,
                     out available,
                     out loadedMap,
+                    out sectionRegistry,
                     out logicalRefLookup,
                     out placedRefRuntimeStateLookup,
                     out loadQueue,
@@ -112,26 +118,64 @@ namespace VVardenfell.Runtime.Streaming
                     out pendingPhysicsLoad,
                     out pendingPhysicsUnload);
 
-                foreach (var step in WorldBootstrapResourceSetup.InstallAvailableCells(cache, available, progress))
+                foreach (var step in WorldBootstrapResourceSetup.InstallAvailableCells(cache, available, sectionRegistry, progress))
                     yield return step;
 
                 foreach (var step in WorldBootstrapResourceSetup.InstallColliderBlobs(collisionLoad, progress))
                     yield return step;
 
+                foreach (var step in WorldBootstrapResourceSetup.InstallPathGridNavigation(cache, progress))
+                    yield return step;
+
+                var materializationResources = WorldBootstrapResourceSetup.CreateMaterializationResources(cache, collisionLoad.Blobs, renderRegistries);
+                WorldBootstrapStateUtility.PublishMaterializationResources(em, materializationResources);
+                WorldBootstrapStateUtility.PublishActorPresentationResources(em);
+                WorldBootstrapStateUtility.PublishVfxPresentationResources(em);
+                WorldBootstrapStateUtility.PublishActorColliderResource(em);
+
                 progress?.BeginStage("Spawn prefabs", "Loading runtime spawn prefab cache", 1);
-                RuntimeSpawnPrefabMaterializer.LoadAndMaterialize(em, cache);
+                var spawnPrefabLoader = world.GetOrCreateSystemManaged<RuntimeSpawnPrefabLoadSystem>();
+                spawnPrefabLoader.LoadAndMaterialize(materializationResources);
                 progress?.Report("Runtime spawn prefabs ready", 1, 1);
                 progress?.CompleteStage();
                 yield return null;
 
+                progress?.BeginStage("Distant terrain", "Loading runtime distant terrain cache", 1);
+                var distantTerrainLoader = world.GetOrCreateSystemManaged<RuntimeDistantTerrainLoadSystem>();
+                distantTerrainLoader.LoadAndMaterialize(materializationResources);
+                progress?.Report("Runtime distant terrain ready", 1, 1);
+                progress?.CompleteStage();
+                yield return null;
+
                 EnsurePhysicsMutationQueueReadyForDirectCellSpawn(world, em);
+                var exteriorLoader = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+                if (exteriorLoader == null)
+                    throw new System.InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
 
                 var defaultSpawn = options.PlayerStartPosition;
                 var defaultCameraCell = WorldPositionToCell(defaultSpawn);
-                if (options.SpawnInitialExteriorCell && WorldSpawner.TrySpawnExteriorCellByCoord(
-                        world,
+                if (!options.IsSandbox && exteriorLoader.LoadAndMaterializeExteriorTerrainOnly(
                         defaultCameraCell,
                         ref loadedMap,
+                        ref sectionRegistry,
+                        active: true))
+                {
+                    progress?.BeginStage("Initial terrain", $"Spawning start terrain {defaultCameraCell.x},{defaultCameraCell.y}", 1);
+                    progress?.Report("Start terrain ready", 1, 1);
+                    progress?.CompleteStage();
+                    yield return null;
+                }
+                else if (!options.IsSandbox)
+                {
+                    if (options.SpawnLocalPlayer)
+                        throw new System.InvalidOperationException($"[VVardenfell][Streaming] default start terrain {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player spawn is blocked.");
+                    UnityEngine.Debug.LogWarning($"[VVardenfell] default start terrain {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache.");
+                }
+
+                if (options.SpawnInitialExteriorCell && exteriorLoader.LoadAndMaterializeExterior(
+                        defaultCameraCell,
+                        ref loadedMap,
+                        ref sectionRegistry,
                         ref logicalRefLookup,
                         active: true,
                         gateTerrainByRadius: DefaultGateTerrainByRadius))
@@ -143,7 +187,9 @@ namespace VVardenfell.Runtime.Streaming
                 }
                 else if (options.SpawnInitialExteriorCell)
                 {
-                    UnityEngine.Debug.LogWarning($"[VVardenfell] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player may spawn before terrain is available.");
+                    if (options.SpawnLocalPlayer)
+                        throw new System.InvalidOperationException($"[VVardenfell][Streaming] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache; player spawn is blocked.");
+                    UnityEngine.Debug.LogWarning($"[VVardenfell] default start cell {defaultCameraCell.x},{defaultCameraCell.y} is missing from the cache.");
                 }
 
                 if (options.QueueInitialExteriorCells)
@@ -165,6 +211,7 @@ namespace VVardenfell.Runtime.Streaming
                     em,
                     available,
                     loadedMap,
+                    sectionRegistry,
                     logicalRefLookup,
                     placedRefRuntimeStateLookup,
                     loadQueue,
@@ -192,6 +239,7 @@ namespace VVardenfell.Runtime.Streaming
                     WorldBootstrapStateUtility.DisposeUnpublishedState(
                         available,
                         loadedMap,
+                        sectionRegistry,
                         logicalRefLookup,
                         placedRefRuntimeStateLookup,
                         loadQueue,

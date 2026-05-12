@@ -9,12 +9,22 @@ namespace VVardenfell.Runtime.Content
     [UpdateInGroup(typeof(MorrowindInitializationSystemGroup), OrderFirst = true)]
     public partial struct RuntimeContentBlobReferenceSystem : ISystem
     {
+        EntityQuery _materializationResourcesQuery;
+
+        public void OnCreate(ref SystemState systemState)
+        {
+            _materializationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeMaterializationResources>());
+        }
+
         public void OnUpdate(ref SystemState systemState)
         {
             if (SystemAPI.HasSingleton<RuntimeContentBlobReference>())
                 return;
 
-            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            if (_materializationResourcesQuery.IsEmptyIgnoreFilter)
+                return;
+
+            var blob = RuntimeMaterializationResources.Require(systemState.EntityManager).ContentBlob;
             if (!blob.IsCreated)
                 return;
 
@@ -27,7 +37,7 @@ namespace VVardenfell.Runtime.Content
         public void OnDestroy(ref SystemState systemState)
         {
             // RuntimeContentBlobReference is a non-owning ECS handle to
-            // WorldResources.Cache.ContentBlob. WorldResources.Reset owns disposal.
+            // RuntimeMaterializationResources.ContentBlob. Cache teardown owns disposal.
         }
     }
 }

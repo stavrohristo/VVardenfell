@@ -29,7 +29,6 @@ namespace VVardenfell.Runtime.Books
             RequireForUpdate<BookTakeRequest>();
             RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<PickedItemRecord>();
-            RequireForUpdate<WorldJournalEntry>();
             RequireForUpdate<LogicalRefLookup>();
             RequireForUpdate<RuntimeContentBlobReference>();
             RequireForUpdate<InteractionAudioRequestState>();
@@ -72,7 +71,7 @@ namespace VVardenfell.Runtime.Books
                         PlacedRefId = placedRefId,
                         Definition = new ItemDefHandle { Value = content.HandleValue },
                     });
-                    WorldJournalUtility.AppendLooseItemRemoved(EntityManager, placedRefId, content);
+                    ScriptVisibleSaveStateUtility.UpsertRemoved(EntityManager, placedRefId, content, 1);
                 }
             }
 

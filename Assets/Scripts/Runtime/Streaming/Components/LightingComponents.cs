@@ -10,42 +10,6 @@ namespace VVardenfell.Runtime.Components
         public UnityObjectRef<Light> Value;
     }
 
-    public struct LightInstanceFlags : IComponentData
-    {
-        public byte Carry;
-        public byte Negative;
-        public byte Flicker;
-        public byte FlickerSlow;
-        public byte Pulse;
-        public byte PulseSlow;
-        public byte OffDefault;
-    }
-
-    public struct LightInstanceState : IComponentData
-    {
-        public byte Enabled;
-        public float3 BaseColorRgb;
-        public float BaseIntensity;
-        public float BaseRange;
-        public float CurrentIntensity;
-        public float CurrentRange;
-        public float AnimationTime;
-    }
-
-    public struct LightInstanceAnimated : IComponentData
-    {
-    }
-
-    public struct LightPresentationLink : IComponentData
-    {
-        public int Slot;
-    }
-
-    public struct LightPresentationOffset : IComponentData
-    {
-        public float3 LocalPosition;
-    }
-
     public struct MorrowindDayCycleState : IComponentData
     {
         public float SunriseTime;

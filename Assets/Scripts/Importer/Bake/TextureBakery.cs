@@ -31,6 +31,8 @@ namespace VVardenfell.Importer.Bake
         private readonly List<string> _hashHexByIndex = new List<string>();
         private readonly Dictionary<int, DdsTexture.Payload> _payloadByIndex = new Dictionary<int, DdsTexture.Payload>();
         private readonly Dictionary<int, DdsTexture.Payload> _rgba32PayloadByIndex = new Dictionary<int, DdsTexture.Payload>();
+        private readonly Dictionary<int, int> _bucketKeyByTextureIndex = new Dictionary<int, int>();
+        private Dictionary<int, int> _bucketIndexByKey;
 
         public int Count => _hashHexByIndex.Count;
         public bool Modified { get; private set; }
@@ -70,12 +72,14 @@ namespace VVardenfell.Importer.Bake
                     _hashHexByIndex.Add(hash);
                     _indexByResolved[resolved] = index;
                 }
+                _bucketIndexByKey = null;
             }
             catch
             {
                 _indexByResolved.Clear();
                 _resolvedByIndex.Clear();
                 _hashHexByIndex.Clear();
+                _bucketIndexByKey = null;
             }
         }
 
@@ -110,10 +114,11 @@ namespace VVardenfell.Importer.Bake
                 _resolvedByIndex.Add(resolved);
                 _hashHexByIndex.Add(hex);
                 _indexByResolved[resolved] = idx;
-                _indexByRaw[rawTexPath] = idx;
-                Modified = true;
-                return idx;
-            }
+                    _indexByRaw[rawTexPath] = idx;
+                    Modified = true;
+                    _bucketIndexByKey = null;
+                    return idx;
+                }
         }
 
         public int AddOrGetRequired(string rawTexPath, string context)
@@ -149,6 +154,7 @@ namespace VVardenfell.Importer.Bake
                 _indexByResolved[resolved] = idx;
                 _indexByRaw[rawTexPath] = idx;
                 Modified = true;
+                _bucketIndexByKey = null;
                 return idx;
             }
         }
@@ -181,12 +187,95 @@ namespace VVardenfell.Importer.Bake
             if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
                 return RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1);
 
-            var payload = GetPayload(textureIndex);
-            return RefTextureBucketFile.MakeBucketKey(payload.Width, payload.Height, payload.Format, payload.MipCount);
+            lock (_gate)
+            {
+                if (_bucketKeyByTextureIndex.TryGetValue(textureIndex, out int cached))
+                    return cached;
+            }
+
+            var metadata = GetMetadata(textureIndex);
+            int key = RefTextureBucketFile.MakeBucketKey(metadata.Width, metadata.Height, metadata.Format, metadata.MipCount);
+            lock (_gate)
+            {
+                if (_bucketKeyByTextureIndex.TryGetValue(textureIndex, out int cached))
+                    return cached;
+                _bucketKeyByTextureIndex[textureIndex] = key;
+                _bucketIndexByKey = null;
+                return key;
+            }
+        }
+
+        public int GetBucketIndex(int textureIndex)
+            => GetBucketIndexForKey(GetBucketKey(textureIndex));
+
+        public int GetBucketIndexForKey(int bucketKey)
+        {
+            lock (_gate)
+            {
+                EnsureBucketIndexCache();
+                if (!_bucketIndexByKey.TryGetValue(bucketKey, out int bucketIndex))
+                    throw new InvalidDataException($"Texture bucket key 0x{bucketKey:X8} is not present in the baked texture bucket registry.");
+                return bucketIndex;
+            }
+        }
+
+        void EnsureBucketIndexCache()
+        {
+            if (_bucketIndexByKey != null)
+                return;
+
+            var keys = new List<int>();
+            var seen = new HashSet<int>();
+            for (int i = 0; i < _hashHexByIndex.Count; i++)
+            {
+                int key = GetBucketKey(i);
+                if (seen.Add(key))
+                    keys.Add(key);
+            }
+
+            int fallbackKey = RefTextureBucketFile.MakeBucketKey(1, 1, TextureFormat.RGBA32, 1);
+            if (seen.Add(fallbackKey))
+                keys.Add(fallbackKey);
+
+            keys.Sort();
+            _bucketIndexByKey = new Dictionary<int, int>(keys.Count);
+            for (int i = 0; i < keys.Count; i++)
+                _bucketIndexByKey.Add(keys[i], i);
+        }
+
+        public int GetBucketSliceOrFallback(int textureIndex, int bucketKey)
+        {
+            lock (_gate)
+            {
+                if ((uint)textureIndex < (uint)_hashHexByIndex.Count)
+                {
+                    int key = GetBucketKey(textureIndex);
+                    if (key != bucketKey)
+                        throw new InvalidDataException($"Texture index {textureIndex} bucket key 0x{key:X8} does not match combined render bucket 0x{bucketKey:X8}.");
+
+                    int slice = 0;
+                    for (int i = 0; i < textureIndex; i++)
+                    {
+                        if (GetBucketKey(i) == bucketKey)
+                            slice++;
+                    }
+                    return slice;
+                }
+
+                int fallbackSlice = 0;
+                for (int i = 0; i < _hashHexByIndex.Count; i++)
+                {
+                    if (GetBucketKey(i) == bucketKey)
+                        fallbackSlice++;
+                }
+                return fallbackSlice;
+            }
         }
 
         public DdsTexture.Payload GetPayload(int textureIndex)
         {
+            byte[] bytes;
+            string actualResolved;
             lock (_gate)
             {
                 if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
@@ -195,8 +284,9 @@ namespace VVardenfell.Importer.Bake
                     return payload;
 
                 string resolved = _resolvedByIndex[textureIndex];
-                if (!_resolver.TryResolve(resolved, out var entry, out var actualResolved))
+                if (!_resolver.TryResolve(resolved, out var entry, out var resolvedPath))
                     throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build texture buckets.");
+                actualResolved = resolvedPath;
                 if (!string.Equals(resolved, actualResolved, StringComparison.OrdinalIgnoreCase))
                 {
                     _resolvedByIndex[textureIndex] = actualResolved;
@@ -204,14 +294,26 @@ namespace VVardenfell.Importer.Bake
                     _indexByResolved[actualResolved] = textureIndex;
                 }
 
-                payload = DdsTexture.DecodePayload(ReadEntry(entry), actualResolved);
+                bytes = ReadEntry(entry);
+            }
+
+            var decoded = DdsTexture.DecodePayload(bytes, actualResolved);
+            lock (_gate)
+            {
+                if (_payloadByIndex.TryGetValue(textureIndex, out var payload))
+                    return payload;
+                payload = decoded;
                 _payloadByIndex[textureIndex] = payload;
+                _bucketKeyByTextureIndex[textureIndex] = RefTextureBucketFile.MakeBucketKey(payload.Width, payload.Height, payload.Format, payload.MipCount);
+                _bucketIndexByKey = null;
                 return payload;
             }
         }
 
         public DdsTexture.Payload GetRgba32Payload(int textureIndex)
         {
+            byte[] bytes;
+            string actualResolved;
             lock (_gate)
             {
                 if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
@@ -220,13 +322,50 @@ namespace VVardenfell.Importer.Bake
                     return payload;
 
                 string resolved = _resolvedByIndex[textureIndex];
-                if (!_resolver.TryResolve(resolved, out var entry, out var actualResolved))
+                if (!_resolver.TryResolve(resolved, out var entry, out var resolvedPath))
                     throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build terrain texture layers.");
 
-                payload = DdsTexture.DecodeToRgba32Payload(ReadEntry(entry), actualResolved);
+                actualResolved = resolvedPath;
+                bytes = ReadEntry(entry);
+            }
+
+            var decoded = DdsTexture.DecodeToRgba32Payload(bytes, actualResolved);
+            lock (_gate)
+            {
+                if (_rgba32PayloadByIndex.TryGetValue(textureIndex, out var payload))
+                    return payload;
+                payload = decoded;
                 _rgba32PayloadByIndex[textureIndex] = payload;
                 return payload;
             }
+        }
+
+        DdsTexture.Metadata GetMetadata(int textureIndex)
+        {
+            byte[] bytes;
+            string actualResolved;
+            lock (_gate)
+            {
+                if ((uint)textureIndex >= (uint)_hashHexByIndex.Count)
+                    throw new InvalidDataException($"Texture index {textureIndex} is out of range.");
+                if (_payloadByIndex.TryGetValue(textureIndex, out var payload))
+                    return new DdsTexture.Metadata(payload.Width, payload.Height, payload.MipCount, payload.Format);
+
+                string resolved = _resolvedByIndex[textureIndex];
+                if (!_resolver.TryResolve(resolved, out var entry, out var actualResolvedLocal))
+                    throw new InvalidDataException($"Texture '{resolved}' is missing from BSA; rebake cannot build texture buckets.");
+                if (!string.Equals(resolved, actualResolvedLocal, StringComparison.OrdinalIgnoreCase))
+                {
+                    _resolvedByIndex[textureIndex] = actualResolvedLocal;
+                    _indexByResolved.Remove(resolved);
+                    _indexByResolved[actualResolvedLocal] = textureIndex;
+                }
+
+                actualResolved = actualResolvedLocal;
+                bytes = ReadEntry(entry);
+            }
+
+            return DdsTexture.DecodeMetadata(bytes, actualResolved);
         }
 
         public RefTextureBucketData BuildRefTextureBuckets()

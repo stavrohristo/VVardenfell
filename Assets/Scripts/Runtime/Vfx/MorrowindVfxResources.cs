@@ -109,7 +109,7 @@ namespace VVardenfell.Runtime.Vfx
             if (shader == null)
                 throw new InvalidOperationException($"[VVardenfell][VFX] Required particle shader '{ShaderName}' is missing.");
 
-            int bucketCount = WorldResources.RefBaseArrays?.Length ?? 0;
+            int bucketCount = cache?.RefBaseArrays?.Length ?? 0;
             if (bucketCount <= 0)
                 throw new InvalidOperationException("[VVardenfell][VFX] Texture array buckets are unavailable.");
 
@@ -117,7 +117,7 @@ namespace VVardenfell.Runtime.Vfx
             _particleCountByBucket = new int[bucketCount];
             for (int i = 0; i < bucketCount; i++)
             {
-                var array = WorldResources.RefBaseArrays[i];
+                var array = cache.RefBaseArrays[i];
                 if (array == null)
                     throw new InvalidOperationException($"[VVardenfell][VFX] Texture array bucket {i} is null.");
 
@@ -454,10 +454,10 @@ namespace VVardenfell.Runtime.Vfx
                 if (string.IsNullOrWhiteSpace(texturePath) || !cache.TryGetTextureIndexByPath(texturePath, out textureIndex))
                     throw new InvalidOperationException($"[VVardenfell][VFX] Texture hash 0x{texturePathHash:X16} for model hash 0x{modelPathHash:X16} is missing from texture cache; rebake required.");
             }
-            if (!WorldResources.TexBucketInfo.IsCreated || (uint)textureIndex >= (uint)WorldResources.TexBucketInfo.Length)
+            if (!cache.TexBucketInfo.IsCreated || (uint)textureIndex >= (uint)cache.TexBucketInfo.Length)
                 throw new InvalidOperationException($"[VVardenfell][VFX] Texture hash 0x{texturePathHash:X16} for model hash 0x{modelPathHash:X16} has no texture bucket.");
 
-            int2 bucketSlice = WorldResources.TexBucketInfo[textureIndex];
+            int2 bucketSlice = cache.TexBucketInfo[textureIndex];
             bucket = bucketSlice.x;
             slice = bucketSlice.y;
         }

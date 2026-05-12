@@ -43,6 +43,7 @@ namespace VVardenfell.Importer.Bake
             CachePaths.Warmup();
             CachePaths.EnsureExists();
             var gameplayContentLookup = BuildGameplayContentLookup(gameplayContent);
+            var combinedStaticExclusions = BuildCombinedStaticExclusionData(gameplayContent);
 
             progress.Stage = "Source Indexing";
             progress.Label = "Opening archives";
@@ -152,7 +153,11 @@ namespace VVardenfell.Importer.Bake
             SeedSkyWeatherTextures(gameplayContent, bakeryTextures);
             var bakeryLayers = new TerrainLayerBakery(defaultTexIdx);
             bakeryLayers.TryLoadExisting(CachePaths.TerrainLayers);
-            bool forceCellRebuild = bakeryLayers.ExistingCacheInvalid;
+            var bakerySplats = new TerrainSplatBakery();
+            bakerySplats.TryLoadExisting(CachePaths.TerrainSplats);
+            bool forceCellRebuild = bakeryLayers.ExistingCacheInvalid
+                                    || bakerySplats.ExistingCacheInvalid
+                                    || !File.Exists(CachePaths.TerrainSplats);
             var bakeryCollisions = new CollisionBakery();
             bakeryCollisions.TryLoadExisting(CachePaths.CollisionCatalog);
             var bakeryModelPrefabs = new ModelPrefabBakery();
@@ -232,6 +237,7 @@ namespace VVardenfell.Importer.Bake
                                     recordIndex,
                                     gameplayContent,
                                     gameplayContentLookup,
+                                    combinedStaticExclusions,
                                     sharedBsa,
                                     bsaByName,
                                     ltexMapsBySource,
@@ -295,17 +301,18 @@ namespace VVardenfell.Importer.Bake
             bakeryActorAnimations.ConfigureCreatureAnimationSources(gameplayContent, bsaByName);
             yield return BuildModelPrefabsIncremental(modelCache, progress, bakeryModelPrefabs, bakeryVfxEffects, bakeryActorAnimations, bakeryObjectAnimations, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryCollisions, sharedBsa, bsaByName, gameplayContent, requiredVfxModels);
             bakeryActorAnimations.BuildVisualRecipes(gameplayContent, bsaByName);
-            yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakeryCollisions, bakeryModelPrefabs);
+            yield return ResolveDirtyCellIndicesIncremental(dirtyCells, progress, bakeryMeshes, bakeryMaterials, bakeryTextures, bakeryLayers, bakerySplats, bakeryCollisions, bakeryModelPrefabs);
             FlushDroppedBakeRefWarnings();
 
             for (int i = 0; i < stagedCells.Length; i++)
                 cellStates[i] = BuildCellState(stagedCells[i]);
 
-            yield return WriteDirtyCellsIncremental(dirtyCells, progress, cellMeters);
+            var modelPrefabCatalog = bakeryModelPrefabs.BuildCatalog();
+            yield return WriteDirtyCellsIncremental(dirtyCells, progress, cellMeters, modelPrefabCatalog, bakeryTextures, bakeryMaterials, gameplayContent, bakeryCollisions);
 
             progress.Stage = "Writing";
             progress.Current = 0;
-            progress.Total = 16;
+            progress.Total = 18;
 
             progress.Label = "meshes.bin";
             progress.Current = 1;
@@ -329,7 +336,6 @@ namespace VVardenfell.Importer.Bake
             progress.Label = "model_prefabs.bin";
             progress.Current = 3;
             yield return null;
-            var modelPrefabCatalog = bakeryModelPrefabs.BuildCatalog();
             if (bakeryModelPrefabs.Modified || bakeryObjectAnimations.Modified || !File.Exists(CachePaths.ModelPrefabs))
                 ModelPrefabFile.Write(CachePaths.ModelPrefabs, modelPrefabCatalog);
 
@@ -338,9 +344,13 @@ namespace VVardenfell.Importer.Bake
             yield return null;
             if (bakeryModelPrefabs.Modified
                 || bakeryObjectAnimations.Modified
+                || bakeryTextures.Modified
+                || bakeryMaterials.Modified
+                || bakeryCollisions.Modified
+                || !RuntimeSpawnPrefabBakery.IsCurrent(CachePaths.RuntimeSpawnPrefabs, modelPrefabCatalog.Records?.Length ?? 0)
                 || !File.Exists(CachePaths.RuntimeSpawnPrefabs))
             {
-                RuntimeSpawnPrefabBakery.Write(CachePaths.RuntimeSpawnPrefabs, modelPrefabCatalog);
+                RuntimeSpawnPrefabBakery.Write(CachePaths.RuntimeSpawnPrefabs, modelPrefabCatalog, bakeryTextures, bakeryMaterials, bakeryCollisions);
             }
 
             progress.Label = "vfx_effects.bin";
@@ -377,8 +387,14 @@ namespace VVardenfell.Importer.Bake
             if (texturesNeedWrite || bakeryLayers.Modified || !File.Exists(CachePaths.TerrainLayers))
                 bakeryLayers.WriteTo(CachePaths.TerrainLayers, bakeryTextures);
 
-            progress.Label = "collisions.bin";
+            progress.Label = "terrain_splats.bin";
             progress.Current = 10;
+            yield return null;
+            if (bakerySplats.Modified || !File.Exists(CachePaths.TerrainSplats))
+                bakerySplats.WriteTo(CachePaths.TerrainSplats);
+
+            progress.Label = "collisions.bin";
+            progress.Current = 11;
             yield return null;
             if (bakeryCollisions.Modified || !File.Exists(CachePaths.Collisions) || !File.Exists(CachePaths.CollisionCatalog))
             {
@@ -387,7 +403,7 @@ namespace VVardenfell.Importer.Bake
             }
 
             progress.Label = "Pruning stale cells";
-            progress.Current = 11;
+            progress.Current = 12;
             yield return null;
             PruneOrphans(CachePaths.LegacyExteriorCellsDir, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             PruneOrphans(CachePaths.LegacyInteriorCellsDir, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
@@ -395,21 +411,31 @@ namespace VVardenfell.Importer.Bake
             PruneOrphans(CachePaths.InteriorCellSectionsDir, expectedSections);
             PruneLegacyTextureFiles(CachePaths.TexturesDir);
 
+            progress.Label = "world_cells.blob";
+            progress.Current = 13;
+            yield return null;
+            RuntimeWorldCellBlobBakery.Write(CachePaths.WorldCells, cellStates);
+
+            progress.Label = "runtime_distant_terrain.entities";
+            progress.Current = 14;
+            yield return null;
+            WriteRuntimeDistantTerrain(CachePaths.RuntimeDistantTerrain, stagedCells);
+
             progress.Label = "mesh_cache_report.txt";
-            progress.Current = 12;
+            progress.Current = 15;
             yield return null;
 
             progress.Label = "world_collision_validation.txt";
-            progress.Current = 13;
+            progress.Current = 16;
             yield return null;
 
             progress.Label = "ui.bin";
-            progress.Current = 14;
+            progress.Current = 17;
             yield return null;
             UiAssetBakery.Bake(config, sharedBsa, progress);
 
             progress.Label = "manifest.bin";
-            progress.Current = 16;
+            progress.Current = 18;
             yield return null;
             var manifest = BakeManifest.FromCurrentSources(
                 esmPath,
@@ -741,6 +767,7 @@ namespace VVardenfell.Importer.Bake
             RecordIndex recordIndex,
             GameplayContentData gameplayContent,
             Dictionary<string, ContentReference> gameplayContentLookup,
+            CombinedStaticExclusionData combinedStaticExclusions,
             BsaArchive sharedBsa,
             Dictionary<string, BsaEntry> bsaByName,
             Dictionary<string, Dictionary<int, string>> ltexMapsBySource,
@@ -772,7 +799,7 @@ namespace VVardenfell.Importer.Bake
                 }
             }
 
-            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMapsBySource, bakeCombinedCellRenderChunks);
+            string fingerprint = ComputeFingerprint(workItem, refs, land, recordIndex, ltexMapsBySource, bakeCombinedCellRenderChunks, combinedStaticExclusions);
             bool hasPrevious = previousStateByKey.TryGetValue(workItem.Key, out var previousState);
             string sectionPath = workItem.IsInterior
                 ? CachePaths.InteriorCellSectionFile(workItem.Cell.Name ?? string.Empty)
@@ -965,7 +992,15 @@ namespace VVardenfell.Importer.Bake
                     continue;
                 }
 
-                PlacedRefCollisionAssignment collisionAssignment = ClassifyPlacedRefCollision(isStat, collisionPayload);
+                bool combinedStaticEligible = IsCombinedStaticRefEligible(
+                    staged,
+                    isStat,
+                    contentReference,
+                    reference.FormId,
+                    reference.BaseId,
+                    model,
+                    combinedStaticExclusions);
+                PlacedRefCollisionAssignment collisionAssignment = ClassifyPlacedRefCollision(isStat, combinedStaticEligible, collisionPayload);
                 if (isStat)
                     staged.CollisionStaticCandidateCount++;
 
@@ -1018,7 +1053,8 @@ namespace VVardenfell.Importer.Bake
                     pos,
                     rot,
                     reference.Scale,
-                    collisionAssignment == PlacedRefCollisionAssignment.PerPlacedRef));
+                    collisionAssignment == PlacedRefCollisionAssignment.PerPlacedRef,
+                    combinedStaticEligible));
             }
 
             staged.StaticCollision = staticVerts.Count > 0
@@ -1029,15 +1065,118 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static PlacedRefCollisionAssignment ClassifyPlacedRefCollision(bool isStat, in CollisionPayload collision)
+        private static PlacedRefCollisionAssignment ClassifyPlacedRefCollision(bool isStat, bool combinedStaticEligible, in CollisionPayload collision)
         {
             if (collision.IsEmpty)
                 return PlacedRefCollisionAssignment.NoCollider;
 
-            return isStat
+            return isStat && combinedStaticEligible
                 ? PlacedRefCollisionAssignment.CellStaticAggregate
                 : PlacedRefCollisionAssignment.PerPlacedRef;
         }
+
+
+        private static bool IsCombinedStaticRefEligible(
+            StagedCellData staged,
+            bool isStat,
+            ContentReference contentReference,
+            uint placedRefId,
+            string baseId,
+            ModelSource model,
+            CombinedStaticExclusionData exclusions)
+        {
+            if (!staged.BakeCombinedCellRenderChunks || staged.WorkItem.IsInterior || !isStat)
+                return false;
+            if (contentReference.Kind != ContentReferenceKind.Static)
+                return false;
+            if (IsMutableStaticRef(contentReference, placedRefId, baseId, exclusions))
+                return false;
+            return IsCombinedCellRenderEligibleStaticGraph(model?.ModelPath ?? string.Empty, model);
+        }
+
+
+        private static bool IsMutableStaticRef(
+            ContentReference contentReference,
+            uint placedRefId,
+            string baseId,
+            CombinedStaticExclusionData exclusions)
+        {
+            if (exclusions == null)
+                return false;
+            if (placedRefId != 0u
+                && exclusions.MutablePlacedRefIds != null
+                && exclusions.MutablePlacedRefIds.Contains(placedRefId))
+                return true;
+            if (contentReference.Kind != ContentReferenceKind.Static)
+                return false;
+            return IsScriptedStaticBaseId(baseId, exclusions);
+        }
+
+
+        private static bool IsScriptedStaticBaseId(string baseId, CombinedStaticExclusionData exclusions)
+        {
+            string normalized = ContentId.NormalizeId(baseId ?? string.Empty);
+            return !string.IsNullOrEmpty(normalized)
+                   && exclusions?.ScriptedStaticIds != null
+                   && exclusions.ScriptedStaticIds.Contains(normalized);
+        }
+
+
+        private static bool IsMutablePlacedOrScriptedStaticRef(uint placedRefId, string baseId, CombinedStaticExclusionData exclusions)
+        {
+            if (exclusions == null)
+                return false;
+            return (placedRefId != 0u
+                    && exclusions.MutablePlacedRefIds != null
+                    && exclusions.MutablePlacedRefIds.Contains(placedRefId))
+                   || IsScriptedStaticBaseId(baseId, exclusions);
+        }
+
+
+        private static CombinedStaticExclusionData BuildCombinedStaticExclusionData(GameplayContentData gameplayContent)
+        {
+            var mutablePlacedRefIds = new HashSet<uint>();
+            var scriptedStaticIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (gameplayContent == null)
+                return new CombinedStaticExclusionData(mutablePlacedRefIds, scriptedStaticIds);
+
+            var statics = gameplayContent.Statics ?? Array.Empty<GenericRecordDef>();
+            for (int i = 0; i < statics.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(statics[i].ScriptId))
+                    continue;
+                string normalized = ContentId.NormalizeId(statics[i].Id ?? string.Empty);
+                if (!string.IsNullOrEmpty(normalized))
+                    scriptedStaticIds.Add(normalized);
+            }
+
+            var instructions = gameplayContent.MorrowindScriptInstructions ?? Array.Empty<MorrowindScriptInstructionDef>();
+            for (int i = 0; i < instructions.Length; i++)
+            {
+                var instruction = instructions[i];
+                if (!IsPlacedRefMutationOpcode((MorrowindScriptOpcode)instruction.Opcode))
+                    continue;
+                if ((MorrowindScriptRefTargetMode)instruction.Operand0 != MorrowindScriptRefTargetMode.PlacedRef)
+                    continue;
+                uint placedRefId = unchecked((uint)instruction.Int0);
+                if (placedRefId != 0u)
+                    mutablePlacedRefIds.Add(placedRefId);
+            }
+
+            return new CombinedStaticExclusionData(mutablePlacedRefIds, scriptedStaticIds);
+        }
+
+
+        private static bool IsPlacedRefMutationOpcode(MorrowindScriptOpcode opcode)
+            => opcode is MorrowindScriptOpcode.RequestSetDisabled
+                or MorrowindScriptOpcode.Rotate
+                or MorrowindScriptOpcode.SetAngle
+                or MorrowindScriptOpcode.PositionCell
+                or MorrowindScriptOpcode.Position
+                or MorrowindScriptOpcode.SetPos
+                or MorrowindScriptOpcode.MoveWorld
+                or MorrowindScriptOpcode.Move
+                or MorrowindScriptOpcode.SetAtStart;
 
 
         private static void AddMissingCollisionSample(StagedCellData staged, string modelPath)

@@ -52,6 +52,7 @@ namespace VVardenfell.Runtime.Streaming
             var stateByKey = BuildCellStateLookup(cache.Manifest.CellStates);
             var exteriorIndices = BuildExteriorValidationIndices(cellGrid, profile);
             var interiorIndices = BuildInteriorValidationIndices(interiorIds, profile);
+            bool validateSectionPayload = profile != null;
             for (int index = 0; index < exteriorIndices.Length; index++)
             {
                 int i = exteriorIndices[index];
@@ -67,7 +68,8 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     ValidateManifestState(ResolveCellState(stateByKey, false, g.X, g.Y, null), false, label, path);
-                    RuntimeCellSectionFile.ValidateFile(path, isInterior: false);
+                    if (validateSectionPayload)
+                        RuntimeCellSectionFile.ValidateFile(path, isInterior: false);
                 }
                 catch (System.Exception ex)
                 {
@@ -89,7 +91,8 @@ namespace VVardenfell.Runtime.Streaming
                 try
                 {
                     ValidateManifestState(ResolveCellState(stateByKey, true, 0, 0, cellId), true, cellId, path);
-                    RuntimeCellSectionFile.ValidateFile(path, isInterior: true, cellId: cellId);
+                    if (validateSectionPayload)
+                        RuntimeCellSectionFile.ValidateFile(path, isInterior: true, cellId: cellId);
                 }
                 catch (System.Exception ex)
                 {

@@ -4,6 +4,7 @@ using Unity.Entities;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.MorrowindScript
 {
@@ -50,6 +51,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 entityManager.SetComponentData(runtimeEntity, default(MorrowindScriptInterpreterScratch));
             }
 
+            ScriptVisibleSaveStateUtility.DisposeOverlayIndex(entityManager, runtimeEntity);
             entityManager.DestroyEntity(runtimeEntity);
         }
     }

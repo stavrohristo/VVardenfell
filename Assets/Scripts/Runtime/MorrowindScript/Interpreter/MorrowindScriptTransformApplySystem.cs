@@ -25,7 +25,6 @@ namespace VVardenfell.Runtime.MorrowindScript
         EntityQuery _runtimeQuery;
         EntityQuery _standingActorQuery;
         EntityQuery _mutationQueueQuery;
-        EntityQuery _activeExplicitRefLookupQuery;
         EntityQuery _playerViewQuery;
 
         public void OnCreate(ref SystemState systemState)
@@ -40,8 +39,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 ComponentType.ReadOnly<RuntimePhysicsMutationQueueTag>(),
                 ComponentType.ReadWrite<RuntimePhysicsMutationRequest>(),
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
-            _activeExplicitRefLookupQuery = systemState.GetEntityQuery(
-                ComponentType.ReadOnly<ActiveExplicitRefLookup>());
             _playerViewQuery = systemState.GetEntityQuery(
                 ComponentType.ReadWrite<PlayerViewComponent>(),
                 ComponentType.ReadWrite<LocalTransform>(),
@@ -50,6 +47,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate(_runtimeQuery);
             systemState.RequireForUpdate(_mutationQueueQuery);
             systemState.RequireForUpdate<LogicalRefLookup>();
+            systemState.RequireForUpdate<RuntimeSectionRegistry>();
             systemState.RequireForUpdate<LoadedCellsMap>();
             systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
@@ -190,18 +188,21 @@ namespace VVardenfell.Runtime.MorrowindScript
             Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
             Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
             var config = systemState.EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
+            var sectionRegistry = systemState.EntityManager.GetComponentData<RuntimeSectionRegistry>(streamingEntity);
             var logicalRefLookup = systemState.EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
             var loaded = systemState.EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
             var transition = systemState.EntityManager.GetComponentData<InteriorTransitionState>(transitionEntity);
+            var interiorSections = RequireInteriorSections(systemState.World);
+            var exteriorSections = RequireExteriorSections(systemState.World);
 
             transition.TransitionInProgress = 1;
+            interiorSections.DeactivateActiveInterior(transition);
             DestroyInteriorEntities(ref systemState, transitionEntity, ref logicalRefLookup);
-            WorldSpawner.HideExteriorVisibility(systemState.World, ref loaded);
-            if (!WorldSpawner.TrySpawnInteriorCellByHash(
-                    systemState.World,
+            exteriorSections.HideExteriorVisibility(ref loaded);
+            if (!interiorSections.LoadAndActivateByHash(
                     request.InteriorCellHash,
                     float3.zero,
-                    transitionEntity,
+                    ref sectionRegistry,
                     ref logicalRefLookup,
                     out FixedString128Bytes spawnedInteriorCellId))
             {
@@ -218,6 +219,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             MovePlayerToDestination(ref systemState, playerEntity, request.Position, rotation);
 
             systemState.EntityManager.SetComponentData(streamingEntity, config);
+            systemState.EntityManager.SetComponentData(streamingEntity, sectionRegistry);
             systemState.EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
             systemState.EntityManager.SetComponentData(streamingEntity, loaded);
             systemState.EntityManager.SetComponentData(transitionEntity, transition);
@@ -246,7 +248,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             quaternion rotation = quaternion.AxisAngle(new float3(0f, 1f, 0f), math.radians(request.Radians / 60f));
             MoveEntity(ref systemState, target, request.Position, rotation);
             ResetAnimationMotion(ref systemState, target, request.Position);
-            UpdateInteriorMembership(ref systemState, target, cellId, request.InteriorCellHash);
+            UpdateInteriorMembership(ref systemState, target, cellId, request.InteriorCellHash, loadedCells, interiorActive, activeInteriorCellHash);
 
             if (systemState.EntityManager.HasBuffer<LogicalRefChild>(target))
             {
@@ -273,7 +275,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                         }
                     }
 
-                    UpdateInteriorMembership(ref systemState, child, cellId, request.InteriorCellHash);
+                    UpdateInteriorMembership(ref systemState, child, cellId, request.InteriorCellHash, loadedCells, interiorActive, activeInteriorCellHash);
                 }
             }
 
@@ -520,6 +522,12 @@ namespace VVardenfell.Runtime.MorrowindScript
                     for (int i = 0; i < entitiesToDestroy.Length; i++)
                     {
                         if (systemState.EntityManager.Exists(entitiesToDestroy[i])
+                            && systemState.EntityManager.HasComponent<RuntimeCellSectionMember>(entitiesToDestroy[i]))
+                        {
+                            continue;
+                        }
+
+                        if (systemState.EntityManager.Exists(entitiesToDestroy[i])
                             && systemState.EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
                         {
                             LogicalRefDestroyUtility.QueueDestroyLogicalRef(
@@ -591,17 +599,34 @@ namespace VVardenfell.Runtime.MorrowindScript
             }
         }
 
-        void UpdateInteriorMembership(ref SystemState systemState, Entity entity, FixedString128Bytes cellId, ulong cellHash)
+        void UpdateInteriorMembership(
+            ref SystemState systemState,
+            Entity entity,
+            FixedString128Bytes cellId,
+            ulong cellHash,
+            in LoadedCellsMap loadedCells,
+            byte interiorActive,
+            ulong activeInteriorCellHash)
         {
             if (systemState.EntityManager.HasComponent<LogicalRefLocation>(entity))
             {
+                var previousLocation = systemState.EntityManager.GetComponentData<LogicalRefLocation>(entity);
                 systemState.EntityManager.SetComponentData(entity, new LogicalRefLocation
                 {
                     InteriorCellId = cellId,
                     InteriorCellHash = cellHash,
                     IsInterior = 1,
                 });
-                MarkActiveExplicitRefLookupDirty(ref systemState);
+                ActiveExplicitRefLookupLifecycleUtility.QueueDynamicMove(
+                    systemState.EntityManager,
+                    entity,
+                    previousLocation,
+                    loadedCells,
+                    new InteriorTransitionState
+                    {
+                        InteriorActive = interiorActive,
+                        ActiveInteriorCellHash = activeInteriorCellHash,
+                    });
                 MarkActorAiNavigationAnchorDirty(ref systemState, entity);
             }
 
@@ -609,18 +634,6 @@ namespace VVardenfell.Runtime.MorrowindScript
                 systemState.EntityManager.AddComponent<InteriorCellMember>(entity);
             if (systemState.EntityManager.HasComponent<CellLink>(entity))
                 systemState.EntityManager.RemoveComponent<CellLink>(entity);
-        }
-
-        void MarkActiveExplicitRefLookupDirty(ref SystemState systemState)
-        {
-            if (_activeExplicitRefLookupQuery.IsEmptyIgnoreFilter)
-                return;
-
-            Entity lookupEntity = _activeExplicitRefLookupQuery.GetSingletonEntity();
-            if (!systemState.EntityManager.HasComponent<ActiveExplicitRefLookupDirty>(lookupEntity))
-                throw new InvalidOperationException("[VVardenfell][WorldRefs] active explicit-ref lookup exists without its dirty marker.");
-
-            systemState.EntityManager.SetComponentEnabled<ActiveExplicitRefLookupDirty>(lookupEntity, true);
         }
 
         void MarkActorAiNavigationAnchorDirty(ref SystemState systemState, Entity entity)
@@ -701,6 +714,22 @@ namespace VVardenfell.Runtime.MorrowindScript
                 return target;
 
             return Entity.Null;
+        }
+
+        static InteriorSectionLifecycleSystem RequireInteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<InteriorSectionLifecycleSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] InteriorSectionLifecycleSystem is unavailable.");
+            return system;
+        }
+
+        static CellLoadWorkerSystem RequireExteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
         }
     }
 }

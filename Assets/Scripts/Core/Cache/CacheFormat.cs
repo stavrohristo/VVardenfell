@@ -15,16 +15,17 @@ namespace VVardenfell.Core.Cache
         /// Bump this to force all users to rebake when the binary layout or baked-content
         /// semantics change.
         /// </summary>
-        public const uint FormatVersion = 59;
+        public const uint FormatVersion = 69;
 
         /// <summary>
         /// Version salt for bake-pipeline behavior that can change without altering the
         /// runtime cell payload layout. Stored per baked cell so the planner can decide
         /// whether an existing cell file is still reusable.
         /// </summary>
-        public const uint WorldBakePipelineVersion = 46;
+        public const uint WorldBakePipelineVersion = 61;
         public const uint GameplayContentVersion = 69;
         public const int RuntimeContentBlobVersion = 3;
+        public const int RuntimeWorldCellBlobVersion = 1;
 
         /// <summary>
         /// Passed through Unity's official blob serialization path for every serialized
@@ -41,6 +42,7 @@ namespace VVardenfell.Core.Cache
         public const uint MeshFlagIndex32    = 1 << 3;  // indices are uint32 instead of uint16
         public const uint MeshFlagHasTextureSelector = 1 << 4; // combined render payload carries per-vertex texture selector
         public const uint MeshFlagHasAlphaCutoff = 1 << 5; // combined render payload carries per-vertex alpha cutoff
+        public const uint MeshFlagHasUV1 = 1 << 6;
 
         // Flags on MaterialRecord.Flags (low byte = flags, top byte = alpha-clip threshold 0..255)
         public const uint MatFlagAlphaBlend  = 1 << 0;
@@ -82,8 +84,8 @@ namespace VVardenfell.Core.Cache
     /// Layout is hand-packed 72 bytes, matched exactly by the writer/reader.
     ///
     /// <see cref="CollisionIndex"/> is -1 for refs with no per-ref collider - either
-    /// because the source NIF has no RootCollisionNode, or because the ref is a pure
-    /// STAT and its collision was accumulated into the cell's combined static-collision
+    /// because the source NIF has no RootCollisionNode, or because the ref is an
+    /// immutable combined STAT and its collision was accumulated into the cell's static-collision
     /// chunk (see <see cref="CacheFormat.CellFlagHasStaticCollision"/>). Non-negative
     /// values index into the global collision payload table (collisions.bin) and are
     /// reserved for interactable record types (DOOR/ACTI/CONT/LIGH/pickable items) so

@@ -2,7 +2,6 @@ using System;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Physics;
 using Unity.Transforms;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
@@ -15,8 +14,6 @@ using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Streaming;
-using CapsuleCollider = Unity.Physics.CapsuleCollider;
-using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Components
 {
@@ -38,6 +35,144 @@ namespace VVardenfell.Runtime.Components
             bool attachDoorInteractable = false,
             DoorInteractable doorInteractable = default)
         {
+            if (!QueueAttachStableComponents(
+                    ref ecb,
+                    logicalEntity,
+                    ref content,
+                    contentReference,
+                    attachDoorInteractable,
+                    doorInteractable))
+            {
+                return false;
+            }
+
+            if (contentReference.Kind != ContentReferenceKind.Actor)
+                return true;
+
+            var handle = new ActorDefHandle { Value = contentReference.HandleValue };
+            QueueAttachFullRuntimeActorState(
+                entityManager,
+                ref ecb,
+                logicalEntity,
+                ref content,
+                handle,
+                worldPosition,
+                isInterior,
+                exteriorCell,
+                interiorCellId,
+                placedRefId);
+            return true;
+        }
+
+        public static bool QueueAttachRuntimeActorState(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ActorDefHandle handle,
+            float3 worldPosition,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            uint placedRefId)
+        {
+            if (!handle.IsValid)
+                return false;
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, handle);
+            QueueActorRuntimeOnlyComponents(
+                entityManager,
+                ref ecb,
+                logicalEntity,
+                ref content,
+                handle,
+                ref actor,
+                worldPosition,
+                isInterior,
+                exteriorCell,
+                interiorCellId,
+                placedRefId,
+                validateBaseline: true);
+            return true;
+        }
+
+        static bool QueueAttachFullRuntimeActorState(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ActorDefHandle handle,
+            float3 worldPosition,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            uint placedRefId)
+        {
+            if (!handle.IsValid)
+                return false;
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, handle);
+            QueueActorBaselineComponents(
+                ref ecb,
+                logicalEntity,
+                ref content,
+                handle,
+                ref actor,
+                worldPosition,
+                isInterior,
+                exteriorCell,
+                interiorCellId);
+            QueueActorRuntimeOnlyComponents(
+                entityManager,
+                ref ecb,
+                logicalEntity,
+                ref content,
+                handle,
+                ref actor,
+                worldPosition,
+                isInterior,
+                exteriorCell,
+                interiorCellId,
+                placedRefId,
+                validateBaseline: false);
+            return true;
+        }
+
+        public static bool QueueAttachBakedActorBaseline(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ActorDefHandle handle,
+            float3 worldPosition,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId)
+        {
+            if (!handle.IsValid)
+                return false;
+            ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, handle);
+            ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
+            ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(ref actor));
+            MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, actor.ScriptIdHash);
+            QueueActorBaselineComponents(
+                ref ecb,
+                logicalEntity,
+                ref content,
+                handle,
+                ref actor,
+                worldPosition,
+                isInterior,
+                exteriorCell,
+                interiorCellId);
+            return true;
+        }
+
+        public static bool QueueAttachStableComponents(
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ContentReference contentReference,
+            bool attachDoorInteractable = false,
+            DoorInteractable doorInteractable = default)
+        {
             if (!RuntimeContentBlobUtility.IsValid(ref content, contentReference))
                 return false;
 
@@ -49,18 +184,6 @@ namespace VVardenfell.Runtime.Components
                     ref RuntimeActorDefBlob actor = ref RuntimeContentBlobUtility.Get(ref content, handle);
                     ecb.AddComponent(logicalEntity, new ActorSpawnSource { Definition = handle });
                     ecb.AddComponent(logicalEntity, BuildPassiveActorPresence(ref actor));
-                    QueueActorRuntimeComponents(
-                        entityManager,
-                        ref ecb,
-                        logicalEntity,
-                        ref content,
-                        handle,
-                        ref actor,
-                        worldPosition,
-                        isInterior,
-                        exteriorCell,
-                        interiorCellId,
-                        placedRefId);
                     MorrowindScriptRuntimeAuthoringUtility.TryQueueObjectScriptByIdHash(ref ecb, logicalEntity, ref content, actor.ScriptIdHash);
                     return true;
                 }
@@ -190,8 +313,7 @@ namespace VVardenfell.Runtime.Components
             };
         }
 
-        static void QueueActorRuntimeComponents(
-            EntityManager entityManager,
+        static void QueueActorBaselineComponents(
             ref EntityCommandBuffer ecb,
             Entity logicalEntity,
             ref RuntimeContentBlob content,
@@ -200,8 +322,7 @@ namespace VVardenfell.Runtime.Components
             float3 worldPosition,
             bool isInterior,
             int2 exteriorCell,
-            FixedString128Bytes interiorCellId,
-            uint placedRefId)
+            FixedString128Bytes interiorCellId)
         {
             var statSeed = MorrowindActorMovementStats.CreateSeedFromActor(ref content, ref actor);
             ecb.AddComponent(logicalEntity, statSeed.Attributes);
@@ -263,14 +384,6 @@ namespace VVardenfell.Runtime.Components
             ecb.SetComponentEnabled<ActorActiveMagicEffectTicking>(logicalEntity, false);
             QueueActorFactionMembership(ref ecb, logicalEntity, ref content, ref actor);
 
-            QueueActorCollider(entityManager, ref ecb, logicalEntity);
-            QueueActorPickCollider(
-                entityManager,
-                ref ecb,
-                logicalEntity,
-                isInterior,
-                exteriorCell);
-
             if (ActorAiRuntimeAuthoringUtility.HasPackage(ref content, actorHandle))
             {
                 var anchor = BuildActorAiAnchor(ref content, isInterior, exteriorCell, interiorCellId);
@@ -290,9 +403,9 @@ namespace VVardenfell.Runtime.Components
                 if (packages.Length > 0)
                 {
                     ActorMovementAuthoringUtility.QueueEnsureMovableActor(
-                            ref ecb,
-                            logicalEntity,
-                            MorrowindActorMovementStats.BuildMovementSpeed(
+                        ref ecb,
+                        logicalEntity,
+                        MorrowindActorMovementStats.BuildMovementSpeed(
                             ref content,
                             actor.Kind,
                             statSeed.Attributes,
@@ -302,7 +415,24 @@ namespace VVardenfell.Runtime.Components
                             derivedMovement));
                 }
             }
+        }
 
+        static void QueueActorRuntimeOnlyComponents(
+            EntityManager entityManager,
+            ref EntityCommandBuffer ecb,
+            Entity logicalEntity,
+            ref RuntimeContentBlob content,
+            ActorDefHandle actorHandle,
+            ref RuntimeActorDefBlob actor,
+            float3 worldPosition,
+            bool isInterior,
+            int2 exteriorCell,
+            FixedString128Bytes interiorCellId,
+            uint placedRefId,
+            bool validateBaseline)
+        {
+            if (validateBaseline)
+                ValidateBakedActorBaseline(entityManager, logicalEntity, actorHandle, ref actor);
             QueueActorInventoryAndEquipment(
                 ref ecb,
                 logicalEntity,
@@ -310,6 +440,85 @@ namespace VVardenfell.Runtime.Components
                 actorHandle,
                 placedRefId,
                 MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(entityManager));
+            QueueActorCollider(entityManager, ref ecb, logicalEntity);
+            QueueActorPickCollider(
+                entityManager,
+                ref ecb,
+                logicalEntity,
+                isInterior,
+                exteriorCell);
+        }
+
+        static void ValidateBakedActorBaseline(EntityManager entityManager, Entity actorEntity, ActorDefHandle actorHandle, ref RuntimeActorDefBlob actor)
+        {
+            string context = $"[VVardenfell][WorldRefs] actor '{actor.Id.ToString()}' baseline";
+            RequireComponent<ActorSpawnSource>(entityManager, actorEntity, context);
+            if (entityManager.GetComponentData<ActorSpawnSource>(actorEntity).Definition.Value != actorHandle.Value)
+                throw new InvalidOperationException($"{context} has stale ActorSpawnSource; rebake required.");
+            RequireComponent<PassiveActorPresence>(entityManager, actorEntity, context);
+            RequireComponent<ActorAttributeSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorAttributeBaseSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorAttributeDamageSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorAttributeModifierSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorSkillSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorSkillBaseSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorSkillDamageSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorSkillModifierSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorVitalSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorVitalBaseSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorVitalModifierSet>(entityManager, actorEntity, context);
+            RequireComponent<ActorEffectStatModifiers>(entityManager, actorEntity, context);
+            RequireComponent<ActorDispositionState>(entityManager, actorEntity, context);
+            RequireComponent<ActorAiSettingsState>(entityManager, actorEntity, context);
+            RequireComponent<ActorScriptEventState>(entityManager, actorEntity, context);
+            RequireComponent<ActorHitAftermathState>(entityManager, actorEntity, context);
+            RequireComponent<ActorHitAftermathAnimationActive>(entityManager, actorEntity, context);
+            RequireComponent<ActorDead>(entityManager, actorEntity, context);
+            RequireComponent<ActorActiveCombatTarget>(entityManager, actorEntity, context);
+            RequireComponent<ActorCrimeState>(entityManager, actorEntity, context);
+            RequireComponent<ActorFriendlyHitState>(entityManager, actorEntity, context);
+            RequireComponent<ActorBlockState>(entityManager, actorEntity, context);
+            RequireComponent<ActorMeleeCombatAiState>(entityManager, actorEntity, context);
+            RequireComponent<ActorCombatMovementState>(entityManager, actorEntity, context);
+            RequireComponent<ActorAiGreetingState>(entityManager, actorEntity, context);
+            RequireComponent<ActorDerivedMovementStats>(entityManager, actorEntity, context);
+            RequireComponent<ActorMagicCastState>(entityManager, actorEntity, context);
+            RequireComponent<ActorActiveMagicEffectDirty>(entityManager, actorEntity, context);
+            RequireComponent<ActorActiveMagicEffectTicking>(entityManager, actorEntity, context);
+            RequireBuffer<ActorCombatTarget>(entityManager, actorEntity, context);
+            RequireBuffer<ActorKnownSpell>(entityManager, actorEntity, context);
+            RequireBuffer<ActorActiveMagicEffect>(entityManager, actorEntity, context);
+            RequireBuffer<ActorActiveSpell>(entityManager, actorEntity, context);
+            RequireBuffer<ActorUsedPower>(entityManager, actorEntity, context);
+            if (actor.FactionIdHash != 0UL)
+                RequireBuffer<ActorFactionMembership>(entityManager, actorEntity, context);
+            if (entityManager.HasComponent<ActorAiState>(actorEntity))
+            {
+                RequireComponent<ActorAiNavigationAnchor>(entityManager, actorEntity, context);
+                RequireComponent<ActorAiNavigationAnchorDirty>(entityManager, actorEntity, context);
+                RequireBuffer<ActorAiPackageRuntime>(entityManager, actorEntity, context);
+                RequireComponent<MorrowindMovementInput>(entityManager, actorEntity, context);
+                RequireComponent<MorrowindMovementState>(entityManager, actorEntity, context);
+                RequireComponent<MorrowindMovementSpeed>(entityManager, actorEntity, context);
+                RequireComponent<PathGridTraversalState>(entityManager, actorEntity, context);
+                RequireComponent<PathGridTraversalPendingRequest>(entityManager, actorEntity, context);
+                RequireComponent<PathGridTraversalAwaitingResult>(entityManager, actorEntity, context);
+                RequireBuffer<PathGridTraversalNode>(entityManager, actorEntity, context);
+            }
+        }
+
+        static void RequireComponent<T>(EntityManager entityManager, Entity entity, string context)
+            where T : unmanaged, IComponentData
+        {
+            if (!entityManager.HasComponent<T>(entity))
+                throw new InvalidOperationException($"{context} is missing {typeof(T).Name}; rebake required.");
+        }
+
+        static void RequireBuffer<T>(EntityManager entityManager, Entity entity, string context)
+            where T : unmanaged, IBufferElementData
+        {
+            if (!entityManager.HasBuffer<T>(entity))
+                throw new InvalidOperationException($"{context} is missing {typeof(T).Name}; rebake required.");
         }
 
         static void QueueActorFactionMembership(
@@ -484,7 +693,7 @@ namespace VVardenfell.Runtime.Components
 
         static void QueueActorCollider(EntityManager entityManager, ref EntityCommandBuffer ecb, Entity logicalEntity)
         {
-            var collider = EnsureActorCapsuleCollider();
+            var collider = RuntimeActorColliderResource.Require(entityManager).ActorCapsuleCollider;
             if (!collider.IsCreated)
                 return;
 
@@ -504,7 +713,7 @@ namespace VVardenfell.Runtime.Components
             bool isInterior,
             int2 exteriorCell)
         {
-            var collider = EnsureActorPickCapsuleCollider();
+            var collider = RuntimeActorColliderResource.Require(entityManager).ActorPickCapsuleCollider;
             if (!collider.IsCreated)
                 return;
 
@@ -526,42 +735,6 @@ namespace VVardenfell.Runtime.Components
                 collider,
                 RuntimeColliderKind.InteractionPick,
                 active: true);
-        }
-
-        static BlobAssetReference<Collider> EnsureActorCapsuleCollider()
-        {
-            if (WorldResources.ActorCapsuleCollider.IsCreated)
-                return WorldResources.ActorCapsuleCollider;
-
-            const float Radius = 0.35f;
-            const float Height = 1.8f;
-            WorldResources.ActorCapsuleCollider = CapsuleCollider.Create(
-                new CapsuleGeometry
-                {
-                    Vertex0 = new float3(0f, Radius, 0f),
-                    Vertex1 = new float3(0f, Height - Radius, 0f),
-                    Radius = Radius,
-                },
-                InteractionCollisionLayers.PlayerBodyFilter);
-            return WorldResources.ActorCapsuleCollider;
-        }
-
-        static BlobAssetReference<Collider> EnsureActorPickCapsuleCollider()
-        {
-            if (WorldResources.ActorPickCapsuleCollider.IsCreated)
-                return WorldResources.ActorPickCapsuleCollider;
-
-            const float Radius = 0.35f;
-            const float Height = 1.8f;
-            WorldResources.ActorPickCapsuleCollider = CapsuleCollider.Create(
-                new CapsuleGeometry
-                {
-                    Vertex0 = new float3(0f, Radius, 0f),
-                    Vertex1 = new float3(0f, Height - Radius, 0f),
-                    Radius = Radius,
-                },
-                InteractionCollisionLayers.InteractionPickFilter);
-            return WorldResources.ActorPickCapsuleCollider;
         }
 
         static ActorAiNavigationAnchor BuildActorAiAnchor(

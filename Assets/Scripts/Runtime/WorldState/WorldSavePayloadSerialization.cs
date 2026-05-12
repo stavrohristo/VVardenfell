@@ -7,6 +7,7 @@ using VVardenfell.Core.Cache;
 using VVardenfell.Runtime;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Combat;
+using VVardenfell.Runtime.Content;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
 using VVardenfell.Runtime.Streaming;
@@ -16,7 +17,7 @@ namespace VVardenfell.Runtime.WorldState
     public static partial class WorldSaveStorage
     {
         const uint PayloadMagic = 0x53575656u; // VVWS
-        const int PayloadVersion = 33;
+        const int PayloadVersion = 35;
         const int MagicSourcePayloadVersion = 33;
         const int InventoryEnchantmentChargePayloadVersion = 33;
         const int MagicRuntimePayloadVersion = 32;
@@ -53,7 +54,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion)
-                throw new InvalidDataException($"unsupported save version {version}; magic runtime saves require v{MagicRuntimePayloadVersion}");
+                throw new InvalidDataException($"unsupported save version {version}; unified persistence overlay saves require v{PayloadVersion}");
         }
 
         static WorldSavePayload ReadPayloadFromAnySave(Stream stream, out SaveGameSlotMetadata metadata)
@@ -135,7 +136,6 @@ namespace VVardenfell.Runtime.WorldState
 
             w.Write(payload.InteriorActive);
             w.Write(payload.ActiveInteriorCellId ?? string.Empty);
-            w.Write(payload.NextJournalSequence);
             w.Write(payload.NextRuntimeRefId);
 
             w.Write(payload.Inventory?.Length ?? 0);
@@ -152,13 +152,6 @@ namespace VVardenfell.Runtime.WorldState
                     WriteEquipmentEntry(w, payload.PlayerEquipment[i]);
             }
 
-            w.Write(payload.JournalEntries?.Length ?? 0);
-            if (payload.JournalEntries != null)
-            {
-                for (int i = 0; i < payload.JournalEntries.Length; i++)
-                    WriteJournalEntry(w, payload.JournalEntries[i]);
-            }
-
             WriteBookReadHistory(w, payload.BookReadHistory);
 
             WriteQuestJournalPayload(w, payload.QuestJournal);
@@ -170,6 +163,7 @@ namespace VVardenfell.Runtime.WorldState
             WriteMagicPayload(w, payload.Magic);
             WriteScriptPayload(w, payload.Script);
             WritePlacedRefStatePayload(w, payload.PlacedRefs);
+            WriteRuntimeSpawns(w, payload.RuntimeSpawns);
         }
 
         static WorldSavePayload ReadPayload(BinaryReader r)
@@ -180,7 +174,7 @@ namespace VVardenfell.Runtime.WorldState
 
             int version = r.ReadInt32();
             if (version != PayloadVersion)
-                throw new InvalidDataException($"unsupported save version {version}; magic runtime saves require v{MagicRuntimePayloadVersion}");
+                throw new InvalidDataException($"unsupported save version {version}; unified persistence overlay saves require v{PayloadVersion}");
 
             var payload = new WorldSavePayload
             {
@@ -268,7 +262,6 @@ namespace VVardenfell.Runtime.WorldState
 
             payload.InteriorActive = r.ReadBoolean();
             payload.ActiveInteriorCellId = r.ReadString();
-            payload.NextJournalSequence = r.ReadUInt32();
             payload.NextRuntimeRefId = r.ReadUInt32();
 
             int inventoryCount = ReadCount(r, "inventory");
@@ -287,11 +280,6 @@ namespace VVardenfell.Runtime.WorldState
             {
                 payload.PlayerEquipment = Array.Empty<ActorEquipmentSlot>();
             }
-
-            int journalCount = ReadCount(r, "journal");
-            payload.JournalEntries = new WorldJournalEntry[journalCount];
-            for (int i = 0; i < journalCount; i++)
-                payload.JournalEntries[i] = ReadJournalEntry(r);
 
             payload.BookReadHistory = version >= BookReadHistoryPayloadVersion
                 ? ReadBookReadHistory(r)
@@ -340,6 +328,7 @@ namespace VVardenfell.Runtime.WorldState
             {
                 payload.Script = ReadScriptPayload(r);
                 payload.PlacedRefs = ReadPlacedRefStatePayload(r, version);
+                payload.RuntimeSpawns = ReadRuntimeSpawns(r, version);
             }
             else
             {
@@ -349,11 +338,13 @@ namespace VVardenfell.Runtime.WorldState
                     GlobalScripts = null,
                     ObjectScripts = null,
                 };
-                payload.PlacedRefs = new PlacedRefStateSavePayload
+                payload.PlacedRefs = new PlacedRefOverlaySavePayload
                 {
                     Entries = null,
                     ActorInventories = null,
+                    Containers = null,
                 };
+                payload.RuntimeSpawns = Array.Empty<RuntimeSpawnedRef>();
             }
 
             return payload;
@@ -458,7 +449,7 @@ namespace VVardenfell.Runtime.WorldState
             return payload;
         }
 
-        static void WritePlacedRefStatePayload(BinaryWriter w, in PlacedRefStateSavePayload payload)
+        static void WritePlacedRefStatePayload(BinaryWriter w, in PlacedRefOverlaySavePayload payload)
         {
             w.Write(payload.Entries?.Length ?? 0);
             if (payload.Entries != null)
@@ -473,20 +464,32 @@ namespace VVardenfell.Runtime.WorldState
                 for (int i = 0; i < payload.ActorInventories.Length; i++)
                     WritePlacedRefActorInventory(w, payload.ActorInventories[i]);
             }
+
+            w.Write(payload.Containers?.Length ?? 0);
+            if (payload.Containers != null)
+            {
+                for (int i = 0; i < payload.Containers.Length; i++)
+                    WritePlacedRefContainer(w, payload.Containers[i]);
+            }
         }
 
-        static PlacedRefStateSavePayload ReadPlacedRefStatePayload(BinaryReader r, int version)
+        static PlacedRefOverlaySavePayload ReadPlacedRefStatePayload(BinaryReader r, int version)
         {
-            var payload = new PlacedRefStateSavePayload();
+            var payload = new PlacedRefOverlaySavePayload();
             int entryCount = ReadCount(r, "placed ref state");
-            payload.Entries = new PlacedRefStateEntrySavePayload[entryCount];
+            payload.Entries = new PlacedRefOverlayEntrySavePayload[entryCount];
             for (int i = 0; i < entryCount; i++)
                 payload.Entries[i] = ReadPlacedRefStateEntry(r);
 
             int inventoryCount = ReadCount(r, "placed ref actor inventory");
-            payload.ActorInventories = new PlacedRefActorInventorySavePayload[inventoryCount];
+            payload.ActorInventories = new PlacedRefOverlayActorInventorySavePayload[inventoryCount];
             for (int i = 0; i < inventoryCount; i++)
                 payload.ActorInventories[i] = ReadPlacedRefActorInventory(r, version);
+
+            int containerCount = ReadCount(r, "placed ref container");
+            payload.Containers = new PlacedRefOverlayContainerSavePayload[containerCount];
+            for (int i = 0; i < containerCount; i++)
+                payload.Containers[i] = ReadPlacedRefContainer(r, version);
 
             return payload;
         }
@@ -593,9 +596,12 @@ namespace VVardenfell.Runtime.WorldState
             };
         }
 
-        static void WritePlacedRefStateEntry(BinaryWriter w, in PlacedRefStateEntrySavePayload value)
+        static void WritePlacedRefStateEntry(BinaryWriter w, in PlacedRefOverlayEntrySavePayload value)
         {
             w.Write(value.PlacedRefId);
+            w.Write(value.HasRemoved);
+            w.Write(value.Removed);
+            WriteContentReference(w, value.RemovedContent);
             w.Write(value.HasDisabled);
             w.Write(value.Disabled);
             w.Write(value.HasLock);
@@ -617,13 +623,17 @@ namespace VVardenfell.Runtime.WorldState
             w.Write(value.InteriorCellId ?? string.Empty);
             w.Write(value.InteriorCellHash);
             w.Write(value.IsInterior);
+            w.Write(value.HasContainer);
         }
 
-        static PlacedRefStateEntrySavePayload ReadPlacedRefStateEntry(BinaryReader r)
+        static PlacedRefOverlayEntrySavePayload ReadPlacedRefStateEntry(BinaryReader r)
         {
-            return new PlacedRefStateEntrySavePayload
+            return new PlacedRefOverlayEntrySavePayload
             {
                 PlacedRefId = r.ReadUInt32(),
+                HasRemoved = r.ReadByte(),
+                Removed = r.ReadByte(),
+                RemovedContent = ReadContentReference(r),
                 HasDisabled = r.ReadByte(),
                 Disabled = r.ReadByte(),
                 HasLock = r.ReadByte(),
@@ -639,10 +649,11 @@ namespace VVardenfell.Runtime.WorldState
                 InteriorCellId = r.ReadString(),
                 InteriorCellHash = r.ReadUInt64(),
                 IsInterior = r.ReadByte(),
+                HasContainer = r.ReadByte(),
             };
         }
 
-        static void WritePlacedRefActorInventory(BinaryWriter w, in PlacedRefActorInventorySavePayload value)
+        static void WritePlacedRefActorInventory(BinaryWriter w, in PlacedRefOverlayActorInventorySavePayload value)
         {
             w.Write(value.PlacedRefId);
             w.Write(value.Items?.Length ?? 0);
@@ -653,9 +664,9 @@ namespace VVardenfell.Runtime.WorldState
                 WriteActorInventoryItem(w, value.Items[i]);
         }
 
-        static PlacedRefActorInventorySavePayload ReadPlacedRefActorInventory(BinaryReader r, int version)
+        static PlacedRefOverlayActorInventorySavePayload ReadPlacedRefActorInventory(BinaryReader r, int version)
         {
-            var payload = new PlacedRefActorInventorySavePayload
+            var payload = new PlacedRefOverlayActorInventorySavePayload
             {
                 PlacedRefId = r.ReadUInt32(),
             };
@@ -664,6 +675,107 @@ namespace VVardenfell.Runtime.WorldState
             for (int i = 0; i < itemCount; i++)
                 payload.Items[i] = ReadActorInventoryItem(r, version);
             return payload;
+        }
+
+        static void WritePlacedRefContainer(BinaryWriter w, in PlacedRefOverlayContainerSavePayload value)
+        {
+            w.Write(value.PlacedRefId);
+            w.Write(value.Items?.Length ?? 0);
+            if (value.Items == null)
+                return;
+
+            for (int i = 0; i < value.Items.Length; i++)
+                WriteContainerSessionItem(w, value.Items[i]);
+        }
+
+        static PlacedRefOverlayContainerSavePayload ReadPlacedRefContainer(BinaryReader r, int version)
+        {
+            var payload = new PlacedRefOverlayContainerSavePayload
+            {
+                PlacedRefId = r.ReadUInt32(),
+            };
+            int itemCount = ReadCount(r, "placed ref container item");
+            payload.Items = new ContainerSessionItem[itemCount];
+            for (int i = 0; i < itemCount; i++)
+                payload.Items[i] = ReadContainerSessionItem(r);
+            return payload;
+        }
+
+        static void WriteContainerSessionItem(BinaryWriter w, in ContainerSessionItem value)
+        {
+            w.Write(value.PlacedRefId);
+            WriteContentReference(w, value.Content);
+            w.Write(value.SoulId.ToString());
+            w.Write(value.SoulActorHandleValue);
+            w.Write(value.Count);
+            w.Write(value.Restocking);
+        }
+
+        static ContainerSessionItem ReadContainerSessionItem(BinaryReader r)
+        {
+            return new ContainerSessionItem
+            {
+                PlacedRefId = r.ReadUInt32(),
+                Content = ReadContentReference(r),
+                SoulId = RuntimeFixedStringUtility.ToFixed64OrDefaultWhiteSpace(r.ReadString()),
+                SoulActorHandleValue = r.ReadInt32(),
+                Count = r.ReadInt32(),
+                Restocking = r.ReadByte(),
+            };
+        }
+
+        static void WriteRuntimeSpawns(BinaryWriter w, RuntimeSpawnedRef[] spawns)
+        {
+            w.Write(spawns?.Length ?? 0);
+            if (spawns == null)
+                return;
+
+            for (int i = 0; i < spawns.Length; i++)
+            {
+                var spawn = spawns[i];
+                w.Write(spawn.RuntimeRefId);
+                WriteContentReference(w, spawn.Content);
+                w.Write(spawn.Position.x);
+                w.Write(spawn.Position.y);
+                w.Write(spawn.Position.z);
+                w.Write(spawn.Rotation.value.x);
+                w.Write(spawn.Rotation.value.y);
+                w.Write(spawn.Rotation.value.z);
+                w.Write(spawn.Rotation.value.w);
+                w.Write(spawn.Scale);
+                w.Write(spawn.ExteriorCell.x);
+                w.Write(spawn.ExteriorCell.y);
+                w.Write(spawn.InteriorCellId.ToString());
+                w.Write(spawn.InteriorCellHash);
+                w.Write(spawn.IsInterior);
+                w.Write(spawn.PersistencePolicy);
+                w.Write(spawn.Alive);
+            }
+        }
+
+        static RuntimeSpawnedRef[] ReadRuntimeSpawns(BinaryReader r, int version)
+        {
+            int count = ReadCount(r, "runtime spawn");
+            var result = new RuntimeSpawnedRef[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new RuntimeSpawnedRef
+                {
+                    RuntimeRefId = r.ReadUInt32(),
+                    Content = ReadContentReference(r),
+                    Position = new float3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                    Rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                    Scale = r.ReadSingle(),
+                    ExteriorCell = new int2(r.ReadInt32(), r.ReadInt32()),
+                    InteriorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(r.ReadString()),
+                    InteriorCellHash = r.ReadUInt64(),
+                    IsInterior = r.ReadByte(),
+                    PersistencePolicy = r.ReadByte(),
+                    Alive = r.ReadByte(),
+                };
+            }
+
+            return result;
         }
 
         static void WriteBookReadHistory(BinaryWriter w, BookReadHistoryEntry[] history)
@@ -1199,61 +1311,6 @@ namespace VVardenfell.Runtime.WorldState
             return payload;
         }
 
-        static void WriteJournalEntry(BinaryWriter w, in WorldJournalEntry value)
-        {
-            w.Write(value.Sequence);
-            w.Write(value.Kind);
-            w.Write(value.PlacedRefId);
-            w.Write(value.RuntimeRefId);
-            WriteContentReference(w, value.Content);
-            w.Write(value.DeltaCount);
-            w.Write(value.Position.x);
-            w.Write(value.Position.y);
-            w.Write(value.Position.z);
-            w.Write(value.Rotation.value.x);
-            w.Write(value.Rotation.value.y);
-            w.Write(value.Rotation.value.z);
-            w.Write(value.Rotation.value.w);
-            w.Write(value.Scale);
-            w.Write(value.ExteriorCell.x);
-            w.Write(value.ExteriorCell.y);
-            w.Write(value.InteriorCellId.ToString());
-            w.Write(value.IsInterior);
-            w.Write(value.PersistencePolicy);
-        }
-
-        static WorldJournalEntry ReadJournalEntry(BinaryReader r)
-        {
-            uint sequence = r.ReadUInt32();
-            byte kind = r.ReadByte();
-            uint placedRefId = r.ReadUInt32();
-            uint runtimeRefId = r.ReadUInt32();
-            ContentReference content = ReadContentReference(r);
-            int deltaCount = r.ReadInt32();
-            float3 position = new float3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-            quaternion rotation = new quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-            float scale = r.ReadSingle();
-            int2 exteriorCell = new int2(r.ReadInt32(), r.ReadInt32());
-            FixedString128Bytes interiorCellId = RuntimeFixedStringUtility.ToFixed128OrDefaultWhiteSpace(r.ReadString());
-            return new WorldJournalEntry
-            {
-                Sequence = sequence,
-                Kind = kind,
-                PlacedRefId = placedRefId,
-                RuntimeRefId = runtimeRefId,
-                Content = content,
-                DeltaCount = deltaCount,
-                Position = position,
-                Rotation = rotation,
-                Scale = scale,
-                ExteriorCell = exteriorCell,
-                InteriorCellId = interiorCellId,
-                InteriorCellHash = InteriorCellIdHash.Hash(interiorCellId),
-                IsInterior = r.ReadByte(),
-                PersistencePolicy = r.ReadByte(),
-            };
-        }
-
         static void WriteActorStats(BinaryWriter w, in ActorRuntimeStatSeed value)
         {
             WriteAttributeSet(w, value.Attributes);
@@ -1425,7 +1482,7 @@ namespace VVardenfell.Runtime.WorldState
 
         static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
         {
-            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            var blob = RuntimeContentBlobReferenceUtility.RequireBlob("Save payload deserialization");
             if (!blob.IsCreated)
                 throw new InvalidOperationException("[VVardenfell][Save] Save payload deserialization requires runtime content blob.");
             return blob;

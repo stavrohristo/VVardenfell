@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Rendering;
 using VVardenfell.Core;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Streaming
@@ -26,6 +27,10 @@ namespace VVardenfell.Runtime.Streaming
                     ComponentType.ReadOnly<CellCoord>(),
                     ComponentType.ReadOnly<RenderBounds>(),
                     ComponentType.ReadWrite<MaterialMeshInfo>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<RuntimeDistantTerrainTag>(),
                 },
                 Options = EntityQueryOptions.IgnoreComponentEnabledState,
             });
@@ -116,6 +121,7 @@ namespace VVardenfell.Runtime.Streaming
 
         [BurstCompile]
         [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
+        [WithNone(typeof(RuntimeDistantTerrainTag))]
         partial struct SyncTerrainFrustumVisibilityJob : IJobEntity
         {
             public float CellMeters;

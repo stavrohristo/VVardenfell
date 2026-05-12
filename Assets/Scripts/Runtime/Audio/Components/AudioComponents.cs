@@ -5,12 +5,6 @@ using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
 {
-    public struct AudioEmitterAuthoring : IComponentData
-    {
-        public SoundDefHandle PrimarySound;
-        public SoundDefHandle SecondarySound;
-    }
-
     public enum AudioPlaybackMode : byte
     {
         Bootstrap = 0,

@@ -19,10 +19,8 @@ namespace VVardenfell.Runtime.Streaming
     {
         protected override void OnDestroy()
         {
-            // Native collections held inside IComponentData singletons don't get auto-
-            // disposed when the world tears down — we own their lifetime. Reach into each
-            // singleton entity, dispose the containers, then let WorldResources drop
-            // its managed references (textures/materials).
+            // Native collections and managed resources held by bootstrap-owned ECS
+            // singletons don't get auto-disposed when the world tears down.
             WorldBootstrap.Uninstall();
             base.OnDestroy();
         }

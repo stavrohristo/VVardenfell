@@ -28,6 +28,7 @@ namespace VVardenfell.Runtime.Streaming
         {
             RequireForUpdate<ActiveSkyWeatherState>();
             RequireForUpdate<MainCameraSingleton>();
+            RequireForUpdate<RuntimeMaterializationResources>();
         }
 
         protected override void OnDestroy()
@@ -54,7 +55,7 @@ namespace VVardenfell.Runtime.Streaming
             MorrowindDayCycleState settings = SystemAPI.HasSingleton<MorrowindDayCycleState>()
                 ? SystemAPI.GetSingleton<MorrowindDayCycleState>()
                 : LightingBootstrapSystem.CreateDefaultDayCycle();
-            _rig.Apply(SystemAPI.GetSingleton<ActiveSkyWeatherState>(), settings, camera);
+            _rig.Apply(SystemAPI.GetSingleton<ActiveSkyWeatherState>(), settings, camera, RuntimeMaterializationResources.Require(EntityManager));
         }
 
         sealed class SkyWeatherRig
@@ -169,9 +170,9 @@ namespace VVardenfell.Runtime.Streaming
 
             public bool IsCurrentSkybox => RenderSettings.skybox == _skyboxMaterial;
 
-            public void Apply(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, Camera camera)
+            public void Apply(in ActiveSkyWeatherState sky, in MorrowindDayCycleState settings, Camera camera, RuntimeMaterializationResources resources)
             {
-                if (!EnsureBakedTexturesLoaded())
+                if (!EnsureBakedTexturesLoaded(resources))
                     return;
 
                 EnsureRig();
@@ -242,13 +243,13 @@ namespace VVardenfell.Runtime.Streaming
                 UnityEngine.Object.DontDestroyOnLoad(_precipitation.gameObject);
             }
 
-            bool EnsureBakedTexturesLoaded()
+            bool EnsureBakedTexturesLoaded(RuntimeMaterializationResources resources)
             {
                 if (_bakedTexturesLoaded)
                     return true;
 
-                var cache = WorldResources.Cache;
-                var contentBlob = cache?.ContentBlob ?? default;
+                var cache = resources?.Cache;
+                var contentBlob = resources?.ContentBlob ?? default;
                 if (cache == null || !contentBlob.IsCreated || cache.Textures == null)
                     return false;
 

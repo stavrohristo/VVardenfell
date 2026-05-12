@@ -61,6 +61,7 @@ namespace VVardenfell.Runtime.Interactions
             _focusQuery = GetEntityQuery(ComponentType.ReadWrite<PlayerInteractionFocus>());
             _streamingQuery = GetEntityQuery(
                 ComponentType.ReadWrite<StreamingConfig>(),
+                ComponentType.ReadWrite<RuntimeSectionRegistry>(),
                 ComponentType.ReadWrite<LogicalRefLookup>(),
                 ComponentType.ReadOnly<AvailableCells>(),
                 ComponentType.ReadWrite<LoadedCellsMap>());
@@ -165,8 +166,6 @@ namespace VVardenfell.Runtime.Interactions
                     string destinationCellId = door.DestinationCellId.ToString();
                     throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination interior '{destinationCellId}' is missing from the world cell blob.");
                 }
-
-                WorldSpawner.TryGetInteriorStaticCollider(door.DestinationCellHash, out destinationInteriorStaticCollider);
             }
 
             TryQueueInteractionAudio(target, InteractionAudioKind.Door, "door");
@@ -174,16 +173,22 @@ namespace VVardenfell.Runtime.Interactions
 
             var streamingEntity = _streamingQuery.GetSingletonEntity();
             var configRef = EntityManager.GetComponentData<StreamingConfig>(streamingEntity);
+            var sectionRegistry = EntityManager.GetComponentData<RuntimeSectionRegistry>(streamingEntity);
             var logicalRefLookup = EntityManager.GetComponentData<LogicalRefLookup>(streamingEntity);
             var available = EntityManager.GetComponentData<AvailableCells>(streamingEntity);
             var loaded = EntityManager.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var interiorSections = RequireInteriorSections();
+            var exteriorSections = RequireExteriorSections();
+            float3 destinationPosition = door.DestinationPosition + (goesToInterior ? InteriorWorldOffset : float3.zero);
 
             if (goesToInterior)
             {
+                interiorSections.DeactivateActiveInterior(transition);
                 DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
-                WorldSpawner.HideExteriorVisibility(World, ref loaded);
-                if (!WorldSpawner.TrySpawnInteriorCellByHash(World, door.DestinationCellHash, InteriorWorldOffset, transitionEntity, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
+                exteriorSections.HideExteriorVisibility(ref loaded);
+                if (!interiorSections.LoadAndActivateByHash(door.DestinationCellHash, InteriorWorldOffset, ref sectionRegistry, ref logicalRefLookup, out FixedString128Bytes spawnedInteriorCellId))
                     throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination interior '{door.DestinationCellId}' was not preloaded.");
+                interiorSections.TryGetInteriorStaticCollider(door.DestinationCellHash, out destinationInteriorStaticCollider);
                 configRef.ExteriorStreamingPaused = true;
                 transition.InteriorActive = 1;
                 transition.ActiveInteriorCellId = spawnedInteriorCellId.IsEmpty ? door.DestinationCellId : spawnedInteriorCellId;
@@ -193,21 +198,30 @@ namespace VVardenfell.Runtime.Interactions
             }
             else
             {
+                interiorSections.DeactivateActiveInterior(transition);
                 DestroyInteriorEntities(transitionEntity, ref logicalRefLookup);
                 configRef.ExteriorStreamingPaused = false;
                 transition.InteriorActive = 0;
                 transition.ActiveInteriorCellId = default;
                 transition.ActiveInteriorCellHash = 0UL;
-            }
 
-            float3 destinationPosition = door.DestinationPosition + (goesToInterior ? InteriorWorldOffset : float3.zero);
-            if (!goesToInterior)
-            {
-                float cellM = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
-                configRef.CameraCell = new int2(
-                    (int)math.floor(destinationPosition.x / cellM),
-                    (int)math.floor(destinationPosition.z / cellM));
-                WorldSpawner.SyncExteriorVisibility(World, configRef, available, ref loaded);
+                int2 destinationCell = WorldBootstrap.WorldPositionToCell(destinationPosition);
+                if (!available.Set.IsCreated || !available.Set.Contains(destinationCell))
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination exterior cell ({destinationCell.x},{destinationCell.y}) is not available.");
+                if (!exteriorSections.LoadAndMaterializeExterior(
+                        destinationCell,
+                        ref loaded,
+                        ref sectionRegistry,
+                        ref logicalRefLookup,
+                        active: true,
+                        gateTerrainByRadius: configRef.GateTerrainByRadius))
+                {
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] teleport destination exterior cell ({destinationCell.x},{destinationCell.y}) could not be loaded.");
+                }
+
+                configRef.CameraCell = destinationCell;
+                exteriorSections.SyncExteriorVisibility(configRef, available, ref loaded);
+                FlushQueuedPhysicsMutations();
             }
 
             quaternion bodyYawRotation = ExtractYawRotation(door.DestinationRotation);
@@ -223,6 +237,7 @@ namespace VVardenfell.Runtime.Interactions
             MovePlayerToDestination(grounded.Position, bodyYawRotation, grounded);
 
             EntityManager.SetComponentData(streamingEntity, configRef);
+            EntityManager.SetComponentData(streamingEntity, sectionRegistry);
             EntityManager.SetComponentData(streamingEntity, logicalRefLookup);
             EntityManager.SetComponentData(streamingEntity, loaded);
             EntityManager.SetComponentData(transitionEntity, transition);
@@ -350,7 +365,7 @@ namespace VVardenfell.Runtime.Interactions
                 else
                 {
                     float3 cellOrigin = new float3(destinationExteriorCell.x * cellM, 0f, destinationExteriorCell.y * cellM);
-                    if (WorldResources.TryGetTerrainCollider(destinationExteriorCell, out var terrainCollider))
+                    if (RequireExteriorSections().TryGetExteriorTerrainCollider(destinationExteriorCell, out var terrainCollider))
                     {
                         var body = BuildGroundingBody(terrainCollider, Entity.Null, cellOrigin);
                         TryFindGroundingColliderHit(
@@ -361,7 +376,7 @@ namespace VVardenfell.Runtime.Interactions
                             ref foundWalkable,
                             ref bestWalkableHit);
                     }
-                    if (WorldResources.TryGetStaticCellCollider(destinationExteriorCell, out var staticCollider))
+                    if (RequireExteriorSections().TryGetExteriorStaticCollider(destinationExteriorCell, out var staticCollider))
                     {
                         var body = BuildGroundingBody(staticCollider, Entity.Null, cellOrigin);
                         TryFindGroundingColliderHit(
@@ -567,12 +582,12 @@ namespace VVardenfell.Runtime.Interactions
                     (int)math.floor(destinationPosition.x / cellM),
                     (int)math.floor(destinationPosition.z / cellM));
                 float3 cellOrigin = new float3(coord.x * cellM, 0f, coord.y * cellM);
-                if (WorldResources.TryGetTerrainCollider(coord, out var terrainCollider))
+                if (RequireExteriorSections().TryGetExteriorTerrainCollider(coord, out var terrainCollider))
                 {
                     var body = BuildGroundingBody(terrainCollider, Entity.Null, cellOrigin);
                     TryFindTeleportGroundingRayHit(body, input, ref found, ref bestHit);
                 }
-                if (WorldResources.TryGetStaticCellCollider(coord, out var staticCollider))
+                if (RequireExteriorSections().TryGetExteriorStaticCollider(coord, out var staticCollider))
                 {
                     var body = BuildGroundingBody(staticCollider, Entity.Null, cellOrigin);
                     TryFindTeleportGroundingRayHit(body, input, ref found, ref bestHit);
@@ -705,7 +720,7 @@ namespace VVardenfell.Runtime.Interactions
                     float3 cellOrigin = new float3(coord.x * cellM, 0f, coord.y * cellM);
                     log.Append("  destinationExteriorCell=").Append(coord).AppendLine();
 
-                    if (WorldResources.TryGetTerrainCollider(coord, out var terrainCollider))
+                    if (RequireExteriorSections().TryGetExteriorTerrainCollider(coord, out var terrainCollider))
                     {
                         directBodyCount++;
                         var body = BuildGroundingBody(terrainCollider, Entity.Null, cellOrigin);
@@ -721,7 +736,7 @@ namespace VVardenfell.Runtime.Interactions
                             ref hitLineCount);
                     }
 
-                    if (WorldResources.TryGetStaticCellCollider(coord, out var staticCollider))
+                    if (RequireExteriorSections().TryGetExteriorStaticCollider(coord, out var staticCollider))
                     {
                         directBodyCount++;
                         var body = BuildGroundingBody(staticCollider, Entity.Null, cellOrigin);
@@ -942,6 +957,12 @@ namespace VVardenfell.Runtime.Interactions
             for (int i = 0; i < entitiesToDestroy.Length; i++)
             {
                 if (EntityManager.Exists(entitiesToDestroy[i])
+                    && EntityManager.HasComponent<RuntimeCellSectionMember>(entitiesToDestroy[i]))
+                {
+                    continue;
+                }
+
+                if (EntityManager.Exists(entitiesToDestroy[i])
                     && EntityManager.HasComponent<LogicalRefTag>(entitiesToDestroy[i]))
                 {
                     LogicalRefDestroyUtility.QueueDestroyLogicalRef(
@@ -1033,6 +1054,31 @@ namespace VVardenfell.Runtime.Interactions
                 return quaternion.identity;
             forward = math.normalize(forward);
             return quaternion.LookRotationSafe(forward, math.up());
+        }
+
+        InteriorSectionLifecycleSystem RequireInteriorSections()
+        {
+            var system = World.GetExistingSystemManaged<InteriorSectionLifecycleSystem>();
+            if (system == null)
+                throw new System.InvalidOperationException("[VVardenfell][Streaming] InteriorSectionLifecycleSystem is unavailable.");
+            return system;
+        }
+
+        CellLoadWorkerSystem RequireExteriorSections()
+        {
+            var system = World.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new System.InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
+        }
+
+        void FlushQueuedPhysicsMutations()
+        {
+            SystemHandle system = World.Unmanaged.GetExistingUnmanagedSystem<RuntimePhysicsMutationApplySystem>();
+            if (system.Equals(SystemHandle.Null))
+                throw new System.InvalidOperationException("[VVardenfell][Physics] RuntimePhysicsMutationApplySystem is unavailable.");
+
+            system.Update(World.Unmanaged);
         }
     }
 }

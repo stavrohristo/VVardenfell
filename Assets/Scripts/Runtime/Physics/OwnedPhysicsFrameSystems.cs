@@ -5,6 +5,7 @@ using Unity.Physics;
 using Unity.Physics.Systems;
 using Unity.Profiling;
 using UnityEngine;
+using VVardenfell.Core.Cache;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Player;
@@ -118,6 +119,7 @@ namespace VVardenfell.Runtime.Physics
                 ComponentType.ReadWrite<PhysicsFlushRequested>());
             systemState.RequireForUpdate<PendingCellPhysicsLoad>();
             systemState.RequireForUpdate<PendingCellPhysicsUnload>();
+            systemState.RequireForUpdate<RuntimeSectionRegistry>();
             systemState.RequireForUpdate(_mutationQueueQuery);
         }
 
@@ -142,21 +144,13 @@ namespace VVardenfell.Runtime.Physics
 
             using var entitiesToEnable = new NativeList<Entity>(Allocator.Temp);
             using var entitiesToDisable = new NativeList<Entity>(Allocator.Temp);
-            foreach (var (cellLink, entity) in SystemAPI
-                         .Query<RefRO<CellLink>>()
-                         .WithAll<RuntimeColliderSource>()
-                         .WithEntityAccess())
-            {
-                int2 cell = cellLink.ValueRO.Value;
-                if (loadSet.Contains(cell))
-                {
-                    entitiesToEnable.Add(entity);
-                    continue;
-                }
-
-                if (unloadSet.Contains(cell))
-                    entitiesToDisable.Add(entity);
-            }
+            var registry = SystemAPI.GetSingleton<RuntimeSectionRegistry>();
+            var loadEnumerator = loadSet.GetEnumerator();
+            while (loadEnumerator.MoveNext())
+                AddSectionColliderEntities(ref systemState, registry, loadEnumerator.Current, entitiesToEnable);
+            var unloadEnumerator = unloadSet.GetEnumerator();
+            while (unloadEnumerator.MoveNext())
+                AddSectionColliderEntities(ref systemState, registry, unloadEnumerator.Current, entitiesToDisable);
 
             if (entitiesToEnable.Length > 0 || entitiesToDisable.Length > 0)
             {
@@ -171,6 +165,34 @@ namespace VVardenfell.Runtime.Physics
 
             pendingLoads.Cells.Clear();
             pendingUnloads.Cells.Clear();
+        }
+
+        static void AddSectionColliderEntities(
+            ref SystemState systemState,
+            RuntimeSectionRegistry registry,
+            int2 cell,
+            NativeList<Entity> entities)
+        {
+            if (!registry.ExteriorSections.IsCreated
+                || !registry.ExteriorSections.TryGetValue(cell, out Entity sectionEntity)
+                || sectionEntity == Entity.Null
+                || !systemState.EntityManager.Exists(sectionEntity))
+            {
+                return;
+            }
+
+            if (!systemState.EntityManager.HasBuffer<RuntimeCellSectionColliderEntity>(sectionEntity))
+                throw new System.InvalidOperationException("[VVardenfell][CellSection] section root is missing collider entity buffer; rebake required.");
+            var colliders = systemState.EntityManager.GetBuffer<RuntimeCellSectionColliderEntity>(sectionEntity);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                Entity entity = colliders[i].Value;
+                if (entity == Entity.Null || !systemState.EntityManager.Exists(entity))
+                    throw new System.InvalidOperationException("[VVardenfell][CellSection] collider buffer references a missing entity; rebake required.");
+                if (!systemState.EntityManager.HasComponent<RuntimeColliderSource>(entity))
+                    throw new System.InvalidOperationException("[VVardenfell][CellSection] collider entity is missing RuntimeColliderSource; resource binding must run first.");
+                entities.Add(entity);
+            }
         }
     }
 }

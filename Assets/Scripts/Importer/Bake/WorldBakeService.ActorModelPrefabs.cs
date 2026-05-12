@@ -525,26 +525,34 @@ namespace VVardenfell.Importer.Bake
         {
             try
             {
-            if (staged.PendingRefs == null)
-                return;
-
-            if (staged.Land != null && staged.Land.VtexIndices != null)
+            if (staged.Land != null && staged.Land.HasHeights)
             {
                 try
                 {
                     var texturePaths = new string[LandRecord.NumTextures];
-                    for (int i = 0; i < LandRecord.NumTextures; i++)
-                        texturePaths[i] = LtexIndex.ResolveVtexRequired(
-                            staged.Land.VtexIndices[i],
-                            ltexMapsBySource,
-                            staged.WorkItem.LandSourcePath,
-                            $"{staged.WorkItem.Key} terrain VTEX slot {i}");
+                    if (staged.Land.VtexIndices != null)
+                    {
+                        for (int i = 0; i < LandRecord.NumTextures; i++)
+                            texturePaths[i] = LtexIndex.ResolveVtexRequired(
+                                staged.Land.VtexIndices[i],
+                                ltexMapsBySource,
+                                staged.WorkItem.LandSourcePath,
+                                $"{staged.WorkItem.Key} terrain VTEX slot {i}");
+                    }
+                    else
+                    {
+                        for (int i = 0; i < LandRecord.NumTextures; i++)
+                            texturePaths[i] = LtexIndex.DefaultTexturePath;
+                    }
                     staged.TerrainTexturePaths = texturePaths;
                 }
                 finally
                 {
                 }
             }
+
+            if (staged.PendingRefs == null)
+                return;
 
             staged.PreparedRefs = BuildPreparedCellRefs(staged);
             staged.DoorEntries ??= new List<DoorRefEntry>();
@@ -562,6 +570,7 @@ namespace VVardenfell.Importer.Bake
             MaterialBakery materials,
             TextureBakery textures,
             TerrainLayerBakery terrainLayers,
+            TerrainSplatBakery terrainSplats,
             CollisionBakery collisions,
             ModelPrefabBakery modelPrefabs)
         {
@@ -605,6 +614,7 @@ namespace VVardenfell.Importer.Bake
                                     materials,
                                     textures,
                                     terrainLayers,
+                                    terrainSplats,
                                     collisions,
                                     modelPrefabs,
                                     materialIndexCache,

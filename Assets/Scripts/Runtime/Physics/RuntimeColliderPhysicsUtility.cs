@@ -43,6 +43,30 @@ namespace VVardenfell.Runtime.Physics
             return true;
         }
 
+        public static bool BindExistingSource(
+            EntityManager entityManager,
+            Entity entity,
+            BlobAssetReference<Collider> collider,
+            RuntimeColliderKind kind,
+            bool temporary = false)
+        {
+            if (entity == Entity.Null || !entityManager.Exists(entity) || !collider.IsCreated)
+                return false;
+            if (!entityManager.HasComponent<RuntimeColliderSource>(entity))
+                return false;
+
+            collider = PrepareColliderForKind(collider, kind, ref temporary);
+            QueueReplacedTemporarySourceForDisposal(entityManager, entity, collider);
+            entityManager.SetComponentData(entity, new RuntimeColliderSource
+            {
+                Value = collider,
+                Kind = kind,
+                Temporary = temporary ? (byte)1 : (byte)0,
+            });
+            AttachGeneratedBlobCleanup(entityManager, entity, collider, temporary);
+            return true;
+        }
+
         public static bool QueueAttachSource(
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,

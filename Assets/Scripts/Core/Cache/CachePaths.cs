@@ -22,10 +22,12 @@ namespace VVardenfell.Core.Cache
         public static string MeshNames => Path.Combine(Root, "meshnames.bin");
         public static string ModelPrefabs => Path.Combine(Root, "model_prefabs.bin");
         public static string RuntimeSpawnPrefabs => Path.Combine(Root, "runtime_spawn_prefabs.entities");
+        public static string RuntimeDistantTerrain => Path.Combine(Root, "runtime_distant_terrain.entities");
         public static string VfxEffects => Path.Combine(Root, "vfx_effects.bin");
         public static string ActorAnimations => Path.Combine(Root, "actor_animations.bin");
         public static string TexturesIndex => Path.Combine(Root, "textures.bin");
         public static string TerrainLayers => Path.Combine(Root, "terrain_layers.bin");
+        public static string TerrainSplats => Path.Combine(Root, "terrain_splats.bin");
         public static string Collisions => Path.Combine(Root, "collisions.bin");
         public static string MeshCatalog => Path.Combine(Root, "mesh_catalog.bin");
         public static string MaterialCatalog => Path.Combine(Root, "material_catalog.bin");
@@ -37,6 +39,7 @@ namespace VVardenfell.Core.Cache
         public static string GameplayContentManifest => Path.Combine(Root, "gameplay_content_manifest.bin");
         public static string GameplayContent => Path.Combine(Root, "gameplay_content.bin");
         public static string RuntimeContentBlob => Path.Combine(Root, "runtime_content_blob.bin");
+        public static string WorldCells => Path.Combine(Root, "world_cells.blob");
         public static string GameplayValidationReport => Path.Combine(Root, "gameplay_content_validation.txt");
         public static string WorldCollisionValidationReport => Path.Combine(Root, "world_collision_validation.txt");
         public static string MeshCacheReport => Path.Combine(Root, "mesh_cache_report.txt");

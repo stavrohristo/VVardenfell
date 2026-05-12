@@ -65,10 +65,11 @@ namespace VVardenfell.Runtime.Streaming
                     if (!avail.Set.Contains(coord)) continue;
                     desired.Add(coord);
 
-                    // Enqueue if not currently active. Covers both "never loaded" (absent from
-                    // Map) and "previously loaded, currently disabled" (in Map, not in Active).
-                    // The worker branches on Map.ContainsKey to decide create-vs-re-enable.
-                    if (!loaded.Active.Contains(coord) && loadBudget > 0)
+                    // Enqueue if the full streamable section is not resident yet, or if
+                    // resident content is currently inactive. Terrain may be pre-seeded
+                    // before full cell streaming so the player cannot fall through the
+                    // world; that terrain-only state must not block full section loading.
+                    if ((!loaded.Streamed.Contains(coord) || !loaded.Active.Contains(coord)) && loadBudget > 0)
                     {
                         queue.Queue.Enqueue(coord);
                         loadBudget--;

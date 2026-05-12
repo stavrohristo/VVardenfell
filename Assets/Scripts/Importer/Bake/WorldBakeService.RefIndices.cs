@@ -28,14 +28,17 @@ namespace VVardenfell.Importer.Bake
             MaterialBakery materials,
             TextureBakery textures,
             TerrainLayerBakery terrainLayers,
+            TerrainSplatBakery terrainSplats,
             CollisionBakery collisions,
             ModelPrefabBakery modelPrefabs,
             Dictionary<uint, int> materialIndexCache,
             Dictionary<string, int> textureIndexCache,
             Dictionary<int, ushort> terrainLayerCache)
         {
-            if (staged.PreparedRefs == null && staged.PlacedRefs == null)
-                return;
+            var meshIndices = new HashSet<int>();
+            var materialIndices = new HashSet<int>();
+            var textureIndices = new HashSet<int>();
+            var collisionIndices = new HashSet<int>();
 
             if (staged.TerrainTexturePaths != null)
             {
@@ -55,13 +58,18 @@ namespace VVardenfell.Importer.Bake
                 staged.LayerGrid = layerGrid;
             }
 
+            if (staged.Land != null && staged.Land.HasHeights)
+            {
+                staged.TerrainMeshIndex = AddTerrainMesh(staged, meshes);
+                meshIndices.Add(staged.TerrainMeshIndex);
+                if (staged.LayerGrid == null)
+                    throw new InvalidDataException($"{staged.WorkItem.Key} terrain has no resolved layer grid.");
+                staged.TerrainSplatSlice = terrainSplats.AddOrGet(staged.LayerGrid);
+            }
+
             int preparedCount = staged.PreparedRefs?.Count ?? 0;
             int placedCount = staged.PlacedRefs?.Count ?? 0;
             var result = new List<CellBakery.BakedRef>(preparedCount + placedCount);
-            var meshIndices = new HashSet<int>();
-            var materialIndices = new HashSet<int>();
-            var textureIndices = new HashSet<int>();
-            var collisionIndices = new HashSet<int>();
             if (preparedCount != 0)
                 throw new InvalidOperationException($"{staged.WorkItem.Key} produced {preparedCount} deprecated prepared refs after model-prefab ref conversion.");
 
@@ -128,6 +136,7 @@ namespace VVardenfell.Importer.Bake
                 textureIndexCache,
                 materialIndices,
                 textureIndices);
+            BakeCombinedRenderChunkMeshes(staged, meshes, textures, meshIndices);
             staged.GlobalMeshIndices = ToSortedArray(meshIndices);
             staged.GlobalMaterialIndices = ToSortedArray(materialIndices);
             staged.GlobalTextureIndices = ToSortedArray(textureIndices);
@@ -143,6 +152,156 @@ namespace VVardenfell.Importer.Bake
             {
                 staged.GlobalTerrainLayerIndices = Array.Empty<int>();
             }
+        }
+
+
+        private static int AddTerrainMesh(StagedCellData staged, MeshBakery meshes)
+        {
+            const int sampleCount = LandRecord.Size;
+            var land = staged.Land;
+            if (land?.Heights == null || land.Heights.Length != sampleCount * sampleCount)
+                throw new InvalidDataException($"{staged.WorkItem.Key} terrain height count mismatch.");
+
+            bool hasNormals = land.Normals != null && land.Normals.Length == 3 * sampleCount * sampleCount;
+            float spacingMw = LandRecordSize.CellUnitsMw / (float)(sampleCount - 1);
+            float spacingU = spacingMw * WorldScale.MwUnitsToMeters;
+            var vertices = new Vector3[sampleCount * sampleCount];
+            var normals = hasNormals ? new Vector3[vertices.Length] : null;
+            var uv0 = new Vector2[vertices.Length];
+            var indices = new int[(sampleCount - 1) * (sampleCount - 1) * 6];
+            var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+
+            for (int y = 0; y < sampleCount; y++)
+            {
+                for (int x = 0; x < sampleCount; x++)
+                {
+                    int index = y * sampleCount + x;
+                    var vertex = new Vector3(
+                        x * spacingU,
+                        land.Heights[index] * WorldScale.MwUnitsToMeters,
+                        y * spacingU);
+                    vertices[index] = vertex;
+                    uv0[index] = new Vector2(x / (float)(sampleCount - 1), y / (float)(sampleCount - 1));
+                    min = Vector3.Min(min, vertex);
+                    max = Vector3.Max(max, vertex);
+                    if (hasNormals)
+                    {
+                        float nx = land.Normals[index * 3 + 0] / 127f;
+                        float ny = land.Normals[index * 3 + 1] / 127f;
+                        float nz = land.Normals[index * 3 + 2] / 127f;
+                        normals[index] = new Vector3(nx, nz, ny).normalized;
+                    }
+                }
+            }
+
+            int t = 0;
+            for (int y = 0; y < sampleCount - 1; y++)
+            {
+                for (int x = 0; x < sampleCount - 1; x++)
+                {
+                    int v00 = y * sampleCount + x;
+                    int v10 = y * sampleCount + x + 1;
+                    int v01 = (y + 1) * sampleCount + x;
+                    int v11 = (y + 1) * sampleCount + x + 1;
+                    indices[t++] = v00; indices[t++] = v01; indices[t++] = v10;
+                    indices[t++] = v10; indices[t++] = v01; indices[t++] = v11;
+                }
+            }
+
+            return meshes.AddOrGetRaw(
+                $"terrain:{staged.WorkItem.Key}",
+                vertices,
+                normals,
+                uv0,
+                null,
+                indices,
+                new Bounds((min + max) * 0.5f, max - min));
+        }
+
+        private static void BakeCombinedRenderChunkMeshes(
+            StagedCellData staged,
+            MeshBakery meshes,
+            TextureBakery textures,
+            HashSet<int> meshIndices)
+        {
+            var chunks = staged.CombinedRenderChunks;
+            var textureSliceCache = new Dictionary<long, int>();
+            for (int i = 0; i < (chunks?.Count ?? 0); i++)
+            {
+                var chunk = chunks[i] ?? throw new InvalidDataException($"{staged.WorkItem.Key} combined render chunk {i} is null.");
+                int meshIndex = AddCombinedRenderMesh(staged.WorkItem.Key, i, chunk, meshes, textures, textureSliceCache);
+                chunk.GlobalMeshIndex = meshIndex;
+                chunk.VertexBytes = null;
+                chunk.IndexBytes = null;
+                meshIndices.Add(meshIndex);
+            }
+        }
+
+        private static int AddCombinedRenderMesh(
+            string cellKey,
+            int chunkIndex,
+            CombinedCellRenderChunkDef chunk,
+            MeshBakery meshes,
+            TextureBakery textures,
+            Dictionary<long, int> textureSliceCache)
+        {
+            if (chunk.VertexBytes == null || chunk.IndexBytes == null)
+                throw new InvalidDataException($"{cellKey} combined render chunk {chunkIndex} missing baked vertex/index bytes.");
+            if ((chunk.MeshFlags & CacheFormat.MeshFlagHasTextureSelector) == 0
+                || (chunk.MeshFlags & CacheFormat.MeshFlagHasAlphaCutoff) == 0)
+                throw new InvalidDataException($"{cellKey} combined render chunk {chunkIndex} is missing texture selector or alpha cutoff payload.");
+
+            const int sourceStride = 10 * sizeof(float);
+            if (chunk.VertexCount <= 0 || chunk.IndexCount <= 0)
+                throw new InvalidDataException($"{cellKey} combined render chunk {chunkIndex} has empty buffers.");
+            if (chunk.VertexBytes.Length != chunk.VertexCount * sourceStride)
+                throw new InvalidDataException($"{cellKey} combined render chunk {chunkIndex} vertex bytes mismatch.");
+            if (chunk.IndexBytes.Length != chunk.IndexCount * sizeof(ushort))
+                throw new InvalidDataException($"{cellKey} combined render chunk {chunkIndex} index bytes mismatch.");
+
+            var vertices = new Vector3[chunk.VertexCount];
+            var normals = new Vector3[chunk.VertexCount];
+            var uv0 = new Vector2[chunk.VertexCount];
+            var uv1 = new Vector2[chunk.VertexCount];
+            using (var ms = new MemoryStream(chunk.VertexBytes, writable: false))
+            using (var r = new BinaryReader(ms))
+            {
+                for (int v = 0; v < chunk.VertexCount; v++)
+                {
+                    vertices[v] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    normals[v] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    uv0[v] = new Vector2(r.ReadSingle(), r.ReadSingle());
+                    int textureIndex = (int)Math.Round(r.ReadSingle());
+                    float alphaCutoff = r.ReadSingle();
+                    long sliceKey = ((long)textureIndex << 32) ^ (uint)chunk.TextureBucketKey;
+                    if (!textureSliceCache.TryGetValue(sliceKey, out int textureSlice))
+                    {
+                        textureSlice = textures.GetBucketSliceOrFallback(textureIndex, chunk.TextureBucketKey);
+                        textureSliceCache.Add(sliceKey, textureSlice);
+                    }
+                    uv1[v] = new Vector2(textureSlice, alphaCutoff);
+                }
+            }
+
+            var indices = new int[chunk.IndexCount];
+            using (var ms = new MemoryStream(chunk.IndexBytes, writable: false))
+            using (var r = new BinaryReader(ms))
+            {
+                for (int i = 0; i < indices.Length; i++)
+                    indices[i] = r.ReadUInt16();
+            }
+
+            return meshes.AddOrGetRaw(
+                $"combined:{cellKey}:{chunkIndex}",
+                vertices,
+                normals,
+                uv0,
+                uv1,
+                indices,
+                new Bounds(
+                    new Vector3(chunk.BoundsCenterX, chunk.BoundsCenterY, chunk.BoundsCenterZ),
+                    new Vector3(chunk.BoundsExtentsX, chunk.BoundsExtentsY, chunk.BoundsExtentsZ) * 2f));
         }
 
 
@@ -399,142 +558,26 @@ namespace VVardenfell.Importer.Bake
         }
 
 
-        private static IEnumerator WriteDirtyCellsIncremental(List<StagedCellData> dirtyCells, BakeProgress progress, float cellMeters)
+        private static IEnumerator WriteDirtyCellsIncremental(
+            List<StagedCellData> dirtyCells,
+            BakeProgress progress,
+            float cellMeters,
+            ModelPrefabCatalogData modelPrefabCatalog,
+            TextureBakery textures,
+            MaterialBakery materials,
+            GameplayContentData gameplayContent,
+            CollisionBakery collisions)
         {
             progress.Stage = "Cell Writes";
             progress.Total = dirtyCells.Count;
             progress.Current = 0;
-            progress.Label = dirtyCells.Count == 0 ? "No dirty cells to write" : $"Preparing cell write payloads 0/{dirtyCells.Count}";
+            progress.Label = dirtyCells.Count == 0 ? "No dirty cells to write" : $"Authoring cell sections 0/{dirtyCells.Count}";
             yield return null;
 
             if (dirtyCells.Count == 0)
                 yield break;
 
-            var preparedWrites = new PreparedCellWriteData[dirtyCells.Count];
-            yield return PrepareCellWritePayloadsIncremental(dirtyCells, preparedWrites, progress);
-            yield return BuildCellColliderBlobsIncremental(preparedWrites, progress, cellMeters);
-            yield return FlushCellSectionsIncremental(preparedWrites, progress);
-        }
-
-
-        private static IEnumerator PrepareCellWritePayloadsIncremental(
-            List<StagedCellData> dirtyCells,
-            PreparedCellWriteData[] preparedWrites,
-            BakeProgress progress)
-        {
-            var info = new CellWriteProgressInfo { Subphase = "Preparing cell write payloads" };
-            UpdateCellWriteProgress(progress, dirtyCells.Count, info);
-            yield return null;
-
-            int claimed = 0;
-            int completed = 0;
-            string lastCompletedKey = null;
-            Exception prepareFailure = null;
-            int maxWorkers = Math.Max(1, Math.Min(Environment.ProcessorCount, dirtyCells.Count));
-
-            var prepareTask = Task.Run(() =>
-            {
-                int nextIndex = 0;
-                int failureSignaled = 0;
-                var workers = new Task[maxWorkers];
-                for (int worker = 0; worker < maxWorkers; worker++)
-                {
-                    workers[worker] = Task.Factory.StartNew(() =>
-                    {
-                        while (Volatile.Read(ref failureSignaled) == 0)
-                        {
-                            int index = Interlocked.Increment(ref nextIndex) - 1;
-                            if (index >= dirtyCells.Count)
-                                break;
-
-                            Interlocked.Increment(ref claimed);
-                            try
-                            {
-                                preparedWrites[index] = PrepareCellWritePayload(dirtyCells[index]);
-                                lastCompletedKey = dirtyCells[index].WorkItem.Key;
-                                Interlocked.Increment(ref completed);
-                            }
-                            catch (Exception ex)
-                            {
-                                if (Interlocked.CompareExchange(ref failureSignaled, 1, 0) == 0)
-                                    prepareFailure = ex;
-                                break;
-                            }
-                        }
-                    }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-                }
-
-                Task.WaitAll(workers);
-            });
-
-            while (!prepareTask.IsCompleted)
-            {
-                info.ClaimedCount = claimed;
-                info.CompletedCount = completed;
-                info.LastCompletedCellKey = lastCompletedKey;
-                UpdateCellWriteProgress(progress, dirtyCells.Count, info);
-                yield return null;
-            }
-
-            if (prepareFailure != null)
-                throw prepareFailure;
-
-            info.ClaimedCount = dirtyCells.Count;
-            info.CompletedCount = dirtyCells.Count;
-            info.LastCompletedCellKey = lastCompletedKey;
-            UpdateCellWriteProgress(progress, dirtyCells.Count, info);
-            yield return null;
-        }
-
-
-        private static PreparedCellWriteData PrepareCellWritePayload(StagedCellData staged)
-        {
-            try
-            {
-                uint flags = 0;
-                bool hasTerrain = staged.Land != null && staged.Land.HasHeights;
-                bool hasNormals = hasTerrain && staged.Land.Normals != null;
-                bool hasVtex = hasTerrain && staged.LayerGrid != null && staged.LayerGrid.Length == LandRecord.NumTextures;
-                bool hasWorldMap = hasTerrain && staged.Land.WorldMap != null && staged.Land.WorldMap.Length == 81;
-                bool hasStaticCollision = !staged.StaticCollision.IsEmpty;
-                bool hasEnvironment = staged.Environment.HasAnyData;
-                if (hasTerrain) flags |= CacheFormat.CellFlagHasTerrain;
-                if (hasNormals) flags |= CacheFormat.CellFlagHasNormals;
-                if (hasVtex) flags |= CacheFormat.CellFlagHasVtex;
-                if (hasStaticCollision) flags |= CacheFormat.CellFlagHasStaticCollision;
-                if (hasEnvironment) flags |= CacheFormat.CellFlagHasEnvironment;
-                if (hasWorldMap) flags |= CacheFormat.CellFlagHasWorldMap;
-
-                return new PreparedCellWriteData
-                {
-                    Key = staged.WorkItem.Key,
-                    IsInterior = staged.WorkItem.IsInterior,
-                    CellId = staged.WorkItem.Cell.Name ?? string.Empty,
-                    GridX = staged.WorkItem.IsInterior ? 0 : staged.WorkItem.Cell.GridX,
-                    GridY = staged.WorkItem.IsInterior ? 0 : staged.WorkItem.Cell.GridY,
-                    Flags = flags,
-                    Environment = staged.Environment,
-                    Land = staged.Land,
-                    StaticCollision = staged.StaticCollision,
-                    TerrainHeightBytes = hasTerrain ? BuildTerrainHeightBytes(staged.Land) : null,
-                    TerrainNormalBytes = hasNormals ? BuildTerrainNormalBytes(staged.Land) : null,
-                    LayerGridBytes = hasVtex ? BuildLayerGridBytes(staged.LayerGrid) : null,
-                    WorldMapBytes = hasWorldMap ? BuildWorldMapBytes(staged.Land) : null,
-                    RefBytes = BuildRefBytes(staged.BakedRefs),
-                    DoorBytes = BuildDoorBytes(staged.DoorEntries),
-                    CapturedSoulBytes = BuildCapturedSoulBytes(staged.CapturedSouls),
-                    LockStateBytes = BuildLockStateBytes(staged.LockStates),
-                    CombinedRenderChunkBytes = BuildCombinedRenderChunkBytes(staged.CombinedRenderChunks),
-                    RefCount = staged.BakedRefs?.Count ?? 0,
-                    DoorCount = staged.DoorEntries?.Count ?? 0,
-                    CapturedSoulCount = staged.CapturedSouls?.Count ?? 0,
-                    LockStateCount = staged.LockStates?.Count ?? 0,
-                    CombinedRenderChunkCount = staged.CombinedRenderChunks?.Count ?? 0,
-                };
-            }
-            finally
-            {
-            }
+            yield return AuthorCellSectionsIncremental(dirtyCells, progress, cellMeters, modelPrefabCatalog, textures, materials, gameplayContent, collisions);
         }
 
 

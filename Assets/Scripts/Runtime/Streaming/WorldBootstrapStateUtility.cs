@@ -1,15 +1,20 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Rendering;
 using VVardenfell.Core;
 using VVardenfell.Core.Cache;
+using VVardenfell.Runtime.Animation;
 using VVardenfell.Runtime.Bootstrap;
 using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Combat;
 using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.MorrowindScript;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Pathfinding;
 using VVardenfell.Runtime.Player;
+using VVardenfell.Runtime.Rendering;
+using VVardenfell.Runtime.Vfx;
 using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.WorldRefs;
 
@@ -21,6 +26,7 @@ namespace VVardenfell.Runtime.Streaming
             CacheLoader cache,
             out NativeHashSet<int2> available,
             out LoadedCellsMap loadedMap,
+            out RuntimeSectionRegistry sectionRegistry,
             out LogicalRefLookup logicalRefLookup,
             out PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             out LoadQueue loadQueue,
@@ -32,10 +38,15 @@ namespace VVardenfell.Runtime.Streaming
             available = new NativeHashSet<int2>(cache.Manifest.CellCount, Allocator.Persistent);
             loadedMap = new LoadedCellsMap
             {
-                Map = new NativeHashMap<int2, Entity>(cellCap, Allocator.Persistent),
                 Streamed = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
                 Active = new NativeHashSet<int2>(cellCap, Allocator.Persistent),
                 SectionStates = new NativeHashMap<int2, byte>(cellCap, Allocator.Persistent),
+            };
+            sectionRegistry = new RuntimeSectionRegistry
+            {
+                ExteriorSections = new NativeHashMap<int2, Entity>(cellCap, Allocator.Persistent),
+                InteriorSectionsByHash = new NativeHashMap<ulong, Entity>(System.Math.Max(cache.Manifest.InteriorCellCount, 16), Allocator.Persistent),
+                InteriorCellIdsByHash = new NativeHashMap<ulong, FixedString128Bytes>(System.Math.Max(cache.Manifest.InteriorCellCount, 16), Allocator.Persistent),
             };
             logicalRefLookup = new LogicalRefLookup
             {
@@ -92,6 +103,7 @@ namespace VVardenfell.Runtime.Streaming
             EntityManager em,
             NativeHashSet<int2> available,
             LoadedCellsMap loadedMap,
+            RuntimeSectionRegistry sectionRegistry,
             LogicalRefLookup logicalRefLookup,
             PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             LoadQueue loadQueue,
@@ -104,6 +116,7 @@ namespace VVardenfell.Runtime.Streaming
             em.AddComponentData(singleton, new StreamingConfig
             {
                 ViewRadius = WorldBootstrap.DefaultViewRadius,
+                DistantTerrainRadius = WorldBootstrap.DefaultDistantTerrainRadius,
                 MaxLoadsPerFrame = WorldBootstrap.DefaultMaxLoadsPerFrame,
                 MaxUnloadsPerFrame = WorldBootstrap.DefaultMaxUnloadsPerFrame,
                 GateTerrainByRadius = WorldBootstrap.DefaultGateTerrainByRadius,
@@ -112,12 +125,95 @@ namespace VVardenfell.Runtime.Streaming
             });
             em.AddComponentData(singleton, new AvailableCells { Set = available });
             em.AddComponentData(singleton, loadedMap);
+            em.AddComponentData(singleton, sectionRegistry);
             em.AddComponentData(singleton, logicalRefLookup);
             em.AddComponentData(singleton, placedRefRuntimeStateLookup);
             em.AddComponentData(singleton, loadQueue);
             em.AddComponentData(singleton, unloadList);
             em.AddComponentData(singleton, pendingPhysicsLoad);
             em.AddComponentData(singleton, pendingPhysicsUnload);
+        }
+
+        public static void PublishMaterializationResources(EntityManager em, RuntimeMaterializationResources resources)
+        {
+            if (resources == null)
+                throw new System.InvalidOperationException("[VVardenfell][Materialization] cannot publish null materialization resources.");
+
+            EntityQuery query = RuntimeMaterializationResourcesQueryCache.Get(em);
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+
+            if (em.HasComponent<RuntimeMaterializationResources>(entity))
+                em.SetComponentData(entity, resources);
+            else
+                em.AddComponentData(entity, resources);
+        }
+
+        public static void PublishActorPresentationResources(EntityManager em)
+        {
+            EntityQuery query = RuntimeActorPresentationResourcesQueryCache.Get(em);
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+
+            var resources = new RuntimeActorPresentationResources
+            {
+                GpuAnimation = new ActorGpuAnimationResources(),
+                EntitiesGraphicsRenderer = new ActorEntitiesGraphicsRenderResources(),
+                ShadowCasterDistance = 64f,
+                ShadowCasterPadding = 8f,
+                MaxActorShadowCasters = 128,
+            };
+
+            if (em.HasComponent<RuntimeActorPresentationResources>(entity))
+            {
+                em.GetComponentData<RuntimeActorPresentationResources>(entity)?.Dispose(em);
+                em.SetComponentData(entity, resources);
+            }
+            else
+            {
+                em.AddComponentData(entity, resources);
+            }
+        }
+
+        public static void PublishVfxPresentationResources(EntityManager em)
+        {
+            EntityQuery query = RuntimeVfxPresentationResourcesQueryCache.Get(em);
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+
+            var resources = new RuntimeVfxPresentationResources();
+            if (em.HasComponent<RuntimeVfxPresentationResources>(entity))
+            {
+                em.GetComponentData<RuntimeVfxPresentationResources>(entity)?.Dispose();
+                em.SetComponentData(entity, resources);
+            }
+            else
+            {
+                em.AddComponentData(entity, resources);
+            }
+        }
+
+        public static void PublishActorColliderResource(EntityManager em)
+        {
+            EntityQuery query = RuntimeActorColliderResourceQueryCache.Get(em);
+            Entity entity = query.IsEmptyIgnoreFilter
+                ? em.CreateEntity()
+                : query.GetSingletonEntity();
+
+            var resource = RuntimeActorColliderResource.Create();
+            if (em.HasComponent<RuntimeActorColliderResource>(entity))
+            {
+                var previous = em.GetComponentData<RuntimeActorColliderResource>(entity);
+                previous.Dispose();
+                em.SetComponentData(entity, resource);
+            }
+            else
+            {
+                em.AddComponentData(entity, resource);
+            }
         }
 
         public static void PublishGameInitialization(EntityManager em)
@@ -164,7 +260,7 @@ namespace VVardenfell.Runtime.Streaming
             PublishBattleSimulatorBootState(em, options);
             RuntimeBootstrapRequestUtility.PublishAll(em);
             bool hasSerializedSavePayload = WorldSaveStorage.TryGetContinueAvailability(out string saveStatus);
-            var contentBlob = RequireRuntimeContentBlob();
+            var contentBlob = RequireRuntimeContentBlob(em);
             ref RuntimeContentBlob content = ref contentBlob.Value;
             ResolveInitialPlayerData(
                 ref content,
@@ -273,9 +369,9 @@ namespace VVardenfell.Runtime.Streaming
             initialInventory = System.Array.Empty<PlayerInitialInventoryItem>();
         }
 
-        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
+        static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob(EntityManager em)
         {
-            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            var blob = RuntimeMaterializationResources.Require(em).ContentBlob;
             if (!blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][ContentBlob] World bootstrap initialization requires runtime content blob.");
             return blob;
@@ -308,6 +404,7 @@ namespace VVardenfell.Runtime.Streaming
         public static void DisposeUnpublishedState(
             NativeHashSet<int2> available,
             LoadedCellsMap loadedMap,
+            RuntimeSectionRegistry sectionRegistry,
             LogicalRefLookup logicalRefLookup,
             PlacedRefRuntimeStateLookup placedRefRuntimeStateLookup,
             LoadQueue loadQueue,
@@ -317,14 +414,18 @@ namespace VVardenfell.Runtime.Streaming
         {
             if (available.IsCreated)
                 available.Dispose();
-            if (loadedMap.Map.IsCreated)
-                loadedMap.Map.Dispose();
             if (loadedMap.Streamed.IsCreated)
                 loadedMap.Streamed.Dispose();
             if (loadedMap.Active.IsCreated)
                 loadedMap.Active.Dispose();
             if (loadedMap.SectionStates.IsCreated)
                 loadedMap.SectionStates.Dispose();
+            if (sectionRegistry.ExteriorSections.IsCreated)
+                sectionRegistry.ExteriorSections.Dispose();
+            if (sectionRegistry.InteriorSectionsByHash.IsCreated)
+                sectionRegistry.InteriorSectionsByHash.Dispose();
+            if (sectionRegistry.InteriorCellIdsByHash.IsCreated)
+                sectionRegistry.InteriorCellIdsByHash.Dispose();
             if (logicalRefLookup.Map.IsCreated)
                 logicalRefLookup.Map.Dispose();
             if (placedRefRuntimeStateLookup.DisabledByPlacedRef.IsCreated)
@@ -344,7 +445,6 @@ namespace VVardenfell.Runtime.Streaming
             var world = World.DefaultGameObjectInjectionWorld;
             if (world == null || !world.IsCreated)
             {
-                WorldResources.Reset();
                 return;
             }
 
@@ -373,10 +473,20 @@ namespace VVardenfell.Runtime.Streaming
                 for (int i = 0; i < entities.Length; i++)
                 {
                     var lc = em.GetComponentData<LoadedCellsMap>(entities[i]);
-                    if (lc.Map.IsCreated) lc.Map.Dispose();
                     if (lc.Streamed.IsCreated) lc.Streamed.Dispose();
                     if (lc.Active.IsCreated) lc.Active.Dispose();
                     if (lc.SectionStates.IsCreated) lc.SectionStates.Dispose();
+                }
+            }
+
+            using (var entities = RuntimeSectionRegistryQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var registry = em.GetComponentData<RuntimeSectionRegistry>(entities[i]);
+                    if (registry.ExteriorSections.IsCreated) registry.ExteriorSections.Dispose();
+                    if (registry.InteriorSectionsByHash.IsCreated) registry.InteriorSectionsByHash.Dispose();
+                    if (registry.InteriorCellIdsByHash.IsCreated) registry.InteriorCellIdsByHash.Dispose();
                 }
             }
 
@@ -401,6 +511,58 @@ namespace VVardenfell.Runtime.Streaming
             }
 
             ActiveExplicitRefLookupLifecycleUtility.DisposeAll(em);
+
+            using (var entities = RuntimeActorPresentationResourcesQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var resources = em.GetComponentData<RuntimeActorPresentationResources>(entities[i]);
+                    resources?.Dispose(em);
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
+            using (var entities = RuntimeVfxPresentationResourcesQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var resources = em.GetComponentData<RuntimeVfxPresentationResources>(entities[i]);
+                    resources?.Dispose();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
+            using (var entities = RuntimeActorColliderResourceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var resource = em.GetComponentData<RuntimeActorColliderResource>(entities[i]);
+                    resource.Dispose();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
+            using (var entities = RuntimeMaterializationResourcesQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var resources = em.GetComponentData<RuntimeMaterializationResources>(entities[i]);
+                    DisposeMaterializationResources(resources);
+                    resources?.ClearReferences();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
+
+            using (var entities = RuntimePathGridNavigationResourceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var resource = em.GetComponentData<RuntimePathGridNavigationResource>(entities[i]);
+                    if (resource.Navigation.IsCreated)
+                        resource.Navigation.Dispose();
+                    em.DestroyEntity(entities[i]);
+                }
+            }
 
             using (var entities = RuntimeContentBlobReferenceQueryCache.Get(em).ToEntityArray(Allocator.Temp))
             {
@@ -472,8 +634,64 @@ namespace VVardenfell.Runtime.Streaming
                     pending.Cells.Dispose();
                 }
             }
+        }
 
-            WorldResources.Reset();
+        static void DisposeMaterializationResources(RuntimeMaterializationResources resources)
+        {
+            if (resources == null)
+                return;
+
+            UnregisterRenderAssets(resources);
+
+            if (resources.ColliderBlobs == null)
+                return;
+
+            for (int i = 0; i < resources.ColliderBlobs.Length; i++)
+            {
+                if (resources.ColliderBlobs[i].IsCreated)
+                    resources.ColliderBlobs[i].Dispose();
+            }
+        }
+
+        static void UnregisterRenderAssets(RuntimeMaterializationResources resources)
+        {
+            var world = World.DefaultGameObjectInjectionWorld;
+            var renderer = world?.GetExistingSystemManaged<EntitiesGraphicsSystem>();
+            if (renderer == null)
+                return;
+
+            if (resources.RegisteredMeshes != null)
+            {
+                for (int i = 0; i < resources.RegisteredMeshes.Length; i++)
+                {
+                    var id = resources.RegisteredMeshes[i];
+                    if (id.value != 0)
+                        renderer.UnregisterMesh(id);
+                }
+            }
+
+            if (resources.RegisteredRefMaterials != null)
+            {
+                for (int i = 0; i < resources.RegisteredRefMaterials.Length; i++)
+                {
+                    var id = resources.RegisteredRefMaterials[i];
+                    if (id.value != 0)
+                        renderer.UnregisterMaterial(id);
+                }
+            }
+
+            if (resources.RegisteredCombinedMaterials != null)
+            {
+                for (int i = 0; i < resources.RegisteredCombinedMaterials.Length; i++)
+                {
+                    var id = resources.RegisteredCombinedMaterials[i];
+                    if (id.value != 0)
+                        renderer.UnregisterMaterial(id);
+                }
+            }
+
+            if (resources.RegisteredTerrainMaterial.value != 0)
+                renderer.UnregisterMaterial(resources.RegisteredTerrainMaterial);
         }
 
         static void DestroyLogicalRefs(EntityManager em)
@@ -561,6 +779,66 @@ namespace VVardenfell.Runtime.Streaming
 
             public static EntityQuery Get(EntityManager entityManager)
                 => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<LoadedCellsMap>());
+        }
+
+        static class RuntimeSectionRegistryQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeSectionRegistry>());
+        }
+
+        static class RuntimeMaterializationResourcesQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeMaterializationResources>());
+        }
+
+        static class RuntimeActorPresentationResourcesQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeActorPresentationResources>());
+        }
+
+        static class RuntimeVfxPresentationResourcesQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeVfxPresentationResources>());
+        }
+
+        static class RuntimeActorColliderResourceQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimeActorColliderResource>());
+        }
+
+        static class RuntimePathGridNavigationResourceQueryCache
+        {
+            static World s_World;
+            static EntityQuery s_Query;
+            static bool s_QueryCreated;
+
+            public static EntityQuery Get(EntityManager entityManager)
+                => GetQuery(entityManager, ref s_World, ref s_Query, ref s_QueryCreated, ComponentType.ReadOnly<RuntimePathGridNavigationResource>());
         }
 
         static class LogicalRefLookupQueryCache

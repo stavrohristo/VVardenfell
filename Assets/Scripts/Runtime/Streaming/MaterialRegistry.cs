@@ -19,9 +19,8 @@ namespace VVardenfell.Runtime.Streaming
     /// don't lose their data, but it is **not populated or consulted anymore**.
     ///
     /// What remains user-editable:
-    ///   * <see cref="TerrainTemplate"/> — cloned per-cell; <c>_Splat</c> (per-cell) and
-    ///     <c>_LayerArray</c> (runtime-built) are injected after the clone. Edit shader /
-    ///     tile scales on the asset.
+    ///   * <see cref="TerrainTemplate"/> - shared terrain template. Bootstrap binds the
+    ///     global terrain layer atlas and splat array once; edit shader tile scales here.
     ///   * <see cref="TerrainFallback"/> — shared across cells whose LAND has no VTEX.
     /// </summary>
     [CreateAssetMenu(menuName = "VVardenfell/Material Registry", fileName = "VVMaterialRegistry")]
@@ -38,7 +37,7 @@ namespace VVardenfell.Runtime.Streaming
         [Tooltip("DORMANT — dead data carried forward from pre-FormatVersion-13 registries. Not populated or read anymore; per-texture ref materials were replaced by a shared Texture2DArray.")]
         public List<RefEntry> RefMaterials = new();
 
-        [Tooltip("Cloned per-cell. _Splat (per-cell) and _LayerArray (runtime-built) are injected after the clone. Edit to tweak shader / _TileScale / _SplatSize across all terrain.")]
+        [Tooltip("Shared terrain template. Bootstrap binds global terrain layer/splat arrays once; edit _TileScale / _SplatSize here.")]
         public Material TerrainTemplate;
 
         [Tooltip("Used as-is for cells whose LAND has no VTEX. Shared across every such cell.")]

@@ -180,6 +180,7 @@ namespace VVardenfell.Importer.Bake
             public readonly int DoorMetaIndex;
             public readonly ContentReference ContentReference;
             public readonly bool AttachModelCollision;
+            public readonly bool CombinedStaticEligible;
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly float Scale;
@@ -193,7 +194,8 @@ namespace VVardenfell.Importer.Bake
                 Vector3 position,
                 Quaternion rotation,
                 float scale,
-                bool attachModelCollision = false)
+                bool attachModelCollision = false,
+                bool combinedStaticEligible = false)
             {
                 ModelPath = modelPath ?? string.Empty;
                 Model = model;
@@ -201,6 +203,7 @@ namespace VVardenfell.Importer.Bake
                 DoorMetaIndex = doorMetaIndex;
                 ContentReference = contentReference;
                 AttachModelCollision = attachModelCollision;
+                CombinedStaticEligible = combinedStaticEligible;
                 Position = position;
                 Rotation = rotation;
                 Scale = scale;
@@ -362,6 +365,8 @@ namespace VVardenfell.Importer.Bake
             public int[] GlobalTextureIndices;
             public int[] GlobalCollisionIndices;
             public int[] GlobalTerrainLayerIndices;
+            public int TerrainMeshIndex = -1;
+            public int TerrainSplatSlice = -1;
             public bool BakeCombinedCellRenderChunks;
             public bool NeedsWrite;
             public int PendingRefCount;
@@ -401,47 +406,24 @@ namespace VVardenfell.Importer.Bake
         }
 
 
+        private sealed class CombinedStaticExclusionData
+        {
+            public readonly HashSet<uint> MutablePlacedRefIds;
+            public readonly HashSet<string> ScriptedStaticIds;
+
+            public CombinedStaticExclusionData(HashSet<uint> mutablePlacedRefIds, HashSet<string> scriptedStaticIds)
+            {
+                MutablePlacedRefIds = mutablePlacedRefIds ?? new HashSet<uint>();
+                ScriptedStaticIds = scriptedStaticIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+
         private enum PlacedRefCollisionAssignment : byte
         {
             NoCollider,
             CellStaticAggregate,
             PerPlacedRef,
-        }
-
-
-        private sealed class PreparedCellWriteData
-        {
-            public string Key;
-            public bool IsInterior;
-            public string CellId;
-            public int GridX;
-            public int GridY;
-            public uint Flags;
-            public CellEnvironmentData Environment;
-            public LandRecord Land;
-            public CellBakery.StaticCollision StaticCollision;
-            public byte[] TerrainHeightBytes;
-            public byte[] TerrainNormalBytes;
-            public byte[] LayerGridBytes;
-            public byte[] WorldMapBytes;
-            public byte[] RefBytes;
-            public byte[] DoorBytes;
-            public byte[] CapturedSoulBytes;
-            public byte[] LockStateBytes;
-            public byte[] CombinedRenderChunkBytes;
-            public int RefCount;
-            public int DoorCount;
-            public int CapturedSoulCount;
-            public int LockStateCount;
-            public int CombinedRenderChunkCount;
-            public BuiltCellBlobData BlobData;
-        }
-
-
-        private sealed class BuiltCellBlobData
-        {
-            public byte[] TerrainColliderBlobBytes;
-            public byte[] StaticCollisionBlobBytes;
         }
 
 
@@ -475,7 +457,7 @@ namespace VVardenfell.Importer.Bake
 
         private sealed class PendingStaticColliderJob : IDisposable
         {
-            public PreparedCellWriteData PreparedWrite;
+            public StagedCellData Staged;
             public Unity.Collections.NativeArray<Unity.Mathematics.float3> Points;
             public Unity.Collections.NativeArray<Unity.Mathematics.int3> Triangles;
             public Unity.Collections.NativeArray<Unity.Entities.BlobAssetReference<Unity.Physics.Collider>> Output;

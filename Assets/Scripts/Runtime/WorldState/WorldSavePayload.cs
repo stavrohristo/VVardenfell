@@ -18,7 +18,6 @@ namespace VVardenfell.Runtime.WorldState
         public PlayerFactionMembership[] PlayerFactions;
         public bool InteriorActive;
         public string ActiveInteriorCellId;
-        public uint NextJournalSequence;
         public uint NextRuntimeRefId;
         public PlayerInventoryItem[] Inventory;
         public ActorEquipmentSlot[] PlayerEquipment;
@@ -28,7 +27,6 @@ namespace VVardenfell.Runtime.WorldState
         public ActorUsedPower[] UsedPowers;
         public LocalMapDiscoveryTilePayload[] ExteriorMapDiscovery;
         public GlobalMapOverlayPayload GlobalMapOverlay;
-        public WorldJournalEntry[] JournalEntries;
         public BookReadHistoryEntry[] BookReadHistory;
         public MorrowindQuestJournalSavePayload QuestJournal;
         public MorrowindDialogueSavePayload Dialogue;
@@ -38,7 +36,8 @@ namespace VVardenfell.Runtime.WorldState
         public MorrowindCombatSavePayload Combat;
         public MorrowindMagicSavePayload Magic;
         public MorrowindScriptSavePayload Script;
-        public PlacedRefStateSavePayload PlacedRefs;
+        public PlacedRefOverlaySavePayload PlacedRefs;
+        public RuntimeSpawnedRef[] RuntimeSpawns;
     }
 
     public struct MorrowindScriptSavePayload
@@ -72,15 +71,19 @@ namespace VVardenfell.Runtime.WorldState
         public MorrowindScriptLocalValue[] Locals;
     }
 
-    public struct PlacedRefStateSavePayload
+    public struct PlacedRefOverlaySavePayload
     {
-        public PlacedRefStateEntrySavePayload[] Entries;
-        public PlacedRefActorInventorySavePayload[] ActorInventories;
+        public PlacedRefOverlayEntrySavePayload[] Entries;
+        public PlacedRefOverlayActorInventorySavePayload[] ActorInventories;
+        public PlacedRefOverlayContainerSavePayload[] Containers;
     }
 
-    public struct PlacedRefStateEntrySavePayload
+    public struct PlacedRefOverlayEntrySavePayload
     {
         public uint PlacedRefId;
+        public byte HasRemoved;
+        public byte Removed;
+        public ContentReference RemovedContent;
         public byte HasDisabled;
         public byte Disabled;
         public byte HasLock;
@@ -96,12 +99,19 @@ namespace VVardenfell.Runtime.WorldState
         public string InteriorCellId;
         public ulong InteriorCellHash;
         public byte IsInterior;
+        public byte HasContainer;
     }
 
-    public struct PlacedRefActorInventorySavePayload
+    public struct PlacedRefOverlayActorInventorySavePayload
     {
         public uint PlacedRefId;
         public ActorInventoryItem[] Items;
+    }
+
+    public struct PlacedRefOverlayContainerSavePayload
+    {
+        public uint PlacedRefId;
+        public ContainerSessionItem[] Items;
     }
 
     public struct MorrowindQuestJournalSavePayload

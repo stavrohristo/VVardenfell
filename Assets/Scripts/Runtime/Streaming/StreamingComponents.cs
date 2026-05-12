@@ -6,13 +6,11 @@ namespace VVardenfell.Runtime.Streaming
 {
     /// <summary>
     /// Singleton knobs for the streaming pipeline. Owned by the bootstrap entity.
-    /// ViewRadius: cells kept resident in a (2r+1)² window.
-    /// MaxLoadsPerFrame / MaxUnloadsPerFrame: amortisation budgets.
-    /// CameraCell: updated every frame by <see cref="CameraCellTrackerSystem"/>.
     /// </summary>
     public struct StreamingConfig : IComponentData
     {
         public int ViewRadius;
+        public int DistantTerrainRadius;
         public int MaxLoadsPerFrame;
         public int MaxUnloadsPerFrame;
         public bool GateTerrainByRadius;
@@ -21,9 +19,7 @@ namespace VVardenfell.Runtime.Streaming
     }
 
     /// <summary>
-    /// Every exterior cell grid coord that the bake produced. Read-only after
-    /// bootstrap; used by <see cref="CellScheduleSystem"/> to filter the view window
-    /// so we only queue cells that actually have baked data.
+    /// Every exterior cell grid coord that the bake produced. Read-only after bootstrap.
     /// </summary>
     public struct AvailableCells : IComponentData
     {
@@ -31,25 +27,21 @@ namespace VVardenfell.Runtime.Streaming
     }
 
     /// <summary>
-    /// Resident exterior cell bookkeeping. Terrain and refs/static content are spawned lazily by
-    /// the cell streamer; loaded terrain remains render-gated by the active streaming radius.
+    /// Resident exterior cell bookkeeping.
     /// </summary>
     public struct LoadedCellsMap : IComponentData
     {
-        /// <summary>Cells whose terrain has been spawned. Value = terrain entity.</summary>
-        public NativeHashMap<int2, Entity> Map;
-
-        /// <summary>Cells whose non-terrain streamable content has been spawned.</summary>
         public NativeHashSet<int2> Streamed;
-
-        /// <summary>Subset of <see cref="Map"/>: cells whose entities are currently rendering.</summary>
         public NativeHashSet<int2> Active;
-
-        /// <summary>Exterior cell load state. Prevents failed cells from being retried every frame.</summary>
         public NativeHashMap<int2, byte> SectionStates;
-
-        /// <summary>Incremented whenever <see cref="Active"/> membership changes.</summary>
         public uint ActiveRevision;
+    }
+
+    public struct RuntimeSectionRegistry : IComponentData
+    {
+        public NativeHashMap<int2, Entity> ExteriorSections;
+        public NativeHashMap<ulong, Entity> InteriorSectionsByHash;
+        public NativeHashMap<ulong, FixedString128Bytes> InteriorCellIdsByHash;
     }
 
     public enum CellSectionLoadState : byte
@@ -61,60 +53,23 @@ namespace VVardenfell.Runtime.Streaming
         Failed = 4,
     }
 
-    /// <summary>
-    /// Coords that <see cref="CellScheduleSystem"/> decided we should load.
-    /// Managed side drains it in <see cref="Runtime.Streaming.CellLoadWorkerSystem"/>.
-    /// </summary>
     public struct LoadQueue : IComponentData
     {
         public NativeQueue<int2> Queue;
     }
 
-    /// <summary>
-    /// Coords the scheduler marked for unload this frame. <see cref="CellUnloadSystem"/>
-    /// drains the list, disabling MaterialMeshInfo on each cell's entities.
-    /// </summary>
     public struct UnloadList : IComponentData
     {
-        public NativeList<int2> PendingEntityDestroy; // filled by schedule, drained by unload
+        public NativeList<int2> PendingEntityDestroy;
     }
 
-    /// <summary>
-    /// Exterior cells whose collider state should be enabled during the next owned physics pre-build phase.
-    /// </summary>
     public struct PendingCellPhysicsLoad : IComponentData
     {
         public NativeList<int2> Cells;
     }
 
-    /// <summary>
-    /// Exterior cells whose collider state should be disabled during the next owned physics pre-build phase.
-    /// </summary>
     public struct PendingCellPhysicsUnload : IComponentData
     {
         public NativeList<int2> Cells;
     }
-
-    /// <summary>Diagnostic breadcrumb on terrain entities. Not read by systems.</summary>
-    public struct CellCoord : IComponentData
-    {
-        public int2 Value;
-    }
-
-    /// <summary>
-    /// Cell-membership tag present on every entity (terrain + refs) that belongs to a cell.
-    /// Plain <see cref="IComponentData"/> on purpose — making this shared (keyed by <c>int2</c>)
-    /// fragments the ECS archetype chunks one-per-cell, which in turn fragments BRG batches
-    /// one-per-cell and explodes the ref draw-call count (e.g. 68k draws for 330k instances
-    /// at ViewRadius=32). As a regular component, every ref lives in a handful of chunks
-    /// regardless of cell, so BRG can merge same-<c>MaterialMeshInfo</c> runs across cells.
-    ///
-    /// Unload reads this per-entity in <see cref="CellUnloadSystem"/> — a Burst scan of
-    /// ~300k entities is sub-millisecond and runs a few times a second at most.
-    /// </summary>
-    public struct CellLink : IComponentData
-    {
-        public int2 Value;
-    }
-
 }

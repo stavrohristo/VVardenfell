@@ -19,10 +19,6 @@ namespace VVardenfell.Runtime.Components
         Scroll = 2,
     }
 
-    public struct BookTag : IComponentData
-    {
-    }
-
     public struct BookReadRequest : IComponentData
     {
         public byte Pending;

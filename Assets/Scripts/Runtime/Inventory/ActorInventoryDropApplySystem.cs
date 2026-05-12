@@ -27,6 +27,7 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate<RuntimeSpawnRequest>();
             systemState.RequireForUpdate<LogicalRefLookup>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeMaterializationResources>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -37,6 +38,7 @@ namespace VVardenfell.Runtime.Inventory
                 return;
 
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
+            var materializationResources = RuntimeMaterializationResources.Require(systemState.EntityManager);
 
             var logicalRefLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
             Entity spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
@@ -46,7 +48,7 @@ namespace VVardenfell.Runtime.Inventory
             for (int i = 0; i < requests.Length; i++)
             {
                 var request = requests[i];
-                ValidateRequest(ref contentBlob, request);
+                ValidateRequest(ref contentBlob, materializationResources, request);
                 if (request.Count == 0)
                     continue;
 
@@ -72,7 +74,7 @@ namespace VVardenfell.Runtime.Inventory
             requests.Clear();
         }
 
-        static void ValidateRequest(ref RuntimeContentBlob contentBlob, in ActorInventoryDropRequest request)
+        static void ValidateRequest(ref RuntimeContentBlob contentBlob, RuntimeMaterializationResources materializationResources, in ActorInventoryDropRequest request)
         {
             if (request.Count < 0)
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop count must be non-negative.");
@@ -83,7 +85,7 @@ namespace VVardenfell.Runtime.Inventory
             if (!RuntimeContentMetadataResolver.TryResolveCarryable(ref contentBlob, request.Content, out _))
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop content is not carryable.");
 
-            if (!WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
+            if (!materializationResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
                 throw new InvalidOperationException("[VVardenfell][Inventory] Drop content has no runtime spawn prefab.");
         }
 

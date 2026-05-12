@@ -252,7 +252,7 @@ namespace VVardenfell.Runtime.Bootstrap
 
         static BlobAssetReference<RuntimeContentBlob> RequireRuntimeContentBlob()
         {
-            var blob = WorldResources.Cache?.ContentBlob ?? default;
+            var blob = RuntimeContentBlobReferenceUtility.RequireBlob("Game initialization request");
             if (!blob.IsCreated)
                 throw new System.InvalidOperationException("[VVardenfell][Init] Game initialization request requires runtime content blob.");
             return blob;

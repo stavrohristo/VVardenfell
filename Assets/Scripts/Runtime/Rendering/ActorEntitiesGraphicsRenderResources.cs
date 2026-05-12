@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Entities.Graphics;
 using Unity.Mathematics;
@@ -8,6 +9,7 @@ using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.Rendering;
 using VVardenfell.Runtime.Animation;
+using VVardenfell.Runtime.Cache;
 using VVardenfell.Runtime.Streaming;
 using Material = UnityEngine.Material;
 
@@ -33,7 +35,8 @@ namespace VVardenfell.Runtime.Rendering
 
         Mesh[] _meshes;
         Material[][] _materials;
-        RenderMeshArray[] _renderMeshArrays;
+        BatchMeshID[] _registeredMeshes;
+        BatchMaterialID[][] _registeredMaterials;
         Entity[] _prototypes;
         Entity[] _shadowOnlyPrototypes;
         ActorSkinMeshRenderInfo[] _skinMeshInfos;
@@ -41,15 +44,18 @@ namespace VVardenfell.Runtime.Rendering
 
         public bool IsReady => HasManagedResources() && HasPrototypeArrays();
 
-        public void Ensure(EntityManager entityManager, ref ActorAnimationCatalogBlob catalog)
+        public void Ensure(EntityManager entityManager, CacheLoader cache, ref ActorAnimationCatalogBlob catalog)
         {
-            ulong signature = BuildSignature(ref catalog);
+            if (cache == null)
+                throw new InvalidOperationException("Actor Entities Graphics render resources require loaded runtime cache.");
+
+            ulong signature = BuildSignature(cache, ref catalog);
             bool signatureMatches = signature == _catalogSignature;
             if (signatureMatches && HasManagedResources() && HasValidPrototypeEntities(entityManager))
                 return;
 
-            int bucketCount = WorldResources.RefBaseArrays?.Length ?? 0;
-            int variantCount = WorldResources.BlendVariantCount;
+            int bucketCount = cache?.RefBaseArrays?.Length ?? 0;
+            int variantCount = cache?.BlendVariantCount ?? 0;
             if (bucketCount <= 0 || variantCount <= 0)
                 throw new InvalidOperationException("Actor Entities Graphics render resources require loaded texture buckets and blend variants.");
 
@@ -61,16 +67,16 @@ namespace VVardenfell.Runtime.Rendering
             }
 
             DisposeEntityResources(entityManager);
-            DisposeManagedResources();
+            DisposeManagedResources(entityManager);
 
             Shader shader = Shader.Find("VVardenfell/MwActorEntitiesGraphics");
             if (shader == null)
                 throw new InvalidOperationException("Missing shader 'VVardenfell/MwActorEntitiesGraphics'.");
 
             BuildMeshes(ref catalog);
-            BuildSkinMeshInfos(ref catalog);
-            BuildMaterials(shader, bucketCount, variantCount);
-            BuildRenderMeshArrays(bucketCount);
+            BuildSkinMeshInfos(ref catalog, cache.TexBucketInfo, cache.FallbackBucketSlice, variantCount);
+            BuildMaterials(shader, bucketCount, variantCount, cache.Materials, cache.RefBaseArrays);
+            RegisterRenderAssets(entityManager);
             BuildPrototypes(entityManager, bucketCount);
             _catalogSignature = signature;
         }
@@ -78,7 +84,8 @@ namespace VVardenfell.Runtime.Rendering
         bool HasManagedResources()
             => _meshes != null
                && _materials != null
-               && _renderMeshArrays != null
+               && _registeredMeshes != null
+               && _registeredMaterials != null
                && _skinMeshInfos != null;
 
         bool HasPrototypeArrays()
@@ -108,14 +115,23 @@ namespace VVardenfell.Runtime.Rendering
             if (prototype == Entity.Null || !entityManager.Exists(prototype))
                 return false;
 
+            if (!entityManager.HasComponent<MaterialMeshInfo>(prototype))
+                return false;
+
+            MaterialMeshInfo materialMeshInfo = entityManager.GetComponentData<MaterialMeshInfo>(prototype);
+            if (materialMeshInfo.HasMaterialMeshIndexRange
+                || materialMeshInfo.Material <= 0
+                || materialMeshInfo.Mesh <= 0)
+            {
+                return false;
+            }
+
             return entityManager.HasComponent<LocalTransform>(prototype)
                    && entityManager.HasComponent<LocalToWorld>(prototype)
-                   && entityManager.HasComponent<MaterialMeshInfo>(prototype)
                    && entityManager.HasComponent<RenderBounds>(prototype)
                    && entityManager.HasComponent<WorldRenderBounds>(prototype)
                    && entityManager.HasComponent<PerInstanceCullingTag>(prototype)
                    && entityManager.HasComponent(prototype, ComponentType.ReadWrite<RenderFilterSettings>())
-                   && entityManager.HasComponent(prototype, ComponentType.ReadWrite<RenderMeshArray>())
                    && entityManager.HasComponent(prototype, ComponentType.ChunkComponent<ChunkWorldRenderBounds>())
                    && entityManager.HasComponent(prototype, ComponentType.ChunkComponent<EntitiesGraphicsChunkInfo>());
         }
@@ -156,9 +172,40 @@ namespace VVardenfell.Runtime.Rendering
             return false;
         }
 
+        public MaterialMeshInfo RequireMaterialMeshInfo(int bucketIndex, int materialIndex, int meshIndex, string context)
+        {
+            if (_registeredMaterials == null
+                || (uint)bucketIndex >= (uint)_registeredMaterials.Length
+                || _registeredMaterials[bucketIndex] == null
+                || (uint)materialIndex >= (uint)_registeredMaterials[bucketIndex].Length)
+            {
+                throw new InvalidOperationException($"{context} references unregistered actor material bucket={bucketIndex} variant={materialIndex}.");
+            }
+
+            if (_registeredMeshes == null || (uint)meshIndex >= (uint)_registeredMeshes.Length)
+                throw new InvalidOperationException($"{context} references unregistered actor mesh index={meshIndex}.");
+
+            BatchMaterialID materialId = _registeredMaterials[bucketIndex][materialIndex];
+            BatchMeshID meshId = _registeredMeshes[meshIndex];
+            if (materialId.value == 0)
+                throw new InvalidOperationException($"{context} resolved a null actor material id bucket={bucketIndex} variant={materialIndex}.");
+            if (meshId.value == 0)
+                throw new InvalidOperationException($"{context} resolved a null actor mesh id index={meshIndex}.");
+
+            return new MaterialMeshInfo(materialId, meshId);
+        }
+
         public void Dispose()
         {
             DisposeManagedResources();
+            _prototypes = null;
+            _shadowOnlyPrototypes = null;
+            _catalogSignature = 0UL;
+        }
+
+        public void Dispose(EntityManager entityManager)
+        {
+            DisposeManagedResources(entityManager);
             _prototypes = null;
             _shadowOnlyPrototypes = null;
             _catalogSignature = 0UL;
@@ -293,17 +340,17 @@ namespace VVardenfell.Runtime.Rendering
             return mesh;
         }
 
-        void BuildSkinMeshInfos(ref ActorAnimationCatalogBlob catalog)
+        void BuildSkinMeshInfos(ref ActorAnimationCatalogBlob catalog, NativeArray<int2> texBucketInfo, int2 fallbackBucketSlice, int variantCount)
         {
             _skinMeshInfos = new ActorSkinMeshRenderInfo[catalog.SkinMeshes.Length];
             for (int i = 0; i < _skinMeshInfos.Length; i++)
             {
                 var skinMesh = catalog.SkinMeshes[i];
-                ResolveTexture(skinMesh.TextureIndex, out int bucketIndex, out int textureSlice);
+                ResolveTexture(texBucketInfo, fallbackBucketSlice, skinMesh.TextureIndex, out int bucketIndex, out int textureSlice);
                 _skinMeshInfos[i] = new ActorSkinMeshRenderInfo
                 {
                     BucketIndex = bucketIndex,
-                    MaterialIndex = math.clamp(skinMesh.MaterialIndex, 0, math.max(0, WorldResources.BlendVariantCount - 1)),
+                    MaterialIndex = math.clamp(skinMesh.MaterialIndex, 0, math.max(0, variantCount - 1)),
                     MeshIndex = skinMesh.VertexCount > 0 && skinMesh.IndexCount > 0 ? i * 2 : -1,
                     MirroredMeshIndex = skinMesh.VertexCount > 0 && skinMesh.IndexCount > 0 ? i * 2 + 1 : -1,
                     TextureSlice = textureSlice,
@@ -312,10 +359,9 @@ namespace VVardenfell.Runtime.Rendering
             }
         }
 
-        void BuildMaterials(Shader shader, int bucketCount, int variantCount)
+        void BuildMaterials(Shader shader, int bucketCount, int variantCount, Material[] cacheMaterials, Texture2DArray[] refBaseArrays)
         {
             _materials = new Material[bucketCount][];
-            Material[] cacheMaterials = WorldResources.Cache?.Materials;
             for (int bucket = 0; bucket < bucketCount; bucket++)
             {
                 _materials[bucket] = new Material[variantCount];
@@ -328,18 +374,56 @@ namespace VVardenfell.Runtime.Rendering
                         doubleSidedGI = true,
                     };
 
-                    material.SetTexture(BaseArrayId, WorldResources.RefBaseArrays[bucket]);
+                    material.SetTexture(BaseArrayId, refBaseArrays[bucket]);
                     CopyAlphaSettings(cacheMaterials, bucket, variant, variantCount, material);
                     _materials[bucket][variant] = material;
                 }
             }
         }
 
-        void BuildRenderMeshArrays(int bucketCount)
+        void RegisterRenderAssets(EntityManager entityManager)
         {
-            _renderMeshArrays = new RenderMeshArray[bucketCount];
-            for (int bucket = 0; bucket < bucketCount; bucket++)
-                _renderMeshArrays[bucket] = new RenderMeshArray(_materials[bucket], _meshes);
+            var renderer = RequireEntitiesGraphicsSystem(entityManager);
+
+            _registeredMeshes = new BatchMeshID[_meshes.Length];
+            var meshIds = new Dictionary<Mesh, BatchMeshID>();
+            for (int i = 0; i < _meshes.Length; i++)
+            {
+                Mesh mesh = _meshes[i];
+                if (mesh == null)
+                    throw new InvalidOperationException($"Actor Entities Graphics generated mesh {i} is null.");
+
+                if (!meshIds.TryGetValue(mesh, out BatchMeshID meshId))
+                {
+                    meshId = renderer.RegisterMesh(mesh);
+                    if (meshId.value == 0)
+                        throw new InvalidOperationException($"Actor Entities Graphics failed to register mesh {i} '{mesh.name}'.");
+                    meshIds.Add(mesh, meshId);
+                }
+
+                _registeredMeshes[i] = meshId;
+            }
+
+            _registeredMaterials = new BatchMaterialID[_materials.Length][];
+            for (int bucket = 0; bucket < _materials.Length; bucket++)
+            {
+                Material[] materials = _materials[bucket];
+                if (materials == null)
+                    throw new InvalidOperationException($"Actor Entities Graphics material bucket {bucket} is null.");
+
+                _registeredMaterials[bucket] = new BatchMaterialID[materials.Length];
+                for (int variant = 0; variant < materials.Length; variant++)
+                {
+                    Material material = materials[variant];
+                    if (material == null)
+                        throw new InvalidOperationException($"Actor Entities Graphics material bucket={bucket} variant={variant} is null.");
+
+                    BatchMaterialID materialId = renderer.RegisterMaterial(material);
+                    if (materialId.value == 0)
+                        throw new InvalidOperationException($"Actor Entities Graphics failed to register material bucket={bucket} variant={variant} '{material.name}'.");
+                    _registeredMaterials[bucket][variant] = materialId;
+                }
+            }
         }
 
         void BuildPrototypes(EntityManager entityManager, int bucketCount)
@@ -395,12 +479,16 @@ namespace VVardenfell.Runtime.Rendering
             int prototypeMeshIndex)
         {
             Entity prototype = entityManager.CreateEntity();
+            MaterialMeshInfo materialMeshInfo = RequireMaterialMeshInfo(
+                bucket,
+                0,
+                prototypeMeshIndex,
+                $"Actor Entities Graphics prototype '{name}'");
             RenderMeshUtility.AddComponents(
                 prototype,
                 entityManager,
                 desc,
-                _renderMeshArrays[bucket],
-                MaterialMeshInfo.FromRenderMeshArrayIndices(0, prototypeMeshIndex));
+                materialMeshInfo);
             if (entityManager.HasComponent<LocalTransform>(prototype))
                 entityManager.SetComponentData(prototype, LocalTransform.Identity);
             else
@@ -421,6 +509,24 @@ namespace VVardenfell.Runtime.Rendering
         }
 
         void DisposeManagedResources()
+        {
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world != null && world.IsCreated)
+            {
+                DisposeManagedResources(world.EntityManager);
+                return;
+            }
+
+            DestroyManagedResources();
+        }
+
+        void DisposeManagedResources(EntityManager entityManager)
+        {
+            UnregisterRenderAssets(entityManager);
+            DestroyManagedResources();
+        }
+
+        void DestroyManagedResources()
         {
             if (_materials != null)
             {
@@ -449,24 +555,71 @@ namespace VVardenfell.Runtime.Rendering
 
             _materials = null;
             _meshes = null;
-            _renderMeshArrays = null;
+            _registeredMeshes = null;
+            _registeredMaterials = null;
             _skinMeshInfos = null;
         }
 
-        static void ResolveTexture(int textureIndex, out int bucketIndex, out int textureSlice)
+        void UnregisterRenderAssets(EntityManager entityManager)
+        {
+            var renderer = entityManager.World != null && entityManager.World.IsCreated
+                ? entityManager.World.GetExistingSystemManaged<EntitiesGraphicsSystem>()
+                : null;
+            if (renderer == null)
+                return;
+
+            if (_registeredMeshes != null)
+            {
+                var unregistered = new HashSet<uint>();
+                for (int i = 0; i < _registeredMeshes.Length; i++)
+                {
+                    BatchMeshID id = _registeredMeshes[i];
+                    if (id.value != 0 && unregistered.Add(id.value))
+                        renderer.UnregisterMesh(id);
+                }
+            }
+
+            if (_registeredMaterials != null)
+            {
+                var unregistered = new HashSet<uint>();
+                for (int bucket = 0; bucket < _registeredMaterials.Length; bucket++)
+                {
+                    BatchMaterialID[] materials = _registeredMaterials[bucket];
+                    if (materials == null)
+                        continue;
+
+                    for (int i = 0; i < materials.Length; i++)
+                    {
+                        BatchMaterialID id = materials[i];
+                        if (id.value != 0 && unregistered.Add(id.value))
+                            renderer.UnregisterMaterial(id);
+                    }
+                }
+            }
+        }
+
+        static EntitiesGraphicsSystem RequireEntitiesGraphicsSystem(EntityManager entityManager)
+        {
+            var renderer = entityManager.World?.GetExistingSystemManaged<EntitiesGraphicsSystem>();
+            if (renderer == null)
+                throw new InvalidOperationException("[VVardenfell][ActorPresentation] EntitiesGraphicsSystem is unavailable; actor render assets cannot be registered.");
+            return renderer;
+        }
+
+        static void ResolveTexture(NativeArray<int2> texBucketInfo, int2 fallbackBucketSlice, int textureIndex, out int bucketIndex, out int textureSlice)
         {
             if (textureIndex >= 0
-                && WorldResources.TexBucketInfo.IsCreated
-                && (uint)textureIndex < (uint)WorldResources.TexBucketInfo.Length)
+                && texBucketInfo.IsCreated
+                && (uint)textureIndex < (uint)texBucketInfo.Length)
             {
-                int2 bucketSlice = WorldResources.TexBucketInfo[textureIndex];
+                int2 bucketSlice = texBucketInfo[textureIndex];
                 bucketIndex = math.max(0, bucketSlice.x);
                 textureSlice = math.max(0, bucketSlice.y);
                 return;
             }
 
-            bucketIndex = math.max(0, WorldResources.FallbackBucketSlice.x);
-            textureSlice = math.max(0, WorldResources.FallbackBucketSlice.y);
+            bucketIndex = math.max(0, fallbackBucketSlice.x);
+            textureSlice = math.max(0, fallbackBucketSlice.y);
         }
 
         static void CopyAlphaSettings(Material[] sourceMaterials, int bucket, int variant, int variantCount, Material material)
@@ -489,14 +642,14 @@ namespace VVardenfell.Runtime.Rendering
                 material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
         }
 
-        static ulong BuildSignature(ref ActorAnimationCatalogBlob catalog)
+        static ulong BuildSignature(CacheLoader cache, ref ActorAnimationCatalogBlob catalog)
         {
             ulong hash = 1469598103934665603UL;
             Add(ref hash, (uint)catalog.SkinMeshes.Length);
             Add(ref hash, (uint)catalog.SkinVertices.Length);
             Add(ref hash, (uint)catalog.SkinIndices.Length);
-            Add(ref hash, (uint)(WorldResources.RefBaseArrays?.Length ?? 0));
-            Add(ref hash, (uint)WorldResources.BlendVariantCount);
+            Add(ref hash, (uint)(cache?.RefBaseArrays?.Length ?? 0));
+            Add(ref hash, (uint)(cache?.BlendVariantCount ?? 0));
             return hash;
         }
 

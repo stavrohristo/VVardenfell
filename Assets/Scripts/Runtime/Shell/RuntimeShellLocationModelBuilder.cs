@@ -119,7 +119,7 @@ namespace VVardenfell.Runtime.Shell
             if (hasLoaded)
             {
                 var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
-                int loadedCount = loaded.Map.IsCreated ? loaded.Map.Count : 0;
+                int loadedCount = loaded.Streamed.IsCreated ? loaded.Streamed.Count : 0;
                 int activeCount = loaded.Active.IsCreated ? loaded.Active.Count : 0;
                 if (loadedCount != _lastLocationLoadedCount || activeCount != _lastLocationActiveCount)
                 {

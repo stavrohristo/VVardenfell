@@ -58,7 +58,6 @@ namespace VVardenfell.Runtime.Inventory
 
         public static void EnsureSessionInitialized(
             EntityManager entityManager,
-            DynamicBuffer<WorldJournalEntry> journal,
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
             Entity actor,
@@ -95,7 +94,7 @@ namespace VVardenfell.Runtime.Inventory
                 }
             }
 
-            WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
+            ScriptVisibleSaveStateUtility.ApplyContainerOverlay(entityManager, placedRefId, items);
         }
 
         static uint PlacedRefId(EntityManager entityManager, Entity entity)

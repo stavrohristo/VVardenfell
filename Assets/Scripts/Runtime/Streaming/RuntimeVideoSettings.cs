@@ -5,8 +5,8 @@ namespace VVardenfell.Runtime.Streaming
 {
     public struct RuntimeVideoSettings : IComponentData
     {
-        public const float DefaultFogDistanceScale = 0.15f;
-        public const float MinFogDistanceScale = 0.05f;
+        public const float DefaultFogDistanceScale = 0.6f;
+        public const float MinFogDistanceScale = 0.35f;
         public const float MaxFogDistanceScale = 1.25f;
 
         public float FogDistanceScale;

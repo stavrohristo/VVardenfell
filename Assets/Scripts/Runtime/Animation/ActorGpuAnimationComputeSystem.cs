@@ -8,7 +8,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Rendering;
 using UnityEngine;
-using VVardenfell.Runtime.Streaming;
+using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Animation
@@ -51,6 +51,7 @@ namespace VVardenfell.Runtime.Animation
         {
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<ActorAnimationRuntimeSettings>();
+            systemState.RequireForUpdate<RuntimeActorPresentationResources>();
             _gpuActorQuery = SystemAPI.QueryBuilder()
                 .WithAll<ActorGpuAnimationState, ActorSkeleton, ActorGpuAnimationRequest, ActorSkinMesh, ActorHeadAnimationState, ActorRenderVisible>()
                 .Build();
@@ -76,12 +77,9 @@ namespace VVardenfell.Runtime.Animation
             if (!catalogRef.IsCreated)
                 return;
 
-            var gpuResources = WorldResources.ActorGpuAnimation;
+            var gpuResources = RuntimeActorPresentationResources.Require(systemState.EntityManager).GpuAnimation;
             if (gpuResources == null)
-            {
-                gpuResources = new ActorGpuAnimationResources();
-                WorldResources.ActorGpuAnimation = gpuResources;
-            }
+                throw new InvalidOperationException("[VVardenfell][ActorGpuAnimation] Actor GPU animation resources are not loaded.");
 
             if (!gpuResources.IsSupported)
             {
@@ -169,8 +167,6 @@ namespace VVardenfell.Runtime.Animation
                 _offsets.Dispose();
             if (_totals.IsCreated)
                 _totals.Dispose();
-            WorldResources.ActorGpuAnimation?.Dispose();
-            WorldResources.ActorGpuAnimation = null;
         }
 
         static void EnsureScratchListLength<T>(ref NativeList<T> list, int length) where T : unmanaged

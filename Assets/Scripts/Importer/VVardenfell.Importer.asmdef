@@ -8,7 +8,9 @@
         "Unity.Collections",
         "Unity.Mathematics",
         "Unity.Burst",
-        "Unity.Transforms"
+        "Unity.Transforms",
+        "Unity.Entities.Graphics",
+        "Unity.Mathematics.Extensions"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

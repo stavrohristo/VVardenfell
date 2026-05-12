@@ -19,19 +19,11 @@ namespace VVardenfell.Runtime.Components
         public Entity ProxyEntity;
     }
 
-    public struct InteractionActivationProxyBuildPending : IComponentData
-    {
-    }
-
     public struct InteractionActivationProxyTag : IComponentData
     {
     }
 
     public struct InteractionActivationProxyFollowTag : IComponentData
-    {
-    }
-
-    public struct InteractionPickSurfaceTag : IComponentData
     {
     }
 
@@ -73,28 +65,6 @@ namespace VVardenfell.Runtime.Components
     {
         public Entity TargetEntity;
         public uint TargetPlacedRefId;
-    }
-
-    public struct DoorInteractable : IComponentData
-    {
-        public byte IsTeleport;
-        public FixedString128Bytes DestinationCellId;
-        public ulong DestinationCellHash;
-        public float3 DestinationPosition;
-        public quaternion DestinationRotation;
-    }
-
-    public struct DoorActivated : IComponentData, IEnableableComponent
-    {
-    }
-
-    public struct DoorMotionState : IComponentData
-    {
-        public float Progress;
-        public float TargetProgress;
-        public float RangeRadians;
-        public float SpeedRadiansPerSecond;
-        public byte Axis;
     }
 
     public struct PlayerInteractionFocus : IComponentData

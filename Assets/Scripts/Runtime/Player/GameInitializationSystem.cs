@@ -16,11 +16,13 @@ using VVardenfell.Runtime.Components;
 using VVardenfell.Runtime.Interactions;
 using VVardenfell.Runtime.Inventory;
 using VVardenfell.Runtime.Movement;
+using VVardenfell.Runtime.Physics;
 using VVardenfell.Runtime.Rendering;
 using VVardenfell.Runtime.WorldState;
 using VVardenfell.Runtime.Shell;
 using VVardenfell.Runtime.Streaming;
 using VVardenfell.Runtime.Systems;
+using VVardenfell.Runtime.WorldRefs;
 
 namespace VVardenfell.Runtime.Player
 {
@@ -89,6 +91,8 @@ namespace VVardenfell.Runtime.Player
             systemState.RequireForUpdate<LogicalRefLookup>();
             systemState.RequireForUpdate<LoadedCellsMap>();
             systemState.RequireForUpdate<AvailableCells>();
+            systemState.RequireForUpdate<RuntimeSectionRegistry>();
+            systemState.RequireForUpdate<RuntimePhysicsMutationQueueTag>();
             systemState.RequireForUpdate<MainCameraSingleton>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
         }
@@ -167,6 +171,9 @@ namespace VVardenfell.Runtime.Player
                 if (!WorldSaveReplayUtility.TryRestoreContinueSave(systemState.World, em, ref init, out string loadError))
                     throw new System.InvalidOperationException($"[VVardenfell][Save] continue load failed. {loadError}");
             }
+
+            EnsurePlayerSpawnSectionReady(ref systemState, em, init);
+
             var standingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.StandingHeight);
             var crouchingBlob = CreatePlayerCapsule(init.PlayerSettings.Radius, init.PlayerSettings.CrouchingHeight);
             var attributes = init.PlayerActorStats.Attributes;
@@ -556,6 +563,134 @@ namespace VVardenfell.Runtime.Player
                 streamingConfig.ExteriorStreamingPaused = false;
             }
             em.SetComponentData(streamingEntity, streamingConfig);
+        }
+
+        void EnsurePlayerSpawnSectionReady(
+            ref SystemState systemState,
+            EntityManager em,
+            in GameInitializationSingleton init)
+        {
+            Entity streamingEntity = SystemAPI.GetSingletonEntity<StreamingConfig>();
+            var config = em.GetComponentData<StreamingConfig>(streamingEntity);
+            var loaded = em.GetComponentData<LoadedCellsMap>(streamingEntity);
+            var registry = em.GetComponentData<RuntimeSectionRegistry>(streamingEntity);
+            var logicalRefs = em.GetComponentData<LogicalRefLookup>(streamingEntity);
+            var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
+
+            Entity spawnSection;
+            string spawnLabel;
+            if (transition.InteriorActive != 0)
+            {
+                if (transition.ActiveInteriorCellHash == 0UL)
+                    throw new System.InvalidOperationException("[VVardenfell][Streaming] Player spawn blocked: active interior state has no cell hash.");
+                if (!registry.InteriorSectionsByHash.IsCreated
+                    || !registry.InteriorSectionsByHash.TryGetValue(transition.ActiveInteriorCellHash, out spawnSection)
+                    || spawnSection == Entity.Null
+                    || !em.Exists(spawnSection))
+                {
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: interior 0x{transition.ActiveInteriorCellHash:X16} is not loaded.");
+                }
+
+                spawnLabel = $"interior 0x{transition.ActiveInteriorCellHash:X16}";
+            }
+            else
+            {
+                var spawnCell = WorldBootstrap.WorldPositionToCell(init.PlayerPosition);
+                var exteriorSections = RequireExteriorSections(systemState.World);
+                bool loadedSection = loaded.Streamed.IsCreated && loaded.Streamed.Contains(spawnCell);
+                if (!loadedSection)
+                {
+                    if (!exteriorSections.LoadAndMaterializeExterior(
+                            spawnCell,
+                            ref loaded,
+                            ref registry,
+                            ref logicalRefs,
+                            active: true,
+                            gateTerrainByRadius: config.GateTerrainByRadius))
+                    {
+                        throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: exterior cell ({spawnCell.x},{spawnCell.y}) is not loaded.");
+                    }
+                }
+                else
+                {
+                    exteriorSections.SetExteriorCellActiveState(spawnCell, active: true, config.GateTerrainByRadius);
+                    if (loaded.Active.IsCreated && loaded.Active.Add(spawnCell))
+                    {
+                        loaded.ActiveRevision++;
+                        if (!registry.ExteriorSections.IsCreated
+                            || !registry.ExteriorSections.TryGetValue(spawnCell, out Entity activatedSection)
+                            || activatedSection == Entity.Null
+                            || !em.Exists(activatedSection))
+                        {
+                            throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: exterior cell ({spawnCell.x},{spawnCell.y}) has no section root.");
+                        }
+                        ActiveExplicitRefLookupLifecycleUtility.QueueSectionChange(em, activatedSection, true);
+                    }
+                    if (loaded.SectionStates.IsCreated)
+                        loaded.SectionStates[spawnCell] = (byte)CellSectionLoadState.Active;
+                }
+
+                if (!registry.ExteriorSections.IsCreated
+                    || !registry.ExteriorSections.TryGetValue(spawnCell, out spawnSection)
+                    || spawnSection == Entity.Null
+                    || !em.Exists(spawnSection))
+                {
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: exterior cell ({spawnCell.x},{spawnCell.y}) has no section root.");
+                }
+
+                em.SetComponentData(streamingEntity, loaded);
+                em.SetComponentData(streamingEntity, registry);
+                em.SetComponentData(streamingEntity, logicalRefs);
+                spawnLabel = $"exterior cell ({spawnCell.x},{spawnCell.y})";
+            }
+
+            FlushQueuedPhysicsMutations(systemState.World);
+            RequireSectionReadyForPlayerSpawn(em, spawnSection, spawnLabel);
+        }
+
+        static CellLoadWorkerSystem RequireExteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new System.InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
+        }
+
+        static void FlushQueuedPhysicsMutations(World world)
+        {
+            SystemHandle system = world.Unmanaged.GetExistingUnmanagedSystem<RuntimePhysicsMutationApplySystem>();
+            if (system.Equals(SystemHandle.Null))
+                throw new System.InvalidOperationException("[VVardenfell][Physics] RuntimePhysicsMutationApplySystem is unavailable.");
+
+            system.Update(world.Unmanaged);
+        }
+
+        static void RequireSectionReadyForPlayerSpawn(EntityManager em, Entity sectionEntity, string label)
+        {
+            if (sectionEntity == Entity.Null || !em.Exists(sectionEntity))
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} section root is missing.");
+            if (!em.HasComponent<RuntimeCellSectionResourcesBound>(sectionEntity)
+                || !em.IsComponentEnabled<RuntimeCellSectionResourcesBound>(sectionEntity))
+            {
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} resources are not bound.");
+            }
+            if (!em.HasBuffer<RuntimeCellSectionColliderEntity>(sectionEntity))
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} has no collider buffer; rebake required.");
+
+            var colliders = em.GetBuffer<RuntimeCellSectionColliderEntity>(sectionEntity);
+            if (colliders.Length == 0)
+                throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} has no collider entities.");
+
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                Entity entity = colliders[i].Value;
+                if (entity == Entity.Null || !em.Exists(entity))
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} collider buffer references a missing entity; rebake required.");
+                if (!em.HasComponent<RuntimeColliderSource>(entity))
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} collider entity is missing RuntimeColliderSource.");
+                if (!em.HasComponent<PhysicsCollider>(entity))
+                    throw new System.InvalidOperationException($"[VVardenfell][Streaming] Player spawn blocked: {label} collider entity is not physics-enabled.");
+            }
         }
 
         void ClearInitializationRequests(ref SystemState systemState, 

@@ -12,6 +12,7 @@ namespace VVardenfell.Core.Cache
         public float BoundsExtentsX;
         public float BoundsExtentsY;
         public float BoundsExtentsZ;
+        public int GlobalMeshIndex = -1;
         public int VertexCount;
         public int IndexCount;
         public uint MeshFlags;

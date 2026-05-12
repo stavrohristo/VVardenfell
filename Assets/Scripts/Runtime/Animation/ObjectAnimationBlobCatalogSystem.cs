@@ -9,9 +9,12 @@ namespace VVardenfell.Runtime.Animation
     [UpdateInGroup(typeof(MorrowindPresentationBuildSystemGroup), OrderFirst = true)]
     public partial struct ObjectAnimationBlobCatalogSystem : ISystem
     {
+        EntityQuery _materializationResourcesQuery;
+
         public void OnCreate(ref SystemState systemState)
         {
             systemState.RequireForUpdate<ObjectAnimationBlobCatalogBootstrapRequest>();
+            _materializationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeMaterializationResources>());
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -22,7 +25,10 @@ namespace VVardenfell.Runtime.Animation
                 return;
             }
 
-            var catalog = WorldResources.Cache?.ModelPrefabCatalog;
+            if (_materializationResourcesQuery.IsEmptyIgnoreFilter)
+                return;
+
+            var catalog = RuntimeMaterializationResources.Require(systemState.EntityManager).Cache?.ModelPrefabCatalog;
             if (catalog?.Records == null)
                 return;
 

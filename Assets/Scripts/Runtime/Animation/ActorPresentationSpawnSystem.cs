@@ -29,22 +29,29 @@ namespace VVardenfell.Runtime.Animation
         {
             systemState.RequireForUpdate<ActorAnimationBlobCatalog>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeMaterializationResources>();
         }
 
         public void OnUpdate(ref SystemState systemState)
         {
-            CacheLoader cache = WorldResources.Cache;
+            RuntimeMaterializationResources materializationResources = RuntimeMaterializationResources.Require(systemState.EntityManager);
+            CacheLoader cache = materializationResources.Cache;
             var blobRef = SystemAPI.GetSingleton<ActorAnimationBlobCatalog>().Blob;
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
 
             ref var catalog = ref blobRef.Value;
-            PrebuildRigidEquipmentPrefabs(ref systemState, ref contentBlob);
-            var actorRenderResources = WorldResources.ActorEntitiesGraphicsRenderer ?? new ActorEntitiesGraphicsRenderResources();
-            WorldResources.ActorEntitiesGraphicsRenderer = actorRenderResources;
-            actorRenderResources.Ensure(systemState.EntityManager, ref catalog);
-            var gpuAnimationResources = WorldResources.ActorGpuAnimation ?? new ActorGpuAnimationResources();
-            WorldResources.ActorGpuAnimation = gpuAnimationResources;
+            PrebuildRigidEquipmentPrefabs(ref systemState, materializationResources, ref contentBlob);
+            var actorPresentationResources = RuntimeActorPresentationResources.Require(systemState.EntityManager);
+            var actorRenderResources = actorPresentationResources.EntitiesGraphicsRenderer;
+            if (actorRenderResources == null)
+                throw new InvalidOperationException("[VVardenfell][ActorPresentation] Actor Entities Graphics resources are not loaded.");
+            actorRenderResources.Ensure(systemState.EntityManager, cache, ref catalog);
+            var gpuAnimationResources = actorPresentationResources.GpuAnimation;
+            if (gpuAnimationResources == null)
+                throw new InvalidOperationException("[VVardenfell][ActorPresentation] Actor GPU animation resources are not loaded.");
 
+            bool hasLoadedCells = SystemAPI.TryGetSingleton<LoadedCellsMap>(out var loadedCells);
+            bool hasInteriorTransition = SystemAPI.TryGetSingleton<InteriorTransitionState>(out var interiorTransition);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var (source, entity) in
                      SystemAPI.Query<RefRO<ActorSpawnSource>>()
@@ -126,15 +133,31 @@ namespace VVardenfell.Runtime.Animation
                 ecb.AddBuffer<ActorGpuAnimationRequest>(entity);
                 ecb.AddBuffer<ActorAnimationOverlayState>(entity);
                 ecb.AddBuffer<ActorAnimationEvent>(entity);
+                bool initialVisible = ResolveInitialActorVisible(
+                    ref systemState,
+                    entity,
+                    hasLoadedCells,
+                    loadedCells,
+                    hasInteriorTransition,
+                    interiorTransition);
                 if (!systemState.EntityManager.HasComponent<ActorRenderVisible>(entity))
                 {
                     ecb.AddComponent<ActorRenderVisible>(entity);
-                    ecb.SetComponentEnabled<ActorRenderVisible>(entity, true);
+                    ecb.SetComponentEnabled<ActorRenderVisible>(entity, initialVisible);
                 }
+                else
+                {
+                    ecb.SetComponentEnabled<ActorRenderVisible>(entity, initialVisible);
+                }
+
                 if (!systemState.EntityManager.HasComponent<ActorShadowCasterVisible>(entity))
                 {
                     ecb.AddComponent<ActorShadowCasterVisible>(entity);
-                    ecb.SetComponentEnabled<ActorShadowCasterVisible>(entity, true);
+                    ecb.SetComponentEnabled<ActorShadowCasterVisible>(entity, initialVisible);
+                }
+                else
+                {
+                    ecb.SetComponentEnabled<ActorShadowCasterVisible>(entity, initialVisible);
                 }
                 var boneBuffer = ecb.AddBuffer<ActorBone>(entity);
                 PopulateBoneBuffer(boneBuffer, ref catalog, skeletonIndex);
@@ -196,6 +219,7 @@ namespace VVardenfell.Runtime.Animation
                     ref ecb,
                     entity,
                     rigidEquipment,
+                    materializationResources,
                     ref catalog,
                     skeletonIndex,
                     ref contentBlob,
@@ -238,6 +262,39 @@ namespace VVardenfell.Runtime.Animation
 
         static int ResolveBoneCount(ref ActorAnimationCatalogBlob catalog, int skeletonIndex)
             => ActorAnimationCatalogRuntimeUtility.ResolveBoneCount(ref catalog, skeletonIndex);
+
+        static bool ResolveInitialActorVisible(
+            ref SystemState systemState,
+            Entity entity,
+            bool hasLoadedCells,
+            in LoadedCellsMap loaded,
+            bool hasInteriorTransition,
+            in InteriorTransitionState transition)
+        {
+            if (systemState.EntityManager.HasComponent<PlacedRefRuntimeState>(entity)
+                && systemState.EntityManager.GetComponentData<PlacedRefRuntimeState>(entity).Disabled != 0)
+            {
+                return false;
+            }
+
+            if (!systemState.EntityManager.HasComponent<LogicalRefLocation>(entity))
+                return true;
+
+            var location = systemState.EntityManager.GetComponentData<LogicalRefLocation>(entity);
+            if (location.IsInterior != 0)
+            {
+                if (!hasInteriorTransition)
+                    return true;
+
+                return transition.InteriorActive != 0
+                       && transition.ActiveInteriorCellHash == location.InteriorCellHash;
+            }
+
+            if (!hasLoadedCells)
+                return true;
+
+            return loaded.Active.IsCreated && loaded.Active.Contains(location.ExteriorCell);
+        }
 
         static int ResolveRuntimeNpcRigFamilyIndex(ref ActorAnimationCatalogBlob catalog, bool firstPerson, bool female, bool beast)
         {
@@ -392,6 +449,11 @@ namespace VVardenfell.Runtime.Animation
                 int renderMeshIndex = skinMeshes[i].RigidMirrorX != 0 && info.MirroredMeshIndex >= 0
                     ? info.MirroredMeshIndex
                     : info.MeshIndex;
+                MaterialMeshInfo materialMeshInfo = renderResources.RequireMaterialMeshInfo(
+                    info.BucketIndex,
+                    info.MaterialIndex,
+                    renderMeshIndex,
+                    $"Actor skin mesh {skinMeshIndex}");
                 byte visibilityMode = localPlayerVisual && IsFirstPersonCameraHiddenPart(skinMeshes[i].PartReference)
                     ? ActorRenderMeshVisibilityMode.FirstPersonCameraHidden
                     : ActorRenderMeshVisibilityMode.Normal;
@@ -400,8 +462,7 @@ namespace VVardenfell.Runtime.Animation
                     actorEntity,
                     child,
                     skinMeshIndex,
-                    renderMeshIndex,
-                    info.MaterialIndex,
+                    materialMeshInfo,
                     info.TextureSlice,
                     vertexCursor,
                     initialLocalToWorld,
@@ -425,8 +486,7 @@ namespace VVardenfell.Runtime.Animation
                         actorEntity,
                         shadowOnlyChild,
                         skinMeshIndex,
-                        renderMeshIndex,
-                        info.MaterialIndex,
+                        materialMeshInfo,
                         info.TextureSlice,
                         vertexCursor,
                         initialLocalToWorld,
@@ -446,8 +506,7 @@ namespace VVardenfell.Runtime.Animation
             Entity actorEntity,
             Entity child,
             int skinMeshIndex,
-            int renderMeshIndex,
-            int materialIndex,
+            MaterialMeshInfo materialMeshInfo,
             int textureSlice,
             int vertexCursor,
             LocalToWorld initialLocalToWorld,
@@ -466,7 +525,7 @@ namespace VVardenfell.Runtime.Animation
             else
                 ecb.AddComponent(child, initialLocalToWorld);
             ecb.AddComponent(child, new Parent { Value = actorEntity });
-            SetOrAdd(ref ecb, child, prototypeComponents.HasMaterialMeshInfo, MaterialMeshInfo.FromRenderMeshArrayIndices(materialIndex, renderMeshIndex));
+            SetOrAdd(ref ecb, child, prototypeComponents.HasMaterialMeshInfo, materialMeshInfo);
             SetOrAdd(ref ecb, child, prototypeComponents.HasTextureSlice, new TextureSlice { Value = textureSlice });
             SetOrAdd(ref ecb, child, prototypeComponents.HasActorDeformedMeshIndex, new ActorDeformedMeshIndex { Value = vertexCursor });
             SetOrAdd(ref ecb, child, prototypeComponents.HasRenderBounds, new RenderBounds
@@ -1196,12 +1255,11 @@ namespace VVardenfell.Runtime.Animation
             return true;
         }
 
-        void PrebuildRigidEquipmentPrefabs(ref SystemState systemState, ref RuntimeContentBlob contentBlob)
+        void PrebuildRigidEquipmentPrefabs(ref SystemState systemState, RuntimeMaterializationResources materializationResources, ref RuntimeContentBlob contentBlob)
         {
             s_RigidEquipmentPrefabBuildSet.Clear();
-            if (WorldResources.Cache == null
-                || WorldResources.SpawnableItemPrefabs == null
-                || WorldResources.ModelPrefabs == null)
+            if (materializationResources?.SpawnableItemPrefabs == null
+                || materializationResources.ModelPrefabs == null)
             {
                 return;
             }
@@ -1230,10 +1288,10 @@ namespace VVardenfell.Runtime.Animation
                     if (!ShouldSpawnRigidEquipmentAtPresentation(itemEquipment))
                         continue;
 
-                    if ((uint)itemHandle.Index >= (uint)WorldResources.SpawnableItemPrefabs.Length)
+                    if ((uint)itemHandle.Index >= (uint)materializationResources.SpawnableItemPrefabs.Length)
                         continue;
 
-                    var descriptor = WorldResources.SpawnableItemPrefabs[itemHandle.Index];
+                    var descriptor = materializationResources.SpawnableItemPrefabs[itemHandle.Index];
                     if (descriptor.IsSupported)
                         s_RigidEquipmentPrefabBuildSet.Add(descriptor.ModelPrefabIndex);
                 }
@@ -1241,8 +1299,8 @@ namespace VVardenfell.Runtime.Animation
 
             foreach (int modelPrefabIndex in s_RigidEquipmentPrefabBuildSet)
             {
-                if ((uint)modelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length
-                    || WorldResources.ModelPrefabs[modelPrefabIndex] == Entity.Null)
+                if ((uint)modelPrefabIndex >= (uint)materializationResources.ModelPrefabs.Length
+                    || materializationResources.ModelPrefabs[modelPrefabIndex] == Entity.Null)
                 {
                     throw new System.InvalidOperationException(
                         $"[VVardenfell][SpawnPrefabs] rigid equipment model prefab {modelPrefabIndex} is not loaded; rebake required.");
@@ -1254,13 +1312,14 @@ namespace VVardenfell.Runtime.Animation
             ref EntityCommandBuffer ecb,
             Entity actorEntity,
             NativeList<ActorRigidEquipment> rigidEquipment,
+            RuntimeMaterializationResources materializationResources,
             ref ActorAnimationCatalogBlob catalog,
             int skeletonIndex,
             ref RuntimeContentBlob contentBlob,
             bool hasEquipment,
             DynamicBuffer<ActorEquipmentSlot> equipment)
         {
-            if (!hasEquipment || WorldResources.ModelPrefabs == null)
+            if (!hasEquipment || materializationResources?.ModelPrefabs == null)
                 return;
 
             LocalTransform initialTransform = systemState.EntityManager.HasComponent<LocalTransform>(actorEntity)
@@ -1282,14 +1341,14 @@ namespace VVardenfell.Runtime.Animation
                 if (!ShouldSpawnRigidEquipmentAtPresentation(itemEquipment))
                     continue;
 
-                if ((uint)itemHandle.Index >= (uint)(WorldResources.SpawnableItemPrefabs?.Length ?? 0))
+                if ((uint)itemHandle.Index >= (uint)(materializationResources.SpawnableItemPrefabs?.Length ?? 0))
                     continue;
 
-                var descriptor = WorldResources.SpawnableItemPrefabs[itemHandle.Index];
+                var descriptor = materializationResources.SpawnableItemPrefabs[itemHandle.Index];
                 if (!descriptor.IsSupported)
                     continue;
 
-                Entity prefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
+                Entity prefab = materializationResources.ModelPrefabs[descriptor.ModelPrefabIndex];
                 if (prefab == Entity.Null || !systemState.EntityManager.Exists(prefab))
                     continue;
 

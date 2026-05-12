@@ -17,7 +17,7 @@ namespace VVardenfell.Importer.Bake
     {
         public const uint MagicMesh = 0x4853454Du; // 'MESH'
         private const uint MagicCatalog = 0x5441434Du; // 'MCAT'
-        private const uint CatalogVersion = 2u;
+        private const uint CatalogVersion = 3u;
         [ThreadStatic] private static SHA256 s_threadSha256;
 
         private readonly object _gate = new object();
@@ -148,6 +148,20 @@ namespace VVardenfell.Importer.Bake
             return AddOrGetEncoded(sourceLabel, payload, payloadHash);
         }
 
+        public int AddOrGetRaw(
+            string sourceLabel,
+            Vector3[] vertices,
+            Vector3[] sourceNormals,
+            Vector2[] uv0,
+            Vector2[] uv1,
+            int[] indices,
+            Bounds bounds)
+        {
+            byte[] payload = EncodePayload(sourceLabel, vertices, sourceNormals, uv0, uv1, indices, bounds);
+            string payloadHash = ComputePayloadHash(payload);
+            return AddOrGetEncoded(sourceLabel, payload, payloadHash);
+        }
+
         public int AddOrGetEncoded(string sourceLabel, byte[] payload, string payloadHash)
         {
             sourceLabel ??= string.Empty;
@@ -213,39 +227,58 @@ namespace VVardenfell.Importer.Bake
         }
 
         public static byte[] EncodePayload(in NifMeshBuilder.RawBuiltMesh bm)
+            => EncodePayload(bm.Name, bm.Vertices, bm.Normals, bm.HasUvs ? bm.Uvs : null, null, bm.Indices, bm.LocalBounds);
+
+        public static byte[] EncodePayload(
+            string name,
+            Vector3[] vertices,
+            Vector3[] sourceNormals,
+            Vector2[] uv0,
+            Vector2[] uv1,
+            int[] indices,
+            Bounds bounds)
         {
-            bool hasNormals = bm.HasNormals;
-            bool hasUVs = bm.HasUvs;
-            bool index32 = bm.VertexCount > 65535;
-            Vector3[] normals = hasNormals
-                ? bm.Normals
-                : BuildFallbackNormals(bm.Vertices, bm.Indices);
-            hasNormals = normals != null && normals.Length == bm.VertexCount;
+            int vertexCount = vertices?.Length ?? 0;
+            if (vertexCount == 0)
+                throw new InvalidDataException($"Baked mesh '{name}' has no vertices.");
+            if (indices == null || indices.Length == 0)
+                throw new InvalidDataException($"Baked mesh '{name}' has no indices.");
+
+            bool hasNormals = sourceNormals != null && sourceNormals.Length == vertexCount;
+            bool hasUVs = uv0 != null && uv0.Length == vertexCount;
+            bool hasUV1 = uv1 != null && uv1.Length == vertexCount;
+            bool index32 = vertexCount > 65535;
+            Vector3[] finalNormals = hasNormals
+                ? sourceNormals
+                : BuildFallbackNormals(vertices, indices);
+            hasNormals = finalNormals != null && finalNormals.Length == vertexCount;
 
             if (!hasNormals)
-                throw new InvalidDataException($"Baked mesh '{bm.Name}' is missing normals.");
+                throw new InvalidDataException($"Baked mesh '{name}' is missing normals.");
 
             uint flags = 0;
             if (hasNormals) flags |= CacheFormat.MeshFlagHasNormals;
             if (hasUVs) flags |= CacheFormat.MeshFlagHasUVs;
+            if (hasUV1) flags |= CacheFormat.MeshFlagHasUV1;
             if (index32) flags |= CacheFormat.MeshFlagIndex32;
 
             int vertexStride = 12;
             if (hasNormals) vertexStride += 12;
             if (hasUVs) vertexStride += 8;
+            if (hasUV1) vertexStride += 8;
 
-            int vertexDataBytes = checked(bm.VertexCount * vertexStride);
+            int vertexDataBytes = checked(vertexCount * vertexStride);
             int indexStride = index32 ? 4 : 2;
-            int indexDataBytes = checked(bm.Indices.Length * indexStride);
+            int indexDataBytes = checked(indices.Length * indexStride);
             int totalBytes = checked(44 + vertexDataBytes + indexDataBytes);
             byte[] payload = new byte[totalBytes];
             int offset = 0;
 
-            WriteUInt32(payload, ref offset, (uint)bm.VertexCount);
-            WriteUInt32(payload, ref offset, (uint)bm.Indices.Length);
+            WriteUInt32(payload, ref offset, (uint)vertexCount);
+            WriteUInt32(payload, ref offset, (uint)indices.Length);
             WriteUInt32(payload, ref offset, flags);
 
-            var b = bm.LocalBounds;
+            var b = bounds;
             WriteSingle(payload, ref offset, b.center.x);
             WriteSingle(payload, ref offset, b.center.y);
             WriteSingle(payload, ref offset, b.center.z);
@@ -255,33 +288,38 @@ namespace VVardenfell.Importer.Bake
             WriteUInt32(payload, ref offset, (uint)vertexDataBytes);
             WriteUInt32(payload, ref offset, (uint)indexDataBytes);
 
-            for (int i = 0; i < bm.VertexCount; i++)
+            for (int i = 0; i < vertexCount; i++)
             {
-                WriteSingle(payload, ref offset, bm.Vertices[i].x);
-                WriteSingle(payload, ref offset, bm.Vertices[i].y);
-                WriteSingle(payload, ref offset, bm.Vertices[i].z);
+                WriteSingle(payload, ref offset, vertices[i].x);
+                WriteSingle(payload, ref offset, vertices[i].y);
+                WriteSingle(payload, ref offset, vertices[i].z);
                 if (hasNormals)
                 {
-                    WriteSingle(payload, ref offset, normals[i].x);
-                    WriteSingle(payload, ref offset, normals[i].y);
-                    WriteSingle(payload, ref offset, normals[i].z);
+                    WriteSingle(payload, ref offset, finalNormals[i].x);
+                    WriteSingle(payload, ref offset, finalNormals[i].y);
+                    WriteSingle(payload, ref offset, finalNormals[i].z);
                 }
                 if (hasUVs)
                 {
-                    WriteSingle(payload, ref offset, bm.Uvs[i].x);
-                    WriteSingle(payload, ref offset, bm.Uvs[i].y);
+                    WriteSingle(payload, ref offset, uv0[i].x);
+                    WriteSingle(payload, ref offset, uv0[i].y);
+                }
+                if (hasUV1)
+                {
+                    WriteSingle(payload, ref offset, uv1[i].x);
+                    WriteSingle(payload, ref offset, uv1[i].y);
                 }
             }
 
             if (index32)
             {
-                for (int i = 0; i < bm.Indices.Length; i++)
-                    WriteUInt32(payload, ref offset, (uint)bm.Indices[i]);
+                for (int i = 0; i < indices.Length; i++)
+                    WriteUInt32(payload, ref offset, (uint)indices[i]);
             }
             else
             {
-                for (int i = 0; i < bm.Indices.Length; i++)
-                    WriteUInt16(payload, ref offset, (ushort)bm.Indices[i]);
+                for (int i = 0; i < indices.Length; i++)
+                    WriteUInt16(payload, ref offset, (ushort)indices[i]);
             }
 
             return payload;

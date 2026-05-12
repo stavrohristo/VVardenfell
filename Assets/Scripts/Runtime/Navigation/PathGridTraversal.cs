@@ -13,82 +13,14 @@ using VVardenfell.Runtime.Systems;
 
 namespace VVardenfell.Runtime.Pathfinding
 {
-    public enum PathGridTraversalStatus : byte
-    {
-        Idle = 0,
-        RequestingPath = 1,
-        Traversing = 2,
-        Reached = 3,
-        Failed = 4,
-        Canceled = 5,
-    }
-
-    public struct PathGridTraversalSettings : IComponentData
-    {
-        public float NodeArrivalDistance;
-        public float FinalArrivalDistance;
-        public float FacingSharpness;
-        public int MaxFineIterations;
-        public int MaxAbstractIterations;
-        public byte AllowPartial;
-        public byte Run;
-        public byte FacePath;
-
-        public static PathGridTraversalSettings Defaults => new PathGridTraversalSettings
-        {
-            NodeArrivalDistance = 0.35f,
-            FinalArrivalDistance = 0.45f,
-            FacingSharpness = 12f,
-            MaxFineIterations = 4096,
-            MaxAbstractIterations = 4096,
-            AllowPartial = 0,
-            Run = 0,
-            FacePath = 1,
-        };
-    }
-
-    public struct PathGridTraversalPendingRequest : IComponentData, IEnableableComponent
-    {
-        public int StartNodeIndex;
-        public int GoalNodeIndex;
-        public float3 FinalTargetPosition;
-        public int MaxFineIterations;
-        public int MaxAbstractIterations;
-        public byte AllowPartial;
-        public byte Run;
-        public byte UseFinalTargetPosition;
-    }
-
-    public struct PathGridTraversalAwaitingResult : IComponentData, IEnableableComponent
-    {
-    }
-
-    public struct PathGridTraversalState : IComponentData
-    {
-        public int ActivePathRequestId;
-        public int CurrentNodeOffset;
-        public int PathNodeCount;
-        public int LastStartNodeIndex;
-        public int LastGoalNodeIndex;
-        public float PathCost;
-        public float3 FinalTargetPosition;
-        public byte Status;
-        public byte UsedAbstractRoute;
-        public byte ReachedGoal;
-        public byte Run;
-        public byte UseFinalTargetPosition;
-    }
-
-    public struct PathGridTraversalNode : IBufferElementData
-    {
-        public int NodeIndex;
-    }
-
     public static class PathGridTraversalBridge
     {
         static World s_SettingsQueryWorld;
         static EntityQuery s_SettingsQuery;
         static bool s_SettingsQueryCreated;
+        static World s_NavigationQueryWorld;
+        static EntityQuery s_NavigationQuery;
+        static bool s_NavigationQueryCreated;
 
         public static bool TryRequestNodeTraversal(
             Entity owner,
@@ -166,10 +98,8 @@ namespace VVardenfell.Runtime.Pathfinding
             int maxFineIterations = 0,
             int maxAbstractIterations = 0)
         {
-            var navigation = WorldResources.PathGridNavigation;
-            if (!navigation.IsCreated)
+            if (!TryGetNavigation(out var navigation, out error))
             {
-                error = "Pathgrid navigation world is not ready.";
                 return false;
             }
 
@@ -194,6 +124,42 @@ namespace VVardenfell.Runtime.Pathfinding
                 run,
                 maxFineIterations,
                 maxAbstractIterations);
+        }
+
+        static bool TryGetNavigation(out PathGridNavigationWorld navigation, out string error)
+        {
+            navigation = default;
+            if (!TryGetWorld(out var entityManager, out error))
+                return false;
+
+            EntityQuery query = GetNavigationQuery(entityManager);
+            if (query.CalculateEntityCount() != 1)
+            {
+                error = "Pathgrid navigation resource is not ready.";
+                return false;
+            }
+
+            navigation = query.GetSingleton<RuntimePathGridNavigationResource>().Navigation;
+            if (!navigation.IsCreated)
+            {
+                error = "Pathgrid navigation world is not ready.";
+                return false;
+            }
+
+            error = null;
+            return true;
+        }
+
+        static EntityQuery GetNavigationQuery(EntityManager entityManager)
+        {
+            World world = entityManager.World;
+            if (s_NavigationQueryCreated && s_NavigationQueryWorld == world)
+                return s_NavigationQuery;
+
+            s_NavigationQueryWorld = world;
+            s_NavigationQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<RuntimePathGridNavigationResource>());
+            s_NavigationQueryCreated = true;
+            return s_NavigationQuery;
         }
 
         public static bool TryCancelTraversal(Entity owner, out string error)
@@ -626,11 +592,12 @@ namespace VVardenfell.Runtime.Pathfinding
             _deadHandle = state.GetComponentTypeHandle<ActorDead>(isReadOnly: true);
             _pathNodeHandle = state.GetBufferTypeHandle<PathGridTraversalNode>(isReadOnly: true);
             state.RequireForUpdate<PathGridTraversalSettings>();
+            state.RequireForUpdate<RuntimePathGridNavigationResource>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
-            var navigation = WorldResources.PathGridNavigation;
+            var navigation = SystemAPI.GetSingleton<RuntimePathGridNavigationResource>().Navigation;
             if (!navigation.IsCreated)
                 return;
 

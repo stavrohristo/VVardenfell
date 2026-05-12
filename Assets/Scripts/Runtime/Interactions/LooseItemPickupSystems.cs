@@ -53,7 +53,6 @@ namespace VVardenfell.Runtime.Interactions
             RequireForUpdate<InteractionAudioRequest>();
             RequireForUpdate(_playerInventoryQuery);
             RequireForUpdate<PickedItemRecord>();
-            RequireForUpdate<WorldJournalEntry>();
             RequireForUpdate<RuntimeContentBlobReference>();
         }
 
@@ -107,7 +106,7 @@ namespace VVardenfell.Runtime.Interactions
                         ? new ItemDefHandle { Value = content.HandleValue }
                         : default,
                 });
-                WorldJournalUtility.AppendLooseItemRemoved(EntityManager, targetPlacedRefId, content);
+                ScriptVisibleSaveStateUtility.UpsertRemoved(EntityManager, targetPlacedRefId, content, 1);
             }
 
             TryQueueInteractionAudio(target, InteractionAudioKind.LooseItem, "item");

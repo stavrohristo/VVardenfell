@@ -157,13 +157,6 @@ namespace VVardenfell.Runtime.Animation
         SpellCasting = 6,
     }
 
-    public enum ActorWeaponAttackType : byte
-    {
-        Chop = 0,
-        Slash = 1,
-        Thrust = 2,
-    }
-
     public struct ActorWeaponAnimationState : IComponentData
     {
         public ContentReference WeaponContent;

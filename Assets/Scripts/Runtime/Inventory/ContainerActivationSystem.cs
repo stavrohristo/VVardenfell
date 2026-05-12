@@ -27,7 +27,6 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate<ContainerWindowRequest>();
             systemState.RequireForUpdate<ContainerSessionHeader>();
             systemState.RequireForUpdate<ContainerSessionItem>();
-            systemState.RequireForUpdate<WorldJournalEntry>();
             systemState.RequireForUpdate<PlayerInteractionFocus>();
             systemState.RequireForUpdate<InteractionActivationResult>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
@@ -68,21 +67,20 @@ namespace VVardenfell.Runtime.Inventory
             ref RuntimeContentBlob contentBlob = ref SystemAPI.GetSingleton<RuntimeContentBlobReference>().Blob.Value;
             var headers = SystemAPI.GetSingletonBuffer<ContainerSessionHeader>();
             var items = SystemAPI.GetSingletonBuffer<ContainerSessionItem>();
-            var journal = SystemAPI.GetSingletonBuffer<WorldJournalEntry>();
             int playerLevel = MorrowindLeveledItemResolverUtility.ResolvePlayerLevel(systemState.EntityManager);
             ContainerDefHandle definition = default;
             string title;
             if (isCorpse)
             {
                 ActorCorpseLootUtility.RequireDeadLootableActor(systemState.EntityManager, target, placedRefId);
-                ActorCorpseLootUtility.EnsureSessionInitialized(systemState.EntityManager, journal, headers, items, target, placedRefId);
+                ActorCorpseLootUtility.EnsureSessionInitialized(systemState.EntityManager, headers, items, target, placedRefId);
                 title = ActorCorpseLootUtility.ResolveTitle(ref contentBlob, systemState.EntityManager, target);
             }
             else
             {
                 var authoring = systemState.EntityManager.GetComponentData<ContainerAuthoring>(target);
                 definition = authoring.Definition;
-                EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, definition, playerLevel);
+                EnsureContainerSessionInitialized(systemState.EntityManager, ref contentBlob, headers, items, placedRefId, definition, playerLevel);
                 title = ContainerLootUtility.ResolveContainerTitle(ref contentBlob, definition);
             }
 
@@ -106,8 +104,8 @@ namespace VVardenfell.Runtime.Inventory
         }
 
         static void EnsureContainerSessionInitialized(
+            EntityManager entityManager,
             ref RuntimeContentBlob contentBlob,
-            DynamicBuffer<WorldJournalEntry> journal,
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
@@ -127,7 +125,7 @@ namespace VVardenfell.Runtime.Inventory
             });
 
             ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, playerLevel);
-            WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
+            ScriptVisibleSaveStateUtility.ApplyContainerOverlay(entityManager, placedRefId, items);
         }
 
         void ClearFocus(ref SystemState systemState)

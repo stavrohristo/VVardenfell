@@ -4,7 +4,8 @@ using Unity.Mathematics;
 using VVardenfell.Core.Cache;
 
 namespace VVardenfell.Runtime.Components
-{    public struct InteriorTransitionState : IComponentData
+{
+    public struct InteriorTransitionState : IComponentData
     {
         public byte InteriorActive;
         public byte TransitionInProgress;
@@ -12,12 +13,10 @@ namespace VVardenfell.Runtime.Components
         public ulong ActiveInteriorCellHash;
     }
 
-    public struct InteriorCellMember : IComponentData
-    {
-    }
-
     public struct InteriorSpawnedEntity : IBufferElementData
     {
+        // Transient runtime-spawned interior entities only. Baked resident interior
+        // section entities are owned by RuntimeSectionRegistry and must not be added here.
         public Entity Value;
     }
 }

@@ -30,6 +30,22 @@ namespace VVardenfell.Importer.Dds
             public byte[][] Mips;
         }
 
+        public readonly struct Metadata
+        {
+            public readonly int Width;
+            public readonly int Height;
+            public readonly int MipCount;
+            public readonly TextureFormat Format;
+
+            public Metadata(int width, int height, int mipCount, TextureFormat format)
+            {
+                Width = width;
+                Height = height;
+                MipCount = mipCount;
+                Format = format;
+            }
+        }
+
         public static Texture2D Load(byte[] data, string nameForLog = null)
         {
             var payload = DecodePayload(data, nameForLog);
@@ -147,6 +163,86 @@ namespace VVardenfell.Importer.Dds
                 Format = format,
                 Mips = SplitMips(data, HeaderSize, width, height, useMips, blockBytes, pixelBytesPerTexel),
             };
+        }
+
+        public static Metadata DecodeMetadata(byte[] data, string nameForLog = null)
+        {
+            if (data == null || data.Length < HeaderSize)
+                throw new InvalidDataException($"DDS too small: {nameForLog}");
+
+            using var ms = new MemoryStream(data, writable: false);
+            using var r = new BinaryReader(ms);
+
+            if (r.ReadUInt32() != MagicDds)
+                throw new InvalidDataException($"Not a DDS file: {nameForLog}");
+
+            r.ReadUInt32();
+            r.ReadUInt32();
+            int height = (int)r.ReadUInt32();
+            int width = (int)r.ReadUInt32();
+            r.ReadUInt32();
+            r.ReadUInt32();
+            uint mipCount = r.ReadUInt32();
+            for (int i = 0; i < 11; i++) r.ReadUInt32();
+
+            r.ReadUInt32();
+            uint pfFlags = r.ReadUInt32();
+            uint fourCC = r.ReadUInt32();
+            uint rgbBits = r.ReadUInt32();
+            uint rMask = r.ReadUInt32();
+            r.ReadUInt32();
+            uint bMask = r.ReadUInt32();
+            r.ReadUInt32();
+
+            TextureFormat format;
+            int blockBytes;
+            int pixelBytesPerTexel;
+            if ((pfFlags & DDPF_FOURCC) != 0)
+            {
+                if (fourCC == FourCC('D','X','T','1'))
+                { format = TextureFormat.DXT1; blockBytes = 8; pixelBytesPerTexel = 0; }
+                else if (fourCC == FourCC('D','X','T','3'))
+                { format = TextureFormat.RGBA32; blockBytes = 16; pixelBytesPerTexel = 0; }
+                else if (fourCC == FourCC('D','X','T','5'))
+                { format = TextureFormat.DXT5; blockBytes = 16; pixelBytesPerTexel = 0; }
+                else
+                    throw new NotSupportedException($"Unsupported DDS fourCC 0x{fourCC:X8} in {nameForLog}");
+            }
+            else if ((pfFlags & DDPF_RGB) != 0 && rgbBits == 32)
+            {
+                bool isBgra = (rMask == 0x00FF0000 && bMask == 0x000000FF);
+                format = isBgra ? TextureFormat.RGBA32 : TextureFormat.RGBA32;
+                blockBytes = 0;
+                pixelBytesPerTexel = 4;
+            }
+            else
+            {
+                throw new NotSupportedException($"Unsupported DDS pixel format (flags=0x{pfFlags:X8}) in {nameForLog}");
+            }
+
+            int pixelBytes = data.Length - HeaderSize;
+            int declaredMipCount = Mathf.Max(1, (int)mipCount);
+            int TotalSizeForMips(int mips)
+            {
+                int total = 0;
+                for (int i = 0; i < mips; i++)
+                {
+                    int w = Mathf.Max(1, width >> i);
+                    int h = Mathf.Max(1, height >> i);
+                    total += blockBytes > 0
+                        ? Mathf.Max(1, (w + 3) / 4) * Mathf.Max(1, (h + 3) / 4) * blockBytes
+                        : w * h * pixelBytesPerTexel;
+                }
+                return total;
+            }
+
+            int useMips = declaredMipCount;
+            while (useMips > 1 && TotalSizeForMips(useMips) > pixelBytes)
+                useMips--;
+            if (TotalSizeForMips(useMips) > pixelBytes)
+                throw new InvalidDataException($"DDS pixel data too short in {nameForLog}");
+
+            return new Metadata(width, height, useMips, format);
         }
 
         public static Payload DecodeToRgba32Payload(byte[] data, string nameForLog = null)

@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.Rendering;
-using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Rendering
 {
@@ -15,7 +14,10 @@ namespace VVardenfell.Runtime.Rendering
 
         static void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
         {
-            var resources = WorldResources.ActorGpuAnimation;
+            if (!RuntimeActorPresentationResources.TryGetDefault(out var presentation))
+                return;
+
+            var resources = presentation.GpuAnimation;
             if (resources == null || !resources.HasPreparedFrame)
                 return;
 

@@ -14,7 +14,8 @@ Shader "VVardenfell/MwTerrain"
         [NoScaleOffset] _LayerArray ("Terrain layer atlas pages", 2DArray) = "white" {}
         [NoScaleOffset] _LayerMeta0 ("Terrain layer meta 0", 2D) = "black" {}
         [NoScaleOffset] _LayerMeta1 ("Terrain layer meta 1", 2D) = "black" {}
-        [NoScaleOffset] _Splat      ("Splatmap (R16 UInt, 16x16)", 2D) = "black" {}
+        [NoScaleOffset] _SplatArray ("Terrain splat array (R16 UInt, 16x16)", 2DArray) = "black" {}
+        [HideInInspector] _SplatSlice ("__splatSlice", Float) = 0
         _TileScale  ("Diffuse tiles per cell edge", Float) = 16
         _SplatSize  ("Splatmap side (=LAND_TEXTURE_SIZE)", Float) = 16
     }
@@ -61,12 +62,20 @@ Shader "VVardenfell/MwTerrain"
             TEXTURE2D_ARRAY(_LayerArray);        SAMPLER(sampler_LayerArray);
             TEXTURE2D(_LayerMeta0);
             TEXTURE2D(_LayerMeta1);
-            TEXTURE2D(_Splat);                   // point-sampled via Load(); no SamplerState needed
+            TEXTURE2D_ARRAY(_SplatArray);        // point-sampled via Load(); no SamplerState needed
 
             CBUFFER_START(UnityPerMaterial)
                 float _TileScale;
                 float _SplatSize;
+                float _SplatSlice;
             CBUFFER_END
+
+            #if defined(DOTS_INSTANCING_ON)
+            UNITY_DOTS_INSTANCING_START(MaterialPropertyMetadata)
+                UNITY_DOTS_INSTANCED_PROP(float, _SplatSlice)
+            UNITY_DOTS_INSTANCING_END(MaterialPropertyMetadata)
+            #define _SplatSlice UNITY_ACCESS_DOTS_INSTANCED_PROP_WITH_DEFAULT(float, _SplatSlice)
+            #endif
 
             float _VV_LocalMapRender;
 
@@ -118,7 +127,7 @@ Shader "VVardenfell/MwTerrain"
                 xy = clamp(xy, int2(0, 0), int2((int)_SplatSize - 1, (int)_SplatSize - 1));
                 // Splatmap is R16 but sampled as RGBA16 — the layer index lives in the red channel.
                 // We wrote it as UNorm16 so multiplying by 65535 gets us back the integer index.
-                float r = _Splat.Load(int3(xy, 0)).r;
+                float r = _SplatArray.Load(int4(xy, (int)_SplatSlice, 0)).r;
                 return floor(r * 65535.0 + 0.5);
             }
 

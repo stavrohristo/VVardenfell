@@ -34,6 +34,7 @@ namespace VVardenfell.Runtime.Shell
             RequireForUpdate<BattleSimulatorState>();
             RequireForUpdate<BattleSimulatorSpawnRequest>();
             RequireForUpdate<RuntimeContentBlobReference>();
+            RequireForUpdate<RuntimeWorldCellBlobReference>();
         }
 
         protected override void OnDestroy()
@@ -138,12 +139,15 @@ namespace VVardenfell.Runtime.Shell
             _cameraCenteredForRunningBattle = true;
         }
 
-        static Vector3 ResolveBattlegroundCenter(Unity.Mathematics.int2 cell)
+        Vector3 ResolveBattlegroundCenter(Unity.Mathematics.int2 cell)
         {
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float x = cell.x * cellMeters + cellMeters * 0.5f;
             float z = cell.y * cellMeters + cellMeters * 0.5f;
-            if (!WorldResources.TrySampleExteriorTerrainHeight(cell, cellMeters * 0.5f, cellMeters * 0.5f, out float height))
+            var worldCellBlobReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+            if (!worldCellBlobReference.Blob.IsCreated)
+                throw new InvalidOperationException("[VVardenfell][BattleSimulatorUI] runtime world-cell blob is unavailable.");
+            if (!RuntimeWorldCellBlobUtility.TrySampleTerrainHeight(ref worldCellBlobReference.Blob.Value, cell, cellMeters * 0.5f, cellMeters * 0.5f, out float height))
                 throw new InvalidOperationException($"[VVardenfell][BattleSimulatorUI] cannot sample terrain height for battle cell {cell.x},{cell.y}.");
 
             return new Vector3(x, height, z);

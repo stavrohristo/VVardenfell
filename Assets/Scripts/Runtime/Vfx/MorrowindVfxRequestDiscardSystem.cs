@@ -12,12 +12,14 @@ namespace VVardenfell.Runtime.Vfx
         EntityQuery _removeQuery;
         EntityQuery _runtimeQuery;
         EntityQuery _wakeQuery;
+        EntityQuery _presentationResourcesQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
             _spawnQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxSpawnRequest>());
             _removeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRemoveRequest>());
             _runtimeQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<MorrowindVfxRuntimeState>());
+            _presentationResourcesQuery = systemState.GetEntityQuery(ComponentType.ReadOnly<RuntimeVfxPresentationResources>());
             _wakeQuery = systemState.GetEntityQuery(new EntityQueryDesc
             {
                 Any = new[]
@@ -30,6 +32,7 @@ namespace VVardenfell.Runtime.Vfx
 
             systemState.RequireForUpdate<RuntimePresentationDisabled>();
             systemState.RequireForUpdate(_wakeQuery);
+            systemState.RequireForUpdate(_presentationResourcesQuery);
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -41,8 +44,9 @@ namespace VVardenfell.Runtime.Vfx
             if (!_runtimeQuery.IsEmptyIgnoreFilter)
                 systemState.EntityManager.DestroyEntity(_runtimeQuery);
 
-            WorldResources.Vfx?.Dispose();
-            WorldResources.Vfx = null;
+            var resources = RuntimeVfxPresentationResources.Require(systemState.EntityManager);
+            resources.Resources?.Dispose();
+            resources.Resources = null;
         }
     }
 }

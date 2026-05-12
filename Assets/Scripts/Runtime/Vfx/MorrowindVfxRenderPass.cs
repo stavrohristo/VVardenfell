@@ -3,7 +3,6 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
-using VVardenfell.Runtime.Streaming;
 
 namespace VVardenfell.Runtime.Vfx
 {
@@ -32,7 +31,10 @@ namespace VVardenfell.Runtime.Vfx
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            var resources = WorldResources.Vfx;
+            if (!RuntimeVfxPresentationResources.TryGetDefault(out var presentation))
+                return;
+
+            var resources = presentation.Resources;
             if (resources == null || resources.ParticleCount <= 0)
                 return;
 

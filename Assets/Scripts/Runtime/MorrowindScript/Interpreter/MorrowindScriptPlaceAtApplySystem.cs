@@ -37,6 +37,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             systemState.RequireForUpdate<MorrowindMovementSettings>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
             systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
+            systemState.RequireForUpdate<RuntimeMaterializationResources>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -50,12 +51,15 @@ namespace VVardenfell.Runtime.MorrowindScript
             if (!contentBlobReference.Blob.IsCreated)
                 throw new InvalidOperationException("[VVardenfell][ContentBlob] PlaceAtPC requested before runtime content blob was ready.");
             ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+            var materializationResources = RuntimeMaterializationResources.Require(systemState.EntityManager);
 
             Entity player = ResolvePlayer();
             var playerTransform = systemState.EntityManager.GetComponentData<LocalTransform>(player);
             bool isInterior = TryResolveInteriorContext(ref systemState, out FixedString128Bytes interiorCellId, out ulong interiorCellHash);
             int2 playerExteriorCell = isInterior ? default : WorldBootstrap.WorldPositionToCell(playerTransform.Position);
             float groundOffset = SystemAPI.GetSingleton<MorrowindMovementSettings>().GroundOffset;
+            var interiorSections = RequireInteriorSections(systemState.World);
+            var exteriorSections = RequireExteriorSections(systemState.World);
 
             Entity spawnEntity = SystemAPI.GetSingletonEntity<RuntimeSpawnState>();
             var spawnState = systemState.EntityManager.GetComponentData<RuntimeSpawnState>(spawnEntity);
@@ -64,7 +68,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int requestIndex = 0; requestIndex < requests.Length; requestIndex++)
             {
                 var request = requests[requestIndex];
-                ValidateRequest(ref content, request, out bool actorSpawn);
+                ValidateRequest(ref content, materializationResources, request, out bool actorSpawn);
                 if (request.Count == 0)
                     continue;
 
@@ -75,6 +79,8 @@ namespace VVardenfell.Runtime.MorrowindScript
                         actorSpawn,
                         isInterior,
                         interiorCellHash,
+                        interiorSections,
+                        exteriorSections,
                         groundOffset,
                         out float3 position))
                 {
@@ -129,7 +135,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
-        static void ValidateRequest(ref RuntimeContentBlob content, in MorrowindScriptPlaceAtRequest request, out bool actorSpawn)
+        static void ValidateRequest(ref RuntimeContentBlob content, RuntimeMaterializationResources materializationResources, in MorrowindScriptPlaceAtRequest request, out bool actorSpawn)
         {
             actorSpawn = false;
             if (request.Count < 0)
@@ -150,7 +156,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC currently supports actors, items, and lights only.");
             }
 
-            if (request.Content.Kind != ContentReferenceKind.Actor && !WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
+            if (request.Content.Kind != ContentReferenceKind.Actor && !materializationResources.TryGetRuntimeSpawnPrefab(request.Content, out _))
                 throw new InvalidOperationException("[VVardenfell][MWScript] PlaceAtPC content has no runtime spawn prefab.");
         }
 
@@ -161,6 +167,8 @@ namespace VVardenfell.Runtime.MorrowindScript
             bool actorSpawn,
             bool isInterior,
             ulong interiorCellHash,
+            InteriorSectionLifecycleSystem interiorSections,
+            CellLoadWorkerSystem exteriorSections,
             float groundOffset,
             out float3 position)
         {
@@ -175,10 +183,10 @@ namespace VVardenfell.Runtime.MorrowindScript
             for (int i = 0; i < directions.Length; i++)
             {
                 float3 candidate = ComputeDirectionalPosition(playerTransform, distance, directions[i]);
-                if (actorSpawn && IsBlockedFromPlayer(candidate, playerTransform.Position, isInterior, interiorCellHash))
+                if (actorSpawn && IsBlockedFromPlayer(candidate, playerTransform.Position, isInterior, interiorCellHash, interiorSections, exteriorSections))
                     continue;
 
-                if (TrySnapToGround(candidate, isInterior, interiorCellHash, groundOffset, out position))
+                if (TrySnapToGround(candidate, isInterior, interiorCellHash, interiorSections, exteriorSections, groundOffset, out position))
                     return true;
             }
 
@@ -206,15 +214,28 @@ namespace VVardenfell.Runtime.MorrowindScript
             };
         }
 
-        static bool IsBlockedFromPlayer(float3 candidate, float3 playerPosition, bool isInterior, ulong interiorCellHash)
+        static bool IsBlockedFromPlayer(
+            float3 candidate,
+            float3 playerPosition,
+            bool isInterior,
+            ulong interiorCellHash,
+            InteriorSectionLifecycleSystem interiorSections,
+            CellLoadWorkerSystem exteriorSections)
         {
             float3 start = candidate + new float3(0f, ActorSafetyLiftMw * WorldScale.MwUnitsToMeters, 0f);
             float3 end = playerPosition + new float3(0f, ActorSafetyTargetLiftMw * WorldScale.MwUnitsToMeters, 0f);
             var input = new RaycastInput { Start = start, End = end, Filter = CollisionFilter.Default };
-            return RaycastWorld(input, isInterior, interiorCellHash, out _);
+            return RaycastWorld(input, isInterior, interiorCellHash, interiorSections, exteriorSections, out _);
         }
 
-        static bool TrySnapToGround(float3 candidate, bool isInterior, ulong interiorCellHash, float groundOffset, out float3 grounded)
+        static bool TrySnapToGround(
+            float3 candidate,
+            bool isInterior,
+            ulong interiorCellHash,
+            InteriorSectionLifecycleSystem interiorSections,
+            CellLoadWorkerSystem exteriorSections,
+            float groundOffset,
+            out float3 grounded)
         {
             float probeLift = ActorSafetyLiftMw * WorldScale.MwUnitsToMeters;
             float probeDistance = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
@@ -225,7 +246,7 @@ namespace VVardenfell.Runtime.MorrowindScript
                 Filter = CollisionFilter.Default,
             };
 
-            if (!RaycastWorld(input, isInterior, interiorCellHash, out var hit))
+            if (!RaycastWorld(input, isInterior, interiorCellHash, interiorSections, exteriorSections, out var hit))
             {
                 grounded = default;
                 return false;
@@ -235,14 +256,20 @@ namespace VVardenfell.Runtime.MorrowindScript
             return true;
         }
 
-        static bool RaycastWorld(RaycastInput input, bool isInterior, ulong interiorCellHash, out Unity.Physics.RaycastHit bestHit)
+        static bool RaycastWorld(
+            RaycastInput input,
+            bool isInterior,
+            ulong interiorCellHash,
+            InteriorSectionLifecycleSystem interiorSections,
+            CellLoadWorkerSystem exteriorSections,
+            out Unity.Physics.RaycastHit bestHit)
         {
             bool found = false;
             bestHit = default;
 
             if (isInterior)
             {
-                if (!WorldSpawner.TryGetInteriorStaticCollider(interiorCellHash, out var staticCollider))
+                if (!interiorSections.TryGetInteriorStaticCollider(interiorCellHash, out var staticCollider))
                 {
                     return false;
                 }
@@ -260,9 +287,9 @@ namespace VVardenfell.Runtime.MorrowindScript
                 {
                     var cell = new int2(x, y);
                     float3 origin = new float3(cell.x * cellM, 0f, cell.y * cellM);
-                    if (WorldResources.TryGetTerrainCollider(cell, out var terrain))
+                    if (exteriorSections.TryGetExteriorTerrainCollider(cell, out var terrain))
                         TryRaycastBody(BuildBody(terrain, Entity.Null, origin), input, ref found, ref bestHit);
-                    if (WorldResources.TryGetStaticCellCollider(cell, out var statics))
+                    if (exteriorSections.TryGetExteriorStaticCollider(cell, out var statics))
                         TryRaycastBody(BuildBody(statics, Entity.Null, origin), input, ref found, ref bestHit);
                 }
             }
@@ -291,6 +318,22 @@ namespace VVardenfell.Runtime.MorrowindScript
 
             found = true;
             bestHit = hit;
+        }
+
+        static InteriorSectionLifecycleSystem RequireInteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<InteriorSectionLifecycleSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] InteriorSectionLifecycleSystem is unavailable.");
+            return system;
+        }
+
+        static CellLoadWorkerSystem RequireExteriorSections(World world)
+        {
+            var system = world.GetExistingSystemManaged<CellLoadWorkerSystem>();
+            if (system == null)
+                throw new InvalidOperationException("[VVardenfell][Streaming] CellLoadWorkerSystem is unavailable.");
+            return system;
         }
     }
 }

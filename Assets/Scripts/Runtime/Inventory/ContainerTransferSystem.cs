@@ -1,5 +1,4 @@
 using System;
-using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
@@ -13,23 +12,18 @@ using VVardenfell.Runtime.WorldState;
 
 namespace VVardenfell.Runtime.Inventory
 {
-    [BurstCompile]
     [UpdateInGroup(typeof(MorrowindMenuMutationSystemGroup))]
     [UpdateAfter(typeof(ContainerWindowStateSystem))]
     [UpdateBefore(typeof(RuntimeShellInputSystem))]
     public partial struct ContainerTransferSystem : ISystem
     {
         EntityQuery _playerInventoryQuery;
-        EntityQuery _worldJournalQuery;
 
         public void OnCreate(ref SystemState systemState)
         {
             _playerInventoryQuery = systemState.GetEntityQuery(
                 ComponentType.ReadOnly<PlayerTag>(),
                 ComponentType.ReadWrite<PlayerInventoryItem>());
-            _worldJournalQuery = systemState.GetEntityQuery(
-                ComponentType.ReadWrite<WorldJournalState>(),
-                ComponentType.ReadWrite<WorldJournalEntry>());
 
             systemState.RequireForUpdate<RuntimeShellState>();
             systemState.RequireForUpdate<ContainerWindowState>();
@@ -38,7 +32,6 @@ namespace VVardenfell.Runtime.Inventory
             systemState.RequireForUpdate(_playerInventoryQuery);
         }
 
-        [BurstCompile]
         public void OnUpdate(ref SystemState systemState)
         {
             ref var shell = ref SystemAPI.GetSingletonRW<RuntimeShellState>().ValueRW;
@@ -80,9 +73,9 @@ namespace VVardenfell.Runtime.Inventory
                         continue;
 
                     RemoveCorpseBackingInventory(ref systemState, state.OpenTargetEntity, placedRefId, entry, entry.Count);
-                    AppendContainerDelta(ref systemState, placedRefId, entry.Content, -entry.Count);
                     ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                     items.RemoveAt(i);
+                    PersistContainerSnapshot(ref systemState, placedRefId, entry.Content);
                     transferredStacks++;
                 }
 
@@ -98,9 +91,9 @@ namespace VVardenfell.Runtime.Inventory
                     if (entry.PlacedRefId == placedRefId && entry.Count > 0)
                     {
                         RemoveCorpseBackingInventory(ref systemState, state.OpenTargetEntity, placedRefId, entry, entry.Count);
-                        AppendContainerDelta(ref systemState, placedRefId, entry.Content, -entry.Count);
                         ContainerLootUtility.AddInventoryStack(ref contentBlob, inventory, entry.Content, entry.SoulId, entry.SoulActorHandleValue, entry.Count);
                         items.RemoveAt(selectedIndex);
+                        PersistContainerSnapshot(ref systemState, placedRefId, entry.Content);
                         transferredStacks = 1;
                     }
                 }
@@ -201,31 +194,18 @@ namespace VVardenfell.Runtime.Inventory
             if (_playerInventoryQuery.CalculateEntityCount() != 1)
                 throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one player inventory entity.");
 
-            if (_worldJournalQuery.CalculateEntityCount() != 1)
-                throw new InvalidOperationException("[VVardenfell][Container] cannot transfer items without exactly one world journal entity.");
         }
 
-        uint AppendContainerDelta(ref SystemState systemState, uint placedRefId, ContentReference content, int deltaCount)
+        uint PersistContainerSnapshot(ref SystemState systemState, uint placedRefId, ContentReference content)
         {
-            if (placedRefId == 0u || !content.IsValid || deltaCount == 0)
+            if (placedRefId == 0u || !content.IsValid)
                 return 0u;
 
-            Entity journalEntity = _worldJournalQuery.GetSingletonEntity();
-            var state = systemState.EntityManager.GetComponentData<WorldJournalState>(journalEntity);
-            uint sequence = state.NextSequence + 1u;
-            state.NextSequence = sequence;
-            systemState.EntityManager.SetComponentData(journalEntity, state);
-
-            var journal = systemState.EntityManager.GetBuffer<WorldJournalEntry>(journalEntity);
-            journal.Add(new WorldJournalEntry
-            {
-                Sequence = sequence,
-                Kind = (byte)WorldJournalEntryKind.ContainerDelta,
-                PlacedRefId = placedRefId,
-                Content = content,
-                DeltaCount = deltaCount,
-            });
-            return sequence;
+            ScriptVisibleSaveStateUtility.ReplaceContainerItems(
+                systemState.EntityManager,
+                placedRefId,
+                SystemAPI.GetSingletonBuffer<ContainerSessionItem>());
+            return 1u;
         }
 
         float3 ResolveAudioPosition(ref SystemState systemState, Entity target)

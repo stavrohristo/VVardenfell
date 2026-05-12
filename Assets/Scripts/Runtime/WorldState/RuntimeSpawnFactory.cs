@@ -55,7 +55,8 @@ namespace VVardenfell.Runtime.WorldState
             EntityManager entityManager,
             ref EntityCommandBuffer ecb,
             ref RuntimeContentBlob content,
-            in WorldResources.RuntimeSpawnPrefabDescriptor descriptor,
+            RuntimeMaterializationResources resources,
+            in RuntimeSpawnPrefabDescriptor descriptor,
             ContentReference contentReference,
             uint runtimeRefId,
             float3 position,
@@ -69,11 +70,11 @@ namespace VVardenfell.Runtime.WorldState
             Entity interiorTransitionEntity,
             byte persistencePolicy)
         {
-            if (WorldResources.ModelPrefabs == null
-                || (uint)descriptor.ModelPrefabIndex >= (uint)WorldResources.ModelPrefabs.Length)
+            if (resources?.ModelPrefabs == null
+                || (uint)descriptor.ModelPrefabIndex >= (uint)resources.ModelPrefabs.Length)
                 return false;
 
-            Entity renderPrefab = WorldResources.ModelPrefabs[descriptor.ModelPrefabIndex];
+            Entity renderPrefab = resources.ModelPrefabs[descriptor.ModelPrefabIndex];
             if (renderPrefab == Entity.Null)
                 return false;
 
@@ -83,6 +84,7 @@ namespace VVardenfell.Runtime.WorldState
                 ref ecb,
                 renderPrefab,
                 renderRoot,
+                resources,
                 descriptor,
                 runtimeRefId,
                 position,
@@ -149,7 +151,8 @@ namespace VVardenfell.Runtime.WorldState
             ref EntityCommandBuffer ecb,
             Entity renderPrefab,
             Entity renderRoot,
-            in WorldResources.RuntimeSpawnPrefabDescriptor descriptor,
+            RuntimeMaterializationResources resources,
+            in RuntimeSpawnPrefabDescriptor descriptor,
             uint runtimeRefId,
             float3 position,
             quaternion rotation,
@@ -181,7 +184,7 @@ namespace VVardenfell.Runtime.WorldState
                     ecb.AddComponent(renderRoot, new CellLink { Value = exteriorCell });
             }
 
-            var colliderBlobs = WorldResources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Unity.Physics.Collider>>();
+            var colliderBlobs = resources.ColliderBlobs ?? System.Array.Empty<BlobAssetReference<Unity.Physics.Collider>>();
             if ((uint)descriptor.CollisionIndex < (uint)colliderBlobs.Length && colliderBlobs[descriptor.CollisionIndex].IsCreated)
             {
                 var colliderBlob = colliderBlobs[descriptor.CollisionIndex];
@@ -205,9 +208,6 @@ namespace VVardenfell.Runtime.WorldState
         {
             if (!entityManager.HasBuffer<LinkedEntityGroup>(renderRoot))
                 return;
-
-            if (!isInterior)
-                WorldResources.RegisterExteriorCellEntity(exteriorCell, renderRoot);
 
             var linked = entityManager.GetBuffer<LinkedEntityGroup>(renderRoot);
             var linkedEntities = new NativeArray<Entity>(linked.Length, Allocator.Temp);
@@ -233,7 +233,6 @@ namespace VVardenfell.Runtime.WorldState
                         ecb.SetComponent(child, new CellLink { Value = exteriorCell });
                     else
                         ecb.AddComponent(child, new CellLink { Value = exteriorCell });
-                    WorldResources.RegisterExteriorCellEntity(exteriorCell, child);
                 }
             }
 

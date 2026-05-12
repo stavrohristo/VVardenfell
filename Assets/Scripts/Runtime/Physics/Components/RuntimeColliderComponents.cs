@@ -3,32 +3,6 @@ using Collider = Unity.Physics.Collider;
 
 namespace VVardenfell.Runtime.Components
 {
-    public enum RuntimeColliderKind : byte
-    {
-        None = 0,
-        TerrainCell = 1,
-        StaticCell = 2,
-        PlacedRef = 3,
-        ActivationProxy = 4,
-        RuntimeSpawn = 5,
-        Player = 6,
-        Actor = 7,
-        InteractionPick = 8,
-        Projectile = 9,
-    }
-
-    public struct RuntimeColliderSource : IComponentData
-    {
-        public BlobAssetReference<Collider> Value;
-        public RuntimeColliderKind Kind;
-        public byte Temporary;
-    }
-
-    public struct RuntimeGeneratedColliderBlobCleanup : ICleanupComponentData
-    {
-        public BlobAssetReference<Collider> Value;
-    }
-
     public static class RuntimeColliderAttachmentUtility
     {
         public static bool AttachSource(
@@ -64,6 +38,21 @@ namespace VVardenfell.Runtime.Components
                 collider,
                 kind,
                 active,
+                temporary);
+        }
+
+        public static bool BindExistingSource(
+            EntityManager entityManager,
+            Entity entity,
+            BlobAssetReference<Collider> collider,
+            RuntimeColliderKind kind,
+            bool temporary = false)
+        {
+            return VVardenfell.Runtime.Physics.RuntimeColliderPhysicsUtility.BindExistingSource(
+                entityManager,
+                entity,
+                collider,
+                kind,
                 temporary);
         }
 

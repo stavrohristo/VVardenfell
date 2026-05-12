@@ -33,9 +33,9 @@ namespace VVardenfell.Runtime.WorldState
             systemState.RequireForUpdate<BattleSimulatorState>();
             systemState.RequireForUpdate<BattleSimulatorSpawnRequest>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeWorldCellBlobReference>();
             systemState.RequireForUpdate<RuntimeSpawnState>();
             systemState.RequireForUpdate<RuntimeSpawnedRef>();
-            systemState.RequireForUpdate<WorldJournalEntry>();
             systemState.RequireForUpdate<LogicalRefLookup>();
             systemState.RequireForUpdate<LoadedCellsMap>();
             systemState.RequireForUpdate<AvailableCells>();
@@ -55,7 +55,6 @@ namespace VVardenfell.Runtime.WorldState
                 var resetLogicalLookup = SystemAPI.GetSingleton<LogicalRefLookup>();
                 DestroyExistingUnits(ref systemState, ref resetLogicalLookup);
                 systemState.EntityManager.SetComponentData(resetLookupEntity, resetLogicalLookup);
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
                 systemState.EntityManager.SetComponentEnabled<BattleSimulatorResetRequest>(stateEntity, false);
                 systemState.EntityManager.GetBuffer<BattleSimulatorSpawnRequest>(stateEntity).Clear();
                 simulatorState.Phase = (byte)BattleSimulatorPhase.Setup;
@@ -86,8 +85,12 @@ namespace VVardenfell.Runtime.WorldState
                 var contentBlobReference = SystemAPI.GetSingleton<RuntimeContentBlobReference>();
                 if (!contentBlobReference.Blob.IsCreated)
                     throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] runtime content blob is unavailable.");
+                var worldCellBlobReference = SystemAPI.GetSingleton<RuntimeWorldCellBlobReference>();
+                if (!worldCellBlobReference.Blob.IsCreated)
+                    throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] runtime world-cell blob is unavailable.");
 
                 ref RuntimeContentBlob content = ref contentBlobReference.Blob.Value;
+                ref RuntimeWorldCellBlob worldCells = ref worldCellBlobReference.Blob.Value;
                 for (int i = 0; i < requests.Length; i++)
                     ValidateRosterEntry(ref content, requests[i]);
                 int totalA = CountTeamRequests(ref content, requests, (byte)BattleSimulatorTeamId.GroupA);
@@ -104,6 +107,7 @@ namespace VVardenfell.Runtime.WorldState
                 var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
                 var available = SystemAPI.GetSingleton<AvailableCells>();
                 var config = SystemAPI.GetSingleton<StreamingConfig>();
+                var transition = SystemAPI.GetSingleton<InteriorTransitionState>();
 
                 DestroyExistingUnits(ref systemState, ref logicalLookup);
 
@@ -119,13 +123,15 @@ namespace VVardenfell.Runtime.WorldState
                     totalA,
                     totalB,
                     cell,
+                    ref worldCells,
                     ref spawnState,
                     spawnEntity,
                     ref logicalLookup,
                     transitionEntity,
                     ref loaded,
                     ref available,
-                    config);
+                    config,
+                    transition);
 
                 int spawnedB = SpawnTeam(
                     ref systemState,
@@ -135,13 +141,15 @@ namespace VVardenfell.Runtime.WorldState
                     totalB,
                     totalA,
                     cell,
+                    ref worldCells,
                     ref spawnState,
                     spawnEntity,
                     ref logicalLookup,
                     transitionEntity,
                     ref loaded,
                     ref available,
-                    config);
+                    config,
+                    transition);
 
                 if (spawnedA != totalA || spawnedB != totalB)
                     throw new System.InvalidOperationException("[VVardenfell][BattleSimulator] roster expansion did not spawn the expected unit counts.");
@@ -150,7 +158,6 @@ namespace VVardenfell.Runtime.WorldState
                 systemState.EntityManager.SetComponentData(lookupEntity, logicalLookup);
                 systemState.EntityManager.SetComponentData(loadedEntity, loaded);
                 systemState.EntityManager.SetComponentData(SystemAPI.GetSingletonEntity<AvailableCells>(), available);
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
 
                 requestBuffer.Clear();
                 simulatorState.Phase = (byte)BattleSimulatorPhase.Running;
@@ -207,13 +214,15 @@ namespace VVardenfell.Runtime.WorldState
             int teamTotal,
             int opposingTotal,
             int2 battlegroundCell,
+            ref RuntimeWorldCellBlob worldCells,
             ref RuntimeSpawnState spawnState,
             Entity spawnEntity,
             ref LogicalRefLookup logicalLookup,
             Entity transitionEntity,
             ref LoadedCellsMap loaded,
             ref AvailableCells available,
-            StreamingConfig config)
+            StreamingConfig config,
+            InteriorTransitionState transition)
         {
             int spawned = 0;
             for (int i = 0; i < requests.Length; i++)
@@ -225,7 +234,7 @@ namespace VVardenfell.Runtime.WorldState
                 for (int count = 0; count < request.Count; count++)
                 {
                     float3 position = ResolveFormationPosition(team, spawned, teamTotal, opposingTotal, battlegroundCell);
-                    GroundFormationPosition(ref content, battlegroundCell, ref position);
+                    GroundFormationPosition(ref worldCells, battlegroundCell, ref position);
                     quaternion rotation = team == (byte)BattleSimulatorTeamId.GroupA
                         ? quaternion.LookRotationSafe(new float3(0f, 0f, 1f), math.up())
                         : quaternion.LookRotationSafe(new float3(0f, 0f, -1f), math.up());
@@ -242,7 +251,8 @@ namespace VVardenfell.Runtime.WorldState
                         transitionEntity,
                         ref loaded,
                         ref available,
-                        config);
+                        config,
+                        transition);
                     spawned++;
                 }
             }
@@ -263,7 +273,8 @@ namespace VVardenfell.Runtime.WorldState
             Entity transitionEntity,
             ref LoadedCellsMap loaded,
             ref AvailableCells available,
-            StreamingConfig config)
+            StreamingConfig config,
+            InteriorTransitionState transition)
         {
             int2 exteriorCell = WorldBootstrap.WorldPositionToCell(position);
             if (!RuntimeContentBlobUtility.TryGetExteriorPathGridHandle(ref content, exteriorCell.x, exteriorCell.y, out var pathGridHandle) || !pathGridHandle.IsValid)
@@ -354,7 +365,11 @@ namespace VVardenfell.Runtime.WorldState
 
             DynamicBuffer<RuntimeSpawnedRef> spawnedRegistry = systemState.EntityManager.GetBuffer<RuntimeSpawnedRef>(spawnEntity);
             spawnedRegistry.Add(spawnedRef);
-            WorldJournalUtility.AppendRuntimeSpawn(systemState.EntityManager, spawnedRef);
+            ActiveExplicitRefLookupLifecycleUtility.QueueDynamicAddIfActive(
+                systemState.EntityManager,
+                logicalEntity,
+                loaded,
+                transition);
         }
 
         static float3 ResolveFormationPosition(byte team, int index, int teamTotal, int opposingTotal, int2 battlegroundCell)
@@ -444,7 +459,7 @@ namespace VVardenfell.Runtime.WorldState
             }
         }
 
-        static void GroundFormationPosition(ref RuntimeContentBlob content, int2 battlegroundCell, ref float3 position)
+        static void GroundFormationPosition(ref RuntimeWorldCellBlob worldCells, int2 battlegroundCell, ref float3 position)
         {
             int2 cell = WorldBootstrap.WorldPositionToCell(position);
             int dx = math.abs(cell.x - battlegroundCell.x);
@@ -455,11 +470,10 @@ namespace VVardenfell.Runtime.WorldState
             float cellMeters = LandRecordSize.CellUnitsMw * WorldScale.MwUnitsToMeters;
             float localX = position.x - cell.x * cellMeters;
             float localZ = position.z - cell.y * cellMeters;
-            if (!WorldResources.TrySampleExteriorTerrainHeight(cell, localX, localZ, out float height))
+            if (!RuntimeWorldCellBlobUtility.TrySampleTerrainHeight(ref worldCells, cell, localX, localZ, out float height))
                 throw new System.InvalidOperationException($"[VVardenfell][BattleSimulator] cannot ground battle unit in cell {cell.x},{cell.y}.");
 
             position.y = height;
-            _ = content;
         }
 
         static void ValidateRosterEntry(ref RuntimeContentBlob content, BattleSimulatorSpawnRequest request)

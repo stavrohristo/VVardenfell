@@ -2233,25 +2233,23 @@ namespace VVardenfell.Runtime.MorrowindScript
         {
             Entity runtimeEntity = WorldStateEntityQueryUtility.GetSingletonBufferOwner<ContainerSessionItem>(entityManager);
             if (runtimeEntity == Entity.Null
-                || !entityManager.HasBuffer<ContainerSessionHeader>(runtimeEntity)
-                || !WorldJournalUtility.TryGetJournalEntity(entityManager, out Entity journalEntity))
+                || !entityManager.HasBuffer<ContainerSessionHeader>(runtimeEntity))
             {
                 return false;
             }
 
             var headers = entityManager.GetBuffer<ContainerSessionHeader>(runtimeEntity);
             var items = entityManager.GetBuffer<ContainerSessionItem>(runtimeEntity);
-            var journal = entityManager.GetBuffer<WorldJournalEntry>(journalEntity);
             var authoring = entityManager.GetComponentData<ContainerAuthoring>(containerEntity);
-            EnsureContainerSessionInitialized(ref contentBlob, journal, headers, items, placedRefId, authoring.Definition, playerLevel);
+            EnsureContainerSessionInitialized(entityManager, ref contentBlob, headers, items, placedRefId, authoring.Definition, playerLevel);
             ContainerLootUtility.ApplyContainerDelta(items, placedRefId, content, deltaCount);
-            WorldJournalUtility.AppendContainerDelta(entityManager, placedRefId, content, deltaCount);
+            ScriptVisibleSaveStateUtility.ReplaceContainerItems(entityManager, placedRefId, items);
             return true;
         }
 
         static void EnsureContainerSessionInitialized(
+            EntityManager entityManager,
             ref RuntimeContentBlob contentBlob,
-            DynamicBuffer<WorldJournalEntry> journal,
             DynamicBuffer<ContainerSessionHeader> headers,
             DynamicBuffer<ContainerSessionItem> items,
             uint placedRefId,
@@ -2268,7 +2266,7 @@ namespace VVardenfell.Runtime.MorrowindScript
             });
 
             ContainerLootUtility.MaterializeContainerContents(ref contentBlob, items, placedRefId, definition, playerLevel);
-            WorldJournalUtility.ApplyContainerDeltas(placedRefId, journal, items);
+            ScriptVisibleSaveStateUtility.ApplyContainerOverlay(entityManager, placedRefId, items);
         }
 
         static bool TryFindEntityByPlacedRef(EntityManager entityManager, uint placedRefId, out Entity entity)

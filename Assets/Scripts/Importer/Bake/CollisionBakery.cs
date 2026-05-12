@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics;
 using VVardenfell.Core.Cache;
@@ -31,6 +32,46 @@ namespace VVardenfell.Importer.Bake
 
         public int Count => _payloads.Count;
         public bool Modified { get; private set; }
+
+        public BlobAssetReference<Collider> CreateColliderBlob(int index)
+        {
+            if ((uint)index >= (uint)_payloads.Count)
+                throw new InvalidDataException($"Collision index {index} is outside catalog length {_payloads.Count}.");
+
+            var payload = _payloads[index];
+            var verts = new NativeList<float3>(payload.Vertices.Length, Allocator.Persistent);
+            var tris = new NativeList<int3>(payload.Indices.Length / 3, Allocator.Persistent);
+            try
+            {
+                verts.ResizeUninitialized(payload.Vertices.Length);
+                var vSpan = verts.AsArray();
+                for (int i = 0; i < payload.Vertices.Length; i++)
+                {
+                    var v = payload.Vertices[i];
+                    vSpan[i] = new float3(v.x, v.y, v.z);
+                }
+
+                int triCount = payload.Indices.Length / 3;
+                tris.ResizeUninitialized(triCount);
+                var iSpan = tris.AsArray();
+                for (int t = 0; t < triCount; t++)
+                {
+                    iSpan[t] = new int3(
+                        payload.Indices[t * 3 + 0],
+                        payload.Indices[t * 3 + 1],
+                        payload.Indices[t * 3 + 2]);
+                }
+
+                return MeshCollider.Create(vSpan, iSpan, CollisionFilter.Default);
+            }
+            finally
+            {
+                if (tris.IsCreated)
+                    tris.Dispose();
+                if (verts.IsCreated)
+                    verts.Dispose();
+            }
+        }
 
         public void TryLoadExisting(string catalogPath)
         {

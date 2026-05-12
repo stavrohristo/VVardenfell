@@ -30,7 +30,6 @@ namespace VVardenfell.Runtime.WorldState
                 out bool created);
 
             RuntimeBootstrapUtility.EnsureComponent(systemState.EntityManager, runtimeEntity, new WorldJournalState(), ref ecb, created);
-            RuntimeBootstrapUtility.EnsureBuffer<WorldJournalEntry>(systemState.EntityManager, runtimeEntity, ref ecb, created);
             WorldStateStructuralUtility.PlaybackAndDispose(systemState.EntityManager, ref ecb);
             RuntimeBootstrapRequestUtility.Consume<WorldJournalBootstrapRequest>(systemState.EntityManager);
         }

@@ -19,14 +19,15 @@ namespace VVardenfell.Runtime.WorldState
             systemState.RequireForUpdate<RuntimeSpawnResult>();
             systemState.RequireForUpdate<RuntimeSpawnRequest>();
             systemState.RequireForUpdate<RuntimeSpawnedRef>();
-            systemState.RequireForUpdate<WorldJournalEntry>();
             systemState.RequireForUpdate<LogicalRefLookup>();
             systemState.RequireForUpdate<LoadedCellsMap>();
+            systemState.RequireForUpdate<RuntimeSectionRegistry>();
             systemState.RequireForUpdate<AvailableCells>();
             systemState.RequireForUpdate<StreamingConfig>();
             systemState.RequireForUpdate<InteriorTransitionState>();
             systemState.RequireForUpdate<InteriorSpawnedEntity>();
             systemState.RequireForUpdate<RuntimeContentBlobReference>();
+            systemState.RequireForUpdate<RuntimeMaterializationResources>();
         }
 
         public void OnUpdate(ref SystemState systemState)
@@ -53,10 +54,10 @@ namespace VVardenfell.Runtime.WorldState
             Entity transitionEntity = SystemAPI.GetSingletonEntity<InteriorTransitionState>();
             var interiorTransition = SystemAPI.GetSingleton<InteriorTransitionState>();
             var loaded = SystemAPI.GetSingleton<LoadedCellsMap>();
-            uint startActiveRevision = loaded.ActiveRevision;
+            var registry = SystemAPI.GetSingleton<RuntimeSectionRegistry>();
             var available = SystemAPI.GetSingleton<AvailableCells>();
             var config = SystemAPI.GetSingleton<StreamingConfig>();
-            bool activeExplicitRefsDirty = false;
+            var materializationResources = RuntimeMaterializationResources.Require(systemState.EntityManager);
 
             for (int i = 0; i < requestSnapshot.Length; i++)
             {
@@ -69,10 +70,11 @@ namespace VVardenfell.Runtime.WorldState
                     ref logicalLookup,
                     transitionEntity,
                     ref loaded,
+                    registry,
                     available,
                     config,
                     interiorTransition,
-                    ref activeExplicitRefsDirty,
+                    materializationResources,
                     request);
             }
 
@@ -80,8 +82,6 @@ namespace VVardenfell.Runtime.WorldState
             systemState.EntityManager.SetComponentData(spawnEntity, spawnResult);
             systemState.EntityManager.SetComponentData(lookupEntity, logicalLookup);
             systemState.EntityManager.SetComponentData(loadedEntity, loaded);
-            if (activeExplicitRefsDirty || loaded.ActiveRevision != startActiveRevision)
-                ActiveExplicitRefLookupLifecycleUtility.MarkDirty(systemState.EntityManager);
         }
 
         void ProcessRequest(ref SystemState systemState, 
@@ -92,10 +92,11 @@ namespace VVardenfell.Runtime.WorldState
             ref LogicalRefLookup logicalLookup,
             Entity transitionEntity,
             ref LoadedCellsMap loaded,
+            RuntimeSectionRegistry registry,
             AvailableCells available,
             StreamingConfig config,
             InteriorTransitionState interiorTransition,
-            ref bool activeExplicitRefsDirty,
+            RuntimeMaterializationResources materializationResources,
             in RuntimeSpawnRequest request)
         {
             spawnResult = new RuntimeSpawnResult
@@ -123,8 +124,8 @@ namespace VVardenfell.Runtime.WorldState
                 return;
             }
 
-            WorldResources.RuntimeSpawnPrefabDescriptor descriptor = default;
-            if (!actorSpawn && !WorldResources.TryGetRuntimeSpawnPrefab(request.Content, out descriptor))
+            RuntimeSpawnPrefabDescriptor descriptor = default;
+            if (!actorSpawn && !materializationResources.TryGetRuntimeSpawnPrefab(request.Content, out descriptor))
             {
                 CompleteFailure(ref spawnResult, RuntimeSpawnResultStatus.MissingPrefab, "No spawnable model prefab is available for that content definition.");
                 return;
@@ -152,7 +153,13 @@ namespace VVardenfell.Runtime.WorldState
                 if (loaded.Active.Add(request.ExteriorCell))
                 {
                     loaded.ActiveRevision++;
-                    activeExplicitRefsDirty = true;
+                    if (registry.ExteriorSections.IsCreated
+                        && registry.ExteriorSections.TryGetValue(request.ExteriorCell, out Entity sectionEntity)
+                        && sectionEntity != Entity.Null
+                        && systemState.EntityManager.Exists(sectionEntity))
+                    {
+                        ActiveExplicitRefLookupLifecycleUtility.QueueSectionChange(systemState.EntityManager, sectionEntity, true);
+                    }
                 }
             }
 
@@ -175,6 +182,7 @@ namespace VVardenfell.Runtime.WorldState
                     systemState.EntityManager,
                     ref createEcb,
                     ref content,
+                    materializationResources,
                     descriptor,
                     request.Content,
                     runtimeRefId,
@@ -232,13 +240,16 @@ namespace VVardenfell.Runtime.WorldState
                 PersistencePolicy = request.PersistencePolicy,
                 Alive = 1,
             });
-            WorldJournalUtility.AppendRuntimeSpawn(systemState.EntityManager, spawnedRegistry[spawnedRegistry.Length - 1]);
 
             spawnResult.RuntimeRefId = runtimeRefId;
             spawnResult.LogicalEntity = logicalEntity;
             spawnResult.Status = (byte)RuntimeSpawnResultStatus.Success;
             spawnResult.Message = new FixedString128Bytes($"Spawned runtime ref 0x{runtimeRefId:X8}.");
-            activeExplicitRefsDirty = true;
+            ActiveExplicitRefLookupLifecycleUtility.QueueDynamicAddIfActive(
+                systemState.EntityManager,
+                logicalEntity,
+                loaded,
+                interiorTransition);
         }
 
         static bool IsExteriorCellActiveNow(in StreamingConfig config, int2 exteriorCell)
